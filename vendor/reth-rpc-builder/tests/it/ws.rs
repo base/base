@@ -150,7 +150,7 @@ async fn test_eth_subscribe_not_available_over_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
-    use reth_consensus::noop::NoopConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::NoopProvider;
     use reth_rpc_builder::RpcModuleBuilder;
@@ -168,7 +168,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .with_network(NoopNetwork::default())
         .with_executor(Runtime::test())
         .with_evm_config(BaseEvmConfig::default())
-        .with_consensus(NoopConsensus::default());
+        .with_consensus(BaseBeaconConsensus::noop());
 
     let eth_api = builder.eth_api_builder().build();
     let server = builder.build(

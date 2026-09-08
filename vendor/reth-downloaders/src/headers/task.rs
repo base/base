@@ -155,7 +155,7 @@ enum DownloaderUpdates {
 mod tests {
     use std::sync::Arc;
 
-    use reth_consensus::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestHeadersClient;
 
     use super::*;
@@ -176,7 +176,7 @@ mod tests {
         let downloader = ReverseHeadersDownloaderBuilder::default()
             .stream_batch_size(1)
             .request_limit(1)
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
 
         let runtime = Runtime::test();
         let mut downloader = TaskDownloader::spawn_with(downloader, &runtime);

@@ -374,7 +374,6 @@ reth-mdbx-sys = { path = "vendor/reth-mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 reth-db-common = { path = "vendor/reth-db-common", default-features = false }
-reth-consensus = { path = "vendor/reth-consensus", default-features = false }
 reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
 reth-db-models = { path = "vendor/reth-db-models", default-features = false }
 reth-cli-runner = { path = "vendor/reth-cli-runner", default-features = false }
@@ -424,7 +423,6 @@ reth-storage-overlay = { path = "vendor/reth-storage-overlay", default-features 
 reth-transaction-pool = { path = "vendor/reth-transaction-pool", default-features = false }
 reth-rpc-server-types = { path = "vendor/reth-rpc-server-types", default-features = false }
 reth-execution-errors = { path = "vendor/reth-execution-errors", default-features = false }
-reth-consensus-common = { path = "vendor/reth-consensus-common", default-features = false }
 reth-zstd-compressors = { path = "vendor/reth-zstd-compressors", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }

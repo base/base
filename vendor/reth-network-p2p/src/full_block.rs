@@ -13,8 +13,8 @@ use alloy_consensus::BlockHeader;
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::BaseBlock;
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::FutureExt;
-use reth_consensus::Consensus;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use reth_network_peers::{PeerId, WithPeerId};
 use reth_primitives_traits::{SealedBlock, SealedBlockWith, SealedHeader};
@@ -41,7 +41,7 @@ where
     Client: BlockClient,
 {
     client: Client,
-    consensus: Arc<dyn Consensus>,
+    consensus: Arc<BaseBeaconConsensus>,
 }
 
 impl<Client> FullBlockClient<Client>
@@ -49,14 +49,14 @@ where
     Client: BlockClient,
 {
     /// Creates a new instance of `FullBlockClient`.
-    pub fn new(client: Client, consensus: Arc<dyn Consensus>) -> Self {
+    pub fn new(client: Client, consensus: Arc<BaseBeaconConsensus>) -> Self {
         Self { client, consensus }
     }
 
     /// Returns a client with Test consensus
     #[cfg(any(test, feature = "test-utils"))]
     pub fn test_client(client: Client) -> Self {
-        Self::new(client, Arc::new(reth_consensus::test_utils::TestConsensus::default()))
+        Self::new(client, Arc::new(base_execution_consensus::BaseBeaconConsensus::test()))
     }
 }
 
@@ -195,7 +195,7 @@ where
     Client: BlockClient,
 {
     client: Client,
-    consensus: Arc<dyn Consensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     hash: B256,
     request: FullBlockRequest<Client>,
     header: Option<SealedHeader>,
@@ -206,7 +206,7 @@ impl<Client> FetchFullBlockFuture<Client>
 where
     Client: BlockClient,
 {
-    fn new(client: Client, consensus: Arc<dyn Consensus>, hash: B256) -> Self {
+    fn new(client: Client, consensus: Arc<BaseBeaconConsensus>, hash: B256) -> Self {
         Self {
             hash,
             consensus,
@@ -704,7 +704,7 @@ where
     /// The client used to fetch headers and bodies.
     client: Client,
     /// The consensus instance used to validate the blocks.
-    consensus: Arc<dyn Consensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// The block hash to start fetching from (inclusive).
     start_hash: B256,
     /// How many blocks to fetch: `len([start_hash, ..]) == count`
@@ -2012,7 +2012,7 @@ mod tests {
         let range_length: usize = 3;
         let (header, _) = insert_headers_into_client(&client, 0..range_length);
 
-        let test_consensus = reth_consensus::test_utils::TestConsensus::default();
+        let test_consensus = base_execution_consensus::BaseBeaconConsensus::test();
         test_consensus.set_fail_validation(true);
         test_consensus.set_fail_body_against_header(false);
         let client = FullBlockClient::new(client, Arc::new(test_consensus));

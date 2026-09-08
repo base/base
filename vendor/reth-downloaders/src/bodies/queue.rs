@@ -6,9 +6,9 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::{Stream, stream::FuturesUnordered};
 use futures_util::StreamExt;
-use reth_consensus::Consensus;
 use reth_network_p2p::{
     bodies::{client::BodiesClient, response::BlockResponse},
     error::DownloadResult,
@@ -60,7 +60,7 @@ where
     pub(crate) fn push_new_request(
         &mut self,
         client: Arc<C>,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         request: Vec<SealedHeader>,
     ) {
         // Set last max requested block number

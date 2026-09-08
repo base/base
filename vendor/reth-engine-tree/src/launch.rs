@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use base_common_consensus::BaseBlock;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use futures::Stream;
-use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_network_p2p::BlockClient;
@@ -50,7 +50,7 @@ use crate::{
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn build_engine_orchestrator<DB, Client, S, V>(
     engine_kind: EngineApiKind,
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     client: Client,
     incoming_requests: S,
     pipeline: Pipeline<DB>,

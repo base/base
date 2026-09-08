@@ -23,6 +23,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -33,6 +34,7 @@ use base_common_rpc_types::{
     BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
@@ -47,7 +49,6 @@ use jsonrpsee::{
         middleware::rpc::RpcServiceBuilder,
     },
 };
-use reth_consensus::FullConsensus;
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 pub use reth_ipc::server::{
     Builder as IpcServerBuilder, RpcServiceBuilder as IpcRpcServiceBuilder,
@@ -113,7 +114,7 @@ pub mod rate_limiter;
 ///
 /// This is the main entrypoint and the easiest way to configure an RPC server.
 #[derive(Debug, Clone)]
-pub struct RpcModuleBuilder<Provider, Pool, Network, Consensus> {
+pub struct RpcModuleBuilder<Provider, Pool, Network> {
     /// The Provider type to when creating all rpc handlers
     provider: Provider,
     /// The Pool type to when creating all rpc handlers
@@ -125,12 +126,12 @@ pub struct RpcModuleBuilder<Provider, Pool, Network, Consensus> {
     /// Defines how the EVM should be configured before execution.
     evm_config: BaseEvmConfig,
     /// The consensus implementation.
-    consensus: Consensus,
+    consensus: Arc<BaseBeaconConsensus>,
 }
 
 // === impl RpcBuilder ===
 
-impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Network, Consensus> {
+impl<Provider, Pool, Network> RpcModuleBuilder<Provider, Pool, Network> {
     /// Create a new instance of the builder
     pub const fn new(
         provider: Provider,
@@ -138,19 +139,19 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
         network: Network,
         executor: Runtime,
         evm_config: BaseEvmConfig,
-        consensus: Consensus,
+        consensus: Arc<BaseBeaconConsensus>,
     ) -> Self {
         Self { provider, pool, network, executor: Some(executor), evm_config, consensus }
     }
 
     /// Configure the provider instance.
-    pub fn with_provider<P>(self, provider: P) -> RpcModuleBuilder<P, Pool, Network, Consensus> {
+    pub fn with_provider<P>(self, provider: P) -> RpcModuleBuilder<P, Pool, Network> {
         let Self { pool, network, executor, evm_config, consensus, .. } = self;
         RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
 
     /// Configure the transaction pool instance.
-    pub fn with_pool<P>(self, pool: P) -> RpcModuleBuilder<Provider, P, Network, Consensus> {
+    pub fn with_pool<P>(self, pool: P) -> RpcModuleBuilder<Provider, P, Network> {
         let Self { provider, network, executor, evm_config, consensus, .. } = self;
         RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
@@ -160,9 +161,7 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
     /// Caution: This will configure a pool API that does absolutely nothing.
     /// This is only intended for allow easier setup of namespaces that depend on the
     /// [`EthApi`] which requires a [`TransactionPool`] implementation.
-    pub fn with_noop_pool(
-        self,
-    ) -> RpcModuleBuilder<Provider, NoopTransactionPool, Network, Consensus> {
+    pub fn with_noop_pool(self) -> RpcModuleBuilder<Provider, NoopTransactionPool, Network> {
         let Self { provider, executor, network, evm_config, consensus, .. } = self;
         RpcModuleBuilder {
             provider,
@@ -175,10 +174,7 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
     }
 
     /// Configure the network instance.
-    pub fn with_network<Net>(
-        self,
-        network: Net,
-    ) -> RpcModuleBuilder<Provider, Pool, Net, Consensus> {
+    pub fn with_network<Net>(self, network: Net) -> RpcModuleBuilder<Provider, Pool, Net> {
         let Self { provider, pool, executor, evm_config, consensus, .. } = self;
         RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
@@ -188,7 +184,7 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
     /// Caution: This will configure a network API that does absolutely nothing.
     /// This is only intended for allow easier setup of namespaces that depend on the
     /// [`EthApi`] which requires a [`NetworkInfo`] implementation.
-    pub fn with_noop_network(self) -> RpcModuleBuilder<Provider, Pool, NoopNetwork, Consensus> {
+    pub fn with_noop_network(self) -> RpcModuleBuilder<Provider, Pool, NoopNetwork> {
         let Self { provider, pool, executor, evm_config, consensus, .. } = self;
         RpcModuleBuilder {
             provider,
@@ -213,9 +209,16 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
     }
 
     /// Configure the consensus implementation.
-    pub fn with_consensus<C>(self, consensus: C) -> RpcModuleBuilder<Provider, Pool, Network, C> {
+    pub fn with_consensus(self, consensus: impl Into<Arc<BaseBeaconConsensus>>) -> Self {
         let Self { provider, network, pool, executor, evm_config, .. } = self;
-        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
+        RpcModuleBuilder {
+            provider,
+            network,
+            pool,
+            executor,
+            evm_config,
+            consensus: consensus.into(),
+        }
     }
 
     /// Instantiates a new [`EthApiBuilder`] from the configured components.
@@ -236,7 +239,7 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
     }
 }
 
-impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Network, Consensus>
+impl<Provider, Pool, Network> RpcModuleBuilder<Provider, Pool, Network>
 where
     Provider: FullRpcProvider<Block = BaseBlock, Receipt = BaseReceipt>
         + CanonStateSubscriptions
@@ -245,7 +248,6 @@ where
         + ChangeSetReader,
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Peers + Clone + 'static,
-    Consensus: FullConsensus + Clone + 'static,
 {
     /// Configures all [`RpcModule`]s specific to the given [`TransportRpcModuleConfig`] which can
     /// be used to start the transport server(s).
@@ -260,11 +262,7 @@ where
         eth: EthApi,
         engine_events: EventSender<ConsensusEngineEvent>,
         beacon_engine_handle: ConsensusEngineHandle,
-    ) -> (
-        TransportRpcModules,
-        AuthRpcModule,
-        RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>,
-    )
+    ) -> (TransportRpcModules, AuthRpcModule, RpcRegistryInner<Provider, Pool, Network, EthApi>)
     where
         EthApi: FullEthApiServer<Provider = Provider, Pool = Pool>,
     {
@@ -286,7 +284,7 @@ where
         config: RpcModuleConfig,
         eth: EthApi,
         engine_events: EventSender<ConsensusEngineEvent>,
-    ) -> RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+    ) -> RpcRegistryInner<Provider, Pool, Network, EthApi>
     where
         EthApi: FullEthApiServer<Provider = Provider, Pool = Pool>,
     {
@@ -327,7 +325,7 @@ where
     }
 }
 
-impl Default for RpcModuleBuilder<(), (), (), ()> {
+impl Default for RpcModuleBuilder<(), (), ()> {
     fn default() -> Self {
         Self {
             provider: (),
@@ -335,7 +333,9 @@ impl Default for RpcModuleBuilder<(), (), (), ()> {
             network: (),
             executor: None,
             evm_config: Default::default(),
-            consensus: (),
+            consensus: Arc::new(BaseBeaconConsensus::new(
+                BaseEvmConfig::default().chain_spec().clone(),
+            )),
         }
     }
 }
@@ -410,13 +410,13 @@ impl RpcModuleConfigBuilder {
 
 /// A Helper type the holds instances of the configured modules.
 #[derive(Debug)]
-pub struct RpcRegistryInner<Provider, Pool, Network, EthApi: EthApiTypes, Consensus> {
+pub struct RpcRegistryInner<Provider, Pool, Network, EthApi: EthApiTypes> {
     provider: Provider,
     pool: Pool,
     network: Network,
     executor: Runtime,
     evm_config: BaseEvmConfig,
-    consensus: Consensus,
+    consensus: Arc<BaseBeaconConsensus>,
     /// Holds all `eth_` namespace handlers
     eth: EthHandlers<EthApi>,
     /// to put trace calls behind semaphore
@@ -431,8 +431,7 @@ pub struct RpcRegistryInner<Provider, Pool, Network, EthApi: EthApiTypes, Consen
 
 // === impl RpcRegistryInner ===
 
-impl<Provider, Pool, Network, EthApi, Consensus>
-    RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     Provider: StateProviderFactory
         + CanonStateSubscriptions
@@ -451,7 +450,7 @@ where
         pool: Pool,
         network: Network,
         executor: Runtime,
-        consensus: Consensus,
+        consensus: Arc<BaseBeaconConsensus>,
         config: RpcModuleConfig,
         evm_config: BaseEvmConfig,
         eth_api: EthApi,
@@ -477,8 +476,7 @@ where
     }
 }
 
-impl<Provider, Pool, Network, EthApi, Consensus>
-    RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     EthApi: EthApiTypes,
 {
@@ -527,8 +525,7 @@ where
     }
 }
 
-impl<Provider, Pool, Network, EthApi, Consensus>
-    RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     Network: NetworkInfo + Clone + 'static,
     EthApi: EthApiTypes,
@@ -567,8 +564,7 @@ where
     }
 }
 
-impl<Provider, Pool, Network, EthApi, Consensus>
-    RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     Provider: FullRpcProvider<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
         + ChangeSetReader
@@ -678,8 +674,7 @@ where
     }
 }
 
-impl<Provider, Pool, Network, EthApi, Consensus>
-    RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     Provider: FullRpcProvider<Block = BaseBlock, Transaction = BaseTxEnvelope, Receipt = BaseReceipt>
         + ChangeSetReader,
@@ -753,8 +748,7 @@ where
     }
 }
 
-impl<Provider, Pool, Network, EthApi, Consensus>
-    RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     Provider: FullRpcProvider<Block = BaseBlock>
         + CanonStateSubscriptions
@@ -764,7 +758,6 @@ where
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: FullEthApiServer,
-    Consensus: FullConsensus + Clone + 'static,
 {
     /// Configures the auth module that includes the
     ///   * `engine_` namespace
@@ -935,14 +928,12 @@ where
     }
 }
 
-impl<Provider, Pool, Network, EthApi, Consensus> Clone
-    for RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
+impl<Provider, Pool, Network, EthApi> Clone for RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     EthApi: EthApiTypes,
     Provider: Clone,
     Pool: Clone,
     Network: Clone,
-    Consensus: Clone,
 {
     fn clone(&self) -> Self {
         Self {

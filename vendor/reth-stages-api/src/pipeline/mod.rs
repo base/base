@@ -628,7 +628,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use assert_matches::assert_matches;
-    use reth_consensus::ConsensusError;
+    use base_execution_consensus::ConsensusError;
     use reth_provider::test_utils::{MockNodeDatabase, create_test_provider_factory};
     use reth_prune::PruneModes;
     use reth_storage_errors::provider::ProviderError;

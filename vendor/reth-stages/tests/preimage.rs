@@ -15,9 +15,9 @@ use base_common_consensus::{
     BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
 use reth_config::config::StageConfig;
-use reth_consensus::noop::NoopConsensus;
 use reth_db::tables;
 use reth_db_api::{
     cursor::{DbCursorRO, DbDupCursorRO},
@@ -1302,7 +1302,7 @@ where
     H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = Block> + 'static,
 {
-    let consensus = NoopConsensus::arc();
+    let consensus = Arc::new(BaseBeaconConsensus::noop());
     let stages_config = StageConfig::default();
     let evm_config = BaseEvmConfig::new(provider_factory.chain_spec());
 
@@ -1346,7 +1346,7 @@ async fn run_pipeline_range(
 ) -> eyre::Result<()> {
     // Run a narrow range intentionally so the test can assert per-phase behavior.
     let tip = file_client.tip().expect("tip");
-    let consensus = NoopConsensus::arc();
+    let consensus = Arc::new(BaseBeaconConsensus::noop());
     let stages_config = StageConfig::default();
     let runtime = reth_tasks::Runtime::test();
 

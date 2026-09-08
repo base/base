@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_rpc_types_engine::{JwtError, JwtSecret};
+use base_execution_consensus::BaseBeaconConsensus;
 use eyre::Result;
-use reth_consensus::Consensus;
 use reth_network_p2p::{
     bodies::client::BodiesClient, headers::client::HeadersClient, priority::Priority,
 };
@@ -68,7 +68,7 @@ where
 pub async fn get_single_body<Client>(
     client: Client,
     header: SealedHeader,
-    consensus: impl Consensus,
+    consensus: BaseBeaconConsensus,
 ) -> Result<SealedBlock>
 where
     Client: BodiesClient<Body = base_common_consensus::BaseBlockBody>,

@@ -49,8 +49,8 @@ mod tests {
     use alloy_rlp::Decodable;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
     use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_consensus::BaseBeaconConsensus;
     use base_execution_evm::BaseEvmConfig;
-    use reth_consensus_common::test_utils::TestConsensus;
     use reth_db::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
         AccountsHistory,
@@ -159,7 +159,7 @@ mod tests {
                         .clone()
                         .into(),
                 )),
-                Arc::new(TestConsensus::new(Arc::new(
+                Arc::new(BaseBeaconConsensus::ethereum_test(Arc::new(
                     BaseChainSpecBuilder::base_mainnet().bedrock_activated().build(),
                 ))),
                 ExecutionStageThresholds {

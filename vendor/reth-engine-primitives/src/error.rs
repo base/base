@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 
 use alloy_rpc_types_engine::ForkchoiceUpdateError;
-use reth_consensus::ConsensusError;
+use base_execution_consensus::ConsensusError;
 use reth_execution_errors::{
     BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };

@@ -9,40 +9,42 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bloom};
 use base_common_consensus::BaseReceipt;
 use base_execution_chainspec::BaseChainSpec;
-use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
     GotExpected, RecoveredBlock, SealedBlock, SealedHeader, receipt::gas_spent_by_transactions,
 };
 
-use crate::validation::{
-    validate_against_parent_hash_number, validate_against_parent_timestamp,
-    validate_block_pre_execution, validate_body_against_header, validate_header_base_fee,
-    validate_header_extra_data, validate_header_gas,
+use crate::{
+    ConsensusError, ReceiptRootBloom,
+    common_validation::{
+        validate_against_parent_hash_number, validate_against_parent_timestamp,
+        validate_block_pre_execution, validate_body_against_header, validate_header_base_fee,
+        validate_header_extra_data, validate_header_gas,
+    },
 };
 
 /// Shared validation fixture used by storage and engine tests.
 #[derive(Debug, Clone)]
-pub struct TestConsensus {
+pub struct EthereumTestConsensus {
     /// Fork schedule for the test's execution rules.
     pub chain_spec: Arc<BaseChainSpec>,
 }
 
-impl TestConsensus {
+impl EthereumTestConsensus {
     /// Creates a validation fixture.
     pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec }
     }
 }
 
-impl HeaderValidator for TestConsensus {
-    fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
+impl EthereumTestConsensus {
+    pub fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
         validate_header_extra_data(header.header(), 32)?;
         validate_header_gas(header.header())?;
         validate_header_base_fee(header.header(), &self.chain_spec)
     }
 
-    fn validate_header_against_parent(
+    pub fn validate_header_against_parent(
         &self,
         header: &SealedHeader,
         parent: &SealedHeader,
@@ -52,8 +54,8 @@ impl HeaderValidator for TestConsensus {
     }
 }
 
-impl Consensus for TestConsensus {
-    fn validate_body_against_header(
+impl EthereumTestConsensus {
+    pub fn validate_body_against_header(
         &self,
         body: &base_common_consensus::BaseBlockBody,
         header: &SealedHeader,
@@ -61,13 +63,13 @@ impl Consensus for TestConsensus {
         validate_body_against_header(body, header.header())
     }
 
-    fn validate_block_pre_execution(&self, block: &SealedBlock) -> Result<(), ConsensusError> {
+    pub fn validate_block_pre_execution(&self, block: &SealedBlock) -> Result<(), ConsensusError> {
         validate_block_pre_execution(block, &self.chain_spec)
     }
 }
 
-impl FullConsensus for TestConsensus {
-    fn validate_block_post_execution(
+impl EthereumTestConsensus {
+    pub fn validate_block_post_execution(
         &self,
         block: &RecoveredBlock,
         result: &BlockExecutionResult<BaseReceipt>,

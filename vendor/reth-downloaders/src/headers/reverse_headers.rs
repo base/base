@@ -12,11 +12,11 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber};
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::{FutureExt, stream::Stream};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use rayon::prelude::*;
 use reth_config::config::HeadersConfig;
-use reth_consensus::HeaderValidator;
 use reth_network_p2p::{
     error::{DownloadError, DownloadResult, PeerRequestResult},
     headers::{
@@ -70,7 +70,7 @@ impl From<HeadersResponseError> for ReverseHeadersDownloaderError {
 #[derive(Debug)]
 pub struct ReverseHeadersDownloader<H: HeadersClient> {
     /// Consensus client used to validate headers
-    consensus: Arc<dyn HeaderValidator>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// Client used to download headers.
     client: Arc<H>,
     /// The local head of the chain.
@@ -1219,7 +1219,7 @@ impl ReverseHeadersDownloaderBuilder {
     pub fn build<H>(
         self,
         client: H,
-        consensus: Arc<dyn HeaderValidator>,
+        consensus: Arc<BaseBeaconConsensus>,
     ) -> ReverseHeadersDownloader<H>
     where
         H: HeadersClient + 'static,
@@ -1284,7 +1284,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
     use assert_matches::assert_matches;
-    use reth_consensus::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::{
         download::DownloadClient, error::PeerRequestResult, test_utils::TestHeadersClient,
     };
@@ -1419,7 +1419,7 @@ mod tests {
         let genesis = SealedHeader::default();
 
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(genesis);
         downloader.update_sync_target(SyncTarget::Tip(B256::random()));
 
@@ -1450,7 +1450,7 @@ mod tests {
         let header: SealedHeader = SealedHeader::default();
 
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(header.clone());
         downloader.update_sync_target(SyncTarget::Tip(B256::random()));
 
@@ -1499,7 +1499,7 @@ mod tests {
         let start = 1000;
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
             .request_limit(batch_size)
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(genesis);
         downloader.update_sync_target(SyncTarget::Tip(B256::random()));
 
@@ -1549,7 +1549,7 @@ mod tests {
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
             .stream_batch_size(3)
             .request_limit(3)
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(p3.clone());
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 
@@ -1581,7 +1581,7 @@ mod tests {
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
             .stream_batch_size(1)
             .request_limit(1)
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(p3.clone());
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 
@@ -1624,7 +1624,7 @@ mod tests {
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
             .stream_batch_size(1)
             .request_limit(3)
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(p3.clone());
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 
@@ -1671,7 +1671,7 @@ mod tests {
             .request_limit(2)
             .min_concurrent_requests(1)
             .max_concurrent_requests(1)
-            .build(client.clone(), Arc::new(TestConsensus::default()));
+            .build(client.clone(), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(p3);
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 
@@ -1688,7 +1688,7 @@ mod tests {
     fn requeues_missing_headers_for_buffered_partial_response() {
         let client = CappedHeadersClient::new(Vec::new(), 0);
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
-            .build(client.clone(), Arc::new(TestConsensus::default()));
+            .build(client.clone(), Arc::new(BaseBeaconConsensus::test()));
         downloader.local_head = Some(SealedHeader::default());
         downloader.sync_target = Some(SyncTargetBlock::from_number(10));
         downloader.next_chain_tip_block_number = 10;
@@ -1712,7 +1712,7 @@ mod tests {
     fn rejects_over_long_headers_response() {
         let client = CappedHeadersClient::new(Vec::new(), 0);
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
-            .build(client.clone(), Arc::new(TestConsensus::default()));
+            .build(client.clone(), Arc::new(BaseBeaconConsensus::test()));
 
         let request = HeadersRequest::falling(5u64.into(), 1);
         let response = vec![

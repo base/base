@@ -115,12 +115,12 @@ use alloy_primitives::{
     map::{AddressMap, B256Set},
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError};
+use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm::{
     BaseEvmConfig, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
     block::BlockExecutor,
 };
 use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
-use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
     ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
 };
@@ -240,7 +240,7 @@ pub struct BasicEngineValidator<P, V> {
     /// Provider for database access.
     provider: P,
     /// Consensus implementation for validation.
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// EVM configuration.
     evm_config: BaseEvmConfig,
     /// Configuration for the tree.
@@ -297,7 +297,7 @@ where
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         evm_config: BaseEvmConfig,
         validator: V,
         config: TreeConfig,
@@ -911,7 +911,7 @@ where
             drop(_enter);
 
             if let Err(e) =
-                consensus.validate_block_pre_execution_with_tx_root(&block, None)
+                consensus.validate_block_pre_execution(&block)
             {
                 error!(target: "engine::tree::payload_validator", ?block, "Failed to validate block {}: {e}", block.hash());
                 return Err(InsertBlockError::consensus_error(e, block).into())

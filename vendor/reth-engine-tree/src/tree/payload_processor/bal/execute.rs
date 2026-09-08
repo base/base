@@ -191,9 +191,9 @@ fn convert_alloy_to_revm_bal(alloy_bal: &AlloyBal) -> Result<Arc<RevmBal>, BalEx
     // place. Therefore, if we do observe such a bytecode in a BAL then that means the BAL is
     // invalid as no legal execution should've led to this bytecode deployment.
     let received_bal_revm = RevmBal::clone_from_alloy(alloy_bal.as_vec()).map_err(|e| {
-        BalExecutionError::Consensus(reth_consensus::ConsensusError::BlockAccessListInvalid(
-            format!("{e:?}"),
-        ))
+        BalExecutionError::Consensus(
+            base_execution_consensus::ConsensusError::BlockAccessListInvalid(format!("{e:?}")),
+        )
     })?;
     Ok(Arc::new(received_bal_revm))
 }

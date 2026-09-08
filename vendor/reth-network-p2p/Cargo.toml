@@ -18,11 +18,11 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-consensus = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-consensus = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
@@ -37,12 +37,12 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 test-case = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 parking_lot = { workspace = true, features = ["default"] }
-reth-consensus = { workspace = true, features = ["test-utils"] }
+base-execution-consensus = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["std"]
 test-utils = [
-    "reth-consensus/test-utils",
+    "base-execution-consensus/test-utils",
     "parking_lot",
     "reth-network-types/test-utils",
     "reth-primitives-traits/test-utils",
@@ -51,7 +51,7 @@ test-utils = [
 ]
 std = [
     "base-common-consensus/std",
-    "reth-consensus/std",
+    "base-execution-consensus/std",
     "alloy-eip7928/std",
     "alloy-eips/std",
     "alloy-primitives/std",

@@ -1,6 +1,6 @@
 //! Engine node related functionality.
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin};
 
 use alloy_consensus::BlockHeader;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
@@ -143,7 +143,7 @@ impl EngineNodeLauncher {
         let static_file_producer_events = static_file_producer.lock().events();
         info!(target: "reth::cli", "StaticFileProducer initialized");
 
-        let consensus = Arc::new(ctx.node_adapter().consensus().clone());
+        let consensus = ctx.node_adapter().consensus().clone();
 
         let pipeline = build_networked_pipeline(
             &ctx.toml_config().stages,

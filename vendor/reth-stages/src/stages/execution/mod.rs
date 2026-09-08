@@ -12,10 +12,10 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics, StateProviderDatabase};
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
-use reth_consensus::FullConsensus;
 use reth_db::{static_file::HeaderMask, tables};
 use reth_execution_types::Chain;
 use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
@@ -75,7 +75,7 @@ pub struct ExecutionStage {
     /// The stage's internal block executor
     evm_config: BaseEvmConfig,
     /// The consensus instance for validating blocks.
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// The commit thresholds of the execution stage.
     thresholds: ExecutionStageThresholds,
     /// The highest threshold (in number of blocks) for switching between incremental
@@ -101,7 +101,7 @@ impl ExecutionStage {
     /// Create new execution stage with specified config.
     pub fn new(
         evm_config: BaseEvmConfig,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         thresholds: ExecutionStageThresholds,
         external_clean_threshold: u64,
         exex_manager_handle: ExExManagerHandle,
@@ -121,7 +121,10 @@ impl ExecutionStage {
     /// Create an execution stage with the provided executor.
     ///
     /// The commit threshold will be set to [`MERKLE_STAGE_DEFAULT_INCREMENTAL_THRESHOLD`].
-    pub fn new_with_executor(evm_config: BaseEvmConfig, consensus: Arc<dyn FullConsensus>) -> Self {
+    pub fn new_with_executor(
+        evm_config: BaseEvmConfig,
+        consensus: Arc<BaseBeaconConsensus>,
+    ) -> Self {
         Self::new(
             evm_config,
             consensus,
@@ -134,7 +137,7 @@ impl ExecutionStage {
     /// Create new instance of [`ExecutionStage`] from configuration.
     pub fn from_config(
         evm_config: BaseEvmConfig,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         config: ExecutionConfig,
         external_clean_threshold: u64,
     ) -> Self {
@@ -735,7 +738,7 @@ mod tests {
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
     use base_execution_chainspec::BaseChainSpecBuilder;
-    use reth_consensus_common::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_db_api::{
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
@@ -759,7 +762,7 @@ mod tests {
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().bedrock_activated().build(),
         ));
-        let consensus = Arc::new(TestConsensus::new(Arc::new(
+        let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(Arc::new(
             BaseChainSpecBuilder::base_mainnet().bedrock_activated().build(),
         )));
         ExecutionStage::new(

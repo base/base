@@ -29,12 +29,12 @@
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
-//! # use reth_consensus::Consensus;
-//! # use reth_consensus::test_utils::TestConsensus;
-//! # use reth_consensus::FullConsensus;
+//! # use base_execution_consensus::Consensus;
+//! # use base_execution_consensus::BaseBeaconConsensus;
+//! # use base_execution_consensus::BaseBeaconConsensus;
 //! #
 //! # let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
-//! # let consensus: Arc<dyn FullConsensus> = Arc::new(TestConsensus::default());
+//! # let consensus: Arc<BaseBeaconConsensus> = Arc::new(TestConsensus::test());
 //! # let headers_downloader = ReverseHeadersDownloaderBuilder::default().build(
 //! #    Arc::new(TestHeadersClient::default()),
 //! #    consensus.clone()

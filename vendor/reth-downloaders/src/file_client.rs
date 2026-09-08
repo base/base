@@ -4,9 +4,9 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
+use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use futures::Future;
 use itertools::{Either, Itertools};
-use reth_consensus::{Consensus, ConsensusError};
 use reth_network_p2p::{
     BlockClient,
     bodies::client::{BodiesClient, BodiesFut},
@@ -109,7 +109,7 @@ impl FileClient {
     /// Create a new file client from a file path.
     pub async fn new<P: AsRef<Path>>(
         path: P,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
     ) -> Result<Self, FileClientError> {
         let file = File::open(path).await?;
         Self::from_file(file, consensus).await
@@ -118,7 +118,7 @@ impl FileClient {
     /// Initialize the [`FileClient`] with a file directly.
     pub(crate) async fn from_file(
         mut file: File,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
     ) -> Result<Self, FileClientError> {
         // get file len from metadata before reading
         let metadata = file.metadata().await?;
@@ -220,7 +220,7 @@ impl FileClient {
 }
 
 struct FileClientBuilder {
-    pub consensus: Arc<dyn Consensus>,
+    pub consensus: Arc<BaseBeaconConsensus>,
     pub parent_header: Option<SealedHeader>,
     pub skip_invalid_blocks: bool,
 }
@@ -612,7 +612,7 @@ impl ChunkedFileReader {
     /// are available before processing. For plain files, it uses the original chunking logic.
     pub async fn next_chunk(
         &mut self,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         parent_header: Option<SealedHeader>,
     ) -> Result<Option<FileClient>, FileClientError> {
         self.next_chunk_with_invalid_block_handling(consensus, parent_header, false).await
@@ -621,7 +621,7 @@ impl ChunkedFileReader {
     /// Read next chunk from file, optionally skipping blocks that fail consensus pre-checks.
     pub async fn next_chunk_with_invalid_block_handling(
         &mut self,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         parent_header: Option<SealedHeader>,
         skip_invalid_blocks: bool,
     ) -> Result<Option<FileClient>, FileClientError> {
@@ -709,9 +709,9 @@ mod tests {
 
     use assert_matches::assert_matches;
     use async_compression::tokio::write::GzipEncoder;
+    use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
     use futures_util::stream::StreamExt;
     use rand::Rng;
-    use reth_consensus::{ConsensusError, noop::NoopConsensus, test_utils::TestConsensus};
     use reth_network_p2p::{
         bodies::downloader::BodyDownloader,
         headers::downloader::{HeaderDownloader, SyncTarget},
@@ -744,14 +744,14 @@ mod tests {
         let file = tempfile::tempfile().unwrap();
 
         let client: Arc<FileClient> = Arc::new(
-            FileClient::from_file(file.into(), NoopConsensus::arc())
+            FileClient::from_file(file.into(), Arc::new(BaseBeaconConsensus::noop()))
                 .await
                 .unwrap()
                 .with_bodies(bodies.clone().into_iter().collect()),
         );
         let mut downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             client.clone(),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             factory,
         );
         downloader.set_download_range(0..=19).expect("failed to set download range");
@@ -773,20 +773,21 @@ mod tests {
 
         let file = tempfile::tempfile().unwrap();
         let client: Arc<FileClient> = Arc::new(
-            FileClient::from_file(file.into(), NoopConsensus::arc()).await.unwrap().with_headers(
-                HashMap::from([
+            FileClient::from_file(file.into(), Arc::new(BaseBeaconConsensus::noop()))
+                .await
+                .unwrap()
+                .with_headers(HashMap::from([
                     (0u64, p0.clone_header()),
                     (1, p1.clone_header()),
                     (2, p2.clone_header()),
                     (3, p3.clone_header()),
-                ]),
-            ),
+                ])),
         );
 
         let mut downloader = ReverseHeadersDownloaderBuilder::default()
             .stream_batch_size(3)
             .request_limit(3)
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         downloader.update_local_head(p3.clone());
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 
@@ -803,12 +804,13 @@ mod tests {
         // Generate some random blocks
         let (file, headers, _) = generate_bodies_file(0..=19).await;
         // now try to read them back
-        let client: Arc<FileClient> =
-            Arc::new(FileClient::from_file(file, NoopConsensus::arc()).await.unwrap());
+        let client: Arc<FileClient> = Arc::new(
+            FileClient::from_file(file, Arc::new(BaseBeaconConsensus::noop())).await.unwrap(),
+        );
 
         // construct headers downloader and use first header
         let mut header_downloader = ReverseHeadersDownloaderBuilder::default()
-            .build(Arc::clone(&client), Arc::new(TestConsensus::default()));
+            .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
         header_downloader.update_local_head(headers.first().unwrap().clone());
         header_downloader.update_sync_target(SyncTarget::Tip(headers.last().unwrap().hash()));
 
@@ -829,15 +831,16 @@ mod tests {
         let (file, headers, mut bodies) = generate_bodies_file(0..=19).await;
 
         // now try to read them back
-        let client: Arc<FileClient> =
-            Arc::new(FileClient::from_file(file, NoopConsensus::arc()).await.unwrap());
+        let client: Arc<FileClient> = Arc::new(
+            FileClient::from_file(file, Arc::new(BaseBeaconConsensus::noop())).await.unwrap(),
+        );
 
         // insert headers in db for the bodies downloader
         insert_headers(&factory, &headers);
 
         let mut downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             client.clone(),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             factory,
         );
         downloader.set_download_range(0..=19).expect("failed to set download range");
@@ -853,7 +856,7 @@ mod tests {
         let (file, _, _) = generate_bodies_file(0..=2).await;
         let chunk_byte_len = file.metadata().await.unwrap().len();
         let mut reader = ChunkedFileReader::from_file(file, chunk_byte_len, false).await.unwrap();
-        let consensus = Arc::new(TestConsensus::default());
+        let consensus = Arc::new(BaseBeaconConsensus::test());
         consensus.set_fail_validation(true);
 
         let err = reader.next_chunk(consensus, None).await.unwrap_err();
@@ -866,7 +869,7 @@ mod tests {
         let (file, _, _) = generate_bodies_file(0..=2).await;
         let chunk_byte_len = file.metadata().await.unwrap().len();
         let mut reader = ChunkedFileReader::from_file(file, chunk_byte_len, false).await.unwrap();
-        let consensus = Arc::new(TestConsensus::default());
+        let consensus = Arc::new(BaseBeaconConsensus::test());
         consensus.set_fail_validation(true);
 
         let client = reader
@@ -890,7 +893,7 @@ mod tests {
         let mut reader =
             ChunkedFileReader::from_file(file, block.len() as u64, false).await.unwrap();
 
-        let err = reader.next_chunk(NoopConsensus::arc(), None).await.unwrap_err();
+        let err = reader.next_chunk(Arc::new(BaseBeaconConsensus::noop()), None).await.unwrap_err();
 
         assert_matches!(
             err,
@@ -919,14 +922,16 @@ mod tests {
         let mut local_header = headers.first().unwrap().clone();
 
         // test
-        while let Some(client) = reader.next_chunk(NoopConsensus::arc(), None).await.unwrap() {
+        while let Some(client) =
+            reader.next_chunk(Arc::new(BaseBeaconConsensus::noop()), None).await.unwrap()
+        {
             let sync_target = client.tip_header().unwrap();
 
             let sync_target_hash = sync_target.hash();
 
             // construct headers downloader and use first header
             let mut header_downloader = ReverseHeadersDownloaderBuilder::default()
-                .build(Arc::new(client), Arc::new(TestConsensus::default()));
+                .build(Arc::new(client), Arc::new(BaseBeaconConsensus::test()));
             header_downloader.update_local_head(local_header.clone());
             header_downloader.update_sync_target(SyncTarget::Tip(sync_target_hash));
 
@@ -988,7 +993,9 @@ mod tests {
         let mut local_header = headers.first().unwrap().clone();
 
         // test
-        while let Some(client) = reader.next_chunk(NoopConsensus::arc(), None).await.unwrap() {
+        while let Some(client) =
+            reader.next_chunk(Arc::new(BaseBeaconConsensus::noop()), None).await.unwrap()
+        {
             if client.headers_len() == 0 {
                 continue;
             }
@@ -999,7 +1006,7 @@ mod tests {
 
             // construct headers downloader and use first header
             let mut header_downloader = ReverseHeadersDownloaderBuilder::default()
-                .build(Arc::new(client), Arc::new(TestConsensus::default()));
+                .build(Arc::new(client), Arc::new(BaseBeaconConsensus::test()));
             header_downloader.update_local_head(local_header.clone());
             header_downloader.update_sync_target(SyncTarget::Tip(sync_target_hash));
 

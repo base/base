@@ -10,10 +10,10 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::Stream;
 use futures_util::StreamExt;
 use reth_config::BodiesConfig;
-use reth_consensus::Consensus;
 use reth_network_p2p::{
     bodies::{
         client::BodiesClient,
@@ -42,7 +42,7 @@ pub struct BodiesDownloader<
     /// The bodies client
     client: Arc<C>,
     /// The consensus client
-    consensus: Arc<dyn Consensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// The database handle
     provider: Provider,
     /// The maximum number of non-empty blocks per one request
@@ -568,7 +568,7 @@ impl BodiesDownloaderBuilder {
     pub fn build<C, Provider>(
         self,
         client: C,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         provider: Provider,
     ) -> BodiesDownloader<C, Provider>
     where
@@ -606,7 +606,7 @@ impl BodiesDownloaderBuilder {
 mod tests {
     use alloy_primitives::{B256, map::B256Map};
     use assert_matches::assert_matches;
-    use reth_consensus::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_provider::test_utils::create_test_provider_factory;
     use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
 
@@ -632,7 +632,7 @@ mod tests {
 
         let mut downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             client.clone(),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             factory,
         );
         downloader.set_download_range(0..=19).expect("failed to set download range");
@@ -670,7 +670,7 @@ mod tests {
 
         let mut downloader = BodiesDownloaderBuilder::default()
             .with_request_limit(request_limit)
-            .build::<_, _>(client.clone(), Arc::new(TestConsensus::default()), factory);
+            .build::<_, _>(client.clone(), Arc::new(BaseBeaconConsensus::test()), factory);
         downloader.set_download_range(0..=199).expect("failed to set download range");
 
         let _ = downloader.collect::<Vec<_>>().await;
@@ -695,7 +695,7 @@ mod tests {
         let mut downloader = BodiesDownloaderBuilder::default()
             .with_stream_batch_size(stream_batch_size)
             .with_request_limit(request_limit)
-            .build::<_, _>(client.clone(), Arc::new(TestConsensus::default()), factory);
+            .build::<_, _>(client.clone(), Arc::new(BaseBeaconConsensus::test()), factory);
 
         let mut range_start = 0;
         while range_start < 100 {
@@ -724,7 +724,7 @@ mod tests {
 
         let mut downloader = BodiesDownloaderBuilder::default()
             .with_stream_batch_size(100)
-            .build::<_, _>(client.clone(), Arc::new(TestConsensus::default()), factory);
+            .build::<_, _>(client.clone(), Arc::new(BaseBeaconConsensus::test()), factory);
 
         // Set and download the first range
         downloader.set_download_range(0..=99).expect("failed to set download range");
@@ -761,7 +761,7 @@ mod tests {
             .with_stream_batch_size(10)
             .with_request_limit(1)
             .with_max_buffered_blocks_size_bytes(1)
-            .build::<_, _>(client.clone(), Arc::new(TestConsensus::default()), factory);
+            .build::<_, _>(client.clone(), Arc::new(BaseBeaconConsensus::test()), factory);
 
         // Set and download the entire range
         downloader.set_download_range(0..=199).expect("failed to set download range");
@@ -789,7 +789,7 @@ mod tests {
         let mut downloader = BodiesDownloaderBuilder::default()
             .with_request_limit(3)
             .with_stream_batch_size(100)
-            .build::<_, _>(client.clone(), Arc::new(TestConsensus::default()), factory);
+            .build::<_, _>(client.clone(), Arc::new(BaseBeaconConsensus::test()), factory);
 
         // Download the requested range
         downloader.set_download_range(0..=99).expect("failed to set download range");

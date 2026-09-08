@@ -24,7 +24,6 @@ derive_more = { workspace = true }
 base-metrics = { workspace = true }
 base-bundles = { workspace = true }
 base-protocol = { workspace = true }
-reth-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }

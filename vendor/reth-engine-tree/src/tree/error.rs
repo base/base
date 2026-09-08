@@ -1,7 +1,7 @@
 //! Internal errors for the tree module.
 
 use alloy_consensus::BlockHeader;
-use reth_consensus::ConsensusError;
+use base_execution_consensus::ConsensusError;
 pub use reth_engine_primitives::{
     InsertBlockErrorKind, InsertBlockFatalError, InsertBlockValidationError,
 };

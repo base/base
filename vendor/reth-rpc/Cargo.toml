@@ -31,7 +31,6 @@ reth-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-network = { workspace = true }
 reth-node-api = { workspace = true }
-reth-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 jsonrpsee-types = { workspace = true }
@@ -47,7 +46,6 @@ reth-network-types = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 reth-execution-errors = {workspace = true}
-reth-consensus-common = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
@@ -57,6 +55,7 @@ reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 base-execution-chainspec = { workspace = true }
+base-execution-consensus = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 futures = { workspace = true, features = ["default"] }

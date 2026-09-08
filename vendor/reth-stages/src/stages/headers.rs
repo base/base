@@ -398,7 +398,7 @@ mod tests {
     };
 
     mod test_runner {
-        use reth_consensus::test_utils::TestConsensus;
+        use base_execution_consensus::BaseBeaconConsensus;
         use reth_downloaders::headers::reverse_headers::{
             ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder,
         };
@@ -529,7 +529,7 @@ mod tests {
                     downloader_factory: Box::new(move || {
                         ReverseHeadersDownloaderBuilder::default()
                             .stream_batch_size(500)
-                            .build(client.clone(), Arc::new(TestConsensus::default()))
+                            .build(client.clone(), Arc::new(BaseBeaconConsensus::test()))
                     }),
                     db: TestStageDB::default(),
                 }

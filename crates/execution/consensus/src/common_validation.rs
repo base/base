@@ -5,11 +5,12 @@ use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::B256;
 use base_execution_chainspec::BaseChainSpec;
-use reth_consensus::ConsensusError;
 use reth_primitives_traits::{
     BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
 };
+
+use crate::ConsensusError;
 
 /// The maximum RLP length of a block, defined in [EIP-7934](https://eips.ethereum.org/EIPS/eip-7934).
 ///

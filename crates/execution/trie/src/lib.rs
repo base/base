@@ -7,8 +7,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-// Used only for feature propagation (serde-bincode-compat workaround).
-#[cfg(feature = "serde-bincode-compat")]
 pub mod api;
 pub use api::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStore,

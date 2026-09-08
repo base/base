@@ -3,10 +3,10 @@
 use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use futures::StreamExt;
 use reth_config::Config;
-use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics, tables, transaction::DbTx};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
@@ -86,7 +86,7 @@ pub async fn import_blocks_from_file<DB>(
     provider_factory: ProviderFactory<DB>,
     config: &Config,
     executor: BaseEvmConfig,
-    consensus: Arc<impl FullConsensus + 'static>,
+    consensus: Arc<BaseBeaconConsensus>,
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<ImportResult>
 where
@@ -273,19 +273,18 @@ where
 /// If configured to execute, all stages will run. Otherwise, only stages that don't require state
 /// will run.
 #[expect(clippy::too_many_arguments)]
-pub fn build_import_pipeline_impl<DB, C>(
+pub fn build_import_pipeline_impl<DB>(
     config: &Config,
     provider_factory: ProviderFactory<DB>,
-    consensus: &Arc<C>,
+    consensus: &Arc<BaseBeaconConsensus>,
     file_client: Arc<FileClient>,
     static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
     disable_exec: bool,
     evm_config: BaseEvmConfig,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<(Pipeline<DB>, impl futures::Stream<Item = NodeEvent> + use<DB, C>)>
+) -> eyre::Result<(Pipeline<DB>, impl futures::Stream<Item = NodeEvent> + use<DB>)>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    C: FullConsensus + 'static,
 {
     if !file_client.has_canonical_blocks() {
         eyre::bail!("unable to import non canonical blocks");

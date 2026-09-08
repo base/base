@@ -12,12 +12,11 @@ use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
 use tracing::debug;
 
-use crate::proof::calculate_receipt_root;
+use crate::{ConsensusError, proof::calculate_receipt_root};
 
 fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: u64) -> bool {
     chain_spec.is_canyon_active_at_timestamp(timestamp)

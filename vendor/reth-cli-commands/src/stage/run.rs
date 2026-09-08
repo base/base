@@ -154,7 +154,7 @@ impl<C: ChainSpecParser> Command<C> {
         let (mut exec_stage, mut unwind_stage): (Box<dyn Stage<_>>, Option<Box<dyn Stage<_>>>) =
             match self.stage {
                 StageEnum::Headers => {
-                    let consensus = Arc::new(components.consensus.clone());
+                    let consensus = components.consensus.clone();
 
                     let network_secret_path = self
                         .network
@@ -206,7 +206,7 @@ impl<C: ChainSpecParser> Command<C> {
                     )
                 }
                 StageEnum::Bodies => {
-                    let consensus = Arc::new(components.consensus.clone());
+                    let consensus = components.consensus.clone();
 
                     let mut config = config;
                     config.peers.trusted_nodes_only |= self.network.trusted_only;
@@ -260,7 +260,7 @@ impl<C: ChainSpecParser> Command<C> {
                 StageEnum::Execution => (
                     Box::new(ExecutionStage::new(
                         components.evm_config.clone(),
-                        Arc::new(components.consensus.clone()),
+                        components.consensus.clone(),
                         ExecutionStageThresholds {
                             max_blocks: Some(batch_size),
                             max_changes: None,

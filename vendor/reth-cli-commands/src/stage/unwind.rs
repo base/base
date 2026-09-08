@@ -5,11 +5,11 @@ use std::sync::Arc;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::Config;
-use reth_consensus::noop::NoopConsensus;
 use reth_db::DatabaseEnv;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
@@ -90,7 +90,7 @@ impl<C: ChainSpecParser> Command<C> {
             Pipeline::<DB>::builder().add_stages(
                 OfflineStages::new(
                     evm_config,
-                    NoopConsensus::arc(),
+                    Arc::new(BaseBeaconConsensus::noop()),
                     config.stages,
                     prune_modes.clone(),
                 )
@@ -102,7 +102,7 @@ impl<C: ChainSpecParser> Command<C> {
                 DefaultStages::new(
                     provider_factory.clone(),
                     tip_rx,
-                    Arc::new(NoopConsensus::default()),
+                    Arc::new(BaseBeaconConsensus::noop()),
                     NoopHeaderDownloader::default(),
                     NoopBodiesDownloader::default(),
                     evm_config.clone(),
@@ -111,7 +111,7 @@ impl<C: ChainSpecParser> Command<C> {
                 )
                 .set(ExecutionStage::new(
                     evm_config,
-                    Arc::new(NoopConsensus::default()),
+                    Arc::new(BaseBeaconConsensus::noop()),
                     ExecutionStageThresholds {
                         max_blocks: None,
                         max_changes: None,

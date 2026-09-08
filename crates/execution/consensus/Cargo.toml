@@ -19,28 +19,32 @@ alloy-trie = { workspace = true }
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
 alloy-consensus = { workspace = true }
-alloy-primitives = { workspace = true }
+alloy-hardforks = { workspace = true }
 reth-storage-errors = { workspace = true }
-reth-consensus-common = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-consensus = { workspace = true, features = ["default"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
-reth-execution-types = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-execution-chainspec = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"], optional = false}
+reth-execution-types = { workspace = true, features = ["default"], optional = false}
 [dev-dependencies]
 reth-trie = { workspace = true }
 alloy-chains = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-genesis = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 
 [features]
-default = [ "std" ]
+default = ["std"]
 std = [
     "alloy-chains/std",
     "alloy-consensus/std",
@@ -51,8 +55,6 @@ std = [
     "base-common-consensus/std",
     "base-execution-chainspec/std",
     "base-protocol/std",
-    "reth-consensus-common/std",
-    "reth-consensus/std",
     "reth-execution-types/std",
     "reth-primitives-traits/std",
     "base-execution-evm/std",
@@ -62,4 +64,9 @@ std = [
     "revm/std",
     "thiserror/std",
     "tracing/std",
+    "alloy-eip7928/std",
+]
+test-utils = [
+    "std",
+    "reth-primitives-traits/test-utils",
 ]

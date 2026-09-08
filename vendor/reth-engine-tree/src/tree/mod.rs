@@ -15,14 +15,14 @@ use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm::{BaseEvmConfig, StateProviderDatabase};
 use crossbeam_channel::{Receiver, Sender};
-use error::{InsertBlockError, InsertBlockFatalError, InsertBlockValidationError};
+use error::{InsertBlockError, InsertBlockFatalError};
 use reth_chain_state::{
     CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats, MemoryOverlayStateProvider,
     NewCanonicalChain,
 };
-use reth_consensus::{Consensus, ConsensusError, FullConsensus};
 use reth_engine_primitives::{
     BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
     ForkchoiceStateTracker, NewPayloadTimings, OnForkChoiceUpdated, SlowBlockInfo,
@@ -341,7 +341,7 @@ pub enum TreeAction {
 /// emitting events.
 pub struct EngineApiTreeHandler<P, V> {
     provider: P,
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     payload_validator: V,
     /// Keeps track of internals such as executed and buffered blocks.
     state: EngineApiTreeState,
@@ -441,7 +441,7 @@ where
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         payload_validator: V,
         outgoing: UnboundedSender<EngineApiEvent>,
         state: EngineApiTreeState,
@@ -491,7 +491,7 @@ where
     #[expect(clippy::complexity)]
     pub fn spawn_new(
         provider: P,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         payload_validator: V,
         persistence: PersistenceHandle,
         payload_builder: PayloadBuilderHandle,
@@ -3291,22 +3291,9 @@ where
         );
         let latest_valid_hash = self.latest_valid_hash_for_invalid_payload(block.parent_hash())?;
 
-        // keep track of the invalid header unless the consensus impl considers it transient
-        let is_transient = match &validation_err {
-            InsertBlockValidationError::Consensus(err) => self.consensus.is_transient_error(err),
-            _ => false,
-        };
-        if is_transient {
-            warn!(
-                target: "engine::tree",
-                invalid_hash=%block.hash(),
-                invalid_number=block.number(),
-                %validation_err,
-                "Skipping invalid header cache insert for transient validation error",
-            );
-        } else {
-            self.state.invalid_headers.insert(block.block_with_parent());
-        }
+        // Base validation failures permanently invalidate the header.
+
+        self.state.invalid_headers.insert(block.block_with_parent());
         self.emit_event(EngineApiEvent::BeaconConsensus(ConsensusEngineEvent::InvalidBlock {
             block: Box::new(block),
             error: validation_err.to_string(),

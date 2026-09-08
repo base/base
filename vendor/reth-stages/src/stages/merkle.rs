@@ -2,8 +2,8 @@ use std::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, constants::KECCAK_EMPTY};
 use alloy_primitives::{B256, BlockNumber};
+use base_execution_consensus::ConsensusError;
 use reth_codecs::Compact;
-use reth_consensus::ConsensusError;
 use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},

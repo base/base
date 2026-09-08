@@ -33,7 +33,6 @@ pin-project = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-eth-wire = { workspace = true }
-reth-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-net-banlist = { workspace = true }
@@ -44,6 +43,7 @@ reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
+base-execution-consensus = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
@@ -121,7 +121,7 @@ serde = [
 test-utils = [
     "reth-transaction-pool/test-utils",
     "reth-network-types/test-utils",
-    "reth-consensus/test-utils",
+    "base-execution-consensus/test-utils",
     "reth-discv4/test-utils",
     "reth-network/test-utils",
     "reth-network-p2p/test-utils",

@@ -19,7 +19,6 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-consensus = {workspace = true}
 alloy-consensus = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-api = { workspace = true }
@@ -29,6 +28,7 @@ reth-execution-types = { workspace = true }
 reth-execution-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-consensus = {workspace = true}
 base-execution-evm = { workspace = true, optional = true }
 base-execution-chainspec = { optional = true, workspace = true }
 base-common-consensus = { workspace = true, features = ["reth"] }

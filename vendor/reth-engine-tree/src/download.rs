@@ -10,8 +10,8 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, map::B256Set};
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::FutureExt;
-use reth_consensus::Consensus;
 use reth_network_p2p::{
     BlockClient,
     full_block::{FetchFullBlockFuture, FetchFullBlockRangeFuture, FullBlockClient},
@@ -82,7 +82,7 @@ where
     Client: BlockClient<Block = base_common_consensus::BaseBlock> + 'static,
 {
     /// Create a new instance
-    pub fn new(client: Client, consensus: Arc<dyn Consensus>) -> Self {
+    pub fn new(client: Client, consensus: Arc<BaseBeaconConsensus>) -> Self {
         Self {
             full_block_client: FullBlockClient::new(client, consensus),
             inflight_full_block_requests: Vec::new(),
@@ -309,7 +309,7 @@ mod tests {
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
     use base_execution_chainspec::BaseChainSpecBuilder;
-    use reth_consensus_common::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
 
@@ -347,7 +347,7 @@ mod tests {
             let header = SealedHeader::seal_slow(header);
 
             insert_headers_into_client(&client, header, 0..total_blocks);
-            let consensus = Arc::new(TestConsensus::new(chain_spec));
+            let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(chain_spec));
 
             let block_downloader = BasicBlockDownloader::new(client.clone(), consensus);
             Self { block_downloader, client }

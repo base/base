@@ -133,7 +133,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
-    use reth_consensus::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::error::DownloadError;
     use reth_provider::test_utils::create_test_provider_factory;
 
@@ -160,7 +160,7 @@ mod tests {
         );
         let downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             client.clone(),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             factory,
         );
         let runtime = Runtime::test();
@@ -183,7 +183,7 @@ mod tests {
 
         let downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             Arc::new(TestBodiesClient::default()),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             factory,
         );
         let runtime = Runtime::test();

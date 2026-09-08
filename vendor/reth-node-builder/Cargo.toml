@@ -32,7 +32,6 @@ reth-network = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-node-api = { workspace = true }
 reth-provider = { workspace = true }
-reth-consensus = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
@@ -98,7 +97,7 @@ js-tracer = ["reth-rpc/js-tracer", "reth-rpc-eth-types/js-tracer"]
 test-utils = [
     "reth-db/test-utils",
     "reth-chain-state/test-utils",
-    "reth-consensus/test-utils",
+    "base-execution-consensus/test-utils",
     "reth-engine-tree/test-utils",
     "base-execution-evm/test-utils",
     "reth-downloaders/test-utils",

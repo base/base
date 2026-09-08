@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
-use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::DatabaseEnv;
 use reth_db_api::{
     cursor::DbCursorRO, database::Database, database_metrics::DatabaseMetrics,
@@ -20,19 +20,16 @@ use tracing::info;
 use super::setup;
 
 #[expect(clippy::too_many_arguments)]
-pub(crate) async fn dump_execution_stage<C>(
+pub(crate) async fn dump_execution_stage(
     db_tool: &DbTool<DatabaseEnv>,
     from: u64,
     to: u64,
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
     evm_config: BaseEvmConfig,
-    consensus: C,
+    consensus: Arc<BaseBeaconConsensus>,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<()>
-where
-    C: FullConsensus + 'static,
-{
+) -> eyre::Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
     import_tables_with_range(&output_db, db_tool, from, to)?;
@@ -141,7 +138,8 @@ fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
 ) -> eyre::Result<()> {
     let provider = db_tool.provider_factory.database_provider_rw()?;
 
-    let mut exec_stage = ExecutionStage::new_with_executor(evm_config, NoopConsensus::arc());
+    let mut exec_stage =
+        ExecutionStage::new_with_executor(evm_config, Arc::new(BaseBeaconConsensus::noop()));
 
     exec_stage.unwind(
         &provider,
@@ -163,20 +161,19 @@ fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
 }
 
 /// Try to re-execute the stage without committing
-fn dry_run<DB, C>(
+fn dry_run<DB>(
     output_provider_factory: ProviderFactory<DB>,
     to: u64,
     from: u64,
     evm_config: BaseEvmConfig,
-    consensus: C,
+    consensus: Arc<BaseBeaconConsensus>,
 ) -> eyre::Result<()>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    C: FullConsensus + 'static,
 {
     info!(target: "reth::cli", "Executing stage. [dry-run]");
 
-    let mut exec_stage = ExecutionStage::new_with_executor(evm_config, Arc::new(consensus));
+    let mut exec_stage = ExecutionStage::new_with_executor(evm_config, consensus);
 
     let input =
         reth_stages::ExecInput { target: Some(to), checkpoint: Some(StageCheckpoint::new(from)) };

@@ -78,7 +78,7 @@ pub enum BlockValidation<B> {
 pub enum BlockImportError {
     /// Consensus error
     #[error(transparent)]
-    Consensus(#[from] reth_consensus::ConsensusError),
+    Consensus(#[from] base_execution_consensus::ConsensusError),
     /// Other error
     #[error(transparent)]
     Other(#[from] Box<dyn Error + Send + Sync>),

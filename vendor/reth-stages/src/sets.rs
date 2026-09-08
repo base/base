@@ -20,9 +20,9 @@
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use std::sync::Arc;
-//! # use reth_consensus::FullConsensus;
+//! # use base_execution_consensus::BaseBeaconConsensus;
 //!
-//! # fn create(exec: BaseEvmConfig, consensus: impl FullConsensus + 'static) {
+//! # fn create(exec: BaseEvmConfig, consensus: BaseBeaconConsensus) {
 //!
 //! let provider_factory = create_test_provider_factory();
 //! let static_file_producer =
@@ -37,9 +37,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_config::config::StageConfig;
-use reth_consensus::FullConsensus;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
 use reth_provider::HeaderSyncGapProvider;
 use reth_prune_types::{PruneMode, PruneModes};
@@ -89,7 +89,7 @@ where
     /// Executor factory needs for execution stage
     evm_config: BaseEvmConfig,
     /// Consensus instance
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// Configuration for each stage in the pipeline
     stages_config: StageConfig,
     /// Prune configuration for every segment that can be pruned
@@ -106,7 +106,7 @@ where
     pub fn new(
         provider: Provider,
         tip: watch::Receiver<B256>,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         header_downloader: H,
         body_downloader: B,
         evm_config: BaseEvmConfig,
@@ -138,7 +138,7 @@ where
     pub fn add_offline_stages<Provider>(
         default_offline: StageSetBuilder<Provider>,
         evm_config: BaseEvmConfig,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         stages_config: StageConfig,
         prune_modes: PruneModes,
     ) -> StageSetBuilder<Provider>
@@ -282,7 +282,7 @@ pub struct OfflineStages {
     /// Executor factory needs for execution stage
     evm_config: BaseEvmConfig,
     /// Consensus instance for validating blocks.
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// Configuration for each stage in the pipeline
     stages_config: StageConfig,
     /// Prune configuration for every segment that can be pruned
@@ -293,7 +293,7 @@ impl OfflineStages {
     /// Create a new set of offline stages with default values.
     pub const fn new(
         evm_config: BaseEvmConfig,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         stages_config: StageConfig,
         prune_modes: PruneModes,
     ) -> Self {
@@ -342,7 +342,7 @@ pub struct ExecutionStages {
     /// Executor factory that will create executors.
     evm_config: BaseEvmConfig,
     /// Consensus instance for validating blocks.
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// Configuration for each stage in the pipeline
     stages_config: StageConfig,
     /// Prune mode for sender recovery
@@ -353,7 +353,7 @@ impl ExecutionStages {
     /// Create a new set of execution stages with default values.
     pub const fn new(
         executor_provider: BaseEvmConfig,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         stages_config: StageConfig,
         sender_recovery_prune_mode: Option<PruneMode>,
     ) -> Self {

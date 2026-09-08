@@ -66,7 +66,7 @@ impl<C: ChainSpecParser> ImportCommand<C> {
         };
 
         let executor = components.evm_config.clone();
-        let consensus = Arc::new(components.consensus.clone());
+        let consensus = components.consensus.clone();
 
         let mut total_imported_blocks = 0;
         let mut total_imported_txns = 0;

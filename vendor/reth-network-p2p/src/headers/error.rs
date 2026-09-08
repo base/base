@@ -1,5 +1,5 @@
+use base_execution_consensus::ConsensusError;
 use derive_more::{Display, Error};
-use reth_consensus::ConsensusError;
 use reth_primitives_traits::SealedHeader;
 
 /// Header downloader result

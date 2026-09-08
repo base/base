@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, BlockNumber};
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use eyre::Result;
 use reth_config::config::EtlConfig;
-use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
 use reth_db_api::{
     database::Database, database_metrics::DatabaseMetrics, models::BlockNumberAddress,
@@ -36,7 +36,7 @@ pub(crate) async fn dump_merkle_stage(
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
     evm_config: BaseEvmConfig,
-    consensus: impl FullConsensus + 'static,
+    consensus: Arc<BaseBeaconConsensus>,
     runtime: reth_tasks::Runtime,
 ) -> Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
@@ -83,7 +83,7 @@ fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     tip_block_number: u64,
     output_db: &DatabaseEnv,
     evm_config: BaseEvmConfig,
-    consensus: impl FullConsensus + 'static,
+    consensus: Arc<BaseBeaconConsensus>,
 ) -> eyre::Result<()> {
     let (from, to) = range;
     let provider = db_tool.provider_factory.database_provider_rw()?;
@@ -104,7 +104,7 @@ fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     // Bring Plainstate to TO (hashing stage execution requires it)
     let mut exec_stage = ExecutionStage::new(
         evm_config, // Not necessary for unwinding.
-        Arc::new(consensus),
+        consensus,
         ExecutionStageThresholds {
             max_blocks: Some(u64::MAX),
             max_changes: None,

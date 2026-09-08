@@ -207,7 +207,6 @@ pub struct RpcRegistry<Node: FullNodeComponents, EthApi: EthApiTypes> {
         reth_node_api::BaseNodePool<Node::Provider>,
         reth_network::NetworkHandle,
         EthApi,
-        std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
     >,
 }
 
@@ -221,7 +220,6 @@ where
         reth_node_api::BaseNodePool<Node::Provider>,
         reth_network::NetworkHandle,
         EthApi,
-        std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
     >;
 
     fn deref(&self) -> &Self::Target {
@@ -1059,7 +1057,7 @@ impl BasicEngineValidatorBuilder {
         let txpool_prewarming = tree_config.txpool_prewarming();
         let mut validator = BasicEngineValidator::new(
             ctx.node.provider().clone(),
-            std::sync::Arc::new(ctx.node.consensus().clone()),
+            ctx.node.consensus().clone(),
             ctx.node.evm_config().clone(),
             validator,
             tree_config,

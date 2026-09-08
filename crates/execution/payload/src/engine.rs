@@ -7,9 +7,8 @@ use base_common_consensus::{BaseTxEnvelope, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_consensus::{BaseConsensusError, isthmus};
+use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_consensus::ConsensusError;
 use reth_engine_primitives::{EngineApiValidator, InsertBlockErrorKind, PayloadValidator};
 use reth_payload_primitives::{
     BasePayloadBuilderAttributes, EngineApiMessageVersion, EngineObjectValidationError,

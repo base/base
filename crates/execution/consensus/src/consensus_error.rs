@@ -1,35 +1,3 @@
-//! Consensus protocol functions
-//!
-//! # Trait hierarchy
-//!
-//! Consensus validation is split across three traits, each adding a layer:
-//!
-//! - [`HeaderValidator`] — validates a header in isolation and against its parent. Used early in
-//!   the validation pipeline before block execution.
-//!
-//! - [`Consensus`] — extends `HeaderValidator` with block body validation. Checks that the body
-//!   matches the header (tx root, ommer hash, withdrawals) and runs pre-execution checks. Used
-//!   before a block is executed.
-//!
-//! - [`FullConsensus`] — extends `Consensus` with post-execution validation. Checks execution
-//!   results against the header (gas used, receipt root, logs bloom). Used after block execution to
-//!   verify the outcome.
-//!
-//! In the engine, these are applied in order during payload validation (`engine_newPayload`).
-//! Payload attribute validation for block building (`engine_forkchoiceUpdated`) is handled
-//! separately at the engine API layer and does not use these traits.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
 use alloc::{
     boxed::Box,
     fmt::Debug,
@@ -41,11 +9,10 @@ use core::{error::Error, fmt::Display};
 
 use alloy_eip7928::BlockAccessListGasError;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
-use base_common_consensus::BaseReceipt;
 
 /// Pre-computed receipt root and logs bloom.
 ///
-/// When provided to [`FullConsensus::validate_block_post_execution`], this allows skipping
+/// When provided to [`BaseBeaconConsensus::validate_block_post_execution`], this allows skipping
 /// the receipt root computation and using the pre-computed values instead.
 pub type ReceiptRootBloom = (B256, Bloom);
 
@@ -54,138 +21,11 @@ pub type ReceiptRootBloom = (B256, Bloom);
 /// When provided to [`Consensus::validate_block_pre_execution_with_tx_root`], this allows
 /// skipping transaction trie reconstruction from the block body.
 pub type TransactionRoot = B256;
-use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    GotExpected, GotExpectedBoxed, RecoveredBlock, SealedBlock, SealedHeader,
+    GotExpected, GotExpectedBoxed, SealedHeader,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
     transaction::error::InvalidTransactionError,
 };
-
-/// A consensus implementation that does nothing.
-pub mod noop;
-
-#[cfg(any(test, feature = "test-utils"))]
-/// test helpers for mocking consensus
-pub mod test_utils;
-
-/// [`Consensus`] implementation which knows full node primitives and is able to validation block's
-/// execution outcome.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait FullConsensus: Consensus {
-    /// Validate a block considering world state, i.e. things that can not be checked before
-    /// execution.
-    ///
-    /// See the Yellow Paper sections 4.3.2 "Holistic Validity".
-    ///
-    /// If `receipt_root_bloom` is provided, the implementation should use the pre-computed
-    /// receipt root and logs bloom instead of computing them from the receipts.
-    ///
-    /// Note: validating blocks does not include other validations of the Consensus
-    fn validate_block_post_execution(
-        &self,
-        block: &RecoveredBlock,
-        result: &BlockExecutionResult<BaseReceipt>,
-        receipt_root_bloom: Option<ReceiptRootBloom>,
-        block_access_list_hash: Option<B256>,
-    ) -> Result<(), ConsensusError>;
-}
-
-/// Consensus is a protocol that chooses canonical chain.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait Consensus: HeaderValidator {
-    /// Ensures that body field values match the header.
-    fn validate_body_against_header(
-        &self,
-        body: &base_common_consensus::BaseBlockBody,
-        header: &SealedHeader,
-    ) -> Result<(), ConsensusError>;
-
-    /// Validate a block disregarding world state, i.e. things that can be checked before sender
-    /// recovery and execution.
-    ///
-    /// See the Yellow Paper sections 4.4.2 "Holistic Validity", 4.4.4 "Block Header Validity".
-    /// Note: Ommer Validation (previously section 11.1) has been deprecated since the Paris hard
-    /// fork transition to proof of stake.
-    ///
-    /// **This should not be called for the genesis block**.
-    ///
-    /// Note: validating blocks does not include other validations of the Consensus
-    fn validate_block_pre_execution(&self, block: &SealedBlock) -> Result<(), ConsensusError>;
-
-    /// Returns `true` if the given consensus error is transient and may resolve on its own.
-    ///
-    /// On fast chains, clock skew between nodes can cause a valid block's timestamp to
-    /// appear briefly in the future. Caching such blocks as permanently invalid would
-    /// prevent them from being re-validated once the local clock catches up.
-    ///
-    /// Transient errors will not cause the block hash to be cached as permanently invalid,
-    /// allowing the block to be re-validated later.
-    fn is_transient_error(&self, _error: &ConsensusError) -> bool {
-        false
-    }
-
-    /// Validate a block disregarding world state using an optional pre-computed transaction root.
-    ///
-    /// If `transaction_root` is provided, the implementation should use the pre-computed
-    /// transaction root instead of recomputing it from the block body. The value must have been
-    /// derived from `block.body().calculate_tx_root()`.
-    ///
-    /// By default this falls back to [`Self::validate_block_pre_execution`].
-    fn validate_block_pre_execution_with_tx_root(
-        &self,
-        block: &SealedBlock,
-        transaction_root: Option<TransactionRoot>,
-    ) -> Result<(), ConsensusError> {
-        let _ = transaction_root;
-        self.validate_block_pre_execution(block)
-    }
-}
-
-/// `HeaderValidator` is a protocol that validates headers and their relationships.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait HeaderValidator: Debug + Send + Sync {
-    /// Validate if header is correct and follows consensus specification.
-    ///
-    /// This is called on standalone header to check if all hashes are correct.
-    fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError>;
-
-    /// Validate that the header information regarding parent are correct.
-    /// This checks the block number, timestamp, basefee and gas limit increment.
-    ///
-    /// This is called before properties that are not in the header itself (like total difficulty)
-    /// have been computed.
-    ///
-    /// **This should not be called for the genesis block**.
-    ///
-    /// Note: Validating header against its parent does not include other `HeaderValidator`
-    /// validations.
-    fn validate_header_against_parent(
-        &self,
-        header: &SealedHeader,
-        parent: &SealedHeader,
-    ) -> Result<(), ConsensusError>;
-
-    /// Validates the given headers
-    ///
-    /// This ensures that the first header is valid on its own and all subsequent headers are valid
-    /// on its own and valid against its parent.
-    ///
-    /// Note: this expects that the headers are in natural order (ascending block number)
-    fn validate_header_range(&self, headers: &[SealedHeader]) -> Result<(), HeaderConsensusError> {
-        if let Some((initial_header, remaining_headers)) = headers.split_first() {
-            self.validate_header(initial_header)
-                .map_err(|e| HeaderConsensusError(e, initial_header.clone()))?;
-            let mut parent = initial_header;
-            for child in remaining_headers {
-                self.validate_header(child).map_err(|e| HeaderConsensusError(e, child.clone()))?;
-                self.validate_header_against_parent(child, parent)
-                    .map_err(|e| HeaderConsensusError(e, child.clone()))?;
-                parent = child;
-            }
-        }
-        Ok(())
-    }
-}
 
 /// Consensus Errors
 #[derive(Debug, Clone, thiserror::Error)]
@@ -565,7 +405,7 @@ impl From<BlockAccessListGasError> for ConsensusError {
 /// `HeaderConsensusError` combines a `ConsensusError` with the `SealedHeader` it relates to.
 #[derive(thiserror::Error, Debug)]
 #[error("Consensus error: {0}, Invalid header: {1:?}")]
-pub struct HeaderConsensusError(ConsensusError, SealedHeader);
+pub struct HeaderConsensusError(pub ConsensusError, pub SealedHeader);
 
 /// EIP-7825: Transaction gas limit exceeds maximum allowed
 #[derive(thiserror::Error, Debug, Eq, PartialEq, Clone)]
@@ -581,7 +421,7 @@ pub struct TxGasLimitTooHighErr {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-struct MessageError(String);
+pub struct MessageError(pub String);
 
 #[cfg(test)]
 mod tests {

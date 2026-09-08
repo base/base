@@ -3,8 +3,8 @@ use std::fmt::Debug;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockHashOrNumber, eip1898::BlockWithParent};
 use alloy_primitives::B256;
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::Stream;
-use reth_consensus::HeaderValidator;
 use reth_primitives_traits::SealedHeader;
 
 use super::error::HeadersDownloaderResult;
@@ -101,7 +101,7 @@ impl HeaderSyncGap {
 
 /// Validate whether the header is valid in relation to its parent.
 pub fn validate_header_download(
-    consensus: &dyn HeaderValidator,
+    consensus: &BaseBeaconConsensus,
     header: &SealedHeader,
     parent: &SealedHeader,
 ) -> DownloadResult<()> {

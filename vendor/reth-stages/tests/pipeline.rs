@@ -10,9 +10,9 @@ use base_common_consensus::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
 use reth_config::config::StageConfig;
-use reth_consensus::noop::NoopConsensus;
 use reth_db_common::init::init_genesis;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
@@ -101,7 +101,7 @@ fn build_downloaders_from_file_client(
     file_client: Arc<FileClient>,
     genesis: reth_primitives_traits::SealedHeader,
     stages_config: StageConfig,
-    consensus: Arc<NoopConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     provider_factory: reth_provider::ProviderFactory<reth_provider::test_utils::MockNodeDatabase>,
 ) -> (impl HeaderDownloader, impl BodyDownloader<Block = Block>, reth_tasks::Runtime) {
     let tip = file_client.tip().expect("file client should have tip");
@@ -136,7 +136,7 @@ where
     H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = Block> + 'static,
 {
-    let consensus = NoopConsensus::arc();
+    let consensus = Arc::new(BaseBeaconConsensus::noop());
     let stages_config = StageConfig::default();
     let evm_config = BaseEvmConfig::new(provider_factory.chain_spec());
 
@@ -357,7 +357,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
     init_genesis(&pipeline_provider_factory).expect("init genesis");
     let pipeline_genesis =
         pipeline_provider_factory.sealed_header(0)?.expect("genesis should exist");
-    let pipeline_consensus = NoopConsensus::arc();
+    let pipeline_consensus = Arc::new(BaseBeaconConsensus::noop());
 
     let blocks_clone = blocks.clone();
     let file_client = create_file_client_from_blocks(blocks);
@@ -466,7 +466,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
 
     // Re-sync: build a new pipeline starting from unwind_target and sync back to num_blocks
     let resync_file_client = create_file_client_from_blocks(blocks_clone);
-    let resync_consensus = NoopConsensus::arc();
+    let resync_consensus = Arc::new(BaseBeaconConsensus::noop());
     let resync_stages_config = StageConfig::default();
 
     let unwind_head = pipeline_provider_factory

@@ -105,8 +105,7 @@ pub trait EngineApiValidator: Send + Sync + Unpin + 'static {
 ///
 /// # Relationship to consensus traits
 ///
-/// This trait does NOT replace the consensus traits (`Consensus`, `FullConsensus` from
-/// `reth-consensus`). Those handle the actual consensus rule
+/// This trait does NOT replace the Base consensus validator (`BaseBeaconConsensus`). Those handle the actual consensus rule
 /// validation (header checks, pre/post-execution). This trait handles engine API-specific
 /// concerns: payload encoding/decoding and attribute validation.
 #[auto_impl::auto_impl(&, Arc)]

@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_consensus::BaseBlock;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_config::{PruneConfig, config::StageConfig};
-use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
@@ -28,7 +28,7 @@ use tokio::sync::watch;
 pub fn build_networked_pipeline<DB, Client>(
     config: &StageConfig,
     client: Client,
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     provider_factory: ProviderFactory<DB>,
     task_executor: &TaskExecutor,
     metrics_tx: reth_stages::MetricEventsSender,
@@ -77,7 +77,7 @@ pub fn build_pipeline<DB, H, B>(
     stage_config: &StageConfig,
     header_downloader: H,
     body_downloader: B,
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     max_block: Option<u64>,
     metrics_tx: reth_stages::MetricEventsSender,
     prune_config: PruneConfig,

@@ -7,8 +7,8 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
+use base_execution_consensus::BaseBeaconConsensus;
 use futures::{Future, FutureExt};
-use reth_consensus::Consensus;
 use reth_network_p2p::{
     bodies::{client::BodiesClient, response::BlockResponse},
     error::{DownloadError, DownloadResult},
@@ -41,7 +41,7 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 pub(crate) struct BodiesRequestFuture<C: BodiesClient<Body = base_common_consensus::BaseBlockBody>>
 {
     client: Arc<C>,
-    consensus: Arc<dyn Consensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     metrics: BodyDownloaderMetrics,
     /// Metrics for individual responses. This can be used to observe how the size (in bytes) of
     /// responses change while bodies are being downloaded.
@@ -62,7 +62,7 @@ where
     /// Returns an empty future. Use [`BodiesRequestFuture::with_headers`] to set the request.
     pub(crate) fn new(
         client: Arc<C>,
-        consensus: Arc<dyn Consensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         metrics: BodyDownloaderMetrics,
     ) -> Self {
         Self {
@@ -255,7 +255,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use reth_consensus::test_utils::TestConsensus;
+    use base_execution_consensus::BaseBeaconConsensus;
     use reth_testing_utils::{generators, generators::random_header_range};
 
     use super::*;
@@ -273,7 +273,7 @@ mod tests {
         let client = Arc::new(TestBodiesClient::default());
         let fut = BodiesRequestFuture::<_>::new(
             client.clone(),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             BodyDownloaderMetrics::default(),
         )
         .with_headers(headers.clone());
@@ -297,7 +297,7 @@ mod tests {
         );
         let fut = BodiesRequestFuture::<_>::new(
             client.clone(),
-            Arc::new(TestConsensus::default()),
+            Arc::new(BaseBeaconConsensus::test()),
             BodyDownloaderMetrics::default(),
         )
         .with_headers(headers.clone());

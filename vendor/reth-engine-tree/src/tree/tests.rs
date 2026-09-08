@@ -24,9 +24,9 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
 };
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
-use reth_consensus_common::test_utils::TestConsensus;
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_payload_builder::PayloadServiceCommand;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
@@ -195,7 +195,7 @@ impl TestHarness {
     ) -> Self {
         let persistence_handle = PersistenceHandle::new(action_tx);
 
-        let consensus = Arc::new(TestConsensus::new(chain_spec.clone()));
+        let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(chain_spec.clone()));
 
         let provider = MockEthProvider::default();
 
@@ -425,7 +425,7 @@ impl ValidatorTestHarness {
         let harness = TestHarness::new(chain_spec.clone());
 
         // Create validator identical to the one in TestHarness
-        let consensus = Arc::new(TestConsensus::new(chain_spec.clone()));
+        let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(chain_spec.clone()));
         let provider = harness.provider.clone();
         let payload_validator = MockEngineValidator;
         let evm_config = BaseEvmConfig::default();

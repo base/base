@@ -26,7 +26,6 @@ reth-discv5 = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-cli-util = { workspace = true }
-reth-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-prune-types = { workspace = true }
@@ -39,6 +38,7 @@ reth-rpc-server-types = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 base-execution-chainspec = { workspace = true }
+base-execution-consensus = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 strum = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
@@ -69,6 +69,7 @@ tokio = { workspace = true }
 proptest = { workspace = true, features = ["default"] }
 [build-dependencies]
 vergen = { workspace = true, features = ["default", "build", "cargo", "emit_and_set"] }
+
 [features]
 # Features for vergen to generate correct env vars
 jemalloc = ["reth-cli-util/jemalloc"]

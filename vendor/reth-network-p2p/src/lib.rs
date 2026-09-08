@@ -33,7 +33,7 @@ pub use full_block::{FullBlockClient, NoopFullBlockClient};
 /// of a Linear and a Parallel downloader generic over the [`Consensus`] and
 /// [`HeadersClient`].
 ///
-/// [`Consensus`]: reth_consensus::Consensus
+/// [`Consensus`]: base_execution_consensus::Consensus
 /// [`HeadersClient`]: crate::headers::client::HeadersClient
 pub mod headers;
 

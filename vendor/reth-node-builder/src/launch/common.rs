@@ -35,12 +35,12 @@ use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
 use reth_config::{PruneConfig, config::EtlConfig};
-use reth_consensus::noop::NoopConsensus;
 use reth_db_api::{
     database::Database, database_metrics::DatabaseMetrics, models::PartialStateTrieUnwindMarker,
 };
@@ -549,7 +549,7 @@ where
                 let mut stages = DefaultStages::new(
                     factory.clone(),
                     tip_rx,
-                    Arc::new(NoopConsensus::default()),
+                    Arc::new(BaseBeaconConsensus::noop()),
                     NoopHeaderDownloader::default(),
                     NoopBodiesDownloader::default(),
                     BaseEvmConfig::default(),

@@ -25,11 +25,11 @@ reth-config = { workspace = true }
 pin-project = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
-reth-consensus = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-consensus = { workspace = true }
 itertools = { workspace = true, optional = true }
 reth-provider = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
@@ -54,9 +54,9 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-consensus = {workspace = true, features = ["serde"]}
 reth-tracing = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-consensus = { workspace = true, features = ["test-utils"] }
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+base-execution-consensus = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
@@ -64,7 +64,7 @@ default = []
 file-client = ["dep:async-compression", "dep:alloy-rlp", "dep:itertools"]
 test-utils = [
     "tempfile",
-    "reth-consensus/test-utils",
+    "base-execution-consensus/test-utils",
     "reth-network-p2p/test-utils",
     "reth-testing-utils",
     "reth-provider/test-utils",

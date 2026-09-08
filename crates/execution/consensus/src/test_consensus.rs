@@ -5,7 +5,7 @@ use base_common_consensus::BaseReceipt;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
-use crate::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
+use crate::{ConsensusError, ReceiptRootBloom};
 
 /// Consensus engine implementation for testing
 #[derive(Debug)]
@@ -50,8 +50,8 @@ impl TestConsensus {
     }
 }
 
-impl FullConsensus for TestConsensus {
-    fn validate_block_post_execution(
+impl TestConsensus {
+    pub fn validate_block_post_execution(
         &self,
         _block: &RecoveredBlock,
         _result: &BlockExecutionResult<BaseReceipt>,
@@ -62,8 +62,8 @@ impl FullConsensus for TestConsensus {
     }
 }
 
-impl Consensus for TestConsensus {
-    fn validate_body_against_header(
+impl TestConsensus {
+    pub fn validate_body_against_header(
         &self,
         _body: &base_common_consensus::BaseBlockBody,
         _header: &SealedHeader,
@@ -71,17 +71,17 @@ impl Consensus for TestConsensus {
         if self.fail_body_against_header() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }
     }
 
-    fn validate_block_pre_execution(&self, _block: &SealedBlock) -> Result<(), ConsensusError> {
+    pub fn validate_block_pre_execution(&self, _block: &SealedBlock) -> Result<(), ConsensusError> {
         if self.fail_validation() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }
     }
 }
 
-impl HeaderValidator for TestConsensus {
-    fn validate_header(&self, _header: &SealedHeader) -> Result<(), ConsensusError> {
+impl TestConsensus {
+    pub fn validate_header(&self, _header: &SealedHeader) -> Result<(), ConsensusError> {
         if self.fail_validation() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }
     }
 
-    fn validate_header_against_parent(
+    pub fn validate_header_against_parent(
         &self,
         _header: &SealedHeader,
         _parent: &SealedHeader,

@@ -4,8 +4,8 @@ use std::fmt;
 
 use alloy_eips::BlockId;
 use alloy_rpc_types_engine::PayloadError;
+use base_execution_consensus::ConsensusError;
 use jsonrpsee_core::RpcResult;
-use reth_consensus::ConsensusError;
 
 /// Helper trait to easily convert various `Result` types into [`RpcResult`]
 pub trait ToRpcResult<Ok, Err>: Sized {

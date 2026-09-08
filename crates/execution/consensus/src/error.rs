@@ -1,8 +1,9 @@
 //! Base consensus errors
 
 use alloy_primitives::B256;
-use reth_consensus::ConsensusError;
 use reth_storage_errors::provider::ProviderError;
+
+use crate::ConsensusError;
 
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]

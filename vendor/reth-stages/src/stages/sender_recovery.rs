@@ -2,8 +2,8 @@ use std::{fmt::Debug, ops::Range, sync::mpsc};
 
 use alloy_primitives::{Address, BlockNumber, TxNumber};
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_consensus::ConsensusError;
 use reth_config::config::SenderRecoveryConfig;
-use reth_consensus::ConsensusError;
 use reth_db::static_file::TransactionMask;
 use reth_db_api::{
     RawValue,

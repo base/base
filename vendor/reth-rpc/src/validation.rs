@@ -20,11 +20,10 @@ use alloy_rpc_types_engine::{
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};
 use base_execution_evm::{BaseEvmConfig, CachedReads, Executor, StateProviderDatabase};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
-use reth_consensus::{Consensus, ConsensusError, FullConsensus};
-use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_engine_primitives::PayloadValidator;
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionOutput;
@@ -55,7 +54,7 @@ impl<Provider> ValidationApi<Provider> {
     /// Create a new instance of the [`ValidationApi`]
     pub fn new(
         provider: Provider,
-        consensus: Arc<dyn FullConsensus>,
+        consensus: Arc<BaseBeaconConsensus>,
         evm_config: BaseEvmConfig,
         config: ValidationApiConfig,
         task_spawner: Runtime,
@@ -624,7 +623,7 @@ pub struct ValidationApiInner<Provider> {
     /// The provider that can interact with the chain.
     provider: Provider,
     /// Consensus implementation.
-    consensus: Arc<dyn FullConsensus>,
+    consensus: Arc<BaseBeaconConsensus>,
     /// Execution payload validator.
     payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
     /// Block executor factory.
