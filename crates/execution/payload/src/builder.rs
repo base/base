@@ -27,8 +27,8 @@ use base_execution_payload_types::{
     BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
-    estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
+    ParkableTransactionPool, PoolTransaction, PredicateContext, TransactionPool,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
@@ -38,7 +38,6 @@ use reth_execution_types::BlockExecutionOutput;
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
-use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::database::State;
@@ -1247,12 +1246,13 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::{BaseEvmConfig, CancelOnDrop, test_utils::StateProviderTest};
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        BasePooledTransaction, PoolTransaction, ValidityOperator, ValidityPredicate,
+    };
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
     use reth_provider::noop::NoopProvider;
-    use reth_transaction_pool::PoolTransaction;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::{
         error::StateRootTaskError,

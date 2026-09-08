@@ -10,7 +10,7 @@ use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::{
     NonParkablePayloadTransactions, ParkablePayloadTransactions, builder::BasePayloadTransactions,
 };
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool::{BasePooledTransaction, PoolTransaction};
 use base_node_core::{
     BaseComponentsBuilder, BaseNode, BasePayloadServiceBuilder,
     args::RollupArgs,
@@ -28,7 +28,6 @@ use reth_payload_util::{
     BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
 };
 use reth_tasks::Runtime;
-use reth_transaction_pool::PoolTransaction;
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
@@ -43,7 +42,7 @@ where
     fn best_transactions(
         &self,
         pool: Pool,
-        attr: reth_transaction_pool::BestTransactionsAttributes,
+        attr: base_execution_txpool::BestTransactionsAttributes,
     ) -> impl ParkablePayloadTransactions<Transaction = BasePooledTransaction> {
         // Block composition:
         // 1. Best transactions from the pool (up to 250k gas)

@@ -8,6 +8,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_txpool::{
+    AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
+    TransactionPool,
+};
 use derive_more::Deref;
 use reth_rpc_eth_api::{
     BaseRpcConverter, EthApiTypes, RpcNodeCore,
@@ -22,10 +26,6 @@ use reth_storage_api::BlockReaderIdExt;
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
-};
-use reth_transaction_pool::{
-    AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, TransactionPool,
-    blobstore::BlobSidecarConverter,
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
@@ -422,11 +422,11 @@ where
     #[inline]
     pub async fn add_pool_transaction(
         &self,
-        origin: reth_transaction_pool::TransactionOrigin,
+        origin: base_execution_txpool::TransactionOrigin,
         transaction: <N::Pool as TransactionPool>::Transaction,
     ) -> Result<AddedTransactionOutcome, EthApiError> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        let request = reth_transaction_pool::BatchTxRequest::new(origin, transaction, response_tx);
+        let request = base_execution_txpool::BatchTxRequest::new(origin, transaction, response_tx);
 
         self.tx_batch_sender()
             .send(request)

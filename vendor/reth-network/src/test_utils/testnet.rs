@@ -14,6 +14,10 @@ use base_common_consensus::{
 };
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_txpool::{
+    EthTransactionPool, InMemoryBlobStore, PoolTransaction, TransactionPool,
+    TransactionValidationTaskExecutor, test_utils::BaseTestTransaction,
+};
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
 use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
@@ -30,10 +34,6 @@ use reth_storage_api::{
 };
 use reth_tasks::Runtime;
 use reth_tokio_util::EventStream;
-use reth_transaction_pool::{
-    EthTransactionPool, PoolTransaction, TransactionPool, TransactionValidationTaskExecutor,
-    blobstore::InMemoryBlobStore, test_utils::BaseTestTransaction,
-};
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},
@@ -203,9 +203,9 @@ where
                 blob_store.clone(),
                 Runtime::test(),
             );
-            peer.map_transactions_manager(reth_transaction_pool::Pool::new(
+            peer.map_transactions_manager(base_execution_txpool::Pool::new(
                 pool,
-                reth_transaction_pool::CoinbaseTipOrdering::default(),
+                base_execution_txpool::CoinbaseTipOrdering::default(),
                 blob_store,
                 Default::default(),
             ))
@@ -236,9 +236,9 @@ where
             );
 
             peer.map_transactions_manager_with(
-                reth_transaction_pool::Pool::new(
+                base_execution_txpool::Pool::new(
                     pool,
-                    reth_transaction_pool::CoinbaseTipOrdering::default(),
+                    base_execution_txpool::CoinbaseTipOrdering::default(),
                     blob_store,
                     Default::default(),
                 ),

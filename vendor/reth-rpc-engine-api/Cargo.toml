@@ -28,7 +28,7 @@ alloy-hardforks = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-api = { workspace = true }
-reth-transaction-pool = { workspace = true }
+base-execution-txpool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }

@@ -33,6 +33,10 @@ use alloy_primitives::{
 };
 use alloy_rlp::Encodable;
 use base_execution_evm::SenderRecoveryCache;
+use base_execution_txpool::{
+    AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PoolTransaction,
+    PropagateKind, PropagatedTransactions, TransactionPool, ValidPoolTransaction,
+};
 use config::AnnouncementAcceptance;
 pub use config::{
     AnnouncementFilteringPolicy, TransactionFetcherConfig, TransactionIngressPolicy,
@@ -61,11 +65,6 @@ use reth_network_peers::PeerId;
 use reth_network_types::ReputationChangeKind;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_tokio_util::EventStream;
-use reth_transaction_pool::{
-    AddedTransactionOutcome, GetPooledTransactionLimit, PoolTransaction, PropagateKind,
-    PropagatedTransactions, TransactionPool, ValidPoolTransaction,
-    error::{PoolError, PoolResult},
-};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
@@ -303,7 +302,7 @@ pub struct TransactionsManager<Pool> {
     /// The import process includes:
     ///  - validation of the transactions, e.g. transaction is well formed: valid tx type, fees are
     ///    valid, or for 4844 transaction the blobs are valid. See also
-    ///    [`EthTransactionValidator`](reth_transaction_pool::validate::EthTransactionValidator)
+    ///    [`EthTransactionValidator`](base_execution_txpool::EthTransactionValidator)
     /// - if the transaction is valid, it is added into the pool.
     ///
     /// Once the new transaction reaches the __pending__ state it will be emitted by the pool via
@@ -2354,6 +2353,15 @@ mod tests {
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
         BaseTypedTransaction as Transaction,
     };
+    use base_execution_txpool::{
+        CoinbaseTipOrdering, Eip4844PoolTransactionError, EthPooledTransaction, InMemoryBlobStore,
+        InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
+        ValidPoolTransaction,
+        test_utils::{
+            BaseTestTransaction, MockTransaction, MockTransactionFactory, OkValidator,
+            TransactionGenerator,
+        },
+    };
     use futures::FutureExt;
     use reth_network_api::{NetworkInfo, PeerKind};
     use reth_network_p2p::{
@@ -2362,16 +2370,6 @@ mod tests {
     };
     use reth_storage_api::noop::NoopProvider;
     use reth_tasks::Runtime;
-    use reth_transaction_pool::{
-        CoinbaseTipOrdering, EthPooledTransaction, Pool, TransactionOrigin, ValidPoolTransaction,
-        blobstore::InMemoryBlobStore,
-        error::{Eip4844PoolTransactionError, InvalidPoolTransactionError, PoolError},
-        identifier::SenderIdentifiers,
-        test_utils::{
-            BaseTestTransaction, MockTransaction, MockTransactionFactory, OkValidator,
-            TransactionGenerator,
-        },
-    };
     use secp256k1::SecretKey;
     use tracing::error;
 
@@ -2923,7 +2921,7 @@ mod tests {
         let tx = NetworkTestData::transaction(MockTransaction::eip1559());
         let _ = transactions
             .pool
-            .add_transaction(reth_transaction_pool::TransactionOrigin::External, tx.clone())
+            .add_transaction(base_execution_txpool::TransactionOrigin::External, tx.clone())
             .await;
 
         let request = GetPooledTransactions(vec![*tx.hash()]);
@@ -3391,7 +3389,7 @@ mod tests {
         let tx_hash = *tx.hash();
         tx_manager
             .pool
-            .add_transaction(reth_transaction_pool::TransactionOrigin::External, tx.clone())
+            .add_transaction(base_execution_txpool::TransactionOrigin::External, tx.clone())
             .await
             .expect("transaction should be accepted into the pool");
 

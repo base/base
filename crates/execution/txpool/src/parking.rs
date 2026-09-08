@@ -9,9 +9,9 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{HashMap, hash_map::Entry},
 };
-use reth_transaction_pool::{
-    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionOrdering,
-    TransactionPool, ValidPoolTransaction, error::InvalidPoolTransactionError,
+use base_execution_txpool::{
+    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, PoolTransaction,
+    TransactionOrdering, TransactionPool, ValidPoolTransaction,
 };
 
 use crate::{BasePooledTx, BestTransactionPriority};
@@ -369,8 +369,8 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
         TxEip8130,
     };
+    use base_execution_txpool::{TransactionId, TransactionOrigin};
     use reth_primitives_traits::Recovered;
-    use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};

@@ -13,6 +13,7 @@ use alloy_rpc_types_mev::{
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockEnvironment, apply_block_overrides};
 use base_execution_evm::Evm;
+use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use reth_rpc_api::MevSimApiServer;
@@ -23,7 +24,6 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;
-use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use revm::{DatabaseCommit, DatabaseRef};
 use tracing::trace;
 

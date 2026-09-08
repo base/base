@@ -783,7 +783,7 @@ impl TransactionFetcher {
     /// Returns the limit to enforce when looking for any pending hash with an idle fallback peer.
     ///
     /// Returns `Some(limit)` if [`TransactionFetcher`] and the
-    /// [`TransactionPool`](reth_transaction_pool::TransactionPool) are operating close to full
+    /// [`TransactionPool`](base_execution_txpool::TransactionPool) are operating close to full
     /// capacity. Returns `None`, unlimited, if they are not that busy.
     pub fn search_breadth_budget_find_idle_fallback_peer(
         &self,
@@ -822,7 +822,7 @@ impl TransactionFetcher {
     /// peer and hashes pending fetch.
     ///
     /// Returns `Some(limit)` if [`TransactionFetcher`] and the
-    /// [`TransactionPool`](reth_transaction_pool::TransactionPool) are operating close to full
+    /// [`TransactionPool`](base_execution_txpool::TransactionPool) are operating close to full
     /// capacity. Returns `None`, unlimited, if they are not that busy.
     pub fn search_breadth_budget_find_intersection_pending_hashes_and_hashes_seen_by_peer(
         &self,

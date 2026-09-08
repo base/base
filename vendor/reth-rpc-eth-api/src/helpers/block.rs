@@ -7,6 +7,7 @@ use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
 use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt};
+use base_execution_txpool::{PoolTransaction, TransactionPool};
 use futures::Future;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,
@@ -14,7 +15,6 @@ use reth_primitives_traits::{
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::BaseEthApiError;
 use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderTx};
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use super::{LoadPendingBlock, LoadReceipt, SpawnBlocking};
 use crate::{FromEthApiError, FullEthApiTypes, node::RpcNodeCoreExt};

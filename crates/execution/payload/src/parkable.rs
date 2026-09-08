@@ -3,13 +3,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
-use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
+use base_execution_txpool::{
+    BasePooledTx, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
+    PoolTransaction, PoolTransactionError, ValidPoolTransaction,
+};
 pub use reth_payload_util::NoopPayloadTransactions;
 use reth_payload_util::PayloadTransactions;
-use reth_transaction_pool::{
-    BestTransactions, PoolTransaction, ValidPoolTransaction,
-    error::{InvalidPoolTransactionError, PoolTransactionError},
-};
 
 /// Indicates that the payload builder excluded a transaction from the current candidate iterator.
 #[derive(Debug, thiserror::Error)]

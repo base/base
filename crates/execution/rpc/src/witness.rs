@@ -8,7 +8,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::BasePayloadBuilder;
-use base_execution_txpool::BasePooledTx;
+use base_execution_txpool::{BasePooledTx, TransactionPool};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
@@ -18,7 +18,6 @@ use reth_storage_api::{
     errors::{ProviderError, ProviderResult},
 };
 use reth_tasks::Runtime;
-use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]

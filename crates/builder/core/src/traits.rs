@@ -2,9 +2,11 @@
 
 use base_common_consensus::BaseTransactionSigned;
 use base_execution_payload_builder::ParkablePayloadTransactions;
-use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
+use base_execution_txpool::{
+    BasePooledTx, StateDiffInvalidation, TimestampedTransaction, TransactionPool,
+    TransactionPoolExt,
+};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
-use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:

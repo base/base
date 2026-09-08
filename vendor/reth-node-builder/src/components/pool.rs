@@ -2,13 +2,12 @@
 
 use alloy_primitives::map::AddressSet;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_execution_txpool::{
+    BlobStore, CoinbaseTipOrdering, DiskFileBlobStore, PoolConfig, PoolTransaction, SubPoolLimit,
+    TransactionOrdering, TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
+};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_transaction_pool::{
-    BlobStore, CoinbaseTipOrdering, PoolConfig, PoolTransaction, SubPoolLimit, TransactionOrdering,
-    TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
-    blobstore::DiskFileBlobStore,
-};
 
 use crate::BuilderContext;
 
@@ -99,15 +98,15 @@ where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     V: TransactionValidator<Block = BaseBlock> + 'static,
     V::Transaction:
-        PoolTransaction<Consensus = BaseTxEnvelope> + reth_transaction_pool::EthPoolTransaction,
+        PoolTransaction<Consensus = BaseTxEnvelope> + base_execution_txpool::EthPoolTransaction,
 {
-    /// Consume the type and build the [`reth_transaction_pool::Pool`] with the given config and
+    /// Consume the type and build the [`base_execution_txpool::Pool`] with the given config and
     /// blob store.
     pub fn build<BS>(
         self,
         blob_store: BS,
         pool_config: PoolConfig,
-    ) -> reth_transaction_pool::Pool<
+    ) -> base_execution_txpool::Pool<
         TransactionValidationTaskExecutor<V>,
         CoinbaseTipOrdering<V::Transaction>,
         BS,
@@ -116,7 +115,7 @@ where
         BS: BlobStore,
     {
         let TxPoolBuilder { validator, .. } = self;
-        reth_transaction_pool::Pool::new(
+        base_execution_txpool::Pool::new(
             validator,
             CoinbaseTipOrdering::default(),
             blob_store,
@@ -131,7 +130,7 @@ where
         blob_store: BS,
         pool_config: PoolConfig,
     ) -> eyre::Result<
-        reth_transaction_pool::Pool<
+        base_execution_txpool::Pool<
             TransactionValidationTaskExecutor<V>,
             CoinbaseTipOrdering<V::Transaction>,
             BS,
@@ -154,7 +153,7 @@ where
         ordering: O,
         blob_store: BS,
         pool_config: PoolConfig,
-    ) -> eyre::Result<reth_transaction_pool::Pool<TransactionValidationTaskExecutor<V>, O, BS>>
+    ) -> eyre::Result<base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, O, BS>>
     where
         BS: BlobStore + Clone,
         O: TransactionOrdering<Transaction = V::Transaction>,
@@ -162,7 +161,7 @@ where
         let TxPoolBuilder { ctx, validator, .. } = self;
 
         let transaction_pool =
-            reth_transaction_pool::Pool::new(validator, ordering, blob_store, pool_config.clone());
+            base_execution_txpool::Pool::new(validator, ordering, blob_store, pool_config.clone());
 
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &pool_config)?;
 
@@ -186,13 +185,13 @@ pub fn create_blob_store_with_cache<DB: Database + DatabaseMetrics + Clone + Unp
 ) -> eyre::Result<DiskFileBlobStore> {
     let data_dir = ctx.config().datadir();
     let config = if let Some(cache_size) = cache_size {
-        reth_transaction_pool::blobstore::DiskFileBlobStoreConfig::default()
+        base_execution_txpool::DiskFileBlobStoreConfig::default()
             .with_max_cached_entries(cache_size)
     } else {
         Default::default()
     };
 
-    Ok(reth_transaction_pool::blobstore::DiskFileBlobStore::open(data_dir.blobstore(), config)?)
+    Ok(base_execution_txpool::DiskFileBlobStore::open(data_dir.blobstore(), config)?)
 }
 
 /// Spawn local transaction backup task if enabled.
@@ -211,14 +210,14 @@ where
             .unwrap_or_else(|| data_dir.txpool_transactions());
 
         let transactions_backup_config =
-            reth_transaction_pool::maintain::LocalTransactionBackupConfig::with_local_txs_backup(
+            base_execution_txpool::LocalTransactionBackupConfig::with_local_txs_backup(
                 transactions_path,
             );
 
         ctx.task_executor().spawn_critical_with_graceful_shutdown_signal(
             "local transactions backup task",
             |shutdown| {
-                reth_transaction_pool::maintain::backup_local_transactions_task(
+                base_execution_txpool::backup_local_transactions_task(
                     shutdown,
                     pool,
                     transactions_backup_config,
@@ -237,7 +236,7 @@ fn spawn_pool_maintenance_task<DB, Pool>(
 ) -> eyre::Result<()>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
+    Pool: base_execution_txpool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
     Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
     let chain_events = ctx.provider().canonical_state_stream();
@@ -245,12 +244,12 @@ where
 
     ctx.task_executor().spawn_critical_task(
         "txpool maintenance task",
-        reth_transaction_pool::maintain::maintain_transaction_pool_future(
+        base_execution_txpool::maintain_transaction_pool_future(
             client,
             pool,
             chain_events,
             ctx.task_executor().clone(),
-            reth_transaction_pool::maintain::MaintainPoolConfig {
+            base_execution_txpool::MaintainPoolConfig {
                 max_tx_lifetime: pool_config.max_queued_lifetime,
                 no_local_exemptions: pool_config.local_transactions_config.no_exemptions,
                 ..Default::default()
@@ -269,7 +268,7 @@ pub fn spawn_maintenance_tasks<DB, Pool>(
 ) -> eyre::Result<()>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
+    Pool: base_execution_txpool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
     Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
     spawn_local_backup_task(ctx, pool.clone())?;
@@ -287,7 +286,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, V: std::fmt::Debu
 
 #[cfg(test)]
 mod tests {
-    use reth_transaction_pool::PoolConfig;
+    use base_execution_txpool::PoolConfig;
 
     use super::*;
 

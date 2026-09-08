@@ -23,7 +23,6 @@ reth-node-core = { workspace = true }
 reth-tokio-util = { workspace = true }
 base-execution-evm = { workspace = true }
 base-execution-txpool = { workspace = true }
-reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = { workspace = true }

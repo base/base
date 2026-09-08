@@ -29,7 +29,6 @@ reth-rpc-eth-api = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
-reth-transaction-pool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 serde_json = { workspace = true, optional = true }
@@ -142,7 +141,7 @@ test-utils = [
     "base-execution-evm/test-utils",
     "reth-stages-types/test-utils",
     "reth-tasks/test-utils",
-    "reth-transaction-pool/test-utils",
+    "base-execution-txpool/test-utils",
     "reth-trie-db/test-utils",
     "serde_json",
 ]

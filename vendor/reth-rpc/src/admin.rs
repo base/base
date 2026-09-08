@@ -9,13 +9,13 @@ use alloy_rpc_types_admin::{
 };
 use async_trait::async_trait;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_txpool::TransactionPool;
 use jsonrpsee::core::RpcResult;
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_peers::{AnyNode, NodeRecord};
 use reth_network_types::PeerKind;
 use reth_rpc_api::AdminApiServer;
 use reth_rpc_server_types::ToRpcResult;
-use reth_transaction_pool::TransactionPool;
 
 /// `admin` API implementation.
 ///

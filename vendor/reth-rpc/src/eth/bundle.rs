@@ -10,6 +10,9 @@ use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::Evm;
+use base_execution_txpool::{
+    EthBlobTransactionSidecar, EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
+};
 use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_api::{
     EthCallBundleApiServer, FromEthApiError, FromEvmError,
@@ -19,9 +22,6 @@ use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
 };
 use reth_tasks::pool::BlockingTaskGuard;
-use reth_transaction_pool::{
-    EthBlobTransactionSidecar, EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
-};
 use revm::{DatabaseCommit, DatabaseRef};
 
 /// `Eth` bundle implementation.

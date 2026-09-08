@@ -8,6 +8,7 @@ use std::sync::Arc;
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_txpool::{PoolConfig, PoolTransaction, TransactionPool};
 use futures::Future;
 use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
@@ -30,7 +31,6 @@ use reth_provider::{
     providers::{BlockchainProvider, RocksDBProvider},
 };
 use reth_tasks::TaskExecutor;
-use reth_transaction_pool::{PoolConfig, PoolTransaction, TransactionPool};
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 

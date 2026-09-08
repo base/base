@@ -26,7 +26,6 @@ reth-network = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 reth-execution-types = { workspace = true }
-base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
@@ -36,5 +35,5 @@ tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+base-execution-txpool = { workspace = true, features = ["test-utils"]}
 reth-node-builder = { workspace = true, features = ["default", "test-utils"] }

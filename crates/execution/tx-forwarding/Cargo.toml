@@ -21,7 +21,6 @@ reth-tasks = { workspace = true }
 base-metrics = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-runner = { workspace = true }
-reth-transaction-pool = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 url = { workspace = true, features = ["default"] }
@@ -45,6 +44,7 @@ base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+
 [features]
 default = [ "metrics" ]
 metrics = [

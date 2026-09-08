@@ -7,11 +7,12 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction};
 use base_common_network::Base;
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool::{
+    AllTransactionsEvents, BasePooledTransaction, FullTransactionEvent, TransactionEvent,
+};
 use dashmap::DashMap;
 use futures::StreamExt;
 use reth_primitives_traits::Recovered;
-use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use tokio::sync::watch;
 use tracing::debug;
 

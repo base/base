@@ -10,14 +10,12 @@ use alloy_primitives::{
     map::{B256Map, HashMap},
 };
 use base_common_consensus::Eip8130Constants;
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
-use reth_transaction_pool::{
-    AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, TransactionOrdering,
-    ValidPoolTransaction,
-    error::{InvalidPoolTransactionError, PoolError, PoolErrorKind},
-    identifier::{SenderIdentifiers, TransactionId},
-    pool::{AddedTransactionState, QueuedReason},
+use base_execution_txpool::{
+    AddedTransactionOutcome, AddedTransactionState, BestTransactions, InvalidPoolTransactionError,
+    PoolError, PoolErrorKind, PoolResult, PriceBumpConfig, QueuedReason, SenderIdentifiers,
+    TransactionId, TransactionOrdering, ValidPoolTransaction,
 };
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::{BasePooledTx, BestTransactionPriority};
 
@@ -64,7 +62,7 @@ impl<T: BasePooledTx> NonceLane<T> {
 
 /// Outcome returned after inserting into the 2D nonce sidecar.
 #[derive(Debug)]
-pub(crate) struct InsertOutcome<T: BasePooledTx> {
+pub struct InsertOutcome<T: BasePooledTx> {
     pub outcome: AddedTransactionOutcome,
     pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
@@ -72,7 +70,7 @@ pub(crate) struct InsertOutcome<T: BasePooledTx> {
 
 /// Outcome returned after pruning mined transactions from the 2D nonce sidecar.
 #[derive(Debug)]
-pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
+pub struct PruneMinedOutcome<T: BasePooledTx> {
     pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
@@ -82,7 +80,7 @@ pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
 /// transactions have no sequencing relationship, so they are stored separately
 /// by replay id and compete independently in the best-transactions iterator.
 #[derive(Debug)]
-pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
+pub struct TwoDNoncePool<T: BasePooledTx> {
     lanes: HashMap<LaneId, NonceLane<T>>,
     nonce_free: B256Map<Arc<ValidPoolTransaction<T>>>,
     hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
@@ -92,7 +90,7 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Creates a new 2D nonce sidecar pool.
-    pub(crate) fn new(price_bump_config: PriceBumpConfig) -> Self {
+    pub fn new(price_bump_config: PriceBumpConfig) -> Self {
         Self {
             lanes: HashMap::default(),
             nonce_free: B256Map::default(),
@@ -103,12 +101,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns true if the sidecar already contains the hash.
-    pub(crate) fn contains(&self, hash: &TxHash) -> bool {
+    pub fn contains(&self, hash: &TxHash) -> bool {
         self.hashes.contains_key(hash)
     }
 
     /// Returns the number of pending and queued transactions.
-    pub(crate) fn pending_and_queued_txn_count(&self) -> (usize, usize) {
+    pub fn pending_and_queued_txn_count(&self) -> (usize, usize) {
         let mut pending = 0;
         let mut queued = 0;
         for lane in self.lanes.values() {
@@ -122,7 +120,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all pending transactions.
-    pub(crate) fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
             for transaction in lane.consecutive_pending_transactions() {
@@ -134,7 +132,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all queued transactions.
-    pub(crate) fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
             for transaction in lane.queued_transactions() {
@@ -145,7 +143,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all transactions in the sidecar.
-    pub(crate) fn all_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn all_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
             transactions.extend(lane.live_transactions().cloned());
@@ -155,7 +153,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all transaction hashes in the sidecar.
-    pub(crate) fn all_hashes(&self) -> Vec<TxHash> {
+    pub fn all_hashes(&self) -> Vec<TxHash> {
         let mut hashes = Vec::new();
         for lane in self.lanes.values() {
             hashes.extend(lane.live_transactions().map(|transaction| *transaction.hash()));
@@ -165,15 +163,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns the transaction for the given hash.
-    pub(crate) fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
+    pub fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
         self.hashes.get(hash).cloned()
     }
 
     /// Returns transactions for the given sender.
-    pub(crate) fn transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut transactions = Vec::new();
         for ((lane_sender, _), lane) in &self.lanes {
             if *lane_sender == sender {
@@ -187,7 +182,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns pending transactions for the given sender.
-    pub(crate) fn pending_transactions_by_sender(
+    pub fn pending_transactions_by_sender(
         &self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
@@ -205,7 +200,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns queued transactions for the given sender.
-    pub(crate) fn queued_transactions_by_sender(
+    pub fn queued_transactions_by_sender(
         &self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
@@ -218,7 +213,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all senders present in the sidecar.
-    pub(crate) fn unique_senders(&self) -> HashSet<Address> {
+    pub fn unique_senders(&self) -> HashSet<Address> {
         self.lanes
             .keys()
             .map(|(sender, _)| *sender)
@@ -227,10 +222,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns or creates the sender id for the given address.
-    pub(crate) fn sender_id_or_create(
-        &mut self,
-        address: Address,
-    ) -> reth_transaction_pool::identifier::SenderId {
+    pub fn sender_id_or_create(&mut self, address: Address) -> base_execution_txpool::SenderId {
         self.senders.sender_id_or_create(address)
     }
 
@@ -239,7 +231,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Nonce-free transactions replace only another transaction with the same
     /// replay id. Finite-channel transactions retain their lane-local sequence
     /// replacement semantics.
-    pub(crate) fn insert_validated(
+    pub fn insert_validated(
         &mut self,
         mut transaction: ValidPoolTransaction<T>,
         state_nonce: u64,
@@ -351,10 +343,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Removes the exact transactions by hash without advancing lane state.
-    pub(crate) fn remove_transactions(
-        &mut self,
-        hashes: &[TxHash],
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn remove_transactions(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut removed = Vec::new();
         for hash in hashes {
             if let Some(transaction) = self.remove_hash(*hash, false) {
@@ -365,7 +354,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Removes transactions and their descendants for each hash.
-    pub(crate) fn remove_transactions_and_descendants(
+    pub fn remove_transactions_and_descendants(
         &mut self,
         hashes: &[TxHash],
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
@@ -404,7 +393,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Prunes mined transactions and advances the matching lane heads.
-    pub(crate) fn prune_mined(&mut self, hashes: &[TxHash]) -> PruneMinedOutcome<T> {
+    pub fn prune_mined(&mut self, hashes: &[TxHash]) -> PruneMinedOutcome<T> {
         let mut removed = Vec::new();
         for hash in hashes {
             if self
@@ -442,10 +431,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// its structural validation rule. Finite channels are unaffected; their
     /// optional window is handled by normal transaction validation until the
     /// state-keyed expiry index is introduced.
-    pub(crate) fn remove_expired_nonce_free(
-        &mut self,
-        now: u64,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn remove_expired_nonce_free(&mut self, now: u64) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let expired: Vec<TxHash> = self
             .nonce_free
             .values()
@@ -458,7 +444,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Removes all transactions for the given sender.
-    pub(crate) fn remove_transactions_by_sender(
+    pub fn remove_transactions_by_sender(
         &mut self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
@@ -468,11 +454,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns a best-transactions iterator snapshot.
-    pub(crate) fn best_transactions<O>(
-        &self,
-        ordering: O,
-        base_fee: u64,
-    ) -> BestTwoDTransactions<T, O>
+    pub fn best_transactions<O>(&self, ordering: O, base_fee: u64) -> BestTwoDTransactions<T, O>
     where
         O: TransactionOrdering<Transaction = T>,
     {
@@ -520,7 +502,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 /// Each finite channel contributes its contiguous head and each nonce-free
 /// transaction contributes an independent one-item candidate.
 #[derive(Debug)]
-pub(crate) struct BestTwoDTransactions<T: BasePooledTx, O>
+pub struct BestTwoDTransactions<T: BasePooledTx, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
@@ -675,7 +657,7 @@ mod tests {
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
-    use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
+    use base_execution_txpool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};

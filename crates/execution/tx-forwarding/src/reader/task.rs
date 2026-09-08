@@ -2,11 +2,13 @@ use std::{fmt, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_execution_txpool::{NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions};
+use base_execution_txpool::{
+    NoExtensions, PoolTransaction, TransactionPool, ValidPoolTransaction, ValidatedTransaction,
+    ValidatedTransactionExtensions,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
-use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
@@ -193,9 +195,8 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
-    use base_execution_txpool::BasePooledTransaction;
-    use reth_transaction_pool::{
-        TransactionOrigin, identifier::TransactionId, noop::NoopTransactionPool,
+    use base_execution_txpool::{
+        BasePooledTransaction, NoopTransactionPool, TransactionId, TransactionOrigin,
     };
 
     use super::*;

@@ -2,9 +2,9 @@
 
 use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use base_common_consensus::BaseTxEnvelope;
-use reth_transaction_pool::{
-    CoinbaseTipOrdering, Pool, PoolTransaction, blobstore::InMemoryBlobStore,
-    noop::MockTransactionValidator, test_utils::BaseTestTransaction,
+use base_execution_txpool::{
+    CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool, PoolTransaction,
+    test_utils::BaseTestTransaction,
 };
 
 /// Pool accepting Base transactions for network tests.

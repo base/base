@@ -5,8 +5,8 @@ use std::time::Duration;
 use alloy_chains::{Chain, ChainKind, NamedChain};
 use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_36M;
 use alloy_primitives::Bytes;
+use base_execution_txpool::PoolConfig;
 use reth_network::protocol::IntoRlpxSubProtocol;
-use reth_transaction_pool::PoolConfig;
 
 /// 60M gas limit
 const ETHEREUM_BLOCK_GAS_LIMIT_60M: u64 = 60_000_000;

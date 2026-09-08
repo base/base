@@ -7,6 +7,7 @@ use alloy_consensus::Header;
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope};
+use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDirection};
 use reth_network::{
@@ -25,7 +26,6 @@ use reth_provider::{
     BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
     ProviderResult, RawBal, test_utils::MockEthProvider,
 };
-use reth_transaction_pool::test_utils::TransactionGenerator;
 use tokio::sync::oneshot;
 
 type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>, TestPool>;

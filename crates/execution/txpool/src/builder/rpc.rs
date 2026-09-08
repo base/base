@@ -4,6 +4,7 @@ use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
 use base_common_consensus::BaseTransactionSigned;
+use base_execution_txpool::{TransactionOrigin, TransactionPool};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -12,7 +13,6 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_transaction_pool::{TransactionOrigin, TransactionPool};
 use serde_json::{Map, json};
 use tracing::debug;
 
@@ -201,7 +201,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
-    use reth_transaction_pool::noop::NoopTransactionPool;
+    use base_execution_txpool::NoopTransactionPool;
 
     use super::*;
     use crate::{BasePooledTransaction, NoExtensions, ValidatedTransaction};
@@ -278,7 +278,7 @@ mod tests {
         }
 
         fn extract(
-            _tx: &reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
+            _tx: &base_execution_txpool::ValidPoolTransaction<BasePooledTransaction>,
         ) -> Self {
             Self::default()
         }

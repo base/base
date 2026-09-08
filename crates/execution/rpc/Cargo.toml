@@ -39,7 +39,6 @@ alloy-rpc-types-eth = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 base-execution-trie = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
-reth-transaction-pool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }

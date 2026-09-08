@@ -50,7 +50,6 @@ reth-rpc-engine-api = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
-reth-transaction-pool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }
@@ -70,7 +69,7 @@ alloy-rpc-types = { workspace = true, features = ["eth"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["default"] }
-base-execution-txpool = { workspace = true, optional = true }
+base-execution-txpool = { workspace = true, optional = false }
 revm-inspectors = { workspace = true, features = ["default"] }
 tracing-futures = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["witness"]}
@@ -90,15 +89,14 @@ revm = { workspace = true, features = ["optional_block_gas_limit", "optional_eip
 [dev-dependencies]
 reth-db-api = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-execution-txpool = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+base-execution-txpool = { workspace = true, features = ["test-utils"]}
 
 [features]
-test-utils = ["dep:base-execution-txpool", "base-execution-evm/test-utils"]
+test-utils = ["base-execution-evm/test-utils"]
 js-tracer = ["revm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer", "reth-rpc-eth-api/js-tracer"]

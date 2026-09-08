@@ -6,12 +6,12 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::U256;
+use base_execution_txpool::TransactionPool;
 use chrono::Local;
 use reth_chain_state::{CanonStateNotification, CanonStateSubscriptions};
 use reth_network_api::{NetworkInfo, Peers};
 use reth_primitives_traits::{Block, BlockBody};
 use reth_storage_api::{BlockReader, BlockReaderIdExt};
-use reth_transaction_pool::TransactionPool;
 use serde_json::Value;
 use tokio::{
     sync::{Mutex, RwLock, mpsc},
@@ -754,10 +754,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use base_execution_txpool::NoopTransactionPool;
     use futures_util::{SinkExt, StreamExt};
     use reth_network_api::noop::NoopNetwork;
     use reth_storage_api::noop::NoopProvider;
-    use reth_transaction_pool::noop::NoopTransactionPool;
     use serde_json::json;
     use tokio::{net::TcpListener, sync::Notify};
     use tokio_tungstenite_0_29_0::tungstenite::protocol::{Message, frame::Utf8Bytes};

@@ -17,8 +17,8 @@ workspace = true
 
 [dependencies]
 alloy-consensus = { workspace = true }
-reth-transaction-pool = { workspace = true }
+base-execution-txpool = { workspace = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+base-execution-txpool = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }

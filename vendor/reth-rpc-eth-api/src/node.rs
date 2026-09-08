@@ -3,6 +3,7 @@
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_txpool::{PoolTransaction, TransactionPool};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
 use reth_node_api::FullNodeComponents;
@@ -11,7 +12,6 @@ use reth_storage_api::{
     BalProvider, BlockReader, BlockReaderIdExt, PruneCheckpointReader, StageCheckpointReader,
     StateProviderFactory,
 };
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 /// Helper trait that provides the same interface as [`FullNodeComponents`] but without requiring
 /// implementation of trait bounds.

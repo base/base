@@ -18,6 +18,10 @@ use base_execution_evm::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
     EvmEnvFor, TxResult,
 };
+use base_execution_txpool::{
+    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, PoolTransaction,
+    TransactionPool,
+};
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
@@ -30,10 +34,6 @@ use reth_storage_api::{
     noop::NoopProvider,
 };
 use reth_storage_errors::provider::ProviderError;
-use reth_transaction_pool::{
-    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
-    error::InvalidPoolTransactionError,
-};
 use reth_trie_common::ComputedTrieData;
 use revm::database::State;
 use tokio::sync::Mutex;

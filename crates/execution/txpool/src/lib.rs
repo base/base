@@ -7,6 +7,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+extern crate self as base_execution_txpool;
+
+pub use imbl::OrdMap;
+
 mod guard;
 pub use guard::{
     Admission, AdmissionRecord, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT, GuardLimits,
@@ -26,6 +30,7 @@ mod validator;
 pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
 
 mod best;
+pub use best::MergeBestTransactions;
 
 mod validity;
 pub use validity::{
@@ -41,8 +46,8 @@ pub use transaction::{
     BasePooledTransaction, BasePooledTx, TimestampedTransaction, unix_time_millis,
 };
 
-mod ordering;
-pub use ordering::{
+mod base_ordering;
+pub use base_ordering::{
     BaseOrdering, BasePriority, BestTransactionPriority, TimestampOrdering, UnifiedTipOrdering,
     UnifiedTipPriority,
 };
@@ -53,8 +58,8 @@ pub use parking::{
     ParkableTransactionPool, ParkedBestTransactions,
 };
 
-mod pool;
-pub use pool::{AccountStateDiff, BaseTransactionPool};
+mod base_pool;
+pub use base_pool::{AccountStateDiff, BaseTransactionPool};
 
 mod state_diff_maintain;
 pub use state_diff_maintain::{
@@ -73,8 +78,54 @@ pub use wire::{
 };
 
 mod two_d_nonce_pool;
+pub use two_d_nonce_pool::{BestTwoDTransactions, InsertOutcome, PruneMinedOutcome, TwoDNoncePool};
+
+mod base_metrics;
+pub use base_metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
+
+mod estimated_da_size;
+pub use estimated_da_size::*;
+
+mod batcher;
+pub use batcher::*;
+
+mod blobstore;
+pub use blobstore::*;
+
+mod config;
+pub use config::*;
+
+mod core_pool;
+pub use core_pool::*;
+
+mod error;
+pub use error::*;
+
+mod identifier;
+pub use identifier::*;
+
+mod maintain;
+pub use maintain::*;
 
 mod metrics;
-pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
+pub use metrics::*;
 
-pub mod estimated_da_size;
+mod noop;
+pub use noop::*;
+
+mod ordering;
+pub use ordering::*;
+
+mod pool;
+pub use pool::*;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
+mod traits;
+pub use traits::*;
+
+mod validate;
+pub use pool::BestTransactions as PendingBestTransactions;
+pub use traits::BestTransactions;
+pub use validate::*;

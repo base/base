@@ -7,6 +7,10 @@ use alloy_eips::{BlockId, Typed2718, eip7594::BlobTransactionSidecarVariant};
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, hex};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_txpool::{
+    AddedTransactionOutcome, Eip4844PoolTransactionError, EthBlobTransactionSidecar,
+    EthPoolTransaction, PoolTransaction, PoolTx,
+};
 use reth_primitives_traits::{AlloyBlockHeader, WithEncoded};
 use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore,
@@ -14,10 +18,6 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, error::RpcPoolError};
 use reth_storage_api::BlockReaderIdExt;
-use reth_transaction_pool::{
-    AddedTransactionOutcome, EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction,
-    PoolTx, error::Eip4844PoolTransactionError,
-};
 
 use crate::EthApi;
 
@@ -38,7 +38,7 @@ where
 
     async fn send_pool_transaction(
         &self,
-        origin: reth_transaction_pool::TransactionOrigin,
+        origin: base_execution_txpool::TransactionOrigin,
         tx: WithEncoded<PoolTx<Self::Pool>>,
     ) -> Result<B256, BaseEthApiError> {
         let (tx, mut pool_transaction) = tx.split();
@@ -136,13 +136,13 @@ mod tests {
     use alloy_rpc_types_eth::request::TransactionRequest;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
+    use base_execution_txpool::{TransactionOrigin, TransactionPool};
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,
         test_utils::{ExtendedAccount, MockEthProvider},
     };
     use reth_rpc_eth_api::node::RpcNodeCoreAdapter;
-    use reth_transaction_pool::{TransactionOrigin, TransactionPool};
 
     use super::*;
 

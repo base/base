@@ -8,9 +8,9 @@ use alloy_rpc_types_txpool::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_txpool::{AllPoolTransactions, PoolTransaction, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TxPoolApiServer;
-use reth_transaction_pool::{AllPoolTransactions, PoolTransaction, TransactionPool};
 use tracing::trace;
 
 /// `txpool` API implementation.

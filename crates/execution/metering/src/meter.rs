@@ -770,13 +770,13 @@ mod tests {
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
     use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
     };
     use eyre::Context;
     use reth_provider::StateProviderFactory;
-    use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
 

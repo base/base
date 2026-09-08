@@ -21,8 +21,8 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
-    maintain_state_diff_invalidation,
+    BaseTransactionValidator, DiskFileBlobStore, EthPoolTransaction, GuardLimits,
+    TimestampedTransaction, TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
@@ -38,9 +38,6 @@ use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
 use reth_tracing::tracing::{debug, info};
-use reth_transaction_pool::{
-    EthPoolTransaction, TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
-};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
@@ -422,7 +419,7 @@ where
         let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
-        let transaction_pool = reth_transaction_pool::Pool::new(
+        let transaction_pool = base_execution_txpool::Pool::new(
             validator,
             ordering.clone(),
             blob_store,

@@ -14,7 +14,7 @@ use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool::{AllTransactionsEvents, BasePooledTransaction, TransactionPool};
 use base_node_core::args::RollupArgs;
 use base_node_runner::{
     BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks, test_utils::init_silenced_tracing,
@@ -27,7 +27,6 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
-use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::sync::oneshot;
 
 use crate::{

@@ -4,6 +4,7 @@ use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::test_utils::spawn_test_payload_service;
+use base_execution_txpool::NoopTransactionPool;
 use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
 use reth_network_api::noop::NoopNetwork;
 use reth_provider::test_utils::NoopProvider;
@@ -17,7 +18,6 @@ use reth_rpc_layer::JwtSecret;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use reth_tokio_util::EventSender;
-use reth_transaction_pool::noop::NoopTransactionPool;
 use tokio::sync::mpsc::unbounded_channel;
 
 /// Localhost with port 0 so a free port is used.

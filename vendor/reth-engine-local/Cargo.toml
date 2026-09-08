@@ -16,7 +16,7 @@ tokio = { workspace = true }
 futures-util = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
-reth-transaction-pool = { workspace = true }
+base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

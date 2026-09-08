@@ -19,6 +19,7 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_handler::{BlockEnvironment, Evm};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
+use base_execution_txpool::TransactionPool;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
@@ -37,7 +38,6 @@ use reth_storage_api::{
     TransactionVariant,
 };
 use reth_tasks::{Runtime, pool::BlockingTaskGuard};
-use reth_transaction_pool::TransactionPool;
 use reth_trie_common::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, root::storage_root_unsorted,
     updates::TrieUpdates,

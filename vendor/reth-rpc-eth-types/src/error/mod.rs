@@ -12,16 +12,16 @@ use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
 use base_evm_handler::{BlockExecutionError, BlockValidationError, CallError, StateOverrideError};
+use base_execution_txpool::{
+    Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
+    PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
+};
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
 use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
 use reth_storage_errors::provider::ProviderError;
-use reth_transaction_pool::error::{
-    Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
-    PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
-};
 use revm::{database::EvmDatabaseError, state::bal::BalError};
 use revm_inspectors::tracing::{DebugInspectorError, MuxError};
 use tokio::sync::oneshot::error::RecvError;

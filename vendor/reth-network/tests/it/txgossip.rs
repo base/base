@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use alloy_consensus::TxLegacy;
 use alloy_primitives::{Signature, U256};
+use base_execution_txpool::{
+    AddedTransactionOutcome, PoolTransaction, TransactionPool, test_utils::TransactionGenerator,
+};
 use futures::StreamExt;
 use reth_network::{
     NetworkEvent, NetworkEventListenerProvider, Peers,
@@ -13,9 +16,6 @@ use reth_network::{
 };
 use reth_network_api::{PeerKind, PeersInfo, events::PeerEvent};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolTransaction, TransactionPool, test_utils::TransactionGenerator,
-};
 use tokio::join;
 
 #[tokio::test(flavor = "multi_thread")]

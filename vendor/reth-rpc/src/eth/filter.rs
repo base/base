@@ -19,6 +19,7 @@ use alloy_rpc_types_eth::{
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::BaseLogResponse;
+use base_execution_txpool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
 use futures::{
     Future,
     future::TryFutureExt,
@@ -42,7 +43,6 @@ use reth_storage_api::{
 };
 use reth_storage_errors::provider::ProviderError;
 use reth_tasks::Runtime;
-use reth_transaction_pool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,

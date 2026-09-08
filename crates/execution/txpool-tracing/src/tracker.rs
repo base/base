@@ -6,6 +6,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
+use base_execution_txpool::{FullTransactionEvent, PoolTransaction};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -13,7 +14,6 @@ use chrono::Local;
 use lru::LruCache;
 use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
-use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 use serde_json::{Map, Value, json};
 
 use crate::{EventLog, NonceSlot, NonceSummary, Pool, TxEvent, metrics::Metrics};

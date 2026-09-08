@@ -12,6 +12,7 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use reth_eth_wire::{
     BlockAccessLists, BlockBodies, BlockHeaders, Cells, GetBlockAccessLists, GetBlockBodies,
@@ -35,7 +36,6 @@ use reth_storage_api::{
     RangeResponse, StateProviderFactory, StateRangeProviderFactory,
     errors::provider::ProviderResult,
 };
-use reth_transaction_pool::{BlobStore, blobstore::NoopBlobStore};
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -821,13 +821,11 @@ mod tests {
         eip7594::{BlobTransactionSidecarVariant, Cell},
     };
     use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
+    use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
     use reth_primitives_traits::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_storage_api::noop::NoopProvider;
-    use reth_transaction_pool::blobstore::{
-        BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar,
-    };
     use test_case::test_case;
     use tokio::sync::mpsc;
 

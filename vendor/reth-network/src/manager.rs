@@ -382,7 +382,7 @@ impl NetworkManager {
     /// use reth_network_peers::mainnet_nodes;
     /// use reth_storage_api::noop::NoopProvider;
     /// use reth_tasks::Runtime;
-    /// use reth_transaction_pool::TransactionPool;
+    /// use base_execution_txpool::TransactionPool;
     /// async fn launch<Pool: TransactionPool>(pool: Pool) {
     ///     // This block provider implementation is used for testing purposes.
     ///     let client = NoopProvider::default();

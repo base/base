@@ -2,11 +2,10 @@
 
 use alloy_primitives::U256;
 use base_execution_txpool::{
-    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, TransactionValidity,
+    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, TransactionPool, TransactionValidity,
     ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use jsonrpsee::core::RpcResult;
-use reth_transaction_pool::TransactionPool;
 
 use crate::{BuilderApiExtensionConfig, BuilderMetrics};
 

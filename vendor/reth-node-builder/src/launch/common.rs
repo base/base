@@ -37,6 +37,7 @@ use alloy_primitives::{B256, BlockNumber};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_txpool::TransactionPool;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
@@ -90,7 +91,6 @@ use reth_tracing::{
     throttle,
     tracing::{debug, error, info, warn},
 };
-use reth_transaction_pool::TransactionPool;
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,

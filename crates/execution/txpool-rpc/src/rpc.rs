@@ -6,7 +6,8 @@ use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{
-    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
+    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, PoolTransaction, TransactionOrigin,
+    TransactionPool, ValidityPredicate,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -20,7 +21,6 @@ use jsonrpsee::{
 };
 use reth_rpc_eth_types::error::RpcPoolError;
 use reth_storage_api::BlockReaderIdExt;
-use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -306,17 +306,16 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_txpool::{
+        NoopTransactionPool, PoolTransaction, TransactionOrigin,
+        test_utils::{MockTransaction, testing_pool},
+    };
     use base_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
     use httpmock::prelude::*;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin,
-        noop::NoopTransactionPool,
-        test_utils::{MockTransaction, testing_pool},
-    };
     use serde_json::{self, json};
 
     use super::*;

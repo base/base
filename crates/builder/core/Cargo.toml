@@ -48,7 +48,6 @@ alloy-signer-local = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-cache = { workspace = true }
-reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
@@ -188,7 +187,7 @@ test-utils = [
     "reth-provider/test-utils",
     "base-execution-evm/test-utils",
     "reth-tasks/test-utils",
-    "reth-transaction-pool/test-utils",
+    "base-execution-txpool/test-utils",
     "reth-trie/test-utils",
     "rlimit",
     "testcontainers",

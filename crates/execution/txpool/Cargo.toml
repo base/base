@@ -13,59 +13,127 @@ workspace = true
 
 [dependencies]
 revm = { workspace = true }
-serde = { workspace = true }
+imbl = { workspace = true }
 c-kzg = { workspace = true }
-tracing = { workspace = true }
+bitflags = { workspace = true }
+smallvec = { workspace = true }
 thiserror = { workspace = true }
-alloy-eips = { workspace = true }
-serde_json = { workspace = true }
+auto_impl = { workspace = true }
+rustc-hash = { workspace = true }
+reth-tasks = { workspace = true }
 derive_more = { workspace = true }
 async-trait = { workspace = true }
+pin-project = { workspace = true }
 base-metrics = { workspace = true }
+futures-util = { workspace = true }
+reth-fs-util = { workspace = true }
+reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
-alloy-consensus = { workspace = true }
 base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
+alloy-hardforks = { workspace = true }
 base-evm-context = { workspace = true }
+reth-chain-state = { workspace = true }
 base-common-genesis = { workspace = true }
-reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
+paste = { workspace = true, optional = true }
 base-precompile-storage = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-execution-chainspec = { workspace = true }
-metrics = { workspace = true, optional = true }
+metrics = { workspace = true, optional = false }
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["kzg"]}
+serde_json = { workspace = true, features = ["alloc"]}
 futures = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive", "rc"]}
+tracing = { workspace = true, features = ["attributes"]}
+schnellru = { workspace = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
+alloy-consensus = { workspace = true, features = ["kzg", "serde"]}
 reth-eth-wire-types = { workspace = true, features = ["default"] }
+proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-execution-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+rand = { workspace = true, optional = true, features = ["default"] }
+proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 [dev-dependencies]
+paste = { workspace = true }
 reth-tasks = { workspace = true }
 alloy-signer = { workspace = true }
+assert_matches = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-test-utils = { workspace = true }
 alloy-signer-local = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
+base-execution-txpool = {workspace = true, features = ["test-utils"]}
 base-execution-chainspec = { workspace = true, features = ["default"] }
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+codspeed-criterion-compat = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 tokio = { workspace = true, features = ["default", "time", "rt-multi-thread", "macros"] }
 
+[[bench]]
+name = "saturated_pool"
+harness = false
+required-features = ["test-utils"]
+
 [features]
-default = [ "metrics" ]
-metrics = [
-    "base-common-evm/metrics",
-    "base-metrics/metrics",
-    "base-observability-events/metrics",
-    "dep:metrics",
+default = ["metrics"]
+metrics = ["base-common-evm/metrics", "base-metrics/metrics", "base-observability-events/metrics"]
+serde = [
+    "reth-execution-types/serde",
+    "reth-eth-wire-types/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "bitflags/serde",
+    "imbl/serde",
+    "parking_lot/serde",
+    "rand?/serde",
+    "smallvec/serde",
+    "reth-primitives-traits/serde",
+    "reth-chain-state/serde",
+    "reth-storage-api/serde",
+    "revm/serde",
+]
+test-utils = [
+    "rand",
+    "paste",
+    "serde",
+    "reth-chain-state/test-utils",
+    "reth-provider/test-utils",
+    "reth-primitives-traits/test-utils",
+    "alloy-primitives/rand",
+    "base-execution-evm/test-utils",
+    "reth-tasks/test-utils",
+]
+arbitrary = [
+    "proptest",
+    "proptest-arbitrary-interop",
+    "imbl/arbitrary",
+    "reth-eth-wire-types/arbitrary",
+    "alloy-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "bitflags/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "smallvec/arbitrary",
+    "revm/arbitrary",
 ]

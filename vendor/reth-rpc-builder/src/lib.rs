@@ -36,6 +36,7 @@ use base_common_rpc_types::{
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_txpool::{NoopTransactionPool, TransactionPool};
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
 use http::{HeaderMap, header::AUTHORIZATION};
@@ -71,7 +72,6 @@ pub use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
 use reth_storage_api::{BlockReader, ChangeSetReader, FullRpcProvider, StateProviderFactory};
 use reth_tasks::{Runtime, pool::BlockingTaskGuard};
 use reth_tokio_util::EventSender;
-use reth_transaction_pool::{TransactionPool, noop::NoopTransactionPool};
 use serde::{Deserialize, Serialize};
 pub use tower::layer::util::{Identity, Stack};
 use tower_http::cors::CorsLayer;

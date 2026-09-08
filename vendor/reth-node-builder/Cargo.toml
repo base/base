@@ -52,7 +52,7 @@ reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
-reth-transaction-pool = { workspace = true }
+base-execution-txpool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-consensus = { workspace = true }
@@ -105,7 +105,7 @@ test-utils = [
     "reth-stages/test-utils",
     "reth-db-api/test-utils",
     "reth-provider/test-utils",
-    "reth-transaction-pool/test-utils",
+    "base-execution-txpool/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-tasks/test-utils",
 ]

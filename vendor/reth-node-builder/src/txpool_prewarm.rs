@@ -4,12 +4,12 @@ use std::fmt::Debug;
 
 use alloy_primitives::B256;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_txpool::{
+    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
+};
 use reth_engine_tree::tree::{
     TxPoolPrewarmSource as PrewarmSource, TxPoolPrewarmTransaction as Transaction,
     TxPoolPrewarmTransactions as Transactions,
-};
-use reth_transaction_pool::{
-    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
 };
 
 /// [`TransactionPool`]-backed [`PrewarmSource`].

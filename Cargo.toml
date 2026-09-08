@@ -416,7 +416,6 @@ reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features 
 reth-execution-types = { path = "vendor/reth-execution-types", default-features = false }
 reth-execution-cache = { path = "vendor/reth-execution-cache", default-features = false }
 reth-storage-overlay = { path = "vendor/reth-storage-overlay", default-features = false }
-reth-transaction-pool = { path = "vendor/reth-transaction-pool", default-features = false }
 reth-rpc-server-types = { path = "vendor/reth-rpc-server-types", default-features = false }
 reth-zstd-compressors = { path = "vendor/reth-zstd-compressors", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }

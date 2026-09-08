@@ -5,7 +5,7 @@ use base_execution_rpc::{
     miner::{BaseMinerExtApi, MinerApiExtServer},
     witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
-use base_execution_txpool::BasePooledTx;
+use base_execution_txpool::{BasePooledTx, TransactionPool};
 use reth_node_api::{FullNodeComponents, NodeAddOns};
 use reth_node_builder::rpc::{
     Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
@@ -15,7 +15,6 @@ use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::FullEthApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
-use reth_transaction_pool::TransactionPool;
 
 /// Add-ons w.r.t. Base.
 ///

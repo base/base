@@ -1,176 +1,156 @@
-//! Metrics for EIP-8130 admission, invalidation, builder prechecks, and
-//! transaction validation.
-//!
-//! All labels are low-cardinality static categories; addresses and transaction
-//! hashes are never used as label values.
+//! Transaction pool metrics.
 
-base_metrics::define_metrics! {
-    txpool.guard,
-    struct = GuardMetrics,
-    #[describe("EIP-8130 transactions rejected at admission by signature/payment limits")]
-    #[label(name = "reason", default = ["sender", "payer", "payment", "payer_balance"])]
-    admission_rejected: counter,
-    #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
-    #[label(
-        name = "cause",
-        default = [
-            "state_diff",
-            "balance_update",
-            "expiry",
-            "block_expiry",
-            "reorg",
-            "feed_gap",
-            "reconcile"
-        ]
-    )]
-    invalidated: counter,
-    #[describe("Occupied expiry buckets fired on canonical state updates")]
-    expiry_buckets_fired: counter,
-    #[describe("Transactions currently tracked by the admission/invalidation guard")]
-    tracked: gauge,
-    #[describe("EIP-8130 drop events from the builder's stateless manifest precheck")]
-    #[label(name = "cause", default = ["config_slot", "payer_balance", "expiry"])]
-    builder_precheck_dropped: counter,
+use reth_metrics::{
+    Metrics,
+    metrics::{Counter, Gauge, Histogram},
+};
+
+/// Transaction pool metrics
+#[derive(Metrics)]
+#[metrics(scope = "transaction_pool")]
+pub struct TxPoolMetrics {
+    /// Number of transactions inserted in the pool
+    pub inserted_transactions: Counter,
+    /// Number of invalid transactions
+    pub invalid_transactions: Counter,
+    /// Number of removed transactions from the pool
+    pub removed_transactions: Counter,
+
+    /// Number of transactions in the pending sub-pool
+    pub pending_pool_transactions: Gauge,
+    /// Total amount of memory used by the transactions in the pending sub-pool in bytes
+    pub pending_pool_size_bytes: Gauge,
+
+    /// Number of transactions in the basefee sub-pool
+    pub basefee_pool_transactions: Gauge,
+    /// Total amount of memory used by the transactions in the basefee sub-pool in bytes
+    pub basefee_pool_size_bytes: Gauge,
+
+    /// Number of transactions in the queued sub-pool
+    pub queued_pool_transactions: Gauge,
+    /// Total amount of memory used by the transactions in the queued sub-pool in bytes
+    pub queued_pool_size_bytes: Gauge,
+
+    /// Number of transactions in the blob sub-pool
+    pub blob_pool_transactions: Gauge,
+    /// Total amount of memory used by the transactions in the blob sub-pool in bytes
+    pub blob_pool_size_bytes: Gauge,
+
+    /// Number of all transactions of all sub-pools: pending + basefee + queued + blob
+    pub total_transactions: Gauge,
+    /// Number of all legacy transactions in the pool
+    pub total_legacy_transactions: Gauge,
+    /// Number of all EIP-2930 transactions in the pool
+    pub total_eip2930_transactions: Gauge,
+    /// Number of all EIP-1559 transactions in the pool
+    pub total_eip1559_transactions: Gauge,
+    /// Number of all EIP-4844 transactions in the pool
+    pub total_eip4844_transactions: Gauge,
+    /// Number of all EIP-7702 transactions in the pool
+    pub total_eip7702_transactions: Gauge,
+    /// Number of all other transactions in the pool
+    pub total_other_transactions: Gauge,
+
+    /// How often the pool was updated after the canonical state changed
+    pub performed_state_updates: Counter,
+
+    /// Counter for the number of pending transactions evicted
+    pub pending_transactions_evicted: Counter,
+    /// Counter for the number of basefee transactions evicted
+    pub basefee_transactions_evicted: Counter,
+    /// Counter for the number of blob transactions evicted
+    pub blob_transactions_evicted: Counter,
+    /// Counter for the number of queued transactions evicted
+    pub queued_transactions_evicted: Counter,
 }
 
-impl GuardMetrics {
-    /// Static label for the `admission_rejected` reason.
-    pub const fn rejection_reason(rejection: crate::LimitRejection) -> &'static str {
-        match rejection {
-            crate::LimitRejection::SenderLimit => "sender",
-            crate::LimitRejection::PayerLimit => "payer",
-            crate::LimitRejection::PaymentLimit => "payment",
-            crate::LimitRejection::PayerBalance => "payer_balance",
-        }
+/// Transaction pool blobstore metrics
+#[derive(Metrics)]
+#[metrics(scope = "transaction_pool")]
+pub struct BlobStoreMetrics {
+    /// Number of failed inserts into the blobstore
+    pub blobstore_failed_inserts: Counter,
+    /// Number of failed deletes into the blobstore
+    pub blobstore_failed_deletes: Counter,
+    /// The number of bytes the blobs in the blobstore take up
+    pub blobstore_byte_size: Gauge,
+    /// How many blobs are currently in the blobstore
+    pub blobstore_entries: Gauge,
+}
+
+/// Transaction pool maintenance metrics
+#[derive(Metrics)]
+#[metrics(scope = "transaction_pool")]
+pub struct MaintainPoolMetrics {
+    /// Gauge indicating the number of addresses with pending updates in the pool,
+    /// requiring their account information to be fetched.
+    pub dirty_accounts: Gauge,
+    /// Counter for the number of times the pool state diverged from the canonical blockchain
+    /// state.
+    pub drift_count: Counter,
+    /// Counter for the number of transactions reinserted into the pool following a blockchain
+    /// reorganization (reorg).
+    pub reinserted_transactions: Counter,
+    /// Counter for the number of finalized blob transactions that have been removed from tracking.
+    pub deleted_tracked_finalized_blobs: Counter,
+}
+
+impl MaintainPoolMetrics {
+    /// Sets the number of dirty accounts in the pool.
+    #[inline]
+    pub fn set_dirty_accounts_len(&self, count: usize) {
+        self.dirty_accounts.set(count as f64);
     }
 
-    /// Records invalidations attributed to a committed-block state diff.
-    pub fn record_state_diff_invalidations(count: usize) {
-        if count > 0 {
-            Self::invalidated("state_diff").increment(count as u64);
-        }
+    /// Increments the count of reinserted transactions.
+    #[inline]
+    pub fn inc_reinserted_transactions(&self, count: usize) {
+        self.reinserted_transactions.increment(count as u64);
     }
 
-    /// Records invalidations attributed to reth's balance-update path.
-    pub fn record_balance_update_invalidations(count: usize) {
-        if count > 0 {
-            Self::invalidated("balance_update").increment(count as u64);
-        }
+    /// Increments the count of deleted tracked finalized blobs.
+    #[inline]
+    pub fn inc_deleted_tracked_blobs(&self, count: usize) {
+        self.deleted_tracked_finalized_blobs.increment(count as u64);
     }
 
-    /// Records invalidations attributed to expiry-bucket firing.
-    pub fn record_expiry_invalidations(count: usize) {
-        if count > 0 {
-            Self::invalidated("expiry").increment(count as u64);
-        }
-    }
-
-    /// Records validity-predicate transactions evicted once the chain advanced
-    /// past their last valid block.
-    pub fn record_block_expiry_invalidations(count: usize) {
-        if count > 0 {
-            Self::invalidated("block_expiry").increment(count as u64);
-        }
-    }
-
-    /// Records bulk invalidations that flush every guarded transaction, labeled
-    /// by cause so a common reorg is distinguishable from a rare feed gap.
-    pub fn record_bulk_invalidations(count: usize, cause: crate::InvalidationCause) {
-        if count > 0 {
-            Self::invalidated(cause.as_label()).increment(count as u64);
-        }
-    }
-
-    /// Records stale admission records reclaimed by canonical reconciliation.
-    pub fn record_reconcile_releases(count: usize) {
-        if count > 0 {
-            Self::invalidated("reconcile").increment(count as u64);
-        }
-    }
-
-    /// Records a builder precheck drop by its positively observed stale cause.
-    pub fn record_builder_precheck_drop(stale: &crate::ManifestStale) {
-        Self::builder_precheck_dropped(stale.cause()).increment(1);
+    /// Increments the drift count by one.
+    #[inline]
+    pub fn inc_drift(&self) {
+        self.drift_count.increment(1);
     }
 }
 
-base_metrics::define_metrics! {
-    txpool.validity,
-    struct = ValidityPoolMetrics,
-    #[describe("Validity transactions admitted to the pool, labeled by whether the admission replaced an existing same-sender/nonce transaction or added a new pool entry")]
-    #[label(name = "outcome", default = ["added", "replaced"])]
-    admitted: counter,
+/// All Transactions metrics
+#[derive(Metrics)]
+#[metrics(scope = "transaction_pool")]
+pub struct AllTransactionsMetrics {
+    /// Number of all transactions by hash in the pool
+    pub all_transactions_by_hash: Gauge,
+    /// Number of all transactions by id in the pool
+    pub all_transactions_by_id: Gauge,
+    /// Number of all transactions by all senders in the pool
+    pub all_transactions_by_all_senders: Gauge,
+    /// Number of blob transactions nonce gaps.
+    pub blob_transactions_nonce_gaps: Counter,
+    /// The current blob base fee
+    pub blob_base_fee: Gauge,
+    /// The current base fee
+    pub base_fee: Gauge,
 }
 
-impl ValidityPoolMetrics {
-    /// Records a validity-transaction admission, distinguishing a replacement
-    /// (an existing pooled transaction for the same sender/nonce was evicted by
-    /// a fee bump or cancellation) from a net-new pool entry. Together the two
-    /// series decompose lane churn: their sum is total validity admissions and
-    /// `replaced` over that sum is the replacement rate.
-    pub fn record_admission(replaced: bool) {
-        Self::admitted(if replaced { "replaced" } else { "added" }).increment(1);
-    }
+/// Transaction pool validation metrics
+#[derive(Metrics)]
+#[metrics(scope = "transaction_pool")]
+pub struct TxPoolValidationMetrics {
+    /// How long to successfully validate a blob
+    pub blob_validation_duration: Histogram,
 }
 
-base_metrics::define_metrics! {
-    txpool.validator,
-    struct = ValidatorMetrics,
-    #[describe("End-to-end mempool validation wall time by transaction kind")]
-    #[label(name = "kind", default = ["eip8130", "standard"])]
-    validate_seconds: histogram,
-    #[describe("EIP-8130 authorization wall time by sender authenticator type")]
-    #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
-    auth_seconds: histogram,
-    #[describe("EIP-8130 lock-classification account-state resolutions by read source")]
-    #[label(name = "source", default = ["cache", "prefetch", "sload"])]
-    classification_state_reads: counter,
-}
-
-#[cfg(test)]
-mod tests {
-    use metrics_util::{
-        MetricKind,
-        debugging::{DebugValue, DebuggingRecorder},
-    };
-
-    use super::*;
-
-    type Snapshot = Vec<(
-        metrics_util::CompositeKey,
-        Option<metrics::Unit>,
-        Option<metrics::SharedString>,
-        DebugValue,
-    )>;
-
-    /// Reads the `txpool.validity.admitted` counter value for a given outcome
-    /// label out of a materialized snapshot, or `None` when absent.
-    fn admitted_count(snapshot: &Snapshot, outcome: &str) -> Option<u64> {
-        snapshot.iter().find_map(|(ck, _, _, value)| {
-            let key = ck.key();
-            let matches = ck.kind() == MetricKind::Counter
-                && key.name() == "txpool.validity.admitted"
-                && key.labels().any(|label| label.key() == "outcome" && label.value() == outcome);
-            match (matches, value) {
-                (true, DebugValue::Counter(value)) => Some(*value),
-                _ => None,
-            }
-        })
-    }
-
-    #[test]
-    fn record_admission_splits_added_and_replaced() {
-        let recorder = DebuggingRecorder::new();
-        let snapshotter = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            ValidityPoolMetrics::record_admission(false);
-            ValidityPoolMetrics::record_admission(false);
-            ValidityPoolMetrics::record_admission(true);
-        });
-
-        // `snapshot()` drains, so materialize once and query the vec.
-        let snapshot = snapshotter.snapshot().into_vec();
-        assert_eq!(admitted_count(&snapshot, "added"), Some(2));
-        assert_eq!(admitted_count(&snapshot, "replaced"), Some(1));
-    }
+/// Transaction pool validator task metrics
+#[derive(Metrics)]
+#[metrics(scope = "transaction_pool")]
+pub struct TxPoolValidatorMetrics {
+    /// Number of in-flight validation job sends waiting for channel capacity
+    pub inflight_validation_jobs: Gauge,
 }

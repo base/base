@@ -17,11 +17,11 @@ use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
 };
+use base_execution_txpool::TransactionPool;
 use eyre::OptionExt;
 use futures_util::{Stream, StreamExt, stream::Fuse};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_storage_api::BlockReader;
-use reth_transaction_pool::TransactionPool;
 use tokio::time::Interval;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;

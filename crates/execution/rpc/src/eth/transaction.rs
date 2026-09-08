@@ -8,6 +8,9 @@ use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_txpool::{
+    AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -20,9 +23,6 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{BlockReaderIdExt, ProviderTx, TransactionsProvider};
-use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
-};
 use tracing::{debug, instrument, warn};
 
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};

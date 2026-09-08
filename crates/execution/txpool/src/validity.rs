@@ -1,7 +1,7 @@
 //! State predicates carried by pooled transactions.
 
 use alloy_primitives::{Address, U256};
-use reth_transaction_pool::ValidPoolTransaction;
+use base_execution_txpool::ValidPoolTransaction;
 use revm::Database;
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};

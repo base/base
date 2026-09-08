@@ -19,6 +19,7 @@ use alloy_eips::BlockNumHash;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::NoopPayloadBuilderService;
+use base_execution_txpool::Pool;
 use futures_util::FutureExt;
 use reth_db::{
     DatabaseEnv,
@@ -38,7 +39,6 @@ use reth_provider::{
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_tasks::Runtime;
-use reth_transaction_pool::Pool;
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
@@ -149,12 +149,10 @@ pub async fn test_exex_context_with_chain_spec(
     let consensus =
         Arc::new(base_execution_consensus::BaseBeaconConsensus::new(provider_factory.chain_spec()));
     let blob_dir = tempfile::tempdir()?;
-    let blob_store = reth_transaction_pool::blobstore::DiskFileBlobStore::open(
-        blob_dir.path(),
-        Default::default(),
-    )?;
+    let blob_store =
+        base_execution_txpool::DiskFileBlobStore::open(blob_dir.path(), Default::default())?;
     let runtime = Runtime::test();
-    let validator = reth_transaction_pool::TransactionValidationTaskExecutor::eth_builder(
+    let validator = base_execution_txpool::TransactionValidationTaskExecutor::eth_builder(
         provider.clone(),
         evm_config.clone(),
     )

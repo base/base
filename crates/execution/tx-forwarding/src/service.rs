@@ -3,11 +3,12 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::Encodable2718;
-use base_execution_txpool::{NoExtensions, ValidatedTransactionExtensions};
+use base_execution_txpool::{
+    NoExtensions, PoolTransaction, TransactionPool, ValidatedTransactionExtensions,
+};
 use futures::{StreamExt, future::join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::HttpClientBuilder;
 use reth_tasks::TaskExecutor;
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};

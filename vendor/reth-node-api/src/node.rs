@@ -13,10 +13,8 @@ use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 
 /// Base's transaction pool with its production disk blob store.
-pub type BaseNodePool<Provider> = base_execution_txpool::BaseTransactionPool<
-    Provider,
-    reth_transaction_pool::blobstore::DiskFileBlobStore,
->;
+pub type BaseNodePool<Provider> =
+    base_execution_txpool::BaseTransactionPool<Provider, base_execution_txpool::DiskFileBlobStore>;
 
 /// Encapsulates all types and components of the node.
 pub trait FullNodeComponents: Clone + Debug + Send + Sync + Unpin + 'static {

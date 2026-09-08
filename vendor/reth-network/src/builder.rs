@@ -1,9 +1,9 @@
 //! Builder support for configuring the entire setup.
 
+use base_execution_txpool::{BlobStore, TransactionPool};
 use reth_metrics::common::mpsc::memory_bounded_channel;
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_storage_api::BalProvider;
-use reth_transaction_pool::{BlobStore, TransactionPool};
 use tokio::sync::mpsc;
 
 use crate::{

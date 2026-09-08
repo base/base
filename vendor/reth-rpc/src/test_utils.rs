@@ -2,11 +2,10 @@
 
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
-use base_execution_txpool::BasePooledTransaction;
-use reth_rpc_eth_api::{RpcNodeCore, node::RpcNodeCoreAdapter};
-use reth_transaction_pool::{
-    CoinbaseTipOrdering, Pool, blobstore::InMemoryBlobStore, noop::MockTransactionValidator,
+use base_execution_txpool::{
+    BasePooledTransaction, CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
 };
+use reth_rpc_eth_api::{RpcNodeCore, node::RpcNodeCoreAdapter};
 
 use crate::EthApiBuilder;
 

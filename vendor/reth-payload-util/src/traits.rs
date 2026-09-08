@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, map::AddressSet};
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use base_execution_txpool::{PoolTransaction, ValidPoolTransaction};
 
 /// Iterator that returns transactions for the block building process in the order they should be
 /// included in the block.
@@ -100,9 +100,8 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, map::AddressSet};
-    use reth_transaction_pool::{
-        PoolTransaction,
-        pool::{BestTransactionsWithPrioritizedSenders, PendingPool},
+    use base_execution_txpool::{
+        BestTransactionsWithPrioritizedSenders, PendingPool, PoolTransaction,
         test_utils::{MockOrdering, MockTransaction, MockTransactionFactory},
     };
 

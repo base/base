@@ -1,5 +1,6 @@
 use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_primitives::{B256, Signature};
+use base_execution_txpool::{TransactionPool, test_utils::MockTransaction};
 use reth_eth_wire::{GetPooledTransactions, PooledTransactions};
 use reth_network::{
     NetworkEventListenerProvider, PeerRequest,
@@ -9,7 +10,6 @@ use reth_network_api::{NetworkInfo, Peers};
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
 use reth_primitives_traits::SignedTransaction;
 use reth_provider::test_utils::MockEthProvider;
-use reth_transaction_pool::{TransactionPool, test_utils::MockTransaction};
 use tokio::sync::oneshot;
 // peer0: `GetPooledTransactions` requester
 // peer1: `GetPooledTransactions` responder

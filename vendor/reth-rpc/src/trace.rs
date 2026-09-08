@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_handler::{base_block_reward_pre_merge, block_reward, ommer_reward};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::{BlockBody, BlockHeader};
@@ -34,7 +35,6 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockNumReader, BlockReader};
 use reth_tasks::pool::BlockingTaskGuard;
-use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use revm::DatabaseCommit;
 use revm_inspectors::{
     opcode::OpcodeGasInspector,

@@ -18,7 +18,7 @@
 //!        * Responds to incoming transaction related requests
 //!        * Requests missing transactions from the `Network`
 //!        * Broadcasts new transactions received from the
-//!          [`TransactionPool`](reth_transaction_pool::TransactionPool) over the `Network`
+//!          [`TransactionPool`](base_execution_txpool::TransactionPool) over the `Network`
 //!
 //!    - `ETH request Task`: is a spawned
 //!      [`EthRequestHandler`](crate::eth_requests::EthRequestHandler) future that:
@@ -82,7 +82,7 @@
 //! use reth_network_peers::mainnet_nodes;
 //! use reth_storage_api::noop::NoopProvider;
 //! use reth_tasks::Runtime;
-//! use reth_transaction_pool::TransactionPool;
+//! use base_execution_txpool::TransactionPool;
 //! async fn launch<Pool: TransactionPool>(pool: Pool) {
 //!     // This block provider implementation is used for testing purposes.
 //!     let client = NoopProvider::default();

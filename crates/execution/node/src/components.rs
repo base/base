@@ -5,11 +5,10 @@ use std::{marker::PhantomData, sync::Arc};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
-use base_execution_txpool::BaseTransactionPool;
+use base_execution_txpool::{BaseTransactionPool, DiskFileBlobStore};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_node_builder::{BuilderContext, ComponentBuilder, NodeAdapter};
 use reth_provider::providers::BlockchainProvider;
-use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
 use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder};
 

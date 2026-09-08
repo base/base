@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use base_execution_txpool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Default extension payload for [`ValidatedTransaction`], contributing no

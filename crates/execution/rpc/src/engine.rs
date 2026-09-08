@@ -12,6 +12,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadV4, ExecutionData,
 };
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_execution_txpool::TransactionPool;
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
@@ -19,7 +20,6 @@ use reth_node_api::EngineApiValidator;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
-use reth_transaction_pool::TransactionPool;
 use tracing::{debug, instrument, trace};
 
 /// The list of all supported Engine capabilities available over the engine endpoint.

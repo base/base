@@ -29,6 +29,7 @@ use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, EngineApiMessageVersion, MessageValidationKind,
     PayloadOrAttributes, validate_payload_timestamp,
 };
+use base_execution_txpool::TransactionPool;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
 use reth_network_api::{CellCustody, NetworkInfo};
@@ -36,7 +37,6 @@ use reth_primitives_traits::{Block, BlockBody};
 use reth_rpc_api::{EngineApiServer, IntoEngineApiRpcModule};
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
 use reth_tasks::Runtime;
-use reth_transaction_pool::TransactionPool;
 use tokio::sync::oneshot;
 use tracing::{debug, trace, warn};
 
@@ -1581,6 +1581,7 @@ mod tests {
     use base_common_consensus::BaseBlock as Block;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_payload_builder::test_utils::spawn_test_payload_service;
+    use base_execution_txpool::NoopTransactionPool;
     use reth_engine_primitives::{
         BeaconEngineMessage, OnForkChoiceUpdated, test_utils::TestEngineValidator,
     };
@@ -1589,7 +1590,6 @@ mod tests {
     };
     use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
     use reth_tasks::Runtime;
-    use reth_transaction_pool::noop::NoopTransactionPool;
     use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
     use super::*;

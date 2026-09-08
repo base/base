@@ -127,9 +127,9 @@ mod tests {
     use alloy_consensus::{Header, TxEip1559};
     use alloy_primitives::{Address, Signature};
     use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
+    use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::Account;
-    use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
 

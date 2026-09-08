@@ -27,6 +27,10 @@ use base_execution_eip8130::{
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
     TxAuthError,
 };
+use base_execution_txpool::{
+    EthPoolTransaction, EthTransactionValidator, InvalidPoolTransactionError, PoolTransactionError,
+    TransactionOrigin, TransactionValidationOutcome, TransactionValidator, ValidTransaction,
+};
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
 };
@@ -37,12 +41,6 @@ use reth_primitives_traits::{
 };
 use reth_storage_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
-};
-use reth_transaction_pool::{
-    EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
-    TransactionValidator,
-    error::{InvalidPoolTransactionError, PoolTransactionError},
-    validate::ValidTransaction,
 };
 use revm::state::{AccountInfo, Bytecode};
 
@@ -2177,12 +2175,12 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
+    use base_execution_txpool::{
+        EthTransactionValidatorBuilder, InMemoryBlobStore, TransactionOrigin,
+        TransactionValidationOutcome,
+    };
     use base_test_utils::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_transaction_pool::{
-        TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
-        validate::EthTransactionValidatorBuilder,
-    };
 
     use super::*;
     use crate::BasePooledTransaction;

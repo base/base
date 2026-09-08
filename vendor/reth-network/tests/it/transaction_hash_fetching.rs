@@ -1,11 +1,11 @@
 use alloy_primitives::U256;
+use base_execution_txpool::{PoolTransaction, TransactionPool, test_utils::TransactionGenerator};
 use reth_network::{
     test_utils::Testnet,
     transactions::{TransactionPropagationMode::Max, TransactionsManagerConfig},
 };
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use reth_tracing::init_test_tracing;
-use reth_transaction_pool::{PoolTransaction, TransactionPool, test_utils::TransactionGenerator};
 use tokio::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]

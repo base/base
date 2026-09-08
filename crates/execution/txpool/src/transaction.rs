@@ -13,11 +13,11 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
-use c_kzg::KzgSettings;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
-use reth_transaction_pool::{
+use base_execution_txpool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
 };
+use c_kzg::KzgSettings;
+use reth_primitives_traits::{InMemorySize, SignedTransaction};
 
 use crate::estimated_da_size::DataAvailabilitySized;
 
@@ -498,12 +498,12 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use base_execution_txpool::{
+        EthTransactionValidatorBuilder, InMemoryBlobStore, PoolTransaction, TransactionOrigin,
+        TransactionValidationOutcome,
+    };
     use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
-    };
 
     use crate::{
         BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
