@@ -25,10 +25,6 @@ all-features = true
 name = "enr"
 path = "src/lib.rs"
 
-[[test]]
-name = "ecdsa"
-path = "tests/ecdsa/main.rs"
-
 [dependencies]
 log = { workspace = true }
 hex = { workspace = true, features = ["default"] }

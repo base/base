@@ -58,11 +58,6 @@ rstest = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 rand_0_10_2 = { workspace = true, features = ["default", "std"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
-[[example]]
-name = "custom_evm"
-path = "examples/custom_evm/main.rs"
-doc-scrape-examples = true
-
 [features]
 default = ["std", "map-foldhash", "parse", "asm-keccak", "gmp", "secp256k1", "blst", "portable", "bn254-mcl", "p256-aws-lc-rs"]
 std = ["alloy-consensus/std", "alloy-eip7928/std", "alloy-eips/std", "alloy-primitives/std", "bitvec/std", "ark-bls12-381/std", "ark-bn254_0_6_0/std", "ark-ec/std", "ark-ff/std", "ark-serialize/std", "ark-std/std", "aurora-engine-modexp/std", "k256_0_14_0/std", "once_cell/std", "p256_0_14_0/std", "phf?/std", "thiserror/std", "c-kzg?/std", "secp256k1_0_31_1?/std", "serde?/std"]

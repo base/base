@@ -30,12 +30,6 @@ rustdoc-args = [
 name = "revm_precompile"
 path = "src/lib.rs"
 
-[[bench]]
-name = "bench"
-path = "bench/main.rs"
-harness = false
-required-features = ["secp256k1"]
-
 [dependencies]
 ark-ec = { workspace = true }
 cfg-if = { workspace = true }
