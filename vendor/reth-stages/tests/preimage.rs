@@ -1300,10 +1300,7 @@ where
     let consensus = NoopConsensus::arc();
     let stages_config = StageConfig::default();
     let evm_config = BaseEvmConfig::new(std::sync::Arc::new(
-        (std::sync::Arc::new(provider_factory.chain_spec().runtime_chain_spec()))
-            .as_ref()
-            .clone()
-            .into(),
+        (std::sync::Arc::new(provider_factory.chain_spec().clone())).as_ref().clone().into(),
     ));
 
     let (tip_tx, tip_rx) = watch::channel(B256::ZERO);

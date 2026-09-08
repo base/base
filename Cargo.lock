@@ -3834,6 +3834,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-primitives",
+ "alloy-trie",
  "auto_impl",
  "base-common-chains",
  "base-common-consensus",

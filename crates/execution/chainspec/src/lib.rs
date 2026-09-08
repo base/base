@@ -21,3 +21,6 @@ pub use spec::{BaseChainSpec, BaseChainSpecError, GenesisInfo};
 
 mod provider;
 pub use provider::ChainSpecProvider;
+
+mod display;
+pub use display::UpgradeDisplay;

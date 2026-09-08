@@ -1,22 +1,19 @@
-use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
 use alloy_eips::{eip1559::INITIAL_BASE_FEE, eip7840::BlobParams, eip7892::BlobScheduleBlobParams};
 use alloy_genesis::Genesis;
-use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgradeExt, ChainConfig, ChainUpgrades, ExecutionFork, Upgrades};
 use base_common_consensus::Predeploys;
-use base_common_genesis::{
-    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
-};
+use base_common_genesis::{BaseUpgrade, FeeConfig, UpgradeActivation, UpgradeActivationSink};
 use base_protocol::OutputRoot;
 use reth_chainspec::{
-    BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks,
-    EthereumHardforks, ForkFilter, ForkId, Head, MAINNET_PRUNE_DELETE_LIMIT,
+    BaseFeeParams, ChainSpec, DepositContract, EthereumHardforks, ForkFilter, ForkId, Head,
+    MAINNET_PRUNE_DELETE_LIMIT,
 };
-use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
+use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
 use reth_network_peers::{NodeRecord, parse_nodes};
 use reth_primitives_traits::SealedHeader;
 
@@ -43,51 +40,39 @@ pub enum BaseChainSpecError {
 }
 
 /// Genesis info extracted from a Base genesis config.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct GenesisInfo {
     /// Base chain info extracted from genesis extra fields.
     pub base_chain_info: base_common_rpc_types::ChainInfo,
     /// Base fee params derived from the genesis config.
-    pub base_fee_params: BaseFeeParamsKind,
+    pub fee_config: FeeConfig,
 }
 
 impl GenesisInfo {
-    /// Extracts Base genesis info from an [`alloy_genesis::Genesis`].
+    /// Extracts fee and upgrade boundary fields from a genesis document.
     pub fn extract_from(genesis: &Genesis) -> Self {
-        let mut info = Self {
-            base_chain_info: base_common_rpc_types::ChainInfo::extract_from(
-                &genesis.config.extra_fields,
-            )
-            .unwrap_or_default(),
-            ..Default::default()
+        let base_chain_info =
+            base_common_rpc_types::ChainInfo::extract_from(&genesis.config.extra_fields)
+                .unwrap_or_default();
+        let mut fee_config = FeeConfig {
+            eip1559_elasticity: 2,
+            eip1559_denominator: 8,
+            eip1559_denominator_canyon: 8,
         };
-        if let Some(base_fee_info) = &info.base_chain_info.base_fee_info
-            && let (Some(elasticity), Some(denominator)) =
-                (base_fee_info.eip1559_elasticity, base_fee_info.eip1559_denominator)
-        {
-            let base_fee_params = base_fee_info.eip1559_denominator_canyon.map_or_else(
-                || BaseFeeParams::new(denominator as u128, elasticity as u128).into(),
-                |canyon_denominator| {
-                    BaseFeeParamsKind::Variable(
-                        vec![
-                            (
-                                EthereumHardfork::London.boxed(),
-                                BaseFeeParams::new(denominator as u128, elasticity as u128),
-                            ),
-                            (
-                                BaseUpgrade::Canyon.boxed(),
-                                BaseFeeParams::new(canyon_denominator as u128, elasticity as u128),
-                            ),
-                        ]
-                        .into(),
-                    )
-                },
-            );
-
-            info.base_fee_params = base_fee_params;
+        if let Some(info) = &base_chain_info.base_fee_info {
+            if let (Some(elasticity), Some(denominator)) =
+                (info.eip1559_elasticity, info.eip1559_denominator)
+            {
+                fee_config = FeeConfig {
+                    eip1559_elasticity: elasticity,
+                    eip1559_denominator: denominator,
+                    eip1559_denominator_canyon: info
+                        .eip1559_denominator_canyon
+                        .unwrap_or(denominator),
+                };
+            }
         }
-
-        info
+        Self { base_chain_info, fee_config }
     }
 }
 
@@ -114,7 +99,7 @@ pub struct BaseChainSpec {
     pub deposit_contract: Option<DepositContract>,
 
     /// The parameters that configure how a block's base fee is computed
-    pub base_fee_params: BaseFeeParamsKind,
+    pub fee_config: FeeConfig,
 
     /// The delete limit for pruner, per run.
     pub prune_delete_limit: usize,
@@ -135,7 +120,11 @@ impl Default for BaseChainSpec {
             paris_block_and_final_difficulty: Default::default(),
             hardforks: Default::default(),
             deposit_contract: Default::default(),
-            base_fee_params: BaseFeeParamsKind::Constant(BaseFeeParams::ethereum()),
+            fee_config: FeeConfig {
+                eip1559_elasticity: 2,
+                eip1559_denominator: 8,
+                eip1559_denominator_canyon: 8,
+            },
             prune_delete_limit: MAINNET_PRUNE_DELETE_LIMIT,
             blob_params: Default::default(),
         }
@@ -325,7 +314,7 @@ impl BaseChainSpec {
             genesis,
             hardforks: upgrades,
             paris_block_and_final_difficulty: Some((0, U256::ZERO)),
-            base_fee_params: base_genesis_info.base_fee_params,
+            fee_config: base_genesis_info.fee_config,
             activation_admin_address,
             ..Default::default()
         })
@@ -346,6 +335,15 @@ impl BaseChainSpec {
             value.chain.id(),
         )?;
         Ok(Self {
+            fee_config: FeeConfig {
+                eip1559_elasticity: value.base_fee_params_at_timestamp(0).elasticity_multiplier
+                    as u64,
+                eip1559_denominator: value.base_fee_params_at_timestamp(0).max_change_denominator
+                    as u64,
+                eip1559_denominator_canyon: value
+                    .base_fee_params_at_timestamp(u64::MAX)
+                    .max_change_denominator as u64,
+            },
             chain: value.chain,
             genesis: value.genesis,
             genesis_header: value.genesis_header,
@@ -356,7 +354,7 @@ impl BaseChainSpec {
                     .map(|fork| (fork, value.hardforks.fork(fork))),
             ),
             deposit_contract: value.deposit_contract,
-            base_fee_params: value.base_fee_params,
+
             prune_delete_limit: value.prune_delete_limit,
             blob_params: value.blob_params,
             activation_admin_address,
@@ -389,8 +387,35 @@ impl BaseChainSpec {
     /// logic: if Isthmus is active at the genesis timestamp, the withdrawals root is set to the
     /// storage root of the `L2ToL1MessagePasser` predeploy.
     pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainUpgrades) -> Header {
-        let mut header =
-            reth_chainspec::make_genesis_header(genesis, &Self::reth_hardforks(upgrades));
+        let timestamp = genesis.timestamp;
+        let cancun = upgrades.fork(BaseUpgrade::Ecotone).active_at_timestamp(timestamp);
+        let mut header = Header {
+            number: genesis.number.unwrap_or_default(),
+            parent_hash: genesis.parent_hash.unwrap_or_default(),
+            gas_limit: genesis.gas_limit,
+            difficulty: genesis.difficulty,
+            nonce: genesis.nonce.into(),
+            extra_data: genesis.extra_data.clone(),
+            state_root: alloy_trie::root::state_root_ref_unhashed(&genesis.alloc),
+            timestamp,
+            mix_hash: genesis.mix_hash,
+            beneficiary: genesis.coinbase,
+            base_fee_per_gas: upgrades.fork(BaseUpgrade::Bedrock).active_at_block(0).then(|| {
+                genesis.base_fee_per_gas.map(|fee| fee as u64).unwrap_or(INITIAL_BASE_FEE)
+            }),
+            withdrawals_root: upgrades
+                .fork(BaseUpgrade::Canyon)
+                .active_at_timestamp(timestamp)
+                .then_some(alloy_consensus::constants::EMPTY_WITHDRAWALS),
+            parent_beacon_block_root: cancun.then_some(B256::ZERO),
+            blob_gas_used: cancun.then_some(genesis.blob_gas_used.unwrap_or(0)),
+            excess_blob_gas: cancun.then_some(genesis.excess_blob_gas.unwrap_or(0)),
+            requests_hash: upgrades
+                .fork(BaseUpgrade::Isthmus)
+                .active_at_timestamp(timestamp)
+                .then_some(alloy_eips::eip7685::EMPTY_REQUESTS_HASH),
+            ..Default::default()
+        };
 
         if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
             && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
@@ -441,103 +466,58 @@ impl BaseChainSpec {
     }
 
     /// Returns the runtime-aware activation condition for a hardfork.
-    pub fn fork<H: Into<ExecutionFork>>(&self, fork: H) -> ForkCondition {
-        {
-            let fork = fork.into();
-            self.runtime_fork_condition(fork).unwrap_or_else(|| self.hardforks.fork(fork))
-        }
+    pub fn fork(&self, fork: impl Into<ExecutionFork>) -> ForkCondition {
+        self.hardforks.activation(self.chain.id(), fork)
     }
 
-    /// Returns a runtime upgrade override for an execution fork condition.
-    pub fn runtime_fork_condition(&self, fork: impl Into<ExecutionFork>) -> Option<ForkCondition> {
-        let upgrade_id = fork.into().base_upgrade()?;
-        RuntimeUpgradeRegistry::activation(self.chain().id(), upgrade_id).map(|activation| {
-            match activation {
-                UpgradeActivation::Never => ForkCondition::Never,
-                UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
-            }
-        })
+    /// Takes a consistent snapshot of configured and runtime upgrade conditions.
+    pub fn schedule(&self) -> ChainUpgrades {
+        self.hardforks.runtime(self.chain.id())
     }
 
-    /// Returns hardforks with runtime overrides materialized into the schedule.
-    pub fn runtime_hardforks(&self) -> ChainUpgrades {
-        let mut hardforks = self.hardforks.clone();
-        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(self.chain().id()) {
-            for (hardfork_id, activation) in overrides.activations {
-                let condition = match activation {
-                    UpgradeActivation::Never => ForkCondition::Never,
-                    UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
-                };
-                Self::set_hardfork_activation_condition_for(&mut hardforks, hardfork_id, condition);
-            }
-        }
-
-        hardforks
-    }
-
-    /// Returns the inner chain spec with runtime hardfork overrides materialized.
-    pub fn runtime_chain_spec(&self) -> ChainSpec {
-        let mut inner = ChainSpec {
-            chain: self.chain.clone(),
-            genesis: self.genesis.clone(),
-            genesis_header: self.genesis_header.clone(),
-            paris_block_and_final_difficulty: self.paris_block_and_final_difficulty.clone(),
-            hardforks: Self::reth_hardforks(&self.hardforks),
-            deposit_contract: self.deposit_contract.clone(),
-            base_fee_params: self.base_fee_params.clone(),
-            prune_delete_limit: self.prune_delete_limit.clone(),
-            blob_params: self.blob_params.clone(),
-        };
-        inner.hardforks = Self::reth_hardforks(&self.runtime_hardforks());
-        inner
-    }
-
-    /// Get an iterator of all hardforks with runtime-aware activation conditions.
-    ///
-    /// Includes upgrades scheduled purely at runtime (via the registry) that were absent from the
-    /// startup schedule, so enumeration matches [`Self::runtime_hardforks`] and [`Self::fork_id`].
+    /// Iterates over all active or scheduled execution rules.
     pub fn forks_iter(&self) -> impl Iterator<Item = (ExecutionFork, ForkCondition)> {
-        let schedule = self.runtime_hardforks();
-        schedule.forks_iter().collect::<Vec<_>>().into_iter()
-    }
-
-    /// Materializes the legacy Reth boundary while its callers are migrated.
-    pub fn reth_hardforks(schedule: &ChainUpgrades) -> ChainHardforks {
-        ChainHardforks::new(
-            schedule
-                .forks_iter()
-                .map(|(fork, condition)| {
-                    let fork: Box<dyn Hardfork> = match fork {
-                        ExecutionFork::Base(fork) => Box::new(fork),
-                        ExecutionFork::Ethereum(fork) => Box::new(fork),
-                    };
-                    (fork, condition)
-                })
-                .collect(),
-        )
+        self.schedule().forks_iter().collect::<Vec<_>>().into_iter()
     }
 
     /// Returns the runtime-aware fork ID for the given head.
     pub fn fork_id(&self, head: &Head) -> ForkId {
-        self.runtime_chain_spec().fork_id(head)
+        self.fork_filter(*head).current()
     }
 
-    /// Returns the runtime-aware fork ID for the latest fork.
+    /// Returns the fork ID after every scheduled upgrade.
     pub fn latest_fork_id(&self) -> ForkId {
-        self.runtime_chain_spec().latest_fork_id()
+        self.fork_id(&Head { number: u64::MAX, timestamp: u64::MAX, ..Default::default() })
     }
 
-    /// Creates a runtime-aware fork filter for the block described by `head`.
+    /// Builds the peer fork filter from one runtime schedule snapshot.
     pub fn fork_filter(&self, head: Head) -> ForkFilter {
-        self.runtime_chain_spec().fork_filter(head)
+        let schedule = self.schedule();
+        let forks = schedule.forks_iter().filter_map(|(_, condition)| match condition {
+            ForkCondition::Block(block) | ForkCondition::TTD { fork_block: Some(block), .. } => {
+                Some(reth_ethereum_forks::ForkFilterKey::Block(block))
+            }
+            ForkCondition::Timestamp(timestamp) => {
+                Some(reth_ethereum_forks::ForkFilterKey::Time(timestamp))
+            }
+            _ => None,
+        });
+        ForkFilter::new(head, self.genesis_hash(), self.genesis_timestamp(), forks)
     }
 
-    /// Returns the runtime-aware fork ID for the given hardfork.
-    pub fn hardfork_fork_id<HF: Into<ExecutionFork> + Clone>(&self, fork: HF) -> Option<ForkId> {
-        match fork.into() {
-            ExecutionFork::Base(fork) => self.runtime_chain_spec().hardfork_fork_id(fork),
-            ExecutionFork::Ethereum(fork) => self.runtime_chain_spec().hardfork_fork_id(fork),
-        }
+    /// Returns the fork ID at the activation of an execution rule.
+    pub fn hardfork_fork_id(&self, fork: impl Into<ExecutionFork>) -> Option<ForkId> {
+        let head = match self.fork(fork) {
+            ForkCondition::Never => return None,
+            ForkCondition::Block(number) => Head { number, ..Default::default() },
+            ForkCondition::Timestamp(timestamp) => {
+                Head { number: u64::MAX, timestamp, ..Default::default() }
+            }
+            ForkCondition::TTD { fork_block, .. } => {
+                Head { number: fork_block.unwrap_or_default(), ..Default::default() }
+            }
+        };
+        Some(self.fork_id(&head))
     }
 
     /// Recomputes the sealed genesis header from the current genesis and hardfork schedule.
@@ -675,26 +655,6 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
             B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &upgrades)),
             hash => SealedHeader::new(Self::make_genesis_header(&genesis, &upgrades), hash),
         };
-        let fee_config = cfg.fee_config();
-        let base_fee_params = BaseFeeParamsKind::Variable(
-            vec![
-                (
-                    EthereumHardfork::London.boxed(),
-                    BaseFeeParams::new(
-                        fee_config.eip1559_denominator as u128,
-                        fee_config.eip1559_elasticity as u128,
-                    ),
-                ),
-                (
-                    BaseUpgrade::Canyon.boxed(),
-                    BaseFeeParams::new(
-                        fee_config.eip1559_denominator_canyon as u128,
-                        fee_config.eip1559_elasticity as u128,
-                    ),
-                ),
-            ]
-            .into(),
-        );
 
         Ok(Self {
             chain: cfg.chain_id.into(),
@@ -702,7 +662,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
             genesis,
             paris_block_and_final_difficulty: Some((0, U256::ZERO)),
             hardforks: upgrades,
-            base_fee_params,
+            fee_config: cfg.fee_config(),
             prune_delete_limit: cfg.prune_delete_limit,
             activation_admin_address,
             ..Default::default()
@@ -713,21 +673,32 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
 impl BaseChainSpec {
     /// Get the [`BaseFeeParams`] for the chain at the given timestamp.
     pub fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
-        self.runtime_chain_spec().base_fee_params_at_timestamp(timestamp)
+        if self.fork(BaseUpgrade::Canyon).active_at_timestamp(timestamp) {
+            self.fee_config.post_canyon_params()
+        } else {
+            self.fee_config.pre_canyon_params()
+        }
     }
 
     /// Get the [`BlobParams`] for the given timestamp
     pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
-        self.runtime_chain_spec().blob_params_at_timestamp(timestamp)
+        let schedule = self.schedule();
+        if let Some(params) = self.blob_params.active_scheduled_params_at_timestamp(timestamp) {
+            Some(*params)
+        } else if schedule.fork(BaseUpgrade::Azul).active_at_timestamp(timestamp) {
+            Some(self.blob_params.osaka)
+        } else if schedule.fork(BaseUpgrade::Isthmus).active_at_timestamp(timestamp) {
+            Some(self.blob_params.prague)
+        } else if schedule.fork(BaseUpgrade::Ecotone).active_at_timestamp(timestamp) {
+            Some(self.blob_params.cancun)
+        } else {
+            None
+        }
     }
 
     /// Returns a string representation of the hardforks.
     pub fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
-        let hardforks = Self::reth_hardforks(&self.runtime_hardforks());
-        let base_forks = hardforks.forks_iter().filter(|(fork, _)| {
-            !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
-        });
-        Box::new(DisplayHardforks::new(base_forks))
+        Box::new(crate::UpgradeDisplay(self.schedule()))
     }
 
     /// The bootnodes for the chain, if any.
@@ -747,7 +718,7 @@ impl BaseChainSpec {
         } else if Upgrades::is_holocene_active_at_timestamp(self, parent.timestamp()) {
             decode_holocene_base_fee(self, parent, target_timestamp).ok()
         } else {
-            self.runtime_chain_spec().next_block_base_fee(parent, target_timestamp)
+            parent.next_block_base_fee(self.base_fee_params_at_timestamp(target_timestamp))
         }
     }
 }
@@ -798,12 +769,16 @@ mod tests {
     use base_common_chains::{ChainConfig, Upgrades};
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
-    use reth_chainspec::{
-        BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthereumHardforks, test_fork_ids,
-    };
+    use reth_chainspec::{ChainSpec, EthereumHardforks};
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
     use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, GenesisInfo};
+
+    fn test_fork_ids(spec: &BaseChainSpec, cases: &[(Head, ForkId)]) {
+        for (head, expected) in cases {
+            assert_eq!(spec.fork_id(head), *expected);
+        }
+    }
 
     #[test]
     fn test_storage_root_consistency() {
@@ -855,7 +830,7 @@ mod tests {
         let mut base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         base_mainnet.genesis_header.set_hash(base_mainnet_spec.genesis_hash());
         test_fork_ids(
-            &base_mainnet_spec.runtime_chain_spec(),
+            &base_mainnet_spec,
             &[
                 (
                     Head { number: 0, ..Default::default() },
@@ -924,7 +899,7 @@ mod tests {
     fn base_sepolia_forkids() {
         let base_sepolia_spec = BaseChainSpec::sepolia();
         test_fork_ids(
-            &base_sepolia_spec.runtime_chain_spec(),
+            &base_sepolia_spec,
             &[
                 (
                     Head { number: 0, ..Default::default() },
@@ -1042,7 +1017,7 @@ mod tests {
 
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
-        // Once scheduled at runtime it must appear, matching `fork()`/`runtime_hardforks()`.
+        // Once scheduled at runtime it must appear, matching `fork()`/`schedule()`.
         assert_eq!(cobalt_condition(&spec), Some(ForkCondition::Timestamp(84)));
         assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
 
@@ -1103,29 +1078,25 @@ mod tests {
         let spec = BaseChainSpec::try_from(&config).unwrap();
         let timestamp = 42;
         let parent = spec.genesis_header();
-        let static_base_fee = spec.runtime_chain_spec().base_fee_params_at_timestamp(timestamp);
-        let static_blob_params = spec.runtime_chain_spec().blob_params_at_timestamp(timestamp);
-        let static_next_base_fee = spec.runtime_chain_spec().next_block_base_fee(parent, timestamp);
+        let static_base_fee = spec.base_fee_params_at_timestamp(timestamp);
+        let static_blob_params = spec.blob_params_at_timestamp(timestamp);
+        let static_next_base_fee = spec.next_block_base_fee(parent, timestamp);
 
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Canyon, timestamp);
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Ecotone, timestamp);
 
-        let runtime_chain_spec = spec.runtime_chain_spec();
+        assert_eq!(spec.schedule().fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(timestamp));
 
         assert_eq!(
             spec.base_fee_params_at_timestamp(timestamp),
-            runtime_chain_spec.base_fee_params_at_timestamp(timestamp)
+            config.fee_config().post_canyon_params()
         );
         assert_ne!(spec.base_fee_params_at_timestamp(timestamp), static_base_fee);
         assert_eq!(
             spec.blob_params_at_timestamp(timestamp),
-            runtime_chain_spec.blob_params_at_timestamp(timestamp)
+            Some(alloy_eips::eip7840::BlobParams::cancun())
         );
         assert_ne!(spec.blob_params_at_timestamp(timestamp), static_blob_params);
-        assert_eq!(
-            spec.next_block_base_fee(parent, timestamp),
-            runtime_chain_spec.next_block_base_fee(parent, timestamp)
-        );
         assert_ne!(spec.next_block_base_fee(parent, timestamp), static_next_base_fee);
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -1450,8 +1421,12 @@ mod tests {
         let chain_spec: BaseChainSpec = genesis.into();
 
         assert_eq!(
-            chain_spec.base_fee_params,
-            BaseFeeParamsKind::Constant(BaseFeeParams::new(70, 60))
+            chain_spec.fee_config,
+            base_common_genesis::FeeConfig {
+                eip1559_elasticity: 60,
+                eip1559_denominator: 70,
+                eip1559_denominator_canyon: 70
+            }
         );
 
         assert!(!chain_spec.is_fork_active_at_block(BaseUpgrade::Bedrock, 0));
@@ -1587,14 +1562,12 @@ mod tests {
         let chain_spec: BaseChainSpec = genesis.into();
 
         assert_eq!(
-            chain_spec.base_fee_params,
-            BaseFeeParamsKind::Variable(
-                vec![
-                    (EthereumHardfork::London.boxed(), BaseFeeParams::new(70, 60)),
-                    (BaseUpgrade::Canyon.boxed(), BaseFeeParams::new(80, 60)),
-                ]
-                .into()
-            )
+            chain_spec.fee_config,
+            base_common_genesis::FeeConfig {
+                eip1559_elasticity: 60,
+                eip1559_denominator: 70,
+                eip1559_denominator_canyon: 80
+            }
         );
 
         assert!(!chain_spec.is_fork_active_at_block(BaseUpgrade::Bedrock, 0));
@@ -1675,11 +1648,12 @@ mod tests {
             }
         );
         assert_eq!(
-            chainspec.base_fee_params,
-            BaseFeeParamsKind::Constant(BaseFeeParams {
-                max_change_denominator: 50,
-                elasticity_multiplier: 6,
-            })
+            chainspec.fee_config,
+            base_common_genesis::FeeConfig {
+                eip1559_elasticity: 6,
+                eip1559_denominator: 50,
+                eip1559_denominator_canyon: 50
+            }
         );
 
         assert!(chainspec.is_fork_active_at_block(BaseUpgrade::Bedrock, 0));

@@ -8,7 +8,7 @@ use EthereumHardfork::{
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
 
 use crate::{BaseUpgradeExt, ExecutionFork, Upgrades};
 
@@ -107,6 +107,41 @@ impl ChainUpgrades {
                     .chain(core::iter::once((ExecutionFork::Base(fork), condition)))
             }))
             .filter(|(_, condition)| *condition != ForkCondition::Never)
+    }
+
+    /// Resolves one execution rule using the current runtime activation registry.
+    pub fn activation(&self, chain_id: u64, fork: impl Into<ExecutionFork>) -> ForkCondition {
+        let fork = fork.into();
+        if let Some(upgrade) = fork.base_upgrade().filter(|upgrade| upgrade.is_execution()) {
+            if let Some(activation) = RuntimeUpgradeRegistry::activation(chain_id, upgrade) {
+                return match activation {
+                    UpgradeActivation::Never => ForkCondition::Never,
+                    UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
+                };
+            }
+        }
+        self.fork(fork)
+    }
+
+    /// Takes one consistent snapshot of the configured schedule and runtime overrides.
+    pub fn runtime(&self, chain_id: u64) -> Self {
+        let mut schedule = self.clone();
+        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(chain_id) {
+            for (upgrade, activation) in overrides.activations {
+                if upgrade.is_execution() {
+                    schedule.insert(
+                        upgrade,
+                        match activation {
+                            UpgradeActivation::Never => ForkCondition::Never,
+                            UpgradeActivation::Timestamp(timestamp) => {
+                                ForkCondition::Timestamp(timestamp)
+                            }
+                        },
+                    );
+                }
+            }
+        }
+        schedule
     }
 
     /// Creates a new [`ChainUpgrades`] with Base mainnet configuration.
