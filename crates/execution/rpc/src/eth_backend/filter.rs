@@ -21,7 +21,6 @@ use base_common_rpc_types::BaseLogResponse;
 use base_execution_txpool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
 use futures::{
     Future,
-    future::TryFutureExt,
     stream::{FuturesOrdered, StreamExt},
 };
 use itertools::Itertools;
@@ -45,21 +44,8 @@ use tokio::{
 use tracing::{debug, error, trace};
 
 use crate::{
-    BaseEthApi, EngineEthFilter, EthApiTypes, EthFilterApiServer, QueryLimits, RpcNodeCore,
-    RpcNodeCoreExt,
+    BaseEthApi, EthApiTypes, EthFilterApiServer, QueryLimits, RpcNodeCore, RpcNodeCoreExt,
 };
-
-impl<ApiNode: RpcNodeCore> EngineEthFilter<BaseLogResponse> for EthFilter<BaseEthApi<ApiNode>> {
-    /// Returns logs matching given filter object, no query limits
-    fn logs(
-        &self,
-        filter: Filter,
-        limits: QueryLimits,
-    ) -> impl Future<Output = RpcResult<Vec<BaseLogResponse>>> + Send {
-        trace!(target: "rpc::eth", "Serving eth_getLogs");
-        self.logs_for_filter(filter, limits).map_err(|e| e.into())
-    }
-}
 
 /// Threshold for deciding between cached and range mode processing
 const CACHED_MODE_BLOCK_THRESHOLD: u64 = 250;

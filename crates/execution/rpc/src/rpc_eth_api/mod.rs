@@ -22,7 +22,7 @@ pub use ext::L2EthApiExtClient;
 pub use ext::L2EthApiExtServer;
 #[cfg(feature = "client")]
 pub use filter::EthFilterApiClient;
-pub use filter::{EngineEthFilter, EthFilterApiServer, QueryLimits};
+pub use filter::{EthFilterApiServer, QueryLimits};
 #[cfg(feature = "client")]
 pub use helpers::EthConfigApiClient;
 pub use helpers::{BasePendingEnv, EthConfigApiServer};

@@ -17,14 +17,12 @@
 mod admin;
 mod anvil;
 mod debug;
-mod engine;
 mod hardhat;
 mod mev;
 mod miner;
 mod net;
 mod otterscan;
 mod reth;
-mod reth_engine;
 mod rpc;
 mod trace;
 mod txpool;
@@ -42,14 +40,12 @@ pub mod servers {
         admin::AdminApiServer,
         anvil::AnvilApiServer,
         debug::DebugApiServer,
-        engine::{EngineApiServer, EngineEthApiServer, IntoEngineApiRpcModule},
         hardhat::HardhatApiServer,
         mev::{MevFullApiServer, MevSimApiServer},
         miner::MinerApiServer,
         net::NetApiServer,
         otterscan::OtterscanServer,
         reth::RethApiServer,
-        reth_engine::{RethEngineApiServer, RethNewPayloadInput, RethPayloadStatus},
         rpc::RpcApiServer,
         trace::TraceApiServer,
         txpool::TxPoolApiServer,
@@ -70,14 +66,12 @@ pub mod clients {
         admin::AdminApiClient,
         anvil::AnvilApiClient,
         debug::DebugApiClient,
-        engine::{EngineApiClient, EngineEthApiClient},
         hardhat::HardhatApiClient,
         mev::{MevFullApiClient, MevSimApiClient},
         miner::MinerApiClient,
         net::NetApiClient,
         otterscan::OtterscanClient,
         reth::RethApiClient,
-        reth_engine::RethEngineApiClient,
         rpc::RpcApiClient,
         trace::TraceApiClient,
         txpool::TxPoolApiClient,

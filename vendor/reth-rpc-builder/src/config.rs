@@ -1,18 +1,15 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::net::SocketAddr;
 
 use base_execution_rpc::ValidationApiConfig;
 use jsonrpsee::server::ServerConfigBuilder;
-use reth_node_core::{args::RpcServerArgs, utils::get_or_create_jwt_secret_from_path};
+use reth_node_core::args::RpcServerArgs;
 use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig, GasPriceOracleConfig};
-use reth_rpc_layer::{JwtError, JwtSecret};
+use reth_rpc_layer::JwtSecret;
 use reth_rpc_server_types::RpcModuleSelection;
 use tower::layer::util::Identity;
-use tracing::{debug, warn};
+use tracing::warn;
 
-use crate::{
-    IpcServerBuilder, RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig,
-    auth::AuthServerConfig, error::RpcError,
-};
+use crate::{IpcServerBuilder, RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
 
 /// A trait that provides a configured RPC server.
 ///
@@ -60,24 +57,6 @@ pub trait RethRpcServerConfig {
 
     /// Returns whether built-in RPC request metrics are enabled.
     fn rpc_metrics_enabled(&self) -> bool;
-
-    /// Creates the [`AuthServerConfig`] from cli args.
-    fn auth_server_config(&self, jwt_secret: JwtSecret) -> Result<AuthServerConfig, RpcError>;
-
-    /// The execution layer and consensus layer clients SHOULD accept a configuration parameter:
-    /// jwt-secret, which designates a file containing the hex-encoded 256 bit secret key to be used
-    /// for verifying/generating JWT tokens.
-    ///
-    /// If such a parameter is given, but the file cannot be read, or does not contain a hex-encoded
-    /// key of 256 bits, the client SHOULD treat this as an error.
-    ///
-    /// If such a parameter is not given, the client SHOULD generate such a token, valid for the
-    /// duration of the execution, and SHOULD store the hex-encoded secret as a jwt.hex file on
-    /// the filesystem. This file can then be used to provision the counterpart client.
-    ///
-    /// The `default_jwt_path` provided as an argument will be used as the default location for the
-    /// jwt secret in case the `auth_jwtsecret` argument is not provided.
-    fn auth_jwt_secret(&self, default_jwt_path: PathBuf) -> Result<JwtSecret, JwtError>;
 
     /// Returns the configured jwt secret key for the regular rpc servers, if any.
     ///
@@ -236,28 +215,6 @@ impl RethRpcServerConfig for RpcServerArgs {
 
     fn rpc_metrics_enabled(&self) -> bool {
         !self.rpc_disable_metrics
-    }
-
-    fn auth_server_config(&self, jwt_secret: JwtSecret) -> Result<AuthServerConfig, RpcError> {
-        let address = SocketAddr::new(self.auth_addr, self.auth_port);
-
-        let mut builder = AuthServerConfig::builder(jwt_secret).socket_addr(address);
-        if self.auth_ipc {
-            builder = builder
-                .ipc_endpoint(self.auth_ipc_path.clone())
-                .with_ipc_config(self.ipc_server_builder());
-        }
-        Ok(builder.build())
-    }
-
-    fn auth_jwt_secret(&self, default_jwt_path: PathBuf) -> Result<JwtSecret, JwtError> {
-        match self.auth_jwtsecret.as_ref() {
-            Some(fpath) => {
-                debug!(target: "reth::cli", user_path=?fpath, "Reading JWT auth secret file");
-                JwtSecret::from_file(fpath)
-            }
-            None => get_or_create_jwt_secret_from_path(&default_jwt_path),
-        }
     }
 
     fn rpc_secret_key(&self) -> Option<JwtSecret> {

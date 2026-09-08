@@ -34,10 +34,9 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_rpc::{
-    AdminApi, BaseEthApi, DebugApi, EngineEthApi, EthApiBuilder, EthApiServer, EthApiTypes,
-    EthBundle, EthCallBundleApiServer, EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi,
-    OtterscanApi, RPCApi, RethApi, RethEngineApi, RpcNodeCore, RpcNodeCoreAdapter, TraceApi,
-    TxPoolApi, Web3Api,
+    AdminApi, BaseEthApi, DebugApi, EthApiBuilder, EthApiServer, EthApiTypes, EthBundle,
+    EthCallBundleApiServer, EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi,
+    RPCApi, RethApi, RpcNodeCore, RpcNodeCoreAdapter, TraceApi, TxPoolApi, Web3Api,
 };
 use base_execution_txpool::{NoopTransactionPool, TransactionPool};
 pub use cors::CorsDomainError;
@@ -53,7 +52,7 @@ use jsonrpsee::{
         middleware::rpc::RpcServiceBuilder,
     },
 };
-use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
+use reth_engine_primitives::ConsensusEngineEvent;
 pub use reth_ipc::server::{
     Builder as IpcServerBuilder, RpcServiceBuilder as IpcRpcServiceBuilder,
 };
@@ -69,10 +68,9 @@ use serde::{Deserialize, Serialize};
 pub use tower::layer::util::{Identity, Stack};
 use tower_http::cors::CorsLayer;
 
-use crate::{auth::AuthRpcModule, error::WsHttpSamePortError, metrics::RpcRequestMetrics};
+use crate::{error::WsHttpSamePortError, metrics::RpcRequestMetrics};
 
 /// Auth server utilities.
-pub mod auth;
 
 /// RPC server utilities.
 pub mod config;
@@ -242,33 +240,6 @@ where
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Peers + Clone + 'static,
 {
-    /// Configures all [`RpcModule`]s specific to the given [`TransportRpcModuleConfig`] which can
-    /// be used to start the transport server(s).
-    ///
-    /// This behaves exactly as [`RpcModuleBuilder::build`] for the [`TransportRpcModules`], but
-    /// also configures the auth (engine api) server, which exposes a subset of the `eth_`
-    /// namespace.
-    pub fn build_with_auth_server<ApiNode: RpcNodeCore<Provider = Provider, Pool = Pool>>(
-        self,
-        module_config: TransportRpcModuleConfig,
-        engine: impl IntoEngineApiRpcModule,
-        eth: BaseEthApi<ApiNode>,
-        engine_events: EventSender<ConsensusEngineEvent>,
-        beacon_engine_handle: ConsensusEngineHandle,
-    ) -> (
-        TransportRpcModules,
-        AuthRpcModule,
-        RpcRegistryInner<Provider, Pool, Network, BaseEthApi<ApiNode>>,
-    ) {
-        let config = module_config.config.clone().unwrap_or_default();
-
-        let mut registry = self.into_registry(config, eth, engine_events);
-        let modules = registry.create_transport_rpc_modules(module_config);
-        let auth_module = registry.create_auth_module(engine, beacon_engine_handle);
-
-        (modules, auth_module, registry)
-    }
-
     /// Converts the builder into a [`RpcRegistryInner`] which can be used to create all
     /// components.
     ///
@@ -719,34 +690,6 @@ where
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Peers + Clone + 'static,
 {
-    /// Configures the auth module that includes the
-    ///   * `engine_` namespace
-    ///   * `reth_` namespace
-    ///   * `api_` namespace
-    ///
-    /// Note: This does _not_ register the `engine_` in this registry.
-    pub fn create_auth_module(
-        &self,
-        engine_api: impl IntoEngineApiRpcModule,
-        beacon_engine_handle: ConsensusEngineHandle,
-    ) -> AuthRpcModule {
-        let mut module = engine_api.into_rpc_module();
-
-        // Merge reth_* endpoints
-        let reth_engine_api = RethEngineApi::new(beacon_engine_handle);
-        module
-            .merge(RethEngineApiServer::into_rpc(reth_engine_api).remove_context())
-            .expect("No conflicting methods");
-
-        // also merge a subset of `eth_` handlers
-        let eth_handlers = self.eth_handlers();
-        let engine_eth = EngineEthApi::new(eth_handlers.api.clone(), eth_handlers.filter.clone());
-
-        module.merge(engine_eth.into_rpc()).expect("No conflicting methods");
-
-        AuthRpcModule { inner: module }
-    }
-
     /// Helper function to create a [`RpcModule`] if it's not `None`
     fn maybe_module(&mut self, config: Option<&RpcModuleSelection>) -> Option<RpcModule<()>> {
         config.map(|config| self.module_for(config))

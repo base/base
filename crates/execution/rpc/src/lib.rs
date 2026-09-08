@@ -12,8 +12,6 @@ mod config;
 pub use config::*;
 mod debug;
 pub use debug::*;
-mod engine;
-pub use engine::*;
 mod error;
 pub use error::*;
 mod eth;
@@ -52,9 +50,6 @@ pub use web3::*;
 mod eth_backend;
 pub use eth_backend::*;
 
-mod core_engine;
-pub use core_engine::*;
-
 mod trace;
 pub use trace::*;
 
@@ -78,18 +73,3 @@ pub use core_miner::*;
 
 mod rpc_eth_api;
 pub use rpc_eth_api::*;
-
-mod engine_backend;
-pub use engine_backend::*;
-
-mod engine_capabilities;
-pub use engine_capabilities::*;
-
-mod engine_error;
-pub use engine_error::*;
-
-mod engine_metrics;
-pub use engine_metrics::*;
-
-mod reth_engine_api;
-pub use reth_engine_api::*;

@@ -1,69 +1,19 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::test_utils::spawn_test_payload_service;
-use base_execution_rpc::BaseEngineApi;
-use base_execution_txpool::NoopTransactionPool;
-use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
 use reth_network_api::noop::NoopNetwork;
 use reth_provider::test_utils::NoopProvider;
 use reth_rpc_builder::{
     RpcModuleBuilder, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
-    auth::{AuthRpcModule, AuthServerConfig, AuthServerHandle},
-    middleware::{RethAuthHttpMiddleware, RethRpcMiddleware},
 };
-use reth_rpc_layer::JwtSecret;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use reth_tokio_util::EventSender;
-use tokio::sync::mpsc::unbounded_channel;
 
 /// Localhost with port 0 so a free port is used.
 pub const fn test_address() -> SocketAddr {
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-}
-
-/// Launches a new server for the auth module
-pub async fn launch_auth(secret: JwtSecret) -> AuthServerHandle {
-    let config = AuthServerConfig::builder(secret).socket_addr(test_address()).build();
-    launch_auth_with_config(config).await
-}
-
-/// Launches a new server for the auth module with the given config.
-pub async fn launch_auth_with_config<RpcMiddleware, HttpMiddleware>(
-    config: AuthServerConfig<RpcMiddleware, HttpMiddleware>,
-) -> AuthServerHandle
-where
-    RpcMiddleware: RethRpcMiddleware,
-    HttpMiddleware: RethAuthHttpMiddleware<RpcMiddleware>,
-{
-    let (tx, _rx) = unbounded_channel();
-    let beacon_engine_handle = ConsensusEngineHandle::new(tx);
-    let client = ClientVersionV1 {
-        code: ClientCode::RH,
-        name: "Reth".to_string(),
-        version: "v0.2.0-beta.5".to_string(),
-        commit: "defa64b2".to_string(),
-    };
-
-    let engine_api = BaseEngineApi::<_, _, _>::new(
-        NoopProvider::default(),
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
-        beacon_engine_handle,
-        spawn_test_payload_service().into(),
-        NoopTransactionPool::default(),
-        Runtime::test(),
-        client,
-        TestEngineValidator::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
-        )),
-        false,
-        NoopNetwork::default(),
-    );
-    let module = AuthRpcModule::new(engine_api);
-    module.start_server(config).await.unwrap()
 }
 
 /// Launches a new server with http only with the given modules

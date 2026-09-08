@@ -72,7 +72,6 @@ tokio = { workspace = true, features = ["default", "sync"] }
 opentelemetry = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }
-tracing-futures = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"]}
 reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
