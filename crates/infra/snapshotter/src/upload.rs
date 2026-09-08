@@ -26,6 +26,7 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
+use bytes::Bytes;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::{
     sync::{Semaphore, mpsc},
@@ -157,8 +158,8 @@ pub struct SnapshotUploader {
 ///
 /// Call [`Self::finish`] only after the archive writer has been finalized (for zstd, after
 /// `Encoder::finish`). Then call [`Self::complete`] to wait for S3 to complete the multipart
-/// upload. Dropping this value without finishing deliberately aborts the multipart upload rather
-/// than publishing a truncated archive.
+/// upload. Dropping this value without finishing closes the input channel, causing the background
+/// task to best-effort abort the multipart upload rather than publishing a truncated archive.
 #[derive(Debug)]
 pub struct StreamingMultipartUpload {
     key: String,
@@ -166,7 +167,7 @@ pub struct StreamingMultipartUpload {
     buffered: Vec<u8>,
     bytes_written: u64,
     finished: bool,
-    task: JoinHandle<Result<u64>>,
+    task: Option<JoinHandle<Result<u64>>>,
 }
 
 #[derive(Debug)]
@@ -220,14 +221,18 @@ impl StreamingMultipartUpload {
     ///
     /// The archive must have been finalized first with [`Self::finish`]. If generation fails,
     /// drop the value instead; its background task aborts the incomplete multipart upload.
-    pub async fn complete(self) -> Result<u64> {
+    pub async fn complete(mut self) -> Result<u64> {
         if !self.finished {
             bail!(
                 "streaming multipart upload for {} was not finalized; call finish after the zstd encoder finishes",
                 self.key
             );
         }
-        self.task.await.context("streaming multipart upload task panicked")?
+        self.task
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("streaming multipart upload task is unavailable"))?
+            .await
+            .context("streaming multipart upload task panicked")?
     }
 
     fn send_part(&self, part: Vec<u8>) -> io::Result<()> {
@@ -242,6 +247,18 @@ impl StreamingMultipartUpload {
                     "streaming multipart uploader stopped while writing archive",
                 )
             })
+    }
+}
+
+impl Drop for StreamingMultipartUpload {
+    fn drop(&mut self) {
+        if !self.finished {
+            warn!(
+                key = %self.key,
+                bytes_written = self.bytes_written,
+                "dropping unfinished streaming multipart upload; background task will abort it"
+            );
+        }
     }
 }
 
@@ -326,10 +343,10 @@ impl SnapshotUploader {
         Ok(StreamingMultipartUpload {
             key,
             sender: Some(sender),
-            buffered: Vec::new(),
+            buffered: Vec::with_capacity(STREAMING_MULTIPART_PART_SIZE),
             bytes_written: 0,
             finished: false,
-            task,
+            task: Some(task),
         })
     }
 
@@ -437,6 +454,7 @@ impl SnapshotUploader {
         part_number: i32,
         bytes: Vec<u8>,
     ) -> Result<CompletedPart> {
+        let bytes = Bytes::from(bytes);
         let length = bytes.len();
         retry_upload(
             || async {
