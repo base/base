@@ -16,8 +16,6 @@ workspace = true
 [dependencies]
 alloy-serde = { workspace = true }
 alloy-network-primitives = { workspace = true }
-async-trait = { workspace = true, optional = true}
-alloy-transport = { workspace = true, optional = true}
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
 base-common-evm = { workspace = true, optional = true }
@@ -30,8 +28,6 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 alloy-provider = { workspace = true, features = ["default"], optional = true}
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde"], optional = true}
-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"], optional = true}
 [dev-dependencies]
 rand = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
@@ -56,8 +52,6 @@ std = [
     "derive_more/std",
     "serde/std",
     "serde_json/std",
-    "alloy-rpc-types-engine?/std",
-    "base-common-rpc-types-engine?/std",
 ]
 arbitrary = [
     "base-common-consensus/arbitrary",
@@ -78,18 +72,12 @@ serde = [
     "alloy-rpc-types-eth/serde",
     "base-common-consensus/serde",
     "base-common-evm?/serde",
-    "alloy-rpc-types-engine?/serde",
-    "base-common-rpc-types-engine?/serde",
 ]
 network = [
     "dep:base-common-network",
     "std",
     "base-common-consensus/serde",
-    "dep:async-trait",
     "dep:alloy-provider",
-    "dep:alloy-transport",
-    "dep:alloy-rpc-types-engine",
-    "dep:base-common-rpc-types-engine",
 ]
 eip8130 = ["dep:base-evm-handler", "dep:base-common-evm", "std"]
 reth = ["eip8130", "network", "std"]

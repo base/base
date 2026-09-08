@@ -15,7 +15,7 @@ use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{Base, BaseEngineApi, Transaction as BaseTransaction};
+use base_common_rpc_types::{Base, Transaction as BaseTransaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
@@ -648,9 +648,8 @@ impl EngineClient for MockEngineClient {
     }
 }
 
-#[async_trait]
-impl BaseEngineApi for MockEngineClient {
-    async fn new_payload_v2(
+impl MockEngineClient {
+    pub async fn new_payload_v2(
         &self,
         payload: ExecutionPayloadInputV2,
     ) -> TransportResult<PayloadStatus> {
@@ -664,7 +663,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn new_payload_v3(
+    pub async fn new_payload_v3(
         &self,
         _payload: ExecutionPayloadV3,
         _parent_beacon_block_root: B256,
@@ -678,7 +677,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn new_payload_v4(
+    pub async fn new_payload_v4(
         &self,
         _payload: BaseExecutionPayloadV4,
         _parent_beacon_block_root: B256,
@@ -692,7 +691,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn fork_choice_updated_v2(
+    pub async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
@@ -712,7 +711,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn fork_choice_updated_v3(
+    pub async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
@@ -732,7 +731,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_payload_v2(
+    pub async fn get_payload_v2(
         &self,
         _payload_id: PayloadId,
     ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
@@ -744,7 +743,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_payload_v3(
+    pub async fn get_payload_v3(
         &self,
         _payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
@@ -756,7 +755,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_payload_v4(
+    pub async fn get_payload_v4(
         &self,
         _payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
@@ -768,7 +767,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_payload_v5(
+    pub async fn get_payload_v5(
         &self,
         _payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
@@ -780,7 +779,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_payload_bodies_by_hash_v1(
+    pub async fn get_payload_bodies_by_hash_v1(
         &self,
         _block_hashes: Vec<BlockHash>,
     ) -> TransportResult<ExecutionPayloadBodiesV1> {
@@ -793,7 +792,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_payload_bodies_by_range_v1(
+    pub async fn get_payload_bodies_by_range_v1(
         &self,
         _start: u64,
         _count: u64,
@@ -807,7 +806,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn get_client_version_v1(
+    pub async fn get_client_version_v1(
         &self,
         _client_version: ClientVersionV1,
     ) -> TransportResult<Vec<ClientVersionV1>> {
@@ -817,7 +816,7 @@ impl BaseEngineApi for MockEngineClient {
         })
     }
 
-    async fn exchange_capabilities(
+    pub async fn exchange_capabilities(
         &self,
         _capabilities: Vec<String>,
     ) -> TransportResult<Vec<String>> {

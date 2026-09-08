@@ -45,8 +45,3 @@ pub use network::Base;
 
 #[cfg(feature = "network")]
 mod builder;
-
-#[cfg(feature = "network")]
-mod engine_client;
-#[cfg(feature = "network")]
-pub use engine_client::BaseEngineApi;

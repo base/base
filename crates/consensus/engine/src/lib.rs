@@ -25,13 +25,7 @@ mod local_client;
 pub use local_client::LocalEngineClient;
 
 mod client;
-pub use client::{BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError};
-
-mod trace_layer;
-pub use trace_layer::{TraceContextLayer, TraceContextService};
-
-mod ws_connect;
-pub use ws_connect::JwtWsConnect;
+pub use client::{EngineClient, EngineClientError};
 
 mod versions;
 pub use versions::{EngineForkchoiceVersion, EngineGetPayloadVersion, EngineNewPayloadVersion};

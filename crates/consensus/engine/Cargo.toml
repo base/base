@@ -11,17 +11,14 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-tower = { workspace = true }
 async-trait = { workspace = true }
 reth-network = { workspace = true }
 base-metrics = { workspace = true }
-alloy-pubsub = { workspace = true }
 reth-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 reth-network-api = { workspace = true }
 alloy-primitives = { workspace = true }
-opentelemetry-http = { workspace = true }
 base-execution-trie = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-network = { workspace = true }
@@ -30,31 +27,23 @@ base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
-url = { workspace = true, features = ["default"] }
-http = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-opentelemetry = { workspace = true, features = ["default"] }
-http-body-util = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-alloy-transport-ws = { workspace = true, features = ["default"] }
+alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types = { workspace = true, features = ["default", "network"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
-alloy-transport-http = { workspace = true, features = ["default", "reqwest", "hyper", "jwt-auth"] }
-alloy-provider = { workspace = true, features = ["default", "ipc", "ws", "reqwest", "reqwest-rustls-tls", "engine-api"] }
+alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
 [dev-dependencies]
 arbitrary = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-tokio-tungstenite = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default", "thread_rng"] }
 base-common-rpc-types = { workspace = true, features = ["default", "arbitrary", "k256"] }

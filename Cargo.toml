@@ -256,7 +256,6 @@ base-batcher-encoder = { path = "crates/batcher/encoder", default-features = fal
 base-batcher-service = { path = "crates/batcher/service", default-features = false }
 
 # Utilities
-base-jwt = { path = "crates/utilities/jwt", default-features = false }
 base-retry = { path = "crates/utilities/retry", default-features = false }
 base-health = { path = "crates/utilities/health", default-features = false }
 base-cli-utils = { path = "crates/utilities/cli", default-features = false }

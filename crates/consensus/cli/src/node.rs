@@ -21,8 +21,8 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs,
-    L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
+    ConsensusChainArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs, L1ConfigFile, L2ConfigFile,
+    P2PArgs, RpcArgs, SequencerArgs,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -130,10 +130,6 @@ pub struct ConsensusNodeConfigArgs {
     #[clap(flatten)]
     pub l1_rpc_args: L1ClientArgs,
 
-    /// L2 engine CLI arguments.
-    #[clap(flatten)]
-    pub l2_client_args: L2ClientArgs,
-
     /// L1 configuration file.
     #[clap(flatten)]
     pub l1_config: L1ConfigFile,
@@ -174,10 +170,6 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     #[clap(flatten)]
     pub l1_rpc_args: L1ClientArgs,
 
-    /// L2 engine CLI arguments.
-    #[clap(flatten)]
-    pub l2_client_args: EmbeddedL2ClientArgs,
-
     /// L1 configuration file.
     #[clap(flatten)]
     pub l1_config: L1ConfigFile,
@@ -209,10 +201,6 @@ pub struct EmbeddedSequencerConsensusNodeConfigArgs {
     /// L1 RPC CLI arguments.
     #[clap(flatten)]
     pub l1_rpc_args: L1ClientArgs,
-
-    /// L2 engine CLI arguments.
-    #[clap(flatten)]
-    pub l2_client_args: EmbeddedL2ClientArgs,
 
     /// L1 configuration file.
     #[clap(flatten)]
@@ -248,7 +236,6 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
         Self {
             node_mode: NodeMode::Validator,
             l1_rpc_args: args.l1_rpc_args,
-            l2_client_args: args.l2_client_args.into(),
             l1_config: args.l1_config,
             l2_config: args.l2_config,
             p2p_flags: args.p2p_flags.into(),
@@ -266,7 +253,6 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
         Self {
             node_mode: NodeMode::Sequencer,
             l1_rpc_args: args.l1_rpc_args,
-            l2_client_args: args.l2_client_args.into(),
             l1_config: args.l1_config,
             l2_config: args.l2_config,
             p2p_flags: args.p2p_flags,
@@ -611,7 +597,6 @@ mod tests {
         ConsensusNodeConfigArgs {
             node_mode: NodeMode::default(),
             l1_rpc_args: L1ClientArgs::default(),
-            l2_client_args: L2ClientArgs::default(),
             l1_config: L1ConfigFile::default(),
             l2_config: L2ConfigFile::default(),
             p2p_flags: P2PArgs::default(),
@@ -637,8 +622,6 @@ mod tests {
             "http://localhost:8545",
             "--l1-beacon",
             "http://localhost:5052",
-            "--l2-engine-rpc",
-            "http://localhost:8551",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
         ])
@@ -659,8 +642,6 @@ mod tests {
             "http://localhost:8545",
             "--l1-beacon",
             "http://localhost:5052",
-            "--l2-engine-rpc",
-            "http://localhost:8551",
             "--l1.dangerously-override-da-batcher-sender",
             "0x2222222222222222222222222222222222222222",
         ])
@@ -1011,7 +992,6 @@ mod tests {
                 ..SequencerArgs::default()
             },
             l1_rpc_args: L1ClientArgs::default(),
-            l2_client_args: EmbeddedL2ClientArgs::default(),
             l1_config: L1ConfigFile::default(),
             l2_config: L2ConfigFile::default(),
             safedb_path: None,

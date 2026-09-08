@@ -3084,16 +3084,12 @@ dependencies = [
  "alloy-network-primitives",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "alloy-transport",
  "arbitrary",
- "async-trait",
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",
- "base-common-rpc-types-engine",
  "base-evm-handler",
  "derive_more",
  "rand 0.9.5",
@@ -3144,7 +3140,6 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types-engine",
  "alloy-signer",
  "backon",
  "base-cli-utils",
@@ -3160,7 +3155,6 @@ dependencies = [
  "base-consensus-providers",
  "base-consensus-rpc",
  "base-consensus-sources",
- "base-jwt",
  "base-protocol",
  "base-retry",
  "base-upgrade-signal",
@@ -3245,13 +3239,9 @@ dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-provider",
- "alloy-pubsub",
- "alloy-rpc-client",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-transport",
- "alloy-transport-http",
- "alloy-transport-ws",
  "arbitrary",
  "async-trait",
  "base-common-chains",
@@ -3266,12 +3256,8 @@ dependencies = [
  "base-metrics",
  "base-protocol",
  "derive_more",
- "http 1.4.2",
- "http-body-util",
  "metrics",
  "metrics-exporter-prometheus",
- "opentelemetry 0.32.0",
- "opentelemetry-http 0.32.0",
  "rand 0.9.5",
  "reth-engine-primitives",
  "reth-network",
@@ -3282,10 +3268,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
- "tokio-tungstenite 0.28.0",
- "tower",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -4170,22 +4153,6 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
-]
-
-[[package]]
-name = "base-jwt"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-engine",
- "backon",
- "base-common-rpc-types",
- "base-consensus-engine",
- "eyre",
- "thiserror 2.0.19",
- "tracing",
- "url",
 ]
 
 [[package]]

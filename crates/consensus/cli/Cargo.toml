@@ -29,7 +29,6 @@ base-consensus-engine = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-sources = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -44,7 +43,6 @@ tokio-util = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
-base-jwt = { workspace = true, features = ["engine-validation"] }
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
