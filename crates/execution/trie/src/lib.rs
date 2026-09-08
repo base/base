@@ -47,6 +47,9 @@ pub mod proof;
 
 pub mod provider;
 
+mod progress;
+pub use progress::{ProofsProgress, ProofsProgressError};
+
 mod batch_provider;
 pub use batch_provider::BaseProofsBatchStateProviderRef;
 

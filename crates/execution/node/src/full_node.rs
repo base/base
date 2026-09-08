@@ -1,12 +1,13 @@
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BaseExecutionHandle, PayloadBuilderHandle};
+use base_execution_trie::ProofsProgress;
 use base_node_context::FullNodeComponents;
 use reth_engine_primitives::ConsensusEngineEvent;
 // re-export the node api types
@@ -43,6 +44,8 @@ pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Graceful execution shutdown and persistence.
     pub engine_shutdown: EngineShutdown,
+    /// Proofs history progress registered by the execution extension before startup completes.
+    pub proofs_progress: Arc<OnceLock<ProofsProgress>>,
     /// Task executor for the node.
     pub task_executor: TaskExecutor,
     /// The initial node config.
@@ -64,6 +67,7 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> Clone for FullNode<Node
             execution: self.execution.clone(),
             engine_events: self.engine_events.clone(),
             engine_shutdown: self.engine_shutdown.clone(),
+            proofs_progress: self.proofs_progress.clone(),
             task_executor: self.task_executor.clone(),
             config: self.config.clone(),
             data_dir: self.data_dir.clone(),

@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Duration};
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
 use base_execution_trie::{
-    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
+    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, ProofsProgress,
+    RocksdbProofsStorage,
 };
 use base_node_context::FullNodeComponents;
 use base_node_core::{ProofsHistoryDbBackend, RollupArgs};
@@ -142,6 +143,9 @@ where
     let storage_exec = storage.clone();
 
     hooks = hooks.add_node_started_hook(move |node| {
+        node.proofs_progress
+            .set(ProofsProgress::new(storage_backend.clone()))
+            .map_err(|_| eyre::eyre!("proofs history progress already registered"))?;
         spawn_proofs_db_metrics(
             node.task_executor,
             storage_backend,

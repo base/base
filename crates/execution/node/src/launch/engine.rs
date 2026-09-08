@@ -402,6 +402,7 @@ impl EngineNodeLauncher {
             },
             engine_events,
             engine_shutdown,
+            proofs_progress: Default::default(),
             task_executor: ctx.task_executor().clone(),
             config: ctx.node_config().clone(),
             data_dir: ctx.data_dir().clone(),
