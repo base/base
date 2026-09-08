@@ -53,9 +53,11 @@ pub struct SnapshotterConfig {
     #[arg(long, short = 'd')]
     pub source_datadir: PathBuf,
 
-    /// Output directory for snapshot archives and manifest.
+    /// Directory containing legacy staged snapshot runs for upload-only recovery.
     ///
-    /// A unique subdirectory is created per run.
+    /// Normal snapshot runs stream compressed archives directly to object storage and do not
+    /// create a run directory here. A unique `run-<timestamp>` subdirectory is only expected
+    /// when using [`Self::upload_existing_run_timestamp`].
     #[arg(long, short = 'o')]
     pub output_dir: PathBuf,
 

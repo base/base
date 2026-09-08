@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
+    SnapshotUploadParams, SnapshotUploader, StreamingS3ArchiveSink, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -686,6 +686,71 @@ async fn unfinished_stream_aborts_multipart_upload() -> Result<()> {
             .is_err(),
         "unfinalized stream must not publish an object"
     );
+
+    Ok(())
+}
+
+/// Exercises Base's selective snapshot generator through the streaming sink. This verifies the
+/// generator finalizes tar/zstd before the sink publishes the object and does not require a local
+/// archive output directory.
+#[tokio::test]
+#[serial]
+async fn snapshot_generator_streams_archives_to_minio() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "generator-streaming".to_string(),
+        None,
+    );
+    let sink = StreamingS3ArchiveSink::new(
+        uploader,
+        tokio::runtime::Handle::current(),
+        1,
+        |archive_name| Ok(format!("generator-streaming/{archive_name}")),
+    )?;
+
+    let source = tempfile::tempdir()?;
+    std::fs::create_dir_all(source.path().join("db"))?;
+    std::fs::write(source.path().join("db/mdbx.dat"), b"generated-state")?;
+    let output_dir = source.path().join("not-created");
+    let output_dir_for_generation = output_dir.clone();
+    let source_path = source.path().to_owned();
+    let remote_static_files = HashMap::new();
+    let manifest = tokio::task::spawn_blocking(move || {
+        SnapshotGenerator::generate_manifest_with_sink(
+            &ManifestGenerationParams {
+                source_datadir: &source_path,
+                output_dir: &output_dir_for_generation,
+                chain_id: 8453,
+                base_url: None,
+                block: Some(0),
+                blocks_per_file: Some(500_000),
+                remote_static_files: &remote_static_files,
+                previous_manifest: None,
+                upload_proofs: false,
+            },
+            &sink,
+        )
+    })
+    .await??;
+    assert!(manifest.components.contains_key("state"));
+    assert!(!output_dir.exists(), "streaming generation must not create the output directory");
+
+    let bytes = get_object_bytes(
+        &harness.storage_client,
+        &harness.bucket_name,
+        "generator-streaming/state.tar.zst",
+    )
+    .await?;
+    let decoder = zstd::Decoder::new(bytes.as_slice())?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries()?;
+    let mut entry = entries.next().expect("state archive should contain mdbx.dat")?;
+    assert_eq!(entry.path()?.as_ref(), Path::new("db/mdbx.dat"));
+    let mut contents = Vec::new();
+    entry.read_to_end(&mut contents)?;
+    assert_eq!(contents, b"generated-state");
 
     Ok(())
 }

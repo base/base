@@ -15,7 +15,7 @@ use std::{
     future::Future,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Condvar, Mutex},
     time::Duration,
 };
 
@@ -25,10 +25,14 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
-use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
+use base_reth_cli::{
+    ChunkFilename, ComponentManifest, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotManifest,
+    SnapshotManifestExt,
+};
 use bytes::Bytes;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::{
+    runtime::Handle,
     sync::{Semaphore, mpsc},
     task::JoinHandle,
     time::sleep,
@@ -295,6 +299,129 @@ impl io::Write for StreamingMultipartUpload {
         // zstd may call flush while it is still writing its frame. A multipart part smaller than
         // 5 MiB is only valid as the final part, so only `finish` may flush `buffered`.
         Ok(())
+    }
+}
+
+/// Bridges Base's synchronous snapshot archive sink to direct S3 multipart uploads.
+///
+/// Reth archive generation invokes the sink from Rayon workers. The supplied Tokio runtime handle
+/// starts and awaits S3 work from those synchronous workers; the limiter prevents Rayon from
+/// creating unbounded 640 MiB streaming buffers in parallel.
+pub struct StreamingS3ArchiveSink {
+    uploader: SnapshotUploader,
+    runtime: Handle,
+    destination: Arc<dyn Fn(&str) -> Result<String> + Send + Sync>,
+    limiter: Arc<StreamingUploadLimiter>,
+}
+
+impl std::fmt::Debug for StreamingS3ArchiveSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingS3ArchiveSink").finish_non_exhaustive()
+    }
+}
+
+impl StreamingS3ArchiveSink {
+    /// Creates a streaming sink whose `destination` maps relative archive names to S3 keys.
+    ///
+    /// `max_active_archives` bounds concurrent archive generation and streaming-memory use. Use
+    /// one for state snapshots unless the deployment has memory for multiple ~1.25 GiB streams.
+    pub fn new<F>(
+        uploader: SnapshotUploader,
+        runtime: Handle,
+        max_active_archives: usize,
+        destination: F,
+    ) -> Result<Self>
+    where
+        F: Fn(&str) -> Result<String> + Send + Sync + 'static,
+    {
+        if max_active_archives == 0 {
+            bail!("max_active_archives must be greater than zero");
+        }
+        Ok(Self {
+            uploader,
+            runtime,
+            destination: Arc::new(destination),
+            limiter: Arc::new(StreamingUploadLimiter::new(max_active_archives)),
+        })
+    }
+}
+
+impl SnapshotArchiveSink for StreamingS3ArchiveSink {
+    fn create_archive(&self, archive_name: &str) -> Result<Box<dyn SnapshotArchiveWriter>> {
+        let permit = self.limiter.acquire();
+        let key = (self.destination)(archive_name)?;
+        let upload = self.runtime.block_on(self.uploader.start_streaming_multipart_upload(key))?;
+        Ok(Box::new(StreamingS3ArchiveWriter {
+            runtime: self.runtime.clone(),
+            upload: Some(upload),
+            _permit: permit,
+        }))
+    }
+}
+
+struct StreamingS3ArchiveWriter {
+    runtime: Handle,
+    upload: Option<StreamingMultipartUpload>,
+    _permit: StreamingUploadPermit,
+}
+
+impl io::Write for StreamingS3ArchiveWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.upload
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "archive writer is finished"))?
+            .write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.upload
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "archive writer is finished"))?
+            .flush()
+    }
+}
+
+impl SnapshotArchiveWriter for StreamingS3ArchiveWriter {
+    fn finish(mut self: Box<Self>) -> Result<()> {
+        let mut upload = self.upload.take().expect("archive writer can only finish once");
+        upload.finish()?;
+        self.runtime.block_on(upload.complete())?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct StreamingUploadLimiter {
+    max_active: usize,
+    active: Mutex<usize>,
+    available: Condvar,
+}
+
+impl StreamingUploadLimiter {
+    const fn new(max_active: usize) -> Self {
+        Self { max_active, active: Mutex::new(0), available: Condvar::new() }
+    }
+
+    fn acquire(self: &Arc<Self>) -> StreamingUploadPermit {
+        let mut active = self.active.lock().expect("streaming upload limiter mutex poisoned");
+        while *active >= self.max_active {
+            active = self.available.wait(active).expect("streaming upload limiter mutex poisoned");
+        }
+        *active += 1;
+        StreamingUploadPermit { limiter: Arc::clone(self) }
+    }
+}
+
+struct StreamingUploadPermit {
+    limiter: Arc<StreamingUploadLimiter>,
+}
+
+impl Drop for StreamingUploadPermit {
+    fn drop(&mut self) {
+        let mut active =
+            self.limiter.active.lock().expect("streaming upload limiter mutex poisoned");
+        *active = active.checked_sub(1).expect("streaming upload limiter released without acquire");
+        self.limiter.available.notify_one();
     }
 }
 
@@ -878,6 +1005,69 @@ impl SnapshotUploader {
             "upload complete"
         );
         Ok(run_prefix)
+    }
+
+    /// Publishes a manifest after every archive has already been streamed to its final S3 key.
+    ///
+    /// The manifest is deliberately the last object written for a run: downloaders use its
+    /// presence as the snapshot-complete signal. This is the streaming counterpart to
+    /// [`Self::upload`], which uploads file-backed artifacts before publishing a manifest.
+    pub async fn publish_streamed_manifest(
+        &self,
+        local_manifest: &SnapshotManifest,
+        timestamp: u64,
+        retain_runs: usize,
+    ) -> Result<String> {
+        let run_prefix = self.run_prefix(timestamp);
+        let manifest_key = format!("{run_prefix}/manifest.json");
+        let published_manifest = build_published_manifest(
+            local_manifest,
+            self.public_snapshot_base_url().as_deref(),
+            timestamp,
+        )?;
+
+        retry_upload(
+            || async {
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(&manifest_key)
+                    .body(ByteStream::from(published_manifest.clone()))
+                    .send()
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = %manifest_key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "streamed manifest upload failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %manifest_key, attempt, "streamed manifest upload succeeded after retrying");
+            },
+        )
+        .await?;
+
+        if let Err(error) = self.prune_old_runs(retain_runs).await {
+            warn!(error = %error, retain_runs, "failed to prune old snapshot runs");
+        }
+        Ok(run_prefix)
+    }
+
+    /// Returns the complete timestamped-run key for a generated archive.
+    pub fn run_object_key(&self, timestamp: u64, archive_name: &str) -> String {
+        format!("{}/{archive_name}", self.run_prefix(timestamp))
+    }
+
+    /// Returns the complete shared static-files key for a generated finalized chunk archive.
+    pub fn static_file_object_key(&self, archive_name: &str) -> String {
+        format!("{}/{}", self.static_files_prefix(), archive_name)
     }
 
     /// Returns the `{prefix}/static_files` key prefix.
