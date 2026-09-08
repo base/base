@@ -34,10 +34,10 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    Attached, FullNode, LaunchContext, LaunchContextWith, LaunchNode, NodeBuilderWithComponents,
-    NodeHandle, WithConfigs,
+    Attached, EngineShutdown, FullNode, LaunchContext, LaunchContextWith, LaunchNode,
+    NodeBuilderWithComponents, NodeHandle, WithConfigs,
     hooks::NodeHooks,
-    rpc::{BasicEngineValidatorBuilder, EngineShutdown, RethRpcAddOns, RpcHandle},
+    rpc::{BasicEngineValidatorBuilder, RethRpcAddOns, RpcHandle},
     setup::build_networked_pipeline,
 };
 
@@ -263,13 +263,8 @@ impl EngineNodeLauncher {
             ),
         );
 
-        let RpcHandle {
-            rpc_server_handles,
-            rpc_registry,
-            engine_events,
-            beacon_engine_handle,
-            engine_shutdown: _,
-        } = add_ons.launch_add_ons(add_ons_ctx).await?;
+        let RpcHandle { rpc_server_handles, rpc_registry } =
+            add_ons.launch_add_ons(add_ons_ctx).await?;
 
         // Create engine shutdown handle
         let (engine_shutdown, shutdown_rx) = EngineShutdown::new();
@@ -291,6 +286,7 @@ impl EngineNodeLauncher {
         let startup_sync_state_idle = ctx.node_config().debug.startup_sync_state_idle;
 
         info!(target: "reth::cli", "Starting consensus engine");
+        let engine_events = event_sender.clone();
         let consensus_engine = move |mut on_graceful_shutdown| async move {
             if let Some(initial_target) = initial_target {
                 debug!(target: "reth::cli", %initial_target,  "start backfill sync");
@@ -395,16 +391,13 @@ impl EngineNodeLauncher {
             network: ctx.node_adapter().network().clone(),
             provider: ctx.node_adapter().provider.clone(),
             payload_builder_handle: ctx.node_adapter().payload_builder_handle().clone(),
+            engine_handle: beacon_engine_handle,
+            engine_events,
+            engine_shutdown,
             task_executor: ctx.task_executor().clone(),
             config: ctx.node_config().clone(),
             data_dir: ctx.data_dir().clone(),
-            add_ons_handle: RpcHandle {
-                rpc_server_handles,
-                rpc_registry,
-                engine_events,
-                beacon_engine_handle,
-                engine_shutdown,
-            },
+            add_ons_handle: RpcHandle { rpc_server_handles, rpc_registry },
         };
         // Notify on node started
         on_node_started.on_event(FullNode::clone(&full_node))?;

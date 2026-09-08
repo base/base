@@ -64,6 +64,9 @@ pub use hooks::*;
 mod launch;
 pub use launch::*;
 
+mod engine_shutdown;
+pub use engine_shutdown::{EngineShutdown, EngineShutdownRequest};
+
 mod full_node;
 pub use full_node::*;
 
