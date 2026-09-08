@@ -217,7 +217,7 @@ where
             info!(target: "reth::cli", "Using custom debug block provider");
 
             let rpc_consensus_client =
-                DebugConsensusClient::new(handle.node.engine_handle.clone(), Arc::new(provider));
+                DebugConsensusClient::new(handle.node.execution.driver.clone(), Arc::new(provider));
 
             handle
                 .node
@@ -245,7 +245,7 @@ where
             .await?;
 
             let rpc_consensus_client = DebugConsensusClient::new(
-                handle.node.engine_handle.clone(),
+                handle.node.execution.driver.clone(),
                 Arc::new(block_provider),
             );
 
@@ -280,7 +280,7 @@ where
                 },
             );
             let rpc_consensus_client = DebugConsensusClient::new(
-                handle.node.engine_handle.clone(),
+                handle.node.execution.driver.clone(),
                 Arc::new(block_provider),
             );
             handle
@@ -296,7 +296,7 @@ where
 
             let blockchain_db = handle.node.provider.clone();
             let chain_spec = config.chain.clone();
-            let beacon_engine_handle = handle.node.engine_handle.clone();
+            let beacon_engine_handle = handle.node.execution.driver.clone();
             let pool = handle.node.pool.clone();
             let payload_builder_handle = handle.node.payload_builder_handle.clone();
 

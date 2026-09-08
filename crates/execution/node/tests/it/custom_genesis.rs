@@ -75,7 +75,8 @@ async fn test_base_node_custom_genesis_number() {
         .expect("genesis header should exist")
         .hash();
     node.inner
-        .engine_handle
+        .execution
+        .driver
         .fork_choice_updated(ForkchoiceState::same_hash(genesis_hash), None)
         .await
         .expect("able to seed forkchoice for custom genesis");

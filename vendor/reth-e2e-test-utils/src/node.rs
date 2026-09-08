@@ -134,7 +134,8 @@ where
         let eth_attr = self.payload.next_attributes();
         let payload_id = self
             .inner
-            .engine_handle
+            .execution
+            .driver
             .fork_choice_updated(self.current_forkchoice_state()?, Some(eth_attr.clone()))
             .await?
             .payload_id
@@ -282,7 +283,8 @@ where
     /// Sends a forkchoice update message to the engine.
     pub async fn update_forkchoice(&self, current_head: B256, new_head: B256) -> eyre::Result<()> {
         self.inner
-            .engine_handle
+            .execution
+            .driver
             .fork_choice_updated(
                 ForkchoiceState {
                     head_block_hash: new_head,
@@ -304,7 +306,7 @@ where
     /// Submits a payload to the engine.
     pub async fn submit_payload(&self, payload: BaseBuiltPayload) -> eyre::Result<B256> {
         let block_hash = payload.block().hash();
-        self.inner.engine_handle.new_payload(payload.into()).await?;
+        self.inner.execution.driver.new_payload(payload.into()).await?;
 
         Ok(block_hash)
     }
@@ -336,7 +338,7 @@ where
             .ok_or_else(|| eyre::eyre!("Failed to create HTTP RPC client for node"))?;
         let auth = self.auth_server_handle();
         let url = self.rpc_url();
-        let beacon_handle = self.inner.engine_handle.clone();
+        let beacon_handle = self.inner.execution.driver.clone();
 
         Ok(crate::testsuite::NodeClient::new_with_beacon_engine(rpc, auth, url, beacon_handle))
     }

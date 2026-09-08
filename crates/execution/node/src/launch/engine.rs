@@ -3,6 +3,7 @@
 use std::{future::Future, pin::Pin};
 
 use base_common_consensus::BlockHeader;
+use base_execution_payload_builder::{BaseEngineValidator, BaseExecutionHandle};
 use base_execution_payload_types::BuiltPayload;
 use base_node_context::{AddOnsContext, BaseNodeContext, FullNodeComponents};
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
@@ -30,6 +31,7 @@ use reth_storage_overlay::OverlayManager;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, error, info};
+use reth_trie_common::KeccakKeyHasher;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -391,7 +393,13 @@ impl EngineNodeLauncher {
             network: ctx.node_adapter().network().clone(),
             provider: ctx.node_adapter().provider.clone(),
             payload_builder_handle: ctx.node_adapter().payload_builder_handle().clone(),
-            engine_handle: beacon_engine_handle,
+            execution: BaseExecutionHandle {
+                driver: beacon_engine_handle,
+                payload_builder: ctx.node_adapter().payload_builder_handle().clone(),
+                validator: BaseEngineValidator::new::<KeccakKeyHasher>(
+                    ctx.node_adapter().evm_config().chain_spec().clone(),
+                ),
+            },
             engine_events,
             engine_shutdown,
             task_executor: ctx.task_executor().clone(),

@@ -6,9 +6,9 @@ use std::{
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::PayloadBuilderHandle;
+use base_execution_payload_builder::{BaseExecutionHandle, PayloadBuilderHandle};
 use base_node_context::FullNodeComponents;
-use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
+use reth_engine_primitives::ConsensusEngineEvent;
 // re-export the node api types
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
@@ -38,7 +38,7 @@ pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     /// Handle to the node's payload builder service.
     pub payload_builder_handle: PayloadBuilderHandle,
     /// Commands submitted directly to the execution driver.
-    pub engine_handle: ConsensusEngineHandle,
+    pub execution: BaseExecutionHandle,
     /// Execution driver event stream.
     pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Graceful execution shutdown and persistence.
@@ -61,7 +61,7 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> Clone for FullNode<Node
             network: self.network.clone(),
             provider: self.provider.clone(),
             payload_builder_handle: self.payload_builder_handle.clone(),
-            engine_handle: self.engine_handle.clone(),
+            execution: self.execution.clone(),
             engine_events: self.engine_events.clone(),
             engine_shutdown: self.engine_shutdown.clone(),
             task_executor: self.task_executor.clone(),

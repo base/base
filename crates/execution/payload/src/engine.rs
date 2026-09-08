@@ -55,6 +55,77 @@ impl BaseEngineValidator {
         &self.inner.chain_spec
     }
 
+    /// Validates native build attributes using the active Base upgrade schedule.
+    pub fn validate_attributes(
+        &self,
+        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    ) -> Result<(), EngineObjectValidationError> {
+        let timestamp = attributes.payload_attributes.timestamp;
+        let fields = &attributes.payload_attributes;
+        if fields.has_withdrawals != self.chain_spec().is_canyon_active_at_timestamp(timestamp) {
+            return Err(EngineObjectValidationError::InvalidParams(
+                "withdrawals presence does not match Canyon activation".into(),
+            ));
+        }
+        if fields.parent_beacon_block_root.is_some()
+            != self.chain_spec().is_ecotone_active_at_timestamp(timestamp)
+        {
+            return Err(EngineObjectValidationError::InvalidParams(
+                "parent beacon block root presence does not match Ecotone activation".into(),
+            ));
+        }
+        self.validate_base_attributes(attributes)
+    }
+
+    /// Checks Base gas and fee parameters shared by native and RPC callers.
+    pub fn validate_base_attributes(
+        &self,
+        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    ) -> Result<(), EngineObjectValidationError> {
+        if attributes.gas_limit.is_none() {
+            return Err(EngineObjectValidationError::InvalidParams(
+                "MissingGasLimitInPayloadAttributes".to_string().into(),
+            ));
+        }
+
+        if self
+            .chain_spec()
+            .is_holocene_active_at_timestamp(attributes.payload_attributes.timestamp)
+        {
+            let (elasticity, denominator) =
+                attributes.decode_eip_1559_params().ok_or_else(|| {
+                    EngineObjectValidationError::InvalidParams(
+                        "MissingEip1559ParamsInPayloadAttributes".to_string().into(),
+                    )
+                })?;
+
+            if elasticity != 0 && denominator == 0 {
+                return Err(EngineObjectValidationError::InvalidParams(
+                    "Eip1559ParamsDenominatorZero".to_string().into(),
+                ));
+            } else if denominator != 0 && elasticity == 0 {
+                return Err(EngineObjectValidationError::InvalidParams(
+                    "Eip1559ParamsElasticityZero".to_string().into(),
+                ));
+            }
+        }
+
+        if self.chain_spec().is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp)
+        {
+            if attributes.min_base_fee.is_none() {
+                return Err(EngineObjectValidationError::InvalidParams(
+                    "MissingMinBaseFeeInPayloadAttributes".to_string().into(),
+                ));
+            }
+        } else if attributes.min_base_fee.is_some() {
+            return Err(EngineObjectValidationError::InvalidParams(
+                "MinBaseFeeNotAllowedBeforeJovian".to_string().into(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Verifies the Isthmus L2-to-L1 message-passer storage root after block execution.
     pub fn validate_isthmus_post_execution<DB, H>(
         &self,
@@ -223,48 +294,7 @@ impl EngineApiValidator for BaseEngineValidator {
             >::PayloadAttributes(attributes),
         )?;
 
-        if attributes.gas_limit.is_none() {
-            return Err(EngineObjectValidationError::InvalidParams(
-                "MissingGasLimitInPayloadAttributes".to_string().into(),
-            ));
-        }
-
-        if self
-            .chain_spec()
-            .is_holocene_active_at_timestamp(attributes.payload_attributes.timestamp)
-        {
-            let (elasticity, denominator) =
-                attributes.decode_eip_1559_params().ok_or_else(|| {
-                    EngineObjectValidationError::InvalidParams(
-                        "MissingEip1559ParamsInPayloadAttributes".to_string().into(),
-                    )
-                })?;
-
-            if elasticity != 0 && denominator == 0 {
-                return Err(EngineObjectValidationError::InvalidParams(
-                    "Eip1559ParamsDenominatorZero".to_string().into(),
-                ));
-            } else if denominator != 0 && elasticity == 0 {
-                return Err(EngineObjectValidationError::InvalidParams(
-                    "Eip1559ParamsElasticityZero".to_string().into(),
-                ));
-            }
-        }
-
-        if self.chain_spec().is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp)
-        {
-            if attributes.min_base_fee.is_none() {
-                return Err(EngineObjectValidationError::InvalidParams(
-                    "MissingMinBaseFeeInPayloadAttributes".to_string().into(),
-                ));
-            }
-        } else if attributes.min_base_fee.is_some() {
-            return Err(EngineObjectValidationError::InvalidParams(
-                "MinBaseFeeNotAllowedBeforeJovian".to_string().into(),
-            ));
-        }
-
-        Ok(())
+        self.validate_base_attributes(attributes)
     }
 }
 
@@ -407,6 +437,30 @@ mod tests {
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
             WithEncoded::from_2718_encodable(metadata.into()),
         ];
+    }
+
+    #[test]
+    fn native_attributes_enforce_fork_fields_and_base_parameters() {
+        let validator = validator();
+        let mut attributes = get_attributes(Some(B64::ZERO), None, 1732633200);
+        assert!(validator.validate_attributes(&attributes).is_ok());
+        attributes.payload_attributes.has_withdrawals = false;
+        assert!(validator.validate_attributes(&attributes).is_err());
+        attributes.payload_attributes.has_withdrawals = true;
+        attributes.payload_attributes.parent_beacon_block_root = None;
+        assert!(validator.validate_attributes(&attributes).is_err());
+        attributes.payload_attributes.parent_beacon_block_root = Some(B256::ZERO);
+        attributes.gas_limit = None;
+        assert_invalid_params_error!(
+            validator.validate_attributes(&attributes),
+            "MissingGasLimitInPayloadAttributes"
+        );
+        attributes.gas_limit = Some(1000);
+        attributes.eip_1559_params = None;
+        assert_invalid_params_error!(
+            validator.validate_attributes(&attributes),
+            "MissingEip1559ParamsInPayloadAttributes"
+        );
     }
 
     #[test]
