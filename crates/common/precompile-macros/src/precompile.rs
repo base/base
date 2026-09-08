@@ -46,7 +46,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
         quote! {
             #[doc = #doc]
             pub fn install(
-                precompiles: &mut ::alloy_evm::precompiles::PrecompilesMap,
+                precompiles: &mut ::base_evm_handler::PrecompilesMap,
                 #(#install_arg_defs),*
             ) {
                 precompiles.extend_precompiles(::core::iter::once((
@@ -77,7 +77,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
             #install
 
             #[doc = #precompile_doc]
-            pub fn precompile(#(#arg_defs),*) -> ::alloy_evm::precompiles::DynPrecompile {
+            pub fn precompile(#(#arg_defs),*) -> ::base_evm_handler::DynPrecompile {
                 #macro_invocation
             }
         }

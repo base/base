@@ -15,9 +15,9 @@
 
 use alloc::string::ToString;
 
-use alloy_evm::EvmInternals;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use base_evm_context::JournalCheckpoint;
+use base_evm_handler::EvmInternals;
 use revm::{
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
@@ -235,8 +235,8 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{EvmInternals, eth::EthEvmContext};
     use alloy_primitives::{Address, U256};
+    use base_evm_handler::{EthEvmContext, EvmInternals};
     use revm::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
 
     use super::JournalStorageProvider;

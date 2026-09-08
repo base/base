@@ -16,9 +16,9 @@ workspace = true
 
 [dependencies]
 revm = { workspace = true }
-alloy-evm = { workspace = true }
 alloy-eips = { workspace = true }
 reth-trie-common = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -67,6 +67,6 @@ std = [
     "serde_with?/std",
     "derive_more/std",
     "reth-trie-common/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
     "alloy-rlp?/std",
 ]

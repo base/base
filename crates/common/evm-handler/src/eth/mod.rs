@@ -12,7 +12,6 @@ use base_evm_context::{
 use base_evm_handler::{
     EthFrame, EthInstructions, EthPrecompiles, NoOpInspector, PrecompileProvider,
 };
-pub use env::NextEvmEnvAttributes;
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
@@ -20,18 +19,12 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 
-use crate::{Database, Evm, env::EvmEnv, evm::EvmFactory, precompiles::PrecompilesMap};
+use crate::{Database, Evm, env::EvmEnv, evm_api::EvmFactory, precompiles::PrecompilesMap};
 
-mod block;
-pub use block::*;
-
-pub mod dao_fork;
-pub mod eip6110;
-pub mod receipt_builder;
-pub mod spec;
-
-mod env;
-pub(crate) mod spec_id;
+mod tx_result;
+pub use tx_result::*;
+mod receipt_builder;
+pub use receipt_builder::*;
 
 /// The Ethereum EVM context type.
 pub type EthEvmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;

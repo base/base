@@ -6,7 +6,7 @@ use alloy_primitives::{
     Address, Bytes,
     map::{DefaultHashBuilder, FbBuildHasher},
 };
-use base_execution_evm::precompiles::{DynPrecompile, Precompile, PrecompileInput};
+use base_execution_evm::{DynPrecompile, Precompile, PrecompileInput};
 use moka::policy::EvictionPolicy;
 use reth_primitives_traits::dashmap::DashMap;
 use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};

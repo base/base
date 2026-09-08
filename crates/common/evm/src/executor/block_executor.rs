@@ -4,19 +4,15 @@ use alloc::{boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
-use alloy_evm::{
-    Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
-    block::{
-        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, StateDB, SystemCaller,
-        state_changes::post_block_balance_increments,
-    },
-    eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
-};
 use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_evm_context::{Block, ResultAndState};
+use base_evm_handler::{
+    BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError, Database,
+    EthTxResult, Evm, ExecutableTx, FromRecoveredTx, FromTxWithEncoded, GasOutput,
+    ReceiptBuilderCtx, RecoveredTx, StateDB, SystemCaller, post_block_balance_increments,
+};
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
 use revm::{DatabaseCommit, database::DatabaseCommitExt};
@@ -367,9 +363,6 @@ mod tests {
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
-    use alloy_evm::{
-        EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
-    };
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Bytes, Signature, U256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
@@ -378,7 +371,9 @@ mod tests {
     };
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::BlockEnv;
-    use base_evm_handler::NoOpInspector;
+    use base_evm_handler::{
+        BlockExecutorFactory, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap, ToTxEnv,
+    };
     use revm::{
         Context,
         database::{CacheDB, EmptyDB, InMemoryDB},

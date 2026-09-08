@@ -8,10 +8,6 @@ use alloc::{string::ToString, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_consensus::{Header, Sealed, crypto::RecoveryError};
-use alloy_evm::{
-    EvmFactory,
-    block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
-};
 use base_common_consensus::BaseReceiptEnvelope;
 use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId,
@@ -20,6 +16,7 @@ use base_common_evm::{
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
+use base_evm_handler::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory, EvmFactory};
 use base_proof_mpt::TrieHinter;
 use revm::database::{State, states::bundle_state::BundleRetention};
 

@@ -13,8 +13,8 @@ use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
 use base_common_consensus::BaseReceipt;
 use base_execution_evm::{
-    BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxTuple, SpecFor,
-    TxEnvFor, WithTxEnv, block::ExecutableTxParts,
+    BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
+    ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
 };
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;

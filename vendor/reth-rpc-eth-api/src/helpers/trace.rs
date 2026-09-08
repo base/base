@@ -7,8 +7,8 @@ use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockId, TransactionInfo};
 use base_evm_context::{Block, ResultAndState};
 use base_execution_evm::{
-    Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv, TxEnvFor, block::BlockExecutor,
-    evm::EvmFactoryExt, tracing::TracingCtx,
+    BlockExecutor, Evm, EvmEnvFor, EvmFactoryExt, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv,
+    TracingCtx, TxEnvFor,
 };
 use futures::Future;
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};

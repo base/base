@@ -16,7 +16,8 @@ extern crate alloc;
 use alloy_consensus::BlockHeader;
 // Re-export [`ExecutionPayload`] moved to `base_execution_payload_types`
 #[cfg(feature = "std")]
-pub use base_execution_evm::{ConvertTx, ExecutableTxIterator, ExecutableTxTuple};
+pub use base_execution_evm::ConvertTx;
+pub use base_execution_evm::{ExecutableTxIterator, ExecutableTxTuple};
 pub use base_execution_payload_types::ExecutionPayload;
 use base_execution_payload_types::{
     EngineApiMessageVersion, EngineObjectValidationError, InvalidPayloadAttributesError,

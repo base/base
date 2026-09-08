@@ -25,7 +25,7 @@ use crate::{
 ///
 /// [EIP-2935]: https://eips.ethereum.org/EIPS/eip-2935
 #[inline]
-pub(crate) fn transact_blockhashes_contract_call<Halt>(
+pub fn transact_blockhashes_contract_call<Halt>(
     spec: impl EthereumHardforks,
     parent_block_hash: B256,
     evm: &mut impl Evm<HaltReason = Halt>,

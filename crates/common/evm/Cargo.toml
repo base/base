@@ -14,7 +14,6 @@ workspace = true
 
 [dependencies]
 revm = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
@@ -48,7 +47,7 @@ default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
     "alloy-consensus/std",
     "alloy-eips/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
     "alloy-primitives/std",
     "base-common-chains/std",
     "base-common-consensus/std",

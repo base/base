@@ -17,10 +17,10 @@ workspace = true
 
 [dependencies]
 revm = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 reth-trie = { workspace = true }
 reth-provider = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-errors = { workspace = true }
 metrics = { workspace = true, optional = true }

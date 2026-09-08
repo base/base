@@ -5,13 +5,12 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
-pub use alloy_evm::block::{BlockExecutor, BlockExecutorFactory, GasOutput};
-use alloy_evm::{
-    Evm, EvmEnv, EvmFactory, RecoveredTx, ToTxEnv,
-    block::{CommitChanges, ExecutableTxParts},
-};
 use alloy_primitives::{Address, B256};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+pub use base_evm_handler::{BlockExecutor, BlockExecutorFactory, GasOutput};
+use base_evm_handler::{
+    CommitChanges, Evm, EvmEnv, EvmFactory, ExecutableTxParts, RecoveredTx, ToTxEnv,
+};
 pub use reth_execution_errors::{
     BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };

@@ -3,10 +3,9 @@
 use alloc::vec;
 
 use alloy_eips::Encodable2718;
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_evm_context::{Transaction, TxEnv};
-use base_evm_handler::SystemCallTx;
+use base_evm_handler::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, SystemCallTx};
 use revm::primitives::{Address, B256, Bytes, TxKind, U256};
 
 use crate::{
@@ -253,7 +252,7 @@ impl IntoTxEnv<Self> for BaseTransaction {
     }
 }
 
-impl alloy_evm::TransactionEnvMut for BaseTransaction {
+impl base_evm_handler::TransactionEnvMut for BaseTransaction {
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.base.set_gas_limit(gas_limit);
     }

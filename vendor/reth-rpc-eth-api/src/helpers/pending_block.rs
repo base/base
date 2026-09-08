@@ -15,7 +15,7 @@ use base_evm_context::{Block, Cfg as _};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
-    EvmEnvFor, block::TxResult,
+    EvmEnvFor, TxResult,
 };
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};

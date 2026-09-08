@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 revm = { workspace = true }
 thiserror = { workspace = true }
-alloy-evm = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 futures-util = { workspace = true }
@@ -73,7 +72,7 @@ std = [
     "base-execution-payload-types/std",
     "dep:rayon",
     "revm/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
     "reth-execution-types/std",
     "reth-storage-errors/std",
     "futures-util/std",
@@ -85,7 +84,7 @@ std = [
     "alloy-rlp?/std",
 ]
 portable = ["base-common-evm/portable", "revm/portable"]
-rpc = ["alloy-evm/rpc"]
+rpc = ["base-evm-handler/rpc"]
 test-utils = [
     "std",
     "reth-primitives-traits/test-utils",

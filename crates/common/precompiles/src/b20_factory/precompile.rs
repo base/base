@@ -1,7 +1,7 @@
 //! Precompile entry point for the `B20Factory`.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::{DynPrecompile, PrecompilesMap};
 
 use crate::{
     B20FactoryStorage, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,

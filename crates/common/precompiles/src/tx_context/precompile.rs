@@ -1,7 +1,7 @@
 //! Precompile entry point for the EIP-8130 transaction context.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::{DynPrecompile, PrecompilesMap};
 
 use crate::{TxContextStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
 
@@ -39,8 +39,8 @@ impl TxContext {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::precompiles::PrecompilesMap;
     use base_common_genesis::BaseUpgrade;
+    use base_evm_handler::PrecompilesMap;
     use revm::precompile::Precompiles;
 
     use crate::{TxContext, TxContextStorage};

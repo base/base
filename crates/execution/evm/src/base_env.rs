@@ -1,11 +1,11 @@
 use alloy_consensus::Header;
-use alloy_evm::EvmEnv;
 use alloy_primitives::U256;
 use base_common_chains::Upgrades;
 use base_common_evm::BaseSpecId;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
+use base_evm_handler::EvmEnv;
 use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 use revm::primitives::hardfork::SpecId;

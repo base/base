@@ -36,10 +36,22 @@ serde_json = { workspace = true, features = [
     "alloc",
     "preserve_order",
 ], optional = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+revm-database = {workspace = true}
+alloy-hardforks = { workspace = true }
+alloy-primitives = { workspace = true }
+derive_more = { workspace = true, features = ["full"] }
+alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-rpc-types-eth = { workspace = true, optional = true }
 [dev-dependencies]
+test-case = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-signer-local = { workspace = true }
 revm-database = { workspace = true, features = ["serde"]}
+serde_json = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 [lints]
 workspace = true
 
@@ -71,5 +83,18 @@ std = [
     "serde_json?/std",
     "serde_json?/preserve_order",
     "either/std",
+    "alloy-primitives/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "derive_more/std",
+    "thiserror/std",
+    "alloy-rpc-types-eth?/std",
+    "tracing/std",
 ]
 tracer = ["std", "serde", "dep:serde", "dep:serde_json"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
+call-util = ["overrides"]
+gmp = ["revm-precompile/gmp"]
+overrides = ["dep:alloy-rpc-types-eth"]
+rpc = ["dep:alloy-rpc-types-eth"]
+secp256k1 = ["std", "alloy-consensus/secp256k1"]

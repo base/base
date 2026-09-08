@@ -67,7 +67,6 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
-alloy-evm = { workspace = true, features = ["overrides"] }
 alloy-rpc-types = { workspace = true, features = ["eth"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
@@ -82,6 +81,7 @@ reth-execution-types = { workspace = true, features = ["serde"] }
 alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
 alloy-rpc-types-engine = { workspace = true, features = ["kzg"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
+base-evm-handler = { workspace = true, features = ["overrides"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

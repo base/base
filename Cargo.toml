@@ -289,7 +289,6 @@ evm2 = { path = "vendor/evm2", default-features = false }
 
 # alloy
 alloy-rlp = { path = "vendor/alloy-rlp", default-features = false }
-alloy-evm = { path = "vendor/alloy-evm", default-features = false }
 alloy-trie = { path = "vendor/alloy-trie", default-features = false }
 alloy-eips = { path = "vendor/alloy-eips", default-features = false }
 alloy-serde = { path = "vendor/alloy-serde", default-features = false }

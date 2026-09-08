@@ -1,6 +1,6 @@
 use alloy_consensus::transaction::Either;
-use alloy_evm::{RecoveredTx, block::ExecutableTxParts};
 use base_common_consensus::BaseTxEnvelope;
+use base_evm_handler::{ExecutableTxParts, RecoveredTx};
 use rayon::prelude::*;
 
 use crate::{TxEnvFor, execute::ExecutableTxFor};

@@ -1,5 +1,5 @@
-pub use alloy_evm::block::BlockExecutionResult;
 use alloy_primitives::{Address, B256, U256};
+pub use base_evm_handler::BlockExecutionResult;
 use reth_primitives_traits::{Account, Bytecode};
 use revm::database::{BundleAccount, states::BundleState};
 

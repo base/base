@@ -2,11 +2,10 @@
 
 use alloy_consensus::{Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::Encodable2718;
-use alloy_evm::{
-    EvmFactory, FromRecoveredTx, FromTxWithEncoded,
-    block::{BlockExecutorFactory, StateDB},
-};
 use base_common_chains::{ChainUpgrades, Upgrades};
+use base_evm_handler::{
+    BlockExecutorFactory, EvmFactory, FromRecoveredTx, FromTxWithEncoded, StateDB,
+};
 use revm::Inspector;
 
 use crate::{

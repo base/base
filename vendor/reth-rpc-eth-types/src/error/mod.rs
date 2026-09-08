@@ -5,13 +5,13 @@ use core::time::Duration;
 use std::convert::Infallible;
 
 use alloy_eips::BlockId;
-use alloy_evm::{call::CallError, overrides::StateOverrideError};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
+use base_evm_handler::{CallError, StateOverrideError};
 use reth_execution_errors::{BlockExecutionError, BlockValidationError};
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
 use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};

@@ -2,7 +2,6 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alloy_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_evm::{Evm, env::BlockEnvironment};
 use alloy_genesis::ChainConfig;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B256, Bytes, U64, hex::decode, uint};
@@ -17,8 +16,9 @@ use alloy_rpc_types_trace::geth::{
 };
 use async_trait::async_trait;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_evm_handler::{BlockEnvironment, Evm};
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{EvmEnvFor, ExecutionWitnessRecord, Executor, block::BlockExecutor};
+use base_execution_evm::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;

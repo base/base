@@ -4,10 +4,6 @@ use core::fmt::Debug;
 use alloy_consensus::{BlockHeader, Header};
 #[cfg(feature = "std")]
 use alloy_eips::Decodable2718;
-use alloy_evm::{
-    Database, EvmFactory, IntoTxEnv,
-    block::{BlockExecutorFactory, BlockExecutorFor},
-};
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
@@ -19,6 +15,7 @@ use base_common_evm::{
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
+use base_evm_handler::{BlockExecutorFactory, BlockExecutorFor, Database, EvmFactory, IntoTxEnv};
 use base_execution_chainspec::BaseChainSpec;
 use reth_execution_errors::BlockExecutionError;
 #[cfg(feature = "std")]
@@ -278,7 +275,7 @@ impl BaseEvmConfig {
 
     /// Creates a [`BlockBuilder`]. Should be used when building a new block.
     ///
-    /// Block builder wraps an inner [`alloy_evm::block::BlockExecutor`] and has a similar
+    /// Block builder wraps an inner [`base_evm_handler::BlockExecutor`] and has a similar
     /// interface. Builder collects all of the executed transactions, and once
     /// [`BlockBuilder::finish`] is called, it invokes the configured [`BlockAssembler`] to
     /// create a block.

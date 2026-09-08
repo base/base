@@ -5,8 +5,8 @@ use alloc::boxed::Box;
 use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
-use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
+use base_evm_handler::{Evm, ReceiptBuilderCtx};
 
 /// Boxed receipt-builder context returned for deposit transactions.
 pub(crate) type ReceiptBuilderError<'a, Tx, E> = Box<ReceiptBuilderCtx<'a, Tx, E>>;

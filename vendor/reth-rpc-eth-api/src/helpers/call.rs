@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eips::eip2930::AccessListResult;
-use alloy_evm::overrides::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides};
 use alloy_hardforks::EthereumHardforks;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{B256, Bytes, U256};
@@ -16,10 +15,11 @@ use alloy_rpc_types_eth::{
 };
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_evm_context::{Block, Cfg, ResultAndState, Transaction};
+use base_evm_handler::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
-    BlockBuilder, CancelOnDrop, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor,
-    TransactionEnvMut, TxEnvFor, block::BlockExecutor, env::BlockEnvironment,
+    BlockBuilder, BlockEnvironment, BlockExecutor, CancelOnDrop, Evm, EvmEnvFor, EvmFor,
+    HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
 };
 use futures::Future;
 use reth_primitives_traits::Recovered;
@@ -509,7 +509,7 @@ pub trait Call: LoadState + SpawnBlocking {
         _evm_env: &EvmEnvFor,
         tx_env: &TxEnvFor,
     ) -> Result<u64, BaseEthApiError> {
-        alloy_evm::call::caller_gas_allowance(&mut db, tx_env)
+        base_evm_handler::caller_gas_allowance(&mut db, tx_env)
             .map_err(BaseEthApiError::from_eth_err)
     }
 

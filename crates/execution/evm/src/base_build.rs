@@ -5,12 +5,12 @@ use alloy_consensus::{
     proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
-use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_common_evm::BaseBlockExecutionCtx;
 use base_evm_context::Block as _;
+use base_evm_handler::BlockExecutorFactory;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_execution_errors::BlockExecutionError;

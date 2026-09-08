@@ -15,17 +15,18 @@ pub use error::*;
 
 mod gas_output;
 pub use gas_output::*;
-pub use revm::{NoopHook, OnStateHook};
 
-pub mod system_calls;
+mod system_calls;
 pub use system_calls::*;
 
-pub mod state_changes;
+mod state_changes;
+pub use state_changes::*;
 
-pub mod state;
+mod state;
 pub use state::*;
 
-pub mod calc;
+mod calc;
+pub use calc::*;
 
 /// The result of executing a block.
 #[derive(Debug, Clone, PartialEq, Eq)]

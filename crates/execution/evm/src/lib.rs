@@ -55,10 +55,9 @@ pub use metrics::ExecutorMetrics;
 /// test helpers for mocking executor
 pub mod test_utils;
 
-pub use alloy_evm::{
-    block::{OnStateHook, state_changes, system_calls},
-    *,
-};
+pub use base_evm_handler as state_changes;
+pub use base_evm_handler as system_calls;
+pub use base_evm_handler::{OnStateHook, *};
 
 mod next_block;
 pub use next_block::NextBlockEnvAttributes;

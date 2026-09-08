@@ -16,11 +16,12 @@ workspace = true
 
 [dependencies]
 nybbles = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-storage-errors = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+
 [features]
 default = ["std"]
 std = [
@@ -29,5 +30,5 @@ std = [
     "thiserror/std",
     "nybbles/std",
     "reth-storage-errors/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
 ]

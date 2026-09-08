@@ -17,7 +17,6 @@ normal = ["getrandom"]
 revm = { workspace = true }
 tracing = { workspace = true }
 alloy-rlp = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
@@ -25,6 +24,7 @@ base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }
+base-evm-handler = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-consensus = { workspace = true }
 serde_json = { workspace = true, optional = true }
@@ -48,7 +48,7 @@ alloy-provider = { workspace = true, features = ["default", "reqwest"], optional
 std = [
     "alloy-consensus/std",
     "alloy-eips/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
     "alloy-rpc-types-engine?/std",

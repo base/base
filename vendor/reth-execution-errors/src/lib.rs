@@ -12,7 +12,7 @@
 extern crate alloc;
 
 pub mod trie;
-pub use alloy_evm::block::{
+pub use base_evm_handler::{
     BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };
 pub use trie::*;

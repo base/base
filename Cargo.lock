@@ -324,28 +324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-evm"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-sol-types",
- "auto_impl",
- "base-evm-context",
- "base-evm-handler",
- "derive_more",
- "revm",
- "serde_json",
- "test-case",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
 name = "alloy-genesis"
 version = "0.0.0"
 dependencies = [
@@ -2943,7 +2921,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-eips",
- "alloy-evm",
  "alloy-hardforks",
  "alloy-json-rpc",
  "alloy-network",
@@ -2969,6 +2946,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-eip8130",
@@ -3192,7 +3170,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
@@ -3203,6 +3180,7 @@ dependencies = [
  "alloy-sol-types",
  "arbitrary",
  "base-evm-context",
+ "base-evm-handler",
  "bincode 2.0.1",
  "bytes",
  "modular-bitfield",
@@ -3223,7 +3201,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-hardforks",
  "alloy-primitives",
  "alloy-sol-types",
@@ -3329,12 +3306,12 @@ dependencies = [
 name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
- "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-chains",
  "base-common-genesis",
  "base-evm-context",
+ "base-evm-handler",
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion 0.8.2",
@@ -3349,7 +3326,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-network",
  "alloy-network-primitives",
  "alloy-primitives",
@@ -3358,6 +3334,7 @@ dependencies = [
  "arbitrary",
  "base-common-consensus",
  "base-common-evm",
+ "base-evm-handler",
  "derive_more",
  "rand 0.9.5",
  "serde",
@@ -3849,12 +3826,18 @@ dependencies = [
 name = "base-evm-handler"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
  "auto_impl",
  "base-evm-context",
  "base-state-api",
  "derive-where",
+ "derive_more",
  "either",
  "revm-bytecode",
  "revm-database",
@@ -3864,6 +3847,9 @@ dependencies = [
  "revm-state",
  "serde",
  "serde_json",
+ "test-case",
+ "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]
@@ -4018,7 +4004,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rpc-types",
  "base-common-chains",
@@ -4027,6 +4012,7 @@ dependencies = [
  "base-common-precompiles",
  "base-common-rpc-types",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-evm",
  "jsonrpsee",
@@ -4069,7 +4055,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-primitives",
@@ -4136,7 +4121,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-hardforks",
  "alloy-primitives",
  "alloy-rlp",
@@ -4149,6 +4133,7 @@ dependencies = [
  "base-common-evm",
  "base-common-rpc-types-engine",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-eip8130",
@@ -4498,7 +4483,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
@@ -4512,6 +4496,7 @@ dependencies = [
  "base-common-precompiles",
  "base-common-rpc-types",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-node-core",
@@ -4711,10 +4696,10 @@ dependencies = [
 name = "base-precompile-storage"
 version = "0.0.0"
 dependencies = [
- "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
  "base-evm-context",
+ "base-evm-handler",
  "base-precompile-macros",
  "derive_more",
  "proptest",
@@ -4730,7 +4715,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rlp",
@@ -4745,6 +4729,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-consensus-derive",
  "base-evm-context",
+ "base-evm-handler",
  "base-proof-driver",
  "base-proof-executor",
  "base-proof-mpt",
@@ -4769,13 +4754,13 @@ name = "base-proof-client"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm",
  "alloy-primitives",
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",
  "base-consensus-derive",
  "base-evm-context",
+ "base-evm-handler",
  "base-proof",
  "base-proof-driver",
  "base-proof-executor",
@@ -4812,7 +4797,6 @@ name = "base-proof-driver"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "async-trait",
@@ -4820,6 +4804,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-rpc-types-engine",
  "base-consensus-derive",
+ "base-evm-handler",
  "base-proof-executor",
  "base-protocol",
  "spin 0.10.1",
@@ -4833,7 +4818,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
@@ -4848,6 +4832,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-rpc-types-engine",
  "base-evm-context",
+ "base-evm-handler",
  "base-proof-mpt",
  "base-protocol",
  "getrandom 0.2.17",
@@ -15893,7 +15878,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-engine",
@@ -15902,6 +15886,7 @@ dependencies = [
  "base-common-evm",
  "base-common-rpc-types-engine",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -16089,9 +16074,9 @@ dependencies = [
 name = "reth-execution-errors"
 version = "0.0.0"
 dependencies = [
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
+ "base-evm-handler",
  "nybbles",
  "reth-storage-errors",
  "thiserror 2.0.19",
@@ -16103,11 +16088,11 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "arbitrary",
  "base-common-consensus",
+ "base-evm-handler",
  "bincode 1.3.3",
  "derive_more",
  "rand 0.9.5",
@@ -16880,7 +16865,6 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-network",
@@ -16904,6 +16888,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -17046,8 +17031,8 @@ name = "reth-rpc-convert"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm",
  "base-common-consensus",
+ "base-evm-handler",
  "reth-primitives-traits",
  "serde_json",
  "thiserror 2.0.19",
@@ -17098,7 +17083,6 @@ dependencies = [
  "alloy-eip2124",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm",
  "alloy-hardforks",
  "alloy-json-rpc",
  "alloy-network",
@@ -17112,6 +17096,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-rpc-types",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-evm",
  "dyn-clone",
@@ -17148,7 +17133,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm",
  "alloy-json-rpc",
  "alloy-network",
  "alloy-primitives",
@@ -17163,6 +17147,7 @@ dependencies = [
  "base-common-flz",
  "base-common-rpc-types",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-protocol",
@@ -17687,9 +17672,9 @@ name = "reth-trie-parallel"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
+ "base-evm-handler",
  "base-execution-chainspec",
  "crossbeam-channel",
  "crossbeam-utils",

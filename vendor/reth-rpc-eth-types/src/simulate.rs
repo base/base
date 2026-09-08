@@ -3,7 +3,6 @@
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_eips::eip2718::WithEncoded;
-use alloy_evm::{block::TxResult, precompiles::PrecompilesMap};
 use alloy_network::{NetworkTransactionBuilder, TransactionBuilder};
 use alloy_rpc_types_eth::{
     BlockId, BlockOverrides, BlockTransactionsKind,
@@ -13,6 +12,7 @@ use alloy_rpc_types_eth::{
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_evm_context::{Block, ExecutionResult};
+use base_evm_handler::{PrecompilesMap, TxResult};
 use base_execution_evm::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
@@ -272,7 +272,7 @@ pub fn apply_precompile_overrides(
     }
 
     precompiles.move_precompiles(moves).map_err(
-        |alloy_evm::precompiles::MovePrecompileError::NotAPrecompile(addr)| {
+        |base_evm_handler::MovePrecompileError::NotAPrecompile(addr)| {
             EthSimulateError::NotAPrecompile(addr)
         },
     )?;
@@ -597,13 +597,13 @@ where
 mod tests {
     use alloy_chains::Chain;
     use alloy_consensus::Header;
-    use alloy_evm::precompiles::PrecompilesMap;
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::{
         BlockOverrides, TransactionRequest,
         simulate::SimBlock,
         state::{AccountOverride, StateOverride},
     };
+    use base_evm_handler::PrecompilesMap;
     use reth_primitives_traits::SealedHeader;
     use revm::precompile::Precompiles;
 

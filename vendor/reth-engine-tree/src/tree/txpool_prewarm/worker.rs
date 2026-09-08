@@ -3,8 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_evm::Evm;
 use alloy_primitives::B256;
+use base_evm_handler::Evm;
 use base_execution_evm::BaseEvmConfig;
 use base_state_api::CachedReads;
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};

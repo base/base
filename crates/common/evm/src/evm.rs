@@ -1,14 +1,14 @@
 use core::ops::{Deref, DerefMut};
 
-use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
     BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, Evm as RevmEvm,
     ExecResultAndState, ExecutionResult, FrameStack, JournalTr, ResultAndState,
 };
 use base_evm_handler::{
-    EthFrame, EthInstructions, EvmTr, FrameInitOrResult, FrameTr, Handler, InspectorEvmTr,
-    InspectorHandler, ItemOrResult, PrecompileProvider, SystemCallTx,
+    Database as AlloyDatabase, EthFrame, EthInstructions, Evm, EvmEnv, EvmTr, FrameInitOrResult,
+    FrameTr, Handler, InspectorEvmTr, InspectorHandler, ItemOrResult, PrecompileProvider,
+    PrecompilesMap, SystemCallTx,
 };
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
@@ -449,10 +449,6 @@ where
 mod tests {
     use alloc::vec;
 
-    use alloy_evm::{
-        EvmFactory, EvmInternals,
-        precompiles::{Precompile, PrecompileInput},
-    };
     use alloy_primitives::{Address, U256};
     use base_common_precompiles::{
         JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
@@ -460,6 +456,7 @@ mod tests {
         JOVIAN_PAIRING_MAX_INPUT_SIZE,
     };
     use base_evm_context::CfgEnv;
+    use base_evm_handler::{EvmFactory, EvmInternals, Precompile, PrecompileInput};
     use revm::database::EmptyDB;
     use rstest::rstest;
 

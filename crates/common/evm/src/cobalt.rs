@@ -1,7 +1,7 @@
-use alloy_evm::Database;
 use alloy_primitives::{Address, Bytes};
 use base_common_chains::Upgrades;
 use base_common_precompiles::NonceManagerStorage;
+use base_evm_handler::Database;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// Single-byte code stub planted on otherwise code-less EIP-8130 system accounts.

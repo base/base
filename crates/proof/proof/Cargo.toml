@@ -16,7 +16,6 @@ serde = { workspace = true }
 ark-ff = { workspace = true }
 tracing = { workspace = true }
 alloy-rlp = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
@@ -29,6 +28,7 @@ alloy-consensus = { workspace = true }
 base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
+base-evm-handler = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
@@ -55,7 +55,7 @@ std = [
     "alloy-consensus/std",
     "alloy-eips/kzg",
     "alloy-eips/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
     "alloy-rlp/std",

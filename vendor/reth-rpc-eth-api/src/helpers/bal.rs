@@ -3,7 +3,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::BlockId;
-use base_execution_evm::{Evm, block::BlockExecutor};
+use base_execution_evm::{BlockExecutor, Evm};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, cache::db::StateProviderTraitObjWrapper, error::FromEthApiError,
 };

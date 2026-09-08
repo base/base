@@ -2,12 +2,12 @@
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
-use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
 use base_common_evm::{BaseSpecId, BaseUpgrade};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
+use base_evm_handler::{EvmEnv, EvmFactory};
 use base_proof_mpt::TrieHinter;
 
 use super::StatelessL2Builder;

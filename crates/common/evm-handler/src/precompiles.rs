@@ -622,7 +622,7 @@ enum PrecompilesKind {
 }
 
 /// A dynamic precompile implementation that can be modified at runtime.
-pub struct DynPrecompile(pub(crate) Box<dyn Precompile>);
+pub struct DynPrecompile(pub Box<dyn Precompile>);
 
 impl DynPrecompile {
     /// Creates a new [`DynPrecompiles`] with the given closure.

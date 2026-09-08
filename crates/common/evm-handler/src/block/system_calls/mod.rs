@@ -12,15 +12,20 @@ use revm::DatabaseCommit;
 use crate::{Evm, block::BlockExecutionError};
 
 mod eip2935;
+pub use eip2935::*;
 mod eip4788;
+pub use eip4788::*;
 mod eip7002;
-mod eip7251;
-mod eip8282;
-
-pub use eip8282::{
-    BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, BUILDER_DEPOSIT_REQUEST_TYPE,
-    BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS, BUILDER_EXIT_REQUEST_TYPE,
+pub use eip7002::{
+    post_commit as withdrawal_requests_post_commit, transact_withdrawal_requests_contract_call,
 };
+mod eip7251;
+pub use eip7251::{
+    post_commit as consolidation_requests_post_commit,
+    transact_consolidation_requests_contract_call,
+};
+mod eip8282;
+pub use eip8282::*;
 
 /// An ephemeral helper type for executing system calls.
 ///

@@ -13,30 +13,31 @@ workspace = true
 [dependencies]
 tracing = { workspace = true }
 alloy-rlp = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 base-protocol = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
+base-evm-handler = { workspace = true }
 base-proof-executor = { workspace = true }
 base-common-genesis = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-common-consensus = { workspace = true }
 base-common-rpc-types-engine = { workspace = true }
 spin = { workspace = true, features = ["default"] }
+
 [features]
 std = [
-	"alloy-consensus/std",
-	"alloy-evm/std",
-	"alloy-primitives/std",
-	"alloy-rlp/std",
-	"base-common-consensus/std",
-	"base-common-genesis/std",
-	"base-common-rpc-types-engine/std",
-	"base-proof-executor/std",
-	"base-protocol/std",
-	"spin/std",
-	"thiserror/std",
-	"tracing/std",
+    "alloy-consensus/std",
+    "base-evm-handler/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "base-common-consensus/std",
+    "base-common-genesis/std",
+    "base-common-rpc-types-engine/std",
+    "base-proof-executor/std",
+    "base-protocol/std",
+    "spin/std",
+    "thiserror/std",
+    "tracing/std",
 ]

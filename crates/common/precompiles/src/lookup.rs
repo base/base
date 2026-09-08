@@ -1,8 +1,8 @@
 //! Dynamic lookup for Beryl-native precompiles.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompileLookup, PrecompilesMap};
 use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::{DynPrecompile, PrecompileLookup, PrecompilesMap};
 
 use crate::{
     B20AssetPrecompile, B20StablecoinPrecompile, B20Variant, NoopPrecompileCallObserver,

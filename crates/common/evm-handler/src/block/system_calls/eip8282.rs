@@ -44,7 +44,7 @@ pub const BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS: Address =
 ///
 /// Note: this does not commit the state changes to the database, it only transacts the call.
 #[inline]
-pub(crate) fn transact_builder_deposit_requests_contract_call<Halt>(
+pub fn transact_builder_deposit_requests_contract_call<Halt>(
     evm: &mut impl Evm<HaltReason = Halt>,
 ) -> Result<ResultAndState<Halt>, BlockExecutionError> {
     // At the end of processing any execution block where Amsterdam is active, call the builder
@@ -66,7 +66,7 @@ pub(crate) fn transact_builder_deposit_requests_contract_call<Halt>(
 ///
 /// Note: this does not commit the state changes to the database, it only transacts the call.
 #[inline]
-pub(crate) fn transact_builder_exit_requests_contract_call<Halt>(
+pub fn transact_builder_exit_requests_contract_call<Halt>(
     evm: &mut impl Evm<HaltReason = Halt>,
 ) -> Result<ResultAndState<Halt>, BlockExecutionError> {
     match evm.transact_system_call(
@@ -84,7 +84,7 @@ pub(crate) fn transact_builder_exit_requests_contract_call<Halt>(
 
 /// Extracts the builder deposit requests from the execution output.
 #[inline]
-pub(crate) fn deposit_post_commit<Halt: Debug>(
+pub fn deposit_post_commit<Halt: Debug>(
     result: ExecutionResult<Halt>,
 ) -> Result<Bytes, BlockExecutionError> {
     match result {
@@ -106,7 +106,7 @@ pub(crate) fn deposit_post_commit<Halt: Debug>(
 
 /// Extracts the builder exit requests from the execution output.
 #[inline]
-pub(crate) fn exit_post_commit<Halt: Debug>(
+pub fn exit_post_commit<Halt: Debug>(
     result: ExecutionResult<Halt>,
 ) -> Result<Bytes, BlockExecutionError> {
     match result {

@@ -1,12 +1,8 @@
 //! Reth compatibility implementations for RPC types.
 
-use alloy_evm::{
-    EvmEnv,
-    env::BlockEnvironment,
-    rpc::{EthTxEnvError, TryIntoTxEnv},
-};
 use alloy_primitives::Bytes;
 use base_common_evm::BaseTransaction as BaseRevm;
+use base_evm_handler::{BlockEnvironment, EthTxEnvError, EvmEnv, TryIntoTxEnv};
 
 use crate::BaseTransactionRequest;
 

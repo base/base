@@ -4,7 +4,6 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eips::BlockNumberOrTag;
-use alloy_evm::{env::BlockEnvironment, overrides::apply_block_overrides};
 use alloy_primitives::U256;
 use alloy_rpc_types_eth::{BlockId, Log};
 use alloy_rpc_types_mev::{
@@ -12,6 +11,7 @@ use alloy_rpc_types_mev::{
     SimBundleResponse, Validity,
 };
 use base_evm_context::{Block, ResultAndState};
+use base_evm_handler::{BlockEnvironment, apply_block_overrides};
 use base_execution_evm::Evm;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;

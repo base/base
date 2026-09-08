@@ -1,13 +1,13 @@
 //! Estimate gas needed implementation
 
-use alloy_evm::overrides::{apply_block_overrides, apply_state_overrides};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_context::{Block, Cfg, ExecutionResult, Transaction};
+use base_evm_handler::{apply_block_overrides, apply_state_overrides};
 use base_execution_evm::{
-    Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor, env::BlockEnvironment,
+    BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
 };
 use futures::Future;
 use reth_rpc_eth_types::{

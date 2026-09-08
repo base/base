@@ -58,8 +58,8 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
-alloy-evm = { workspace = true, features = ["overrides", "call-util"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
+base-evm-handler = { workspace = true, features = ["overrides", "call-util"] }
 revm = { workspace = true, features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "optional_fee_charge", "memory_limit"] }
 
 [features]

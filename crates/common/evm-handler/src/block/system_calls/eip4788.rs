@@ -22,7 +22,7 @@ use crate::{
 ///
 /// [EIP-4788]: https://eips.ethereum.org/EIPS/eip-4788
 #[inline]
-pub(crate) fn transact_beacon_root_contract_call<Halt>(
+pub fn transact_beacon_root_contract_call<Halt>(
     spec: impl EthereumHardforks,
     parent_beacon_block_root: Option<B256>,
     evm: &mut impl Evm<HaltReason = Halt>,

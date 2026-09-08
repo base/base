@@ -1,8 +1,8 @@
 //! Precompile entry point for the stablecoin B-20 variant.
 
-use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::{Address, Bytes};
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::DynPrecompile;
 use base_precompile_storage::BasePrecompileError;
 
 use crate::{

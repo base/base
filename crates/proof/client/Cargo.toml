@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 revm = {workspace = true}
 tracing = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 base-proof = { workspace = true }
 base-protocol = { workspace = true }
@@ -21,6 +20,7 @@ base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
+base-evm-handler = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
@@ -35,7 +35,7 @@ tokio = { workspace = true, features = ["default", "full"] }
 [features]
 std = [
     "alloy-consensus/std",
-    "alloy-evm/std",
+    "base-evm-handler/std",
     "alloy-primitives/std",
     "base-common-consensus/std",
     "base-common-evm/std",

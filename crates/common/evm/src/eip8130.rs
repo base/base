@@ -45,7 +45,6 @@
 
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
-use alloy_evm::{Database as AlloyDatabase, EvmInternals};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_consensus::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
@@ -56,7 +55,8 @@ use base_evm_context::{
     LocalContextTr, Output, ResultGas, SuccessReason, take_error,
 };
 use base_evm_handler::{
-    EvmTr, FrameResult, Handler, InspectorEvmTr, InspectorHandler, PrecompileProvider,
+    Database as AlloyDatabase, EvmInternals, EvmTr, FrameResult, Handler, InspectorEvmTr,
+    InspectorHandler, PrecompileProvider,
 };
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
@@ -1720,7 +1720,6 @@ impl Eip8130Executor {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
@@ -1729,7 +1728,7 @@ mod tests {
     };
     use base_common_precompiles::INonceManager;
     use base_evm_context::{BlockEnv, CfgEnv, Context};
-    use base_evm_handler::NoOpInspector;
+    use base_evm_handler::{Evm, FromTxWithEncoded, NoOpInspector, PrecompilesMap};
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;

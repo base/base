@@ -1,8 +1,7 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
-use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_evm_context::FrameStack;
-use base_evm_handler::{EthFrame, EthInstructions};
+use base_evm_handler::{EthFrame, EthInstructions, PrecompilesMap};
 use revm::{Database, interpreter::interpreter::EthInterpreter};
 
 use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
@@ -28,7 +27,7 @@ pub trait Builder: Sized {
 
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
-    /// [`alloy_evm::Evm::transact`].
+    /// [`base_evm_handler::Evm::transact`].
     fn build_base(self) -> BaseEvm<Self::Db, (), PrecompilesMap> {
         self.build_base_with_activation_admin_address(None)
     }
@@ -36,7 +35,7 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with a `()` inspector and an activation registry admin address.
     ///
     /// The inspect flag is `false`, so [`Inspector`][revm::Inspector] callbacks are never invoked
-    /// via [`alloy_evm::Evm::transact`].
+    /// via [`base_evm_handler::Evm::transact`].
     fn build_base_with_activation_admin_address(
         self,
         activation_admin_address: Option<Address>,
@@ -48,12 +47,12 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with a `()` inspector and caller-supplied precompiles.
     ///
     /// The inspect flag is `false`, so [`Inspector`][revm::Inspector] callbacks are never invoked
-    /// via [`alloy_evm::Evm::transact`].
+    /// via [`base_evm_handler::Evm::transact`].
     fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<Self::Db, (), P>;
 
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
     /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
-    /// [`alloy_evm::Evm::transact`] call.
+    /// [`base_evm_handler::Evm::transact`] call.
     fn build_with_inspector<INSP>(
         self,
         inspector: INSP,
@@ -64,7 +63,7 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with the given inspector and activation registry admin address.
     ///
     /// The inspect flag is `true`, so [`Inspector`][revm::Inspector] callbacks are invoked on every
-    /// [`alloy_evm::Evm::transact`] call.
+    /// [`base_evm_handler::Evm::transact`] call.
     fn build_with_inspector_and_activation_admin_address<INSP>(
         self,
         inspector: INSP,
@@ -77,7 +76,7 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with the given inspector and caller-supplied precompiles.
     ///
     /// The inspect flag is `true`, so [`Inspector`][revm::Inspector] callbacks are invoked on every
-    /// [`alloy_evm::Evm::transact`] call.
+    /// [`base_evm_handler::Evm::transact`] call.
     fn build_with_inspector_and_precompiles<INSP, P>(
         self,
         inspector: INSP,

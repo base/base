@@ -109,16 +109,15 @@ use alloy_consensus::{
 };
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal, compute_block_access_list_hash};
 use alloy_eips::{NumHash, eip1898::BlockWithParent, eip4895::Withdrawal};
-use alloy_evm::Evm;
 use alloy_primitives::{
     Address, B256,
     map::{AddressMap, B256Set},
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError};
+use base_evm_handler::Evm;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm::{
-    BaseEvmConfig, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
-    block::BlockExecutor,
+    BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
 };
 use base_execution_payload_builder::{PayloadBuilderLease, PayloadBuilderResources};
 use base_execution_payload_types::{
@@ -1169,8 +1168,8 @@ where
         has_bal: bool,
     ) -> Result<(E, Vec<Address>), BlockExecutionError>
     where
-        E: BlockExecutor<Receipt = BaseReceipt, Evm: alloy_evm::Evm<DB = &'a mut State<DB>>>,
-        Tx: alloy_evm::block::ExecutableTx<E> + alloy_evm::RecoveredTx<InnerTx>,
+        E: BlockExecutor<Receipt = BaseReceipt, Evm: base_evm_handler::Evm<DB = &'a mut State<DB>>>,
+        Tx: base_evm_handler::ExecutableTx<E> + base_evm_handler::RecoveredTx<InnerTx>,
         InnerTx: TxHashRef,
         DB: revm::Database + 'a,
         Err: core::error::Error + Send + Sync + 'static,
@@ -1204,7 +1203,7 @@ where
             self.metrics.record_transaction_wait(wait_start.elapsed());
 
             let tx = tx_result.map_err(BlockExecutionError::other)?;
-            let tx_signer = *<Tx as alloy_evm::RecoveredTx<InnerTx>>::signer(&tx);
+            let tx_signer = *<Tx as base_evm_handler::RecoveredTx<InnerTx>>::signer(&tx);
 
             senders.push(tx_signer);
 

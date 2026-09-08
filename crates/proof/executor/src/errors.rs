@@ -6,9 +6,9 @@
 
 use alloc::string::String;
 
-use alloy_evm::block::BlockExecutionError;
 use base_common_consensus::EIP1559ParamError;
 use base_evm_context::DBErrorMarker;
+use base_evm_handler::BlockExecutionError;
 use base_proof_mpt::TrieNodeError;
 use thiserror::Error;
 
@@ -278,7 +278,7 @@ impl From<EIP1559ParamError> for ExecutorError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::block::{
+    use base_evm_handler::{
         BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
     };
 

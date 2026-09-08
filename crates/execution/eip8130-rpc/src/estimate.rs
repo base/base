@@ -1,15 +1,12 @@
 //! `eth_estimateGas` gas estimation for EIP-8130 simulation requests.
 
 use alloy_eips::BlockId;
-use alloy_evm::{
-    EvmFactory,
-    overrides::{apply_block_overrides, apply_state_overrides},
-};
 use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};
+use base_evm_handler::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_api::{

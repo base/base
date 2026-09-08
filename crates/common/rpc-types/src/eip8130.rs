@@ -2,13 +2,13 @@
 
 use alloc::vec;
 
-use alloy_evm::FromRecoveredTx;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
 };
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
+use base_evm_handler::FromRecoveredTx;
 
 use crate::{BaseTransactionRequest, Eip8130AuthScheme};
 

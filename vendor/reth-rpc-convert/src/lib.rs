@@ -12,5 +12,5 @@
 
 pub mod transaction;
 
-pub use alloy_evm::rpc::{CallFees, CallFeesError, EthTxEnvError, TryIntoTxEnv};
+pub use base_evm_handler::{CallFees, CallFeesError, EthTxEnvError, TryIntoTxEnv};
 pub use transaction::TransactionConversionError;

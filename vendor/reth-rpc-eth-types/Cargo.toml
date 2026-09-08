@@ -66,8 +66,8 @@ reth-rpc-convert = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-alloy-evm = { workspace = true, features = ["overrides", "call-util"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
+base-evm-handler = { workspace = true, features = ["overrides", "call-util"] }
 [dev-dependencies]
 reth-db-models = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }

@@ -1,7 +1,7 @@
 //! Precompile entry point for the EIP-8130 2D nonce manager.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::{DynPrecompile, PrecompilesMap};
 
 use crate::{NonceManagerStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
 
@@ -39,8 +39,8 @@ impl NonceManager {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::precompiles::PrecompilesMap;
     use base_common_genesis::BaseUpgrade;
+    use base_evm_handler::PrecompilesMap;
     use revm::precompile::Precompiles;
 
     use crate::{NonceManager, NonceManagerStorage};

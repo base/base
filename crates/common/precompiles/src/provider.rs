@@ -1,7 +1,7 @@
-use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::PrecompilesMap;
 use base_precompile_storage::StorageFeatures;
 use revm::{
     precompile,

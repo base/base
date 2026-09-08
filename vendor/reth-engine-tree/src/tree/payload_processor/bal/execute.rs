@@ -21,13 +21,10 @@ use alloy_eip7928::{
     bal::{Bal as AlloyBal, DecodedBal},
     compute_block_access_list_hash,
 };
-use alloy_evm::{
-    Evm,
-    block::{BlockExecutionError, BlockExecutor, BlockValidationError, TxResult},
-};
 use alloy_primitives::Address;
 use base_common_consensus::BaseReceipt;
 use base_evm_context::{Block, ResultAndState};
+use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult};
 use base_execution_evm::{BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor};
 use crossbeam_channel::{Receiver, Sender};
 use reth_provider::BlockExecutionOutput;
@@ -890,9 +887,9 @@ mod tests {
         // commit loop must still reject tx2 because tx1's committed gas leaves too little
         // block gas for tx2's gas limit.
         use alloy_consensus::TxLegacy;
-        use alloy_evm::block::BlockValidationError;
         use alloy_primitives::TxKind;
         use base_common_consensus::BaseTypedTransaction as Transaction;
+        use base_evm_handler::BlockValidationError;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 

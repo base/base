@@ -9,8 +9,8 @@
 
 use std::{fmt, sync::Arc};
 
-use alloy_evm::block::OnStateHook;
 use alloy_primitives::{B256, keccak256, map::B256Map};
+use base_evm_handler::OnStateHook;
 use reth_trie::{
     HashedPostState, HashedStorage, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates,
 };

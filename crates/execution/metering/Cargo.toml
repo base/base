@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 revm = { workspace = true }
-alloy-evm = { workspace = true }
 jsonrpsee = { workspace = true }
 derive_more = { workspace = true }
 base-bundles = { workspace = true }
@@ -23,6 +22,7 @@ base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-runner = { workspace = true }
+base-evm-handler = { workspace = true }
 base-common-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-precompiles = { workspace = true }

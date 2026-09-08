@@ -2,8 +2,8 @@
 
 use core::fmt::Display;
 
-use alloy_evm::InvalidTxError;
 use base_evm_context::{EVMError, InvalidTransaction, TransactionError, TxEnvBuildError};
+use base_evm_handler::InvalidTxError;
 
 /// Error type for building [`TxEnv`]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]

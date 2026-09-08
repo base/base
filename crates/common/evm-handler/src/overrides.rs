@@ -660,7 +660,7 @@ mod tests {
             state::AccountInfo,
         };
 
-        use crate::{Evm, env::EvmEnv, eth::EthEvmFactory, evm::EvmFactory};
+        use crate::{Evm, env::EvmEnv, eth::EthEvmFactory, evm_api::EvmFactory};
 
         type TestDb = State<CacheDB<EmptyDB>>;
 

@@ -8,8 +8,6 @@ use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
 };
-#[cfg(feature = "evm")]
-use alloy_evm::FromRecoveredTx;
 #[cfg(feature = "alloy-compat")]
 use alloy_network::{UnknownTxEnvelope, UnknownTypedTransaction};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
@@ -18,6 +16,8 @@ use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 use alloy_rpc_types_eth::ConversionError;
 #[cfg(feature = "evm")]
 use base_evm_context::TxEnv;
+#[cfg(feature = "evm")]
+use base_evm_handler::FromRecoveredTx;
 
 use super::OpTxType;
 

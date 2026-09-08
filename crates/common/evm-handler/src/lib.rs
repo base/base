@@ -2,14 +2,20 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 extern crate self as base_evm_handler;
+pub extern crate self as revm;
 
+pub use base_evm_context::{Context, Journal, JournalEntry};
 pub use base_state_api as database_interface;
+pub use base_state_api::{DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
 pub use revm_bytecode as bytecode;
+pub use revm_database as database;
 pub use revm_interpreter as interpreter;
 pub use revm_precompile as precompile;
+pub use revm_precompile::install_crypto;
 pub use revm_primitives as primitives;
 pub use revm_state as state;
 
@@ -90,3 +96,47 @@ pub use traits::*;
 
 mod validation;
 pub use validation::*;
+
+mod block;
+pub use block::*;
+
+mod evm_api;
+pub use evm_api::*;
+
+mod eth;
+pub use eth::*;
+
+mod env;
+pub use env::*;
+
+mod error;
+pub use error::*;
+
+mod tx;
+pub use tx::*;
+
+mod evm_internals;
+pub use evm_internals::*;
+
+#[cfg(feature = "call-util")]
+mod call;
+#[cfg(feature = "call-util")]
+pub use call::*;
+
+#[cfg(feature = "overrides")]
+mod overrides;
+#[cfg(feature = "overrides")]
+pub use overrides::*;
+
+mod precompiles;
+pub use precompiles::*;
+
+#[cfg(feature = "rpc")]
+mod rpc;
+#[cfg(feature = "rpc")]
+pub use rpc::*;
+
+mod tracing;
+pub use tracing::*;
+
+mod either_evm;

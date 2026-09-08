@@ -19,7 +19,7 @@ use crate::{
 ///
 /// Note: this does not commit the state changes to the database, it only transacts the call.
 #[inline]
-pub(crate) fn transact_consolidation_requests_contract_call<Halt>(
+pub fn transact_consolidation_requests_contract_call<Halt>(
     evm: &mut impl Evm<HaltReason = Halt>,
 ) -> Result<ResultAndState<Halt>, BlockExecutionError> {
     // Execute EIP-7251 consolidation requests contract call.
@@ -51,7 +51,7 @@ pub(crate) fn transact_consolidation_requests_contract_call<Halt>(
 /// Calls the consolidation requests system contract, and returns the requests from the execution
 /// output.
 #[inline]
-pub(crate) fn post_commit<Halt: Debug>(
+pub fn post_commit<Halt: Debug>(
     result: ExecutionResult<Halt>,
 ) -> Result<Bytes, BlockExecutionError> {
     match result {

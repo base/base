@@ -7,7 +7,7 @@
 /// inherit `StorageFeatures::Legacy`. See [`crate::UpgradeGatedStorageFeatures::from_upgrade`].
 macro_rules! base_precompile {
     ($id:expr, storage_features: $storage_features:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
-        ::alloy_evm::precompiles::DynPrecompile::new_stateful(
+        ::base_evm_handler::DynPrecompile::new_stateful(
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
                 if !input.is_direct_call() {

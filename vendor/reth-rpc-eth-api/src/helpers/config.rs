@@ -8,11 +8,11 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig, SystemContract},
 };
-use alloy_evm::precompiles::Precompile;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::Address;
+use base_evm_handler::Precompile;
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{BaseEvmConfig, Evm, precompiles::PrecompilesMap};
+use base_execution_evm::{BaseEvmConfig, Evm, PrecompilesMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_types::EthApiError;

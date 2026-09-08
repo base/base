@@ -1,8 +1,8 @@
 //! Precompile entry point for the activation registry.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::{DynPrecompile, PrecompilesMap};
 use base_precompile_macros::precompile;
 
 use crate::{
@@ -88,9 +88,9 @@ impl ActivationRegistry {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::precompiles::PrecompilesMap;
     use alloy_primitives::Address;
     use base_common_genesis::BaseUpgrade;
+    use base_evm_handler::PrecompilesMap;
     use revm::precompile::Precompiles;
 
     use crate::{ActivationRegistry, ActivationRegistryStorage};

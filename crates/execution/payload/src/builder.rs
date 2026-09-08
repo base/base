@@ -7,7 +7,6 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_evm::{Evm as AlloyEvm, block::TxResult};
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
@@ -16,6 +15,7 @@ use base_common_consensus::{BaseReceipt, BaseTxEnvelope, CoinbaseTip, Predeploys
 use base_common_evm::L1BlockInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::{Block, BlockEnv};
+use base_evm_handler::{Evm as AlloyEvm, TxResult};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{
