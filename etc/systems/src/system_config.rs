@@ -119,8 +119,6 @@ pub struct SystemTestPorts {
     pub l2_builder_http: u16,
     /// L2 Builder WebSocket port
     pub l2_builder_ws: u16,
-    /// L2 Builder Auth RPC port
-    pub l2_builder_auth: u16,
     /// L2 Builder P2P port
     pub l2_builder_p2p: u16,
 
@@ -137,8 +135,6 @@ pub struct SystemTestPorts {
     pub l2_client_http: u16,
     /// L2 Client WebSocket port
     pub l2_client_ws: u16,
-    /// L2 Client Auth RPC port
-    pub l2_client_auth: u16,
     /// L2 Client P2P port
     pub l2_client_p2p: u16,
     /// L2 Client Metrics port
@@ -167,7 +163,7 @@ impl SystemTestPorts {
 
             l2_builder_http: 7545,
             l2_builder_ws: 7546,
-            l2_builder_auth: 7551,
+
             l2_builder_p2p: 7303,
             l2_builder_metrics: 7090,
             l2_builder_cl_rpc: 7549,
@@ -176,7 +172,7 @@ impl SystemTestPorts {
 
             l2_client_http: 8545,
             l2_client_ws: 8546,
-            l2_client_auth: 8551,
+
             l2_client_p2p: 8303,
             l2_client_metrics: 8090,
             l2_client_cl_rpc: 8549,

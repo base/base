@@ -362,13 +362,6 @@ impl<D> ChainPath<D> {
         self.data_dir().join("reth.toml")
     }
 
-    /// Returns the path to the jwtsecret file for this chain.
-    ///
-    /// `<DIR>/<CHAIN_ID>/jwt.hex`
-    pub fn jwt(&self) -> PathBuf {
-        self.data_dir().join("jwt.hex")
-    }
-
     /// Returns the path to the invalid block hooks directory for this chain.
     ///
     /// `<DIR>/<CHAIN_ID>/invalid_block_hooks`

@@ -250,7 +250,6 @@ services:
     ports:
       - "${L2_BUILDER_HTTP_PORT}:${L2_BUILDER_HTTP_PORT}"           # HTTP RPC
       - "${L2_BUILDER_WS_PORT}:${L2_BUILDER_WS_PORT}"               # WebSocket
-      - "${L2_BUILDER_AUTH_PORT}:${L2_BUILDER_AUTH_PORT}"           # Auth RPC (Engine API)
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}"             # P2P
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}/udp"         # Discovery
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
@@ -290,10 +289,6 @@ services:
       - --ws.port=${L2_BUILDER_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_BUILDER_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-builder-engine.ipc
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
       - --nat=extip:${L2_BUILDER_ADVERTISE_IP}
@@ -402,7 +397,6 @@ services:
     ports:
       - "${L2_CLIENT_HTTP_PORT}:${L2_CLIENT_HTTP_PORT}"     # HTTP RPC
       - "${L2_CLIENT_WS_PORT}:${L2_CLIENT_WS_PORT}"         # WebSocket
-      - "${L2_CLIENT_AUTH_PORT}:${L2_CLIENT_AUTH_PORT}"     # Auth RPC (Engine API)
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}/udp"   # Discovery
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
@@ -445,10 +439,6 @@ services:
       - --ws.port=${L2_CLIENT_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_CLIENT_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-client-engine.ipc
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
@@ -522,7 +512,6 @@ services:
     ports:
       - "${L2_BASE_RPC_HTTP_PORT}:${L2_BASE_RPC_HTTP_PORT}"     # HTTP RPC
       - "${L2_BASE_RPC_WS_PORT}:${L2_BASE_RPC_WS_PORT}"         # WebSocket
-      - "${L2_BASE_RPC_AUTH_PORT}:${L2_BASE_RPC_AUTH_PORT}"     # Auth RPC (Engine API)
       - "${L2_BASE_RPC_P2P_PORT}:${L2_BASE_RPC_P2P_PORT}"       # P2P
       - "${L2_BASE_RPC_P2P_PORT}:${L2_BASE_RPC_P2P_PORT}/udp"   # Discovery
       - "${L2_BASE_RPC_METRICS_PORT}:${L2_BASE_RPC_METRICS_PORT}"  # Metrics
@@ -560,10 +549,6 @@ services:
       - --ws.port=${L2_BASE_RPC_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_BASE_RPC_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-engine.ipc
       - --port=${L2_BASE_RPC_P2P_PORT}
       - --discovery.port=${L2_BASE_RPC_P2P_PORT}
       - --nat=extip:${L2_BASE_RPC_ADVERTISE_IP}

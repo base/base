@@ -83,7 +83,6 @@ services:
     ports:
       - "${L2_SEQ1_HTTP_PORT}:${L2_SEQ1_HTTP_PORT}"                     # HTTP RPC
       - "${L2_SEQ1_WS_PORT}:${L2_SEQ1_WS_PORT}"                         # WebSocket
-      - "${L2_SEQ1_AUTH_PORT}:${L2_SEQ1_AUTH_PORT}"                     # Auth RPC (Engine API)
       - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}"                       # P2P
       - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}/udp"                   # Discovery
       - "${L2_SEQ1_METRICS_PORT}:${L2_SEQ1_METRICS_PORT}"               # Metrics
@@ -118,10 +117,6 @@ services:
       - --ws.port=${L2_SEQ1_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_SEQ1_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-sequencer-1-engine.ipc
       - --port=${L2_SEQ1_P2P_PORT}
       - --discovery.port=${L2_SEQ1_P2P_PORT}
       - --nat=extip:${L2_SEQ1_ADVERTISE_IP}
@@ -188,7 +183,6 @@ services:
     ports:
       - "${L2_SEQ2_HTTP_PORT}:${L2_SEQ2_HTTP_PORT}"                     # HTTP RPC
       - "${L2_SEQ2_WS_PORT}:${L2_SEQ2_WS_PORT}"                         # WebSocket
-      - "${L2_SEQ2_AUTH_PORT}:${L2_SEQ2_AUTH_PORT}"                     # Auth RPC (Engine API)
       - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}"                       # P2P
       - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}/udp"                   # Discovery
       - "${L2_SEQ2_METRICS_PORT}:${L2_SEQ2_METRICS_PORT}"               # Metrics
@@ -223,10 +217,6 @@ services:
       - --ws.port=${L2_SEQ2_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=${L2_SEQ2_AUTH_PORT}
-      - --authrpc.addr=0.0.0.0
-      - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --auth-ipc.path=/tmp/base-sequencer-2-engine.ipc
       - --port=${L2_SEQ2_P2P_PORT}
       - --discovery.port=${L2_SEQ2_P2P_PORT}
       - --nat=extip:${L2_SEQ2_ADVERTISE_IP}

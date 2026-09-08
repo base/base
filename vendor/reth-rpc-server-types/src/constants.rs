@@ -6,9 +6,6 @@ pub const DEFAULT_HTTP_RPC_PORT: u16 = 8545;
 /// The default port for the ws server
 pub const DEFAULT_WS_RPC_PORT: u16 = 8546;
 
-/// The default port for the auth server.
-pub const DEFAULT_AUTH_PORT: u16 = 8551;
-
 /// The default maximum block range allowed to filter
 pub const DEFAULT_MAX_BLOCKS_PER_FILTER: u64 = 100_000;
 
@@ -48,9 +45,6 @@ pub const DEFAULT_PROOF_PERMITS: usize = 25;
 
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/reth.ipc";
-
-/// The `engine_api` IPC endpoint
-pub const DEFAULT_ENGINE_API_IPC_ENDPOINT: &str = "/tmp/reth_engine_api.ipc";
 
 /// The default limit for blocks count in `eth_simulateV1`.
 pub const DEFAULT_MAX_SIMULATE_BLOCKS: u64 = 256;

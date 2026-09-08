@@ -1,10 +1,9 @@
 //! Utility functions for node startup and shutdown, for example path parsing and retrieving single
 //! blocks from the network.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use alloy_eips::BlockHashOrNumber;
-use alloy_rpc_types_engine::{JwtError, JwtSecret};
 use base_common_consensus::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use eyre::Result;
@@ -12,22 +11,10 @@ use reth_network_p2p::{
     bodies::client::BodiesClient, headers::client::HeadersClient, priority::Priority,
 };
 use reth_primitives_traits::{SealedBlock, SealedHeader};
-use tracing::{debug, info};
 
 /// Parses a user-specified path into a [`PathBuf`].
 pub fn parse_path(value: &str) -> PathBuf {
     PathBuf::from(value)
-}
-
-/// Attempts to retrieve or create a JWT secret from the specified path.
-pub fn get_or_create_jwt_secret_from_path(path: &Path) -> Result<JwtSecret, JwtError> {
-    if path.exists() {
-        debug!(target: "reth::cli", ?path, "Reading JWT auth secret file");
-        JwtSecret::from_file(path)
-    } else {
-        info!(target: "reth::cli", ?path, "Creating JWT auth secret file");
-        JwtSecret::try_create_random(path)
-    }
 }
 
 /// Get a single header from the network

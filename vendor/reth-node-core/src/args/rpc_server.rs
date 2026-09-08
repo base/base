@@ -3,7 +3,6 @@
 use std::{
     ffi::OsStr,
     net::{IpAddr, Ipv4Addr},
-    path::PathBuf,
     sync::OnceLock,
     time::Duration,
 };
@@ -65,12 +64,7 @@ pub struct DefaultRpcServerArgs {
     ipcdisable: bool,
     ipcpath: String,
     ipc_socket_permissions: Option<String>,
-    auth_addr: IpAddr,
-    auth_port: u16,
-    auth_jwtsecret: Option<PathBuf>,
-    auth_ipc: bool,
-    auth_ipc_path: String,
-    disable_auth_server: bool,
+
     rpc_jwtsecret: Option<JwtSecret>,
     rpc_disable_metrics: bool,
     rpc_max_request_size: MaxU32,
@@ -189,42 +183,6 @@ impl DefaultRpcServerArgs {
     /// Set the default IPC socket permissions
     pub fn with_ipc_socket_permissions(mut self, v: Option<String>) -> Self {
         self.ipc_socket_permissions = v;
-        self
-    }
-
-    /// Set the default auth server address
-    pub const fn with_auth_addr(mut self, v: IpAddr) -> Self {
-        self.auth_addr = v;
-        self
-    }
-
-    /// Set the default auth server port
-    pub const fn with_auth_port(mut self, v: u16) -> Self {
-        self.auth_port = v;
-        self
-    }
-
-    /// Set the default auth JWT secret path
-    pub fn with_auth_jwtsecret(mut self, v: Option<PathBuf>) -> Self {
-        self.auth_jwtsecret = v;
-        self
-    }
-
-    /// Set the default auth IPC enabled state
-    pub const fn with_auth_ipc(mut self, v: bool) -> Self {
-        self.auth_ipc = v;
-        self
-    }
-
-    /// Set the default auth IPC path
-    pub fn with_auth_ipc_path(mut self, v: String) -> Self {
-        self.auth_ipc_path = v;
-        self
-    }
-
-    /// Set whether to disable the auth server by default
-    pub const fn with_disable_auth_server(mut self, v: bool) -> Self {
-        self.disable_auth_server = v;
         self
     }
 
@@ -390,12 +348,7 @@ impl Default for DefaultRpcServerArgs {
             ipcdisable: false,
             ipcpath: constants::DEFAULT_IPC_ENDPOINT.to_string(),
             ipc_socket_permissions: None,
-            auth_addr: Ipv4Addr::LOCALHOST.into(),
-            auth_port: constants::DEFAULT_AUTH_PORT,
-            auth_jwtsecret: None,
-            auth_ipc: false,
-            auth_ipc_path: constants::DEFAULT_ENGINE_API_IPC_ENDPOINT.to_string(),
-            disable_auth_server: false,
+
             rpc_jwtsecret: None,
             rpc_disable_metrics: false,
             rpc_max_request_size: RPC_DEFAULT_MAX_REQUEST_SIZE_MB.into(),
@@ -487,44 +440,9 @@ pub struct RpcServerArgs {
     #[arg(long = "ipc.permissions", default_value = Resettable::from(DefaultRpcServerArgs::get_global().ipc_socket_permissions.as_ref().map(|v| v.to_string().into())))]
     pub ipc_socket_permissions: Option<String>,
 
-    /// Auth server address to listen on
-    #[arg(long = "authrpc.addr", default_value_t = DefaultRpcServerArgs::get_global().auth_addr)]
-    pub auth_addr: IpAddr,
-
-    /// Auth server port to listen on
-    #[arg(long = "authrpc.port", default_value_t = DefaultRpcServerArgs::get_global().auth_port)]
-    pub auth_port: u16,
-
-    /// Path to a JWT secret to use for the authenticated engine-API RPC server.
-    ///
-    /// This will enforce JWT authentication for all requests coming from the consensus layer.
-    ///
-    /// If no path is provided, a secret will be generated and stored in the datadir under
-    /// `<DIR>/<CHAIN_ID>/jwt.hex`. For mainnet this would be `~/.local/share/reth/mainnet/jwt.hex`
-    /// by default.
-    #[arg(long = "authrpc.jwtsecret", value_name = "PATH", global = true, required = false, default_value = Resettable::from(DefaultRpcServerArgs::get_global().auth_jwtsecret.as_ref().map(|v| v.to_string_lossy().into())))]
-    pub auth_jwtsecret: Option<PathBuf>,
-
-    /// Enable auth engine API over IPC
-    #[arg(long, default_value_t = DefaultRpcServerArgs::get_global().auth_ipc)]
-    pub auth_ipc: bool,
-
-    /// Filename for auth IPC socket/pipe within the datadir
-    #[arg(long = "auth-ipc.path", default_value_t = DefaultRpcServerArgs::get_global().auth_ipc_path.clone())]
-    pub auth_ipc_path: String,
-
-    /// Disable the auth/engine API server.
-    ///
-    /// This will prevent the authenticated engine-API server from starting. Use this if you're
-    /// running a node that doesn't need to serve engine API requests.
-    #[arg(long = "disable-auth-server", alias = "disable-engine-api", default_value_t = DefaultRpcServerArgs::get_global().disable_auth_server)]
-    pub disable_auth_server: bool,
-
     /// Hex encoded JWT secret to authenticate the regular RPC server(s), see `--http.api` and
     /// `--ws.api`.
     ///
-    /// This is __not__ used for the authenticated engine-API RPC server, see
-    /// `--authrpc.jwtsecret`.
     #[arg(long = "rpc.jwtsecret", value_name = "HEX", global = true, required = false, default_value = Resettable::from(DefaultRpcServerArgs::get_global().rpc_jwtsecret.as_ref().map(|v| format!("{:?}", v).into())))]
     pub rpc_jwtsecret: Option<JwtSecret>,
 
@@ -704,12 +622,6 @@ impl RpcServerArgs {
         self
     }
 
-    /// Enables the Auth IPC
-    pub const fn with_auth_ipc(mut self) -> Self {
-        self.auth_ipc = true;
-        self
-    }
-
     /// Configures modules for both the HTTP-RPC server and WS-RPC server.
     ///
     /// This is the same as calling both [`Self::with_http_api`] and [`Self::with_ws_api`].
@@ -718,7 +630,7 @@ impl RpcServerArgs {
     }
 
     /// Change rpc port numbers based on the instance number, if provided.
-    /// * The `auth_port` is scaled by a factor of `instance * 100`
+
     /// * The `http_port` is scaled by a factor of `-instance`
     /// * The `ws_port` is scaled by a factor of `instance * 2`
     /// * The `ipcpath` is appended with the instance number: `/tmp/reth.ipc-<instance>`
@@ -728,14 +640,12 @@ impl RpcServerArgs {
     ///
     /// This will also panic in debug mode if either:
     /// * `instance` is greater than `655` (scaling would overflow `u16`)
-    /// * `self.auth_port / 100 + (instance - 1)` would overflow `u16`
+
     ///
     /// In release mode, this will silently wrap around.
     pub fn adjust_instance_ports(&mut self, instance: Option<u16>) {
         if let Some(instance) = instance {
             debug_assert_ne!(instance, 0, "instance must be non-zero");
-            // auth port is scaled by a factor of instance * 100
-            self.auth_port += instance * 100 - 100;
             // http port is scaled by a factor of -instance
             self.http_port -= instance - 1;
             // ws port is scaled by a factor of instance * 2
@@ -759,13 +669,6 @@ impl RpcServerArgs {
         self
     }
 
-    /// Set the auth port to zero, to allow the OS to assign a random unused port when the rpc
-    /// server binds to a socket.
-    pub const fn with_auth_unused_port(mut self) -> Self {
-        self.auth_port = 0;
-        self
-    }
-
     /// Append a random string to the ipc path, to prevent possible collisions when multiple nodes
     /// are being run on the same machine.
     pub fn with_ipc_random_path(mut self) -> Self {
@@ -780,7 +683,6 @@ impl RpcServerArgs {
     pub fn with_unused_ports(mut self) -> Self {
         self = self.with_http_unused_port();
         self = self.with_ws_unused_port();
-        self = self.with_auth_unused_port();
         self = self.with_ipc_random_path();
         self
     }
@@ -835,12 +737,7 @@ impl Default for RpcServerArgs {
             ipcdisable,
             ipcpath,
             ipc_socket_permissions,
-            auth_addr,
-            auth_port,
-            auth_jwtsecret,
-            auth_ipc,
-            auth_ipc_path,
-            disable_auth_server,
+
             rpc_jwtsecret,
             rpc_disable_metrics,
             rpc_max_request_size,
@@ -881,12 +778,7 @@ impl Default for RpcServerArgs {
             ipcdisable,
             ipcpath,
             ipc_socket_permissions,
-            auth_addr,
-            auth_port,
-            auth_jwtsecret,
-            auth_ipc,
-            auth_ipc_path,
-            disable_auth_server,
+
             rpc_jwtsecret,
             rpc_disable_metrics,
             rpc_max_request_size,
@@ -1053,12 +945,7 @@ mod tests {
             ipcdisable: false,
             ipcpath: "reth.ipc".to_string(),
             ipc_socket_permissions: Some("0o666".to_string()),
-            auth_addr: "127.0.0.1".parse().unwrap(),
-            auth_port: 8551,
-            auth_jwtsecret: Some(std::path::PathBuf::from("/tmp/jwt.hex")),
-            auth_ipc: false,
-            auth_ipc_path: "engine.ipc".to_string(),
-            disable_auth_server: false,
+
             rpc_jwtsecret: Some(
                 JwtSecret::from_hex(
                     "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
@@ -1128,14 +1015,6 @@ mod tests {
             "reth.ipc",
             "--ipc.permissions",
             "0o666",
-            "--authrpc.addr",
-            "127.0.0.1",
-            "--authrpc.port",
-            "8551",
-            "--authrpc.jwtsecret",
-            "/tmp/jwt.hex",
-            "--auth-ipc.path",
-            "engine.ipc",
             "--rpc.jwtsecret",
             "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             "--rpc.max-request-size",

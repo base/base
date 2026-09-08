@@ -385,7 +385,7 @@ mod tests {
         cmd.rpc.adjust_instance_ports(cmd.instance);
         cmd.network.port = DEFAULT_DISCOVERY_PORT;
         // check rpc port numbers
-        assert_eq!(cmd.rpc.auth_port, 8551);
+
         assert_eq!(cmd.rpc.http_port, 8545);
         assert_eq!(cmd.rpc.ws_port, 8546);
         // check network listening port number
@@ -396,7 +396,7 @@ mod tests {
         cmd.rpc.adjust_instance_ports(cmd.instance);
         cmd.network.port = DEFAULT_DISCOVERY_PORT + 2 - 1;
         // check rpc port numbers
-        assert_eq!(cmd.rpc.auth_port, 8651);
+
         assert_eq!(cmd.rpc.http_port, 8544);
         assert_eq!(cmd.rpc.ws_port, 8548);
         // check network listening port number
@@ -407,7 +407,7 @@ mod tests {
         cmd.rpc.adjust_instance_ports(cmd.instance);
         cmd.network.port = DEFAULT_DISCOVERY_PORT + 3 - 1;
         // check rpc port numbers
-        assert_eq!(cmd.rpc.auth_port, 8751);
+
         assert_eq!(cmd.rpc.http_port, 8543);
         assert_eq!(cmd.rpc.ws_port, 8550);
         // check network listening port number
@@ -440,7 +440,7 @@ mod tests {
         cmd.network = cmd.network.with_unused_ports();
 
         // make sure the rpc ports are zero
-        assert_eq!(cmd.rpc.auth_port, 0);
+
         assert_eq!(cmd.rpc.http_port, 0);
         assert_eq!(cmd.rpc.ws_port, 0);
 

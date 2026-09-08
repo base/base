@@ -26,21 +26,21 @@ base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 base-execution-payload-types = { workspace = true, optional = true}
 base-common-rpc-types-engine = { workspace = true, optional = true }
 base-execution-txpool = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"], optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
+base-execution-chainspec = { workspace = true, features = ["default"], optional = true }
 base-common-rpc-types = { workspace = true, optional = true, features = ["default", "network"] }
 
 [dependencies.base-node-context]
@@ -57,6 +57,8 @@ harness = false
 
 [features]
 test-utils = [
+    "dep:base-common-consensus",
+    "dep:base-execution-chainspec",
     "dep:reth-network",
     "dep:tokio",
     "base-node-core/test-utils",

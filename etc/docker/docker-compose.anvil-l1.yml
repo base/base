@@ -73,7 +73,6 @@ services:
           --http.addr=0.0.0.0 \
           --http.port=${L2_PROOFS_HTTP_PORT} \
           --http.api=eth,web3,net,rpc,debug \
-          --auth-ipc.path=/data/engine.ipc \
           --metrics=0.0.0.0:${L2_PROOFS_METRICS_PORT} \
           --source-l2-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT} \
           --follow.proofs \

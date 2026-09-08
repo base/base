@@ -347,10 +347,6 @@ mod tests {
             "--ws",
             "--ws.addr=0.0.0.0",
             "--ws.port=8546",
-            "--authrpc.port=8551",
-            "--authrpc.addr=0.0.0.0",
-            "--authrpc.jwtsecret=/genesis/jwt.hex",
-            "--auth-ipc.path=/data/engine.ipc",
             "--port=30303",
             "--discovery.port=30303",
             "--metrics=0.0.0.0:8090",
@@ -403,7 +399,6 @@ mod tests {
             panic!("expected rpc command");
         };
 
-        assert_eq!(rpc.execution.node.rpc.auth_ipc_path, "/data/engine.ipc");
         assert_eq!(rpc.execution.node.network.port, 30303);
         assert!(rpc.execution_chain.is_some());
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
