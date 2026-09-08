@@ -6,13 +6,12 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::BaseEngineApi;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
     PipelineErrorKind, PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,
     StatefulAttributesBuilder, StepResult,
 };
-use base_consensus_engine::EngineForkchoiceVersion;
+use base_consensus_engine::EngineClient;
 use base_consensus_safedb::{
     SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
@@ -733,20 +732,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             safe_block_hash: block_hash,
             finalized_block_hash: self.finalized_head.block_info.hash,
         };
-        match EngineForkchoiceVersion::from_cfg(&self.rollup_config, timestamp) {
-            EngineForkchoiceVersion::V2 => {
-                self.engine
-                    .fork_choice_updated_v2(fcu, None)
-                    .await
-                    .expect("TestRollupNode: fork_choice_updated_v2 failed");
-            }
-            EngineForkchoiceVersion::V3 => {
-                self.engine
-                    .fork_choice_updated_v3(fcu, None)
-                    .await
-                    .expect("TestRollupNode: fork_choice_updated_v3 failed");
-            }
-        }
+        self.engine
+            .update_forkchoice(fcu, None)
+            .await
+            .expect("TestRollupNode: forkchoice update failed");
     }
 
     /// Decode the L1 epoch from the first L1 info deposit in a raw transaction list.

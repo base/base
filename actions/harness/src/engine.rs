@@ -7,26 +7,21 @@ use std::{
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey, U256, hex};
-use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
+use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
+use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_rpc_types_engine::{
-    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId,
-    PayloadStatus, PayloadStatusEnum,
+    ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
+    PayloadStatusEnum,
 };
-use alloy_rpc_types_eth::{
-    Block, BlockTransactions, EIP1186AccountProofResponse, Transaction as EthTransaction,
-};
+use alloy_rpc_types_eth::{Block, BlockTransactions, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{Base, BaseEngineApi};
+use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
-    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
-    BasePayloadAttributes,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_node::{
@@ -676,6 +671,63 @@ impl ActionEngineClient {
 
 #[async_trait]
 impl EngineClient for ActionEngineClient {
+    async fn submit_payload(
+        &self,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let hash = Self::execute_v1_inner(
+            &mut guard,
+            &self.block_registry,
+            &self.rollup_config,
+            envelope.execution_payload.as_v1(),
+        )?;
+        Ok(Self::make_valid(hash))
+    }
+
+    async fn update_forkchoice(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> Result<ForkchoiceUpdated, EngineClientError> {
+        let head = fork_choice_state.head_block_hash;
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+
+        // Update canonical head if the block is in our executed headers.
+        if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned()
+            && let Some(info) = guard.executed_infos.get(&h.number)
+        {
+            guard.canonical_head = *info;
+        }
+
+        // Sequencer mode: build a block from the provided attributes.
+        if let Some(ref attrs) = payload_attributes {
+            let payload_id = Self::build_payload_inner(&mut guard, head, attrs)?;
+            return Ok(ForkchoiceUpdated {
+                payload_status: Self::make_valid(head),
+                payload_id: Some(payload_id),
+            });
+        }
+
+        Ok(Self::make_fcu_valid(head))
+    }
+
+    async fn resolve_payload(
+        &self,
+        id: PayloadId,
+        _attributes: &BasePayloadAttributes,
+    ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let pending = Self::take_pending(&mut guard, id)?;
+        let block = pending.built.block();
+        let (execution_payload, _) =
+            BaseExecutionPayload::from_block_unchecked(block.hash(), &block.clone_block());
+        Ok(BaseExecutionPayloadEnvelope {
+            execution_payload,
+            parent_beacon_block_root: block.parent_beacon_block_root,
+        })
+    }
+
     fn cfg(&self) -> &RollupConfig {
         &self.rollup_config
     }
@@ -708,56 +760,24 @@ impl EngineClient for ActionEngineClient {
         )
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
-        let inner = Arc::clone(&self.inner);
-        let block_id = block;
-        EthGetBlock::new_provider(
-            block,
-            Box::new(move |_kind| {
-                let inner = Arc::clone(&inner);
-                ProviderCall::BoxedFuture(Box::pin(async move {
-                    let guard = inner.lock().expect("action engine inner lock poisoned");
-                    let rpc_block = match block_id {
-                        BlockId::Number(num_or_tag) => {
-                            let number = match num_or_tag {
-                                BlockNumberOrTag::Number(n) => n,
-                                _ => return Ok(None),
-                            };
-                            guard
-                                .executed_headers
-                                .get(&number)
-                                .map(|h| Self::header_to_l2_rpc_block(h, h.hash_slow()))
-                        }
-                        BlockId::Hash(block_hash) => guard
-                            .executed_headers
-                            .values()
-                            .find(|h| h.hash_slow() == block_hash.block_hash)
-                            .map(|h| Self::header_to_l2_rpc_block(h, h.hash_slow())),
-                    };
-                    Ok(rpc_block)
-                }))
-            }),
-        )
+    async fn get_l2_block(&self, block: BlockId) -> TransportResult<Option<ActionL2RpcBlock>> {
+        let guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let header = match block {
+            BlockId::Number(BlockNumberOrTag::Number(number)) => {
+                guard.executed_headers.get(&number)
+            }
+            BlockId::Number(_) => {
+                guard.executed_headers.get(&guard.canonical_head.block_info.number)
+            }
+            BlockId::Hash(hash) => {
+                guard.executed_headers.values().find(|header| header.hash_slow() == hash.block_hash)
+            }
+        };
+        Ok(header.map(|header| Self::header_to_l2_rpc_block(header, header.hash_slow())))
     }
 
-    fn get_proof(
-        &self,
-        address: Address,
-        _keys: Vec<StorageKey>,
-    ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse> {
-        RpcWithBlock::new_provider(move |_block_id| {
-            ProviderCall::BoxedFuture(Box::pin(async move {
-                Ok(EIP1186AccountProofResponse {
-                    address,
-                    balance: Default::default(),
-                    code_hash: Default::default(),
-                    nonce: 0,
-                    storage_hash: Default::default(),
-                    account_proof: vec![],
-                    storage_proof: vec![],
-                })
-            }))
-        })
+    async fn storage_root(&self, _address: Address, _block: BlockId) -> TransportResult<B256> {
+        Ok(B256::ZERO)
     }
 
     async fn l2_block_by_label(
@@ -813,161 +833,6 @@ impl EngineClient for ActionEngineClient {
 
     async fn el_syncing(&self) -> Result<bool, EngineClientError> {
         Ok(false)
-    }
-}
-
-#[async_trait]
-impl BaseEngineApi for ActionEngineClient {
-    async fn new_payload_v2(
-        &self,
-        payload: ExecutionPayloadInputV2,
-    ) -> TransportResult<PayloadStatus> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let block_hash = Self::execute_v1_inner(
-            &mut guard,
-            &self.block_registry,
-            &self.rollup_config,
-            &payload.execution_payload,
-        )?;
-        Ok(Self::make_valid(block_hash))
-    }
-
-    async fn new_payload_v3(
-        &self,
-        payload: ExecutionPayloadV3,
-        _parent_beacon_block_root: B256,
-    ) -> TransportResult<PayloadStatus> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let block_hash = Self::execute_v1_inner(
-            &mut guard,
-            &self.block_registry,
-            &self.rollup_config,
-            &payload.payload_inner.payload_inner,
-        )?;
-        Ok(Self::make_valid(block_hash))
-    }
-
-    async fn new_payload_v4(
-        &self,
-        payload: BaseExecutionPayloadV4,
-        _parent_beacon_block_root: B256,
-    ) -> TransportResult<PayloadStatus> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let block_hash = Self::execute_v1_inner(
-            &mut guard,
-            &self.block_registry,
-            &self.rollup_config,
-            &payload.payload_inner.payload_inner.payload_inner,
-        )?;
-        Ok(Self::make_valid(block_hash))
-    }
-
-    async fn fork_choice_updated_v2(
-        &self,
-        fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<BasePayloadAttributes>,
-    ) -> TransportResult<ForkchoiceUpdated> {
-        let head = fork_choice_state.head_block_hash;
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-
-        // Update canonical head if the block is in our executed headers.
-        if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned()
-            && let Some(info) = guard.executed_infos.get(&h.number)
-        {
-            guard.canonical_head = *info;
-        }
-
-        // Sequencer mode: build a block from the provided attributes.
-        if let Some(ref attrs) = payload_attributes {
-            let payload_id = Self::build_payload_inner(&mut guard, head, attrs)?;
-            return Ok(ForkchoiceUpdated {
-                payload_status: Self::make_valid(head),
-                payload_id: Some(payload_id),
-            });
-        }
-
-        Ok(Self::make_fcu_valid(head))
-    }
-
-    async fn fork_choice_updated_v3(
-        &self,
-        fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<BasePayloadAttributes>,
-    ) -> TransportResult<ForkchoiceUpdated> {
-        self.fork_choice_updated_v2(fork_choice_state, payload_attributes).await
-    }
-
-    async fn get_payload_v2(
-        &self,
-        payload_id: PayloadId,
-    ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(ExecutionPayloadEnvelopeV2::from(p.built))
-    }
-
-    async fn get_payload_v3(
-        &self,
-        payload_id: PayloadId,
-    ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(BaseExecutionPayloadEnvelopeV3::from(p.built))
-    }
-
-    async fn get_payload_v4(
-        &self,
-        payload_id: PayloadId,
-    ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(BaseExecutionPayloadEnvelopeV4::from(p.built))
-    }
-
-    async fn get_payload_v5(
-        &self,
-        payload_id: PayloadId,
-    ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(BaseExecutionPayloadEnvelopeV5::from(p.built))
-    }
-
-    async fn get_payload_bodies_by_hash_v1(
-        &self,
-        _block_hashes: Vec<BlockHash>,
-    ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "ActionEngineClient does not support get_payload_bodies_by_hash_v1",
-        )))
-    }
-
-    async fn get_payload_bodies_by_range_v1(
-        &self,
-        _start: u64,
-        _count: u64,
-    ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "ActionEngineClient does not support get_payload_bodies_by_range_v1",
-        )))
-    }
-
-    async fn get_client_version_v1(
-        &self,
-        _client_version: ClientVersionV1,
-    ) -> TransportResult<Vec<ClientVersionV1>> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "ActionEngineClient does not support get_client_version_v1",
-        )))
-    }
-
-    async fn exchange_capabilities(
-        &self,
-        _capabilities: Vec<String>,
-    ) -> TransportResult<Vec<String>> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "ActionEngineClient does not support exchange_capabilities",
-        )))
     }
 }
 

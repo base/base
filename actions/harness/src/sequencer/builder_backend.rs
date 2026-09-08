@@ -25,8 +25,7 @@ use async_trait::async_trait;
 use base_builder_core::{
     BuilderConfig,
     test_utils::{
-        ChainDriver, EngineApi, Ipc, LocalInstance, LocalInstanceBuilder,
-        node_config_with_chain_spec,
+        ChainDriver, EngineApi, LocalInstance, LocalInstanceBuilder, node_config_with_chain_spec,
     },
 };
 use base_common_consensus::{BaseTxEnvelope, transaction::SignerRecoverable};
@@ -55,7 +54,7 @@ pub struct BuilderBackedEngineClient {
     /// `Sync` (`LocalInstance` is `Send` but not `Sync`).
     instance: Mutex<LocalInstance>,
     /// The authenticated Engine API IPC socket path, used to build engine clients on demand.
-    auth_ipc: String,
+    execution: base_execution_payload_builder::BaseExecutionHandle,
     /// How long to let the payload build loop run before sealing a block.
     block_time: Duration,
     rollup_config: Arc<RollupConfig>,
@@ -84,7 +83,7 @@ impl BuilderBackedEngineClient {
             .build()
             .await?;
 
-        let auth_ipc = instance.auth_ipc().to_string();
+        let execution = instance.execution.clone();
         let block_time = instance.builder_config().block_time;
 
         // The caller supplies the genesis head, anchored to the real L1 genesis origin, so the
@@ -92,7 +91,7 @@ impl BuilderBackedEngineClient {
         // zeroed). `get_unsafe_head` returns this until payloads are inserted.
         Ok(Self {
             instance: Mutex::new(instance),
-            auth_ipc,
+            execution,
             block_time,
             rollup_config,
             head: Mutex::new(genesis_head),
@@ -106,21 +105,17 @@ impl BuilderBackedEngineClient {
     }
 
     /// An Engine API client for the in-process builder node's authenticated IPC endpoint.
-    fn engine(&self) -> EngineApi<Ipc> {
-        EngineApi::<Ipc>::with_ipc(&self.auth_ipc)
+    fn engine(&self) -> EngineApi {
+        EngineApi { execution: self.execution.clone() }
     }
 
     /// A [`ChainDriver`] for driving block production over the builder's engine API directly
     /// (bypassing the sequencer actor) — useful for lower-level tests.
-    pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {
-        // Read the RPC IPC path under a short lock, then release it before connecting so no lock is
-        // held across an await point.
-        let rpc_ipc = self.instance.lock().expect("instance lock").rpc_ipc().to_string();
-        let provider = ProviderBuilder::<Identity, Identity, Base>::default()
-            .connect_ipc(rpc_ipc.into())
-            .await
-            .map_err(|e| eyre::eyre!("failed to connect builder provider: {e}"))?;
-        Ok(ChainDriver::<Ipc>::remote(provider, self.engine()))
+    pub async fn driver(&self) -> eyre::Result<ChainDriver> {
+        let http_url = self.instance.lock().expect("instance lock").http_url.clone();
+        let provider =
+            ProviderBuilder::<Identity, Identity, Base>::default().connect_http(http_url.parse()?);
+        Ok(ChainDriver::remote(provider, self.engine()))
     }
 }
 

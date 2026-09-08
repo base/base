@@ -30,9 +30,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     BlockServiceBuilder, BuilderConfig, SharedMeteringProvider,
-    test_utils::{
-        EngineApi, Ipc, TransactionPoolObserver, create_test_db_env, driver::ChainDriver,
-    },
+    test_utils::{EngineApi, TransactionPoolObserver, create_test_db_env, driver::ChainDriver},
 };
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
@@ -58,6 +56,10 @@ pub fn clear_otel_env_vars() {
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
+    /// In-process execution services.
+    pub execution: base_execution_payload_builder::BaseExecutionHandle,
+    /// Public HTTP endpoint used by transaction-query tests.
+    pub http_url: String,
     node_config: NodeConfig,
     builder_config: BuilderConfig,
     runtime: Option<Runtime>,
@@ -240,6 +242,9 @@ impl LocalInstance {
         });
 
         let node_handle = hooks.apply_to(builder).launch().await?;
+        let execution = node_handle.node.execution.clone();
+        let http_url =
+            node_handle.node.rpc_server_handle().http_url().expect("test HTTP RPC enabled");
         let exit_future = node_handle.node_exit_future;
         let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
 
@@ -248,6 +253,8 @@ impl LocalInstance {
         let pool_handle = pool_handle_rx.await.expect("Failed to receive pool handle");
 
         Ok(Self {
+            execution,
+            http_url,
             builder_config,
             node_config,
             exit_future,
@@ -270,19 +277,9 @@ impl LocalInstance {
         &self.builder_config
     }
 
-    /// Returns the IPC socket path for the regular JSON-RPC server.
-    pub fn rpc_ipc(&self) -> &str {
-        &self.node_config.rpc.ipcpath
-    }
-
-    /// Returns the IPC socket path for the authenticated Engine API server.
-    pub fn auth_ipc(&self) -> &str {
-        &self.node_config.rpc.auth_ipc_path
-    }
-
-    /// Creates an IPC-based [`EngineApi`] client for this instance.
-    pub fn engine_api(&self) -> EngineApi<Ipc> {
-        EngineApi::<Ipc>::with_ipc(self.auth_ipc())
+    /// Accesses the node's execution driver and payload builder.
+    pub fn engine_api(&self) -> EngineApi {
+        EngineApi { execution: self.execution.clone() }
     }
 
     /// Returns a reference to the transaction pool observer.
@@ -301,16 +298,14 @@ impl LocalInstance {
     }
 
     /// Creates a [`ChainDriver`] connected to this local instance.
-    pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {
-        ChainDriver::<Ipc>::local(self).await
+    pub async fn driver(&self) -> eyre::Result<ChainDriver> {
+        ChainDriver::local(self).await
     }
 
-    /// Creates an alloy provider connected to this instance over IPC.
+    /// Creates an alloy provider for the public HTTP endpoint.
     pub async fn provider(&self) -> eyre::Result<RootProvider<Base>> {
-        ProviderBuilder::<Identity, Identity, Base>::default()
-            .connect_ipc(self.rpc_ipc().to_string().into())
-            .await
-            .map_err(|e| eyre::eyre!("Failed to connect to provider: {e}"))
+        Ok(ProviderBuilder::<Identity, Identity, Base>::default()
+            .connect_http(self.http_url.parse()?))
     }
 }
 
@@ -411,15 +406,8 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig {
     std::fs::create_dir_all(&pprof_dumps_path)
         .expect("Failed to create temporary pprof dumps directory");
 
-    let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc"));
-    let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc"));
-
-    let mut rpc = RpcServerArgs::default().with_auth_ipc();
-    rpc.ws = false;
-    rpc.http = false;
-    rpc.auth_port = 0;
-    rpc.ipcpath = rpc_ipc_path.to_string_lossy().into();
-    rpc.auth_ipc_path = auth_ipc_path.to_string_lossy().into();
+    let mut rpc = RpcServerArgs::default().with_unused_ports().with_http();
+    rpc.ipcdisable = true;
 
     let mut network = NetworkArgs::default().with_unused_ports();
     network.discovery.disable_discovery = true;

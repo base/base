@@ -12,8 +12,8 @@ use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use chrono::Utc;
 
 use super::{
-    DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
-    LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_base_tx,
+    DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode,
+    LocalInstance, PrivateKeySigner, TransactionBuilder, sign_base_tx,
 };
 use crate::BuilderConfig;
 
@@ -21,8 +21,8 @@ use crate::BuilderConfig;
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
 #[derive(Debug)]
-pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
-    engine_api: EngineApi<RpcProtocol>,
+pub struct ChainDriver {
+    engine_api: EngineApi,
     provider: RootProvider<Base>,
     signer: Option<PrivateKeySigner>,
     gas_limit: Option<u64>,
@@ -31,13 +31,13 @@ pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
 }
 
 // instantiation and configuration
-impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
+impl ChainDriver {
     const MIN_BLOCK_TIME: Duration = Duration::from_secs(1);
 
     /// Creates a new `ChainDriver` instance for a local instance of `RBuilder` running in-process
     /// communicating over IPC.
-    pub async fn local(instance: &LocalInstance) -> eyre::Result<ChainDriver<Ipc>> {
-        Ok(ChainDriver::<Ipc> {
+    pub async fn local(instance: &LocalInstance) -> eyre::Result<ChainDriver> {
+        Ok(ChainDriver {
             engine_api: instance.engine_api(),
             provider: instance.provider().await?,
             signer: Default::default(),
@@ -48,7 +48,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 
     /// Creates a new `ChainDriver` for some EL node instance.
-    pub fn remote(provider: RootProvider<Base>, engine_api: EngineApi<RpcProtocol>) -> Self {
+    pub fn remote(provider: RootProvider<Base>, engine_api: EngineApi) -> Self {
         Self {
             engine_api,
             provider,
@@ -88,7 +88,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 }
 
 // public test api
-impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
+impl ChainDriver {
     /// Builds a new block using only sequencer-injected transactions, skipping the mempool.
     pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
         self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0)).await
@@ -330,7 +330,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 }
 
 // internal methods
-impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
+impl ChainDriver {
     async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
         let attribs = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(latest, attribs, 3)?;

@@ -14,7 +14,7 @@ use reth_db::{
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 
 use super::{
-    BUILDER_PRIVATE_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, Protocol, TransactionBuilder,
+    BUILDER_PRIVATE_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, TransactionBuilder,
     driver::ChainDriver, sign_base_tx,
 };
 
@@ -82,7 +82,7 @@ pub trait ChainDriverExt {
     ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
 }
 
-impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
+impl ChainDriverExt for ChainDriver {
     async fn fund_many(&self, addresses: Vec<Address>, amount: u128) -> eyre::Result<BlockHash> {
         let mut txs = Vec::with_capacity(addresses.len());
 

@@ -23,7 +23,7 @@ use testcontainers::bollard::{
 use tokio::signal;
 use tracing::{debug, warn};
 
-use super::{EngineApi, Ipc};
+use super::ExternalEngineApi;
 
 const AUTH_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/auth.ipc";
 const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
@@ -39,7 +39,7 @@ const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
 /// return an error during `ChainDriver::build_new_block`.
 #[derive(Debug)]
 pub struct ExternalNode {
-    engine_api: EngineApi<Ipc>,
+    engine_api: ExternalEngineApi,
     provider: RootProvider<Base>,
     docker: Docker,
     tempdir: PathBuf,
@@ -80,7 +80,7 @@ impl ExternalNode {
         relax_permissions(&docker, &container.id, RPC_CONTAINER_IPC_PATH).await?;
 
         // Connect to the IPCs
-        let engine_api = EngineApi::with_ipc(&auth_ipc);
+        let engine_api = ExternalEngineApi { path: auth_ipc };
         let provider = ProviderBuilder::<Identity, Identity, Base>::default()
             .connect_ipc(rpc_ipc.into())
             .await?;
@@ -115,7 +115,7 @@ impl ExternalNode {
     }
 
     /// Access to the Engine API of the validation node.
-    pub const fn engine_api(&self) -> &EngineApi<Ipc> {
+    pub const fn engine_api(&self) -> &ExternalEngineApi {
         &self.engine_api
     }
 }
