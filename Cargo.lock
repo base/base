@@ -3335,7 +3335,6 @@ dependencies = [
  "base-common-chains",
  "base-common-genesis",
  "base-evm-context",
- "base-evm-handler",
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion 0.8.2",

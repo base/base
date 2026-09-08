@@ -30,7 +30,7 @@ mod handler;
 pub use handler::BaseHandler;
 
 mod precompiles;
-pub use precompiles::BasePrecompiles;
+pub use base_common_precompiles::BasePrecompiles;
 
 mod beryl_metrics;
 pub use beryl_metrics::BerylPrecompileMetricsObserver;

@@ -1,9 +1,4 @@
-//! Base precompile provider integration.
-
-use crate::BaseSpecId;
-
-/// Base precompile provider for the Base EVM spec.
-pub type BasePrecompiles = base_common_precompiles::BasePrecompiles<BaseSpecId>;
+//! Base precompile provider integration tests.
 
 #[cfg(test)]
 mod tests {
@@ -14,8 +9,7 @@ mod tests {
         primitives::eip7823,
     };
 
-    use super::*;
-    use crate::BaseUpgrade;
+    use crate::{BasePrecompiles, BaseSpecId, BaseUpgrade};
 
     fn encode_length(len: usize) -> [u8; 32] {
         let mut encoded = [0u8; 32];

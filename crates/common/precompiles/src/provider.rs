@@ -2,48 +2,48 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
-use base_evm_handler::EthPrecompiles;
 use base_precompile_storage::StorageFeatures;
 use revm::{
     precompile,
     precompile::{Precompiles, bn254, modexp, secp256r1},
-    primitives::{OnceLock, hardfork::SpecId},
+    primitives::OnceLock,
 };
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup,
-    NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
-    TxContext, UpgradeGatedStorageFeatures, bls12_381, bn254_pair,
+    ActivationAdminConfig, ActivationRegistry, B20Factory, BerylLookup, NonceManager,
+    NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver, TxContext,
+    UpgradeGatedStorageFeatures, bls12_381, bn254_pair,
 };
 
-/// Static Base precompile table for a [`BasePrecompileSpec`].
+/// Static Base precompile table for a Base upgrade.
 ///
 /// This type selects the fork's Ethereum-style precompiles. It is not a
 /// [`base_evm_handler::PrecompileProvider`]. Call [`Self::install`] or
 /// [`Self::install_with_observer`] to build the executable [`PrecompilesMap`].
 #[derive(Debug, Clone)]
-pub struct BasePrecompiles<S = BaseUpgrade> {
+pub struct BasePrecompiles {
     /// Inner static Ethereum-style precompile table.
-    inner: EthPrecompiles,
+    precompiles: &'static Precompiles,
     /// Spec id of the precompile table.
-    spec: S,
+    spec: BaseUpgrade,
     /// Activation registry admin address.
     activation_admin_address: Option<Address>,
 }
 
-impl<S: BasePrecompileSpec> BasePrecompiles<S> {
+impl BasePrecompiles {
     /// Create the static precompile table for the given spec.
     ///
     /// The returned value does not include Beryl or later dynamic precompiles.
     /// Call [`Self::install`] before using the set for EVM execution.
     #[inline]
-    pub fn new_with_spec(spec: S) -> Self {
-        let precompiles = match spec.upgrade() {
+    pub fn new_with_spec(spec: impl Into<BaseUpgrade>) -> Self {
+        let spec = spec.into();
+        let precompiles = match spec {
             BaseUpgrade::Bedrock
             | BaseUpgrade::Regolith
             | BaseUpgrade::Canyon
             | BaseUpgrade::Delta
-            | BaseUpgrade::Ecotone => Precompiles::new(Self::eth_spec(spec.upgrade()).into()),
+            | BaseUpgrade::Ecotone => Precompiles::new(spec.into_eth_spec().into()),
             BaseUpgrade::Fjord => Self::fjord(),
             BaseUpgrade::Granite | BaseUpgrade::Holocene | BaseUpgrade::PectraBlobSchedule => {
                 Self::granite()
@@ -60,11 +60,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
-        Self {
-            inner: EthPrecompiles { precompiles, spec: SpecId::default() },
-            spec,
-            activation_admin_address: None,
-        }
+        Self { precompiles, spec, activation_admin_address: None }
     }
 
     /// Sets the activation registry admin address.
@@ -84,18 +80,13 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
 
     /// Returns the persistent-storage features selected by this Base upgrade.
     pub fn storage_features(&self) -> StorageFeatures {
-        UpgradeGatedStorageFeatures::from_upgrade(self.spec.upgrade())
-    }
-
-    /// Converts a Base upgrade into its Ethereum precompile spec.
-    pub fn eth_spec(upgrade: BaseUpgrade) -> SpecId {
-        upgrade.into_eth_spec()
+        UpgradeGatedStorageFeatures::from_upgrade(self.spec)
     }
 
     /// Precompiles getter.
     #[inline]
     pub const fn precompiles(&self) -> &'static Precompiles {
-        self.inner.precompiles
+        self.precompiles
     }
 
     /// Returns precompiles for Fjord spec.
@@ -209,43 +200,35 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         O: PrecompileCallObserver,
     {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
-        if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            B20Factory::install_with_observer(
-                &mut precompiles,
-                self.spec.upgrade(),
-                observer.clone(),
-            );
-            BerylLookup::install_with_observer(
-                &mut precompiles,
-                self.spec.upgrade(),
-                observer.clone(),
-            );
+        if self.spec >= BaseUpgrade::Beryl {
+            B20Factory::install_with_observer(&mut precompiles, self.spec, observer.clone());
+            BerylLookup::install_with_observer(&mut precompiles, self.spec, observer.clone());
             PolicyRegistryPrecompile::install_with_observer(
                 &mut precompiles,
-                self.spec.upgrade(),
+                self.spec,
                 observer.clone(),
             );
             ActivationRegistry::install_with_observer(
                 &mut precompiles,
                 ActivationAdminConfig::new(
                     self.activation_admin_address,
-                    self.spec.upgrade() >= BaseUpgrade::Cobalt,
+                    self.spec >= BaseUpgrade::Cobalt,
                 ),
-                self.spec.upgrade(),
+                self.spec,
                 observer,
             );
         }
-        if self.spec.upgrade() >= BaseUpgrade::Cobalt {
-            TxContext::install(&mut precompiles, self.spec.upgrade());
-            NonceManager::install(&mut precompiles, self.spec.upgrade());
+        if self.spec >= BaseUpgrade::Cobalt {
+            TxContext::install(&mut precompiles, self.spec);
+            NonceManager::install(&mut precompiles, self.spec);
         }
         precompiles
     }
 }
 
-impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
+impl Default for BasePrecompiles {
     fn default() -> Self {
-        Self::new_with_spec(S::default_precompile_spec())
+        Self::new_with_spec(BaseUpgrade::LATEST)
     }
 }
 
@@ -267,7 +250,7 @@ mod tests {
         NonceManagerStorage, PolicyRegistryStorage, TxContextStorage, bls12_381, bn254_pair,
     };
 
-    type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
+    type TestPrecompiles = BasePrecompiles;
 
     fn encode_length(len: usize) -> [u8; 32] {
         let mut encoded = [0u8; 32];
@@ -458,8 +441,8 @@ mod tests {
 
     #[test]
     fn test_default_precompiles_matches_latest() {
-        let latest = BasePrecompiles::new_with_spec(BaseUpgrade::LATEST).inner.precompiles;
-        let default = TestPrecompiles::default().inner.precompiles;
+        let latest = BasePrecompiles::new_with_spec(BaseUpgrade::LATEST).precompiles;
+        let default = TestPrecompiles::default().precompiles;
         assert_eq!(latest.len(), default.len());
 
         let intersection = default.intersection(latest);
