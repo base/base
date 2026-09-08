@@ -623,7 +623,7 @@ governor = { version = "0.7", default-features = false }
 
 # Additional vendored crates
 enr = { path = "vendor/enr", default-features = false }
-nybbles = { path = "vendor/nybbles", default-features = false }
+nybbles = { version = "=0.4.8", default-features = false }
 tree_hash = { path = "vendor/tree_hash", default-features = false }
 ethereum_serde_utils = { path = "vendor/ethereum_serde_utils", default-features = false }
 discv5-reth = { path = "vendor/discv5-reth", default-features = false, package = "discv5-reth" }
