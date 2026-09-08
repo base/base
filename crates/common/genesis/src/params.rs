@@ -30,7 +30,7 @@ pub struct FeeConfig {
 impl FeeConfig {
     /// The Base Mainnet EIP-1559 fee parameters.
     ///
-    /// These values match `base_common_chains::ChainConfig::mainnet().fee_config()`. Kept here as
+    /// These values match `base_common_chains::ChainConfig::mainnet().fee_config`. Kept here as
     /// hardcoded constants so this crate need not depend on `base-common-chains` (which would
     /// invert the dependency direction). Drift is guarded by `mainnet_fee_config_matches_constant`.
     pub const BASE_MAINNET: Self =

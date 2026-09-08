@@ -62,8 +62,9 @@ impl IngressService {
         builder_tx: broadcast::Sender<MeteringForwardMessage>,
         config: Config,
     ) -> Self {
-        let cobalt_timestamp = ChainConfig::by_chain_id(config.chain_id)
-            .and_then(|chain_config| chain_config.cobalt_timestamp);
+        let cobalt_timestamp = ChainConfig::by_chain_id(config.chain_id).and_then(|chain_config| {
+            chain_config.upgrades[base_common_chains::BaseUpgrade::Cobalt].as_timestamp()
+        });
         let simulation_provider = Arc::new(simulation_provider);
 
         // A TTL cache to deduplicate bundles with the same Bundle ID

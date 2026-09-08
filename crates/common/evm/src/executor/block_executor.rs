@@ -402,7 +402,7 @@ mod tests {
     fn test_with_encoded() {
         let executor_factory = BaseBlockExecutorFactory::new(
             AlloyReceiptBuilder::default(),
-            ChainUpgrades::mainnet(),
+            base_common_chains::ChainConfig::mainnet().upgrades.clone(),
             BaseEvmFactory::default(),
         );
         let mut db =

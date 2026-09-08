@@ -510,6 +510,9 @@ impl Default for IndexHistoryConfig {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct PruneConfig {
+    /// Maximum rows deleted per pruning run. Defaults to no row limit.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub delete_limit: Option<usize>,
     /// Minimum pruning interval measured in blocks.
     pub block_interval: usize,
     /// Pruning configuration for every part of the data that can be pruned.
@@ -522,6 +525,7 @@ pub struct PruneConfig {
 }
 
 /// Returns the default minimum pruning distance.
+#[cfg(feature = "serde")]
 const fn default_minimum_pruning_distance() -> u64 {
     MINIMUM_UNWIND_SAFE_DISTANCE
 }
@@ -529,6 +533,7 @@ const fn default_minimum_pruning_distance() -> u64 {
 impl Default for PruneConfig {
     fn default() -> Self {
         Self {
+            delete_limit: None,
             block_interval: DEFAULT_BLOCK_INTERVAL,
             segments: PruneModes::default(),
             minimum_pruning_distance: MINIMUM_UNWIND_SAFE_DISTANCE,
@@ -554,6 +559,7 @@ impl PruneConfig {
     /// - `receipts_log_filter`: set from `other` only if `self` is empty and `other` is non-empty.
     pub fn merge(&mut self, other: Self) {
         let Self {
+            delete_limit,
             block_interval,
             segments:
                 PruneModes {
@@ -567,6 +573,10 @@ impl PruneConfig {
                 },
             minimum_pruning_distance,
         } = other;
+
+        if self.delete_limit.is_none() {
+            self.delete_limit = delete_limit;
+        }
 
         // Merge block_interval, only update if it's the default interval
         if self.block_interval == DEFAULT_BLOCK_INTERVAL {
@@ -612,7 +622,7 @@ where
 }
 
 #[cfg(all(test, feature = "serde"))]
-mod tests {
+pub mod tests {
     use std::{collections::BTreeMap, path::Path, str::FromStr, time::Duration};
 
     use alloy_primitives::Address;
@@ -1111,6 +1121,7 @@ receipts = { distance = 16384 }
     #[test]
     fn test_prune_config_merge() {
         let mut config1 = PruneConfig {
+            delete_limit: None,
             block_interval: 5,
             minimum_pruning_distance: MINIMUM_UNWIND_SAFE_DISTANCE,
             segments: PruneModes {
@@ -1128,6 +1139,7 @@ receipts = { distance = 16384 }
         };
 
         let config2 = PruneConfig {
+            delete_limit: Some(20_000),
             block_interval: 10,
             minimum_pruning_distance: MINIMUM_UNWIND_SAFE_DISTANCE,
             segments: PruneModes {
@@ -1150,6 +1162,7 @@ receipts = { distance = 16384 }
         // Check that the configuration has been merged. Any configuration present in config1
         // should not be overwritten by config2
         assert_eq!(config1.block_interval, 10);
+        assert_eq!(config1.delete_limit, Some(20_000));
         assert_eq!(config1.segments.sender_recovery, Some(PruneMode::Full));
         assert_eq!(config1.segments.transaction_lookup, Some(PruneMode::Full));
         assert_eq!(config1.segments.receipts, Some(PruneMode::Distance(1000)));

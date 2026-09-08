@@ -115,54 +115,7 @@ impl Default for RollupConfig {
 
 impl EthereumHardforks for RollupConfig {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        // Helper: cascade through the Base upgrade chain, returning the first set timestamp.
-        let cascade = |starting: &[Option<u64>]| -> ForkCondition {
-            if let Some(ts) = starting.iter().flatten().next() {
-                return ForkCondition::Timestamp(*ts);
-            }
-            ForkCondition::Never
-        };
-
-        if fork <= EthereumHardfork::Berlin {
-            // Pre-Bedrock Ethereum forks all activate at block 0 on Base chains.
-            ForkCondition::Block(0)
-        } else if fork <= EthereumHardfork::Paris {
-            // Bedrock activates everything from London through Paris at block 0.
-            ForkCondition::Block(0)
-        } else if fork <= EthereumHardfork::Shanghai {
-            // Canyon activates Shanghai; cascade through later Base upgrades if unset.
-            cascade(&[
-                self.upgrade_activation_timestamp(BaseUpgrade::Canyon),
-                self.upgrade_activation_timestamp(BaseUpgrade::Ecotone),
-                self.upgrade_activation_timestamp(BaseUpgrade::Fjord),
-                self.upgrade_activation_timestamp(BaseUpgrade::Granite),
-                self.upgrade_activation_timestamp(BaseUpgrade::Holocene),
-                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
-            ])
-        } else if fork <= EthereumHardfork::Cancun {
-            // Ecotone activates Cancun; cascade through later Base upgrades if unset.
-            cascade(&[
-                self.upgrade_activation_timestamp(BaseUpgrade::Ecotone),
-                self.upgrade_activation_timestamp(BaseUpgrade::Fjord),
-                self.upgrade_activation_timestamp(BaseUpgrade::Granite),
-                self.upgrade_activation_timestamp(BaseUpgrade::Holocene),
-                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
-            ])
-        } else if fork <= EthereumHardfork::Prague {
-            // Isthmus activates Prague; cascade through later Base upgrades if unset.
-            cascade(&[
-                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
-            ])
-        } else if fork <= EthereumHardfork::Osaka {
-            self.upgrade_activation_timestamp(BaseUpgrade::Azul)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never)
-        } else {
-            ForkCondition::Never
-        }
+        crate::ChainUpgrades::from(&self.upgrades).activation(self.l2_chain_id.id(), fork)
     }
 }
 

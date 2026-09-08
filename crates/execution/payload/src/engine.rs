@@ -494,7 +494,9 @@ mod tests {
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             Some(1),
-            ChainConfig::sepolia().jovian_timestamp,
+            ChainConfig::sepolia().upgrades[base_common_chains::BaseUpgrade::Jovian]
+                .as_timestamp()
+                .unwrap_or_default(),
         );
 
         let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
@@ -509,7 +511,13 @@ mod tests {
     #[test]
     fn test_malformed_attributes_jovian_with_eip_1559_params_none() {
         let validator = validator();
-        let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
+        let attributes = get_attributes(
+            None,
+            Some(1),
+            ChainConfig::sepolia().upgrades[base_common_chains::BaseUpgrade::Jovian]
+                .as_timestamp()
+                .unwrap_or_default(),
+        );
 
         let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
             &validator,
@@ -540,7 +548,9 @@ mod tests {
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             None,
-            ChainConfig::sepolia().jovian_timestamp,
+            ChainConfig::sepolia().upgrades[base_common_chains::BaseUpgrade::Jovian]
+                .as_timestamp()
+                .unwrap_or_default(),
         );
 
         let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(

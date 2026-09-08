@@ -185,7 +185,7 @@ mod tests {
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{address, keccak256};
     use base_common_genesis::BaseUpgrade;
-    use revm::{Database as _, database::InMemoryDB, state::AccountInfo};
+    use revm::{database::InMemoryDB, state::AccountInfo};
 
     use super::*;
 

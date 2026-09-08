@@ -360,6 +360,9 @@ impl ExecutionNodeLaunchConfig {
 }
 
 #[cfg(test)]
+pub use tests::execution_args_reject_era_import;
+
+#[cfg(test)]
 mod tests {
     use clap::Parser;
 

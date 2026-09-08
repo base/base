@@ -148,49 +148,89 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
         UpgradeSpec {
             upgrade: BaseUpgrade::Delta,
             name: "Delta",
-            timestamp: Some(cfg.delta_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Delta]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Canyon,
             name: "Canyon",
-            timestamp: Some(cfg.canyon_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Canyon]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Ecotone,
             name: "Ecotone",
-            timestamp: Some(cfg.ecotone_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Ecotone]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Fjord,
             name: "Fjord",
-            timestamp: Some(cfg.fjord_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Fjord]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Granite,
             name: "Granite",
-            timestamp: Some(cfg.granite_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Granite]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Holocene,
             name: "Holocene",
-            timestamp: Some(cfg.holocene_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Holocene]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Isthmus,
             name: "Isthmus",
-            timestamp: Some(cfg.isthmus_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Jovian,
             name: "Jovian",
-            timestamp: Some(cfg.jovian_timestamp),
+            timestamp: Some(
+                cfg.upgrades[base_common_chains::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         },
-        UpgradeSpec { upgrade: BaseUpgrade::Azul, name: "Azul", timestamp: cfg.azul_timestamp },
-        UpgradeSpec { upgrade: BaseUpgrade::Beryl, name: "Beryl", timestamp: cfg.beryl_timestamp },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Azul,
+            name: "Azul",
+            timestamp: cfg.upgrades[base_common_chains::BaseUpgrade::Azul].as_timestamp(),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Beryl,
+            name: "Beryl",
+            timestamp: cfg.upgrades[base_common_chains::BaseUpgrade::Beryl].as_timestamp(),
+        },
         UpgradeSpec {
             upgrade: BaseUpgrade::Cobalt,
             name: "Cobalt",
-            timestamp: cfg.cobalt_timestamp,
+            timestamp: cfg.upgrades[base_common_chains::BaseUpgrade::Cobalt].as_timestamp(),
         },
         UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
         UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },

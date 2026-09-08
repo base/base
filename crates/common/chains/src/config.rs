@@ -2,12 +2,13 @@
 
 use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::{Address, B256, U256, address, b256, uint};
 use base_common_genesis::{
     BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
 };
 
-use crate::BaseUpgrade;
+use crate::{BaseUpgrade, ChainUpgrades, Upgrades};
 
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,65 +29,20 @@ pub struct ChainConfig {
     /// Channel timeout in L1 blocks.
     pub channel_timeout: u64,
 
-    // Hardfork schedule
-    /// Bedrock activation block.
-    pub bedrock_block: u64,
-    /// Regolith activation timestamp.
-    pub regolith_timestamp: u64,
-    /// Canyon activation timestamp.
-    pub canyon_timestamp: u64,
-    /// Delta activation timestamp.
-    pub delta_timestamp: u64,
-    /// Ecotone activation timestamp.
-    pub ecotone_timestamp: u64,
-    /// Fjord activation timestamp.
-    pub fjord_timestamp: u64,
-    /// Granite activation timestamp.
-    pub granite_timestamp: u64,
-    /// Holocene activation timestamp.
-    pub holocene_timestamp: u64,
-    /// Pectra blob schedule activation timestamp (optional, sepolia-only).
-    pub pectra_blob_schedule_timestamp: Option<u64>,
-    /// Isthmus activation timestamp.
-    pub isthmus_timestamp: u64,
-    /// Jovian activation timestamp.
-    pub jovian_timestamp: u64,
-    /// Base Azul activation timestamp (optional).
-    pub azul_timestamp: Option<u64>,
-    /// Beryl activation timestamp (optional).
-    pub beryl_timestamp: Option<u64>,
-    /// Cobalt activation timestamp (optional).
-    pub cobalt_timestamp: Option<u64>,
-    /// Denim activation timestamp (optional).
-    pub denim_timestamp: Option<u64>,
+    /// Canonical Base upgrade schedule, including consensus-only activations.
+    pub upgrades: ChainUpgrades,
+    /// Activation registry admin configured at startup.
+    pub activation_admin_address: Option<Address>,
 
-    // Genesis
-    /// L1 genesis block hash.
-    pub genesis_l1_hash: B256,
-    /// L1 genesis block number.
-    pub genesis_l1_number: u64,
-    /// L2 genesis block hash.
-    pub genesis_l2_hash: B256,
-    /// L2 genesis block number.
-    pub genesis_l2_number: u64,
-    /// L2 genesis timestamp.
-    pub genesis_l2_time: u64,
-    /// Genesis batcher address.
-    pub genesis_batcher_address: Address,
-    /// Genesis overhead.
-    pub genesis_overhead: U256,
-    /// Genesis scalar.
-    pub genesis_scalar: U256,
-    /// Genesis gas limit.
-    pub genesis_gas_limit: u64,
+    /// Genesis anchors and initial system configuration.
+    pub genesis: ChainGenesis,
+    /// Channel timeout after Granite.
+    pub granite_channel_timeout: u64,
+    /// Earliest L1 timestamp accepted for blob batch data.
+    pub blobs_enabled_l1_timestamp: Option<u64>,
 
-    // Base fee params
-    /// EIP-1559 elasticity multiplier.
-    pub eip1559_elasticity: u64,
-    /// EIP-1559 denominator (pre-Canyon).
-    pub eip1559_denominator: u64,
-    /// EIP-1559 denominator (Canyon and later).
-    pub eip1559_denominator_canyon: u64,
+    /// EIP-1559 parameters before and after Canyon.
+    pub fee_config: FeeConfig,
 
     // Contract addresses
     /// Batch inbox address on L1.
@@ -104,8 +60,6 @@ pub struct ChainConfig {
     // Gas limits
     /// Maximum gas limit for L2 blocks.
     pub max_gas_limit: u64,
-    /// Maximum number of entries deleted per execution-layer pruning batch.
-    pub prune_delete_limit: usize,
 
     // Networking
     /// Bootnodes for peer discovery, split by stack layer.
@@ -114,6 +68,37 @@ pub struct ChainConfig {
     // Execution genesis
     /// Embedded genesis JSON for reth alloc tables.
     pub genesis_json: &'static str,
+}
+
+impl Default for ChainConfig {
+    fn default() -> Self {
+        Self {
+            chain_id: Default::default(),
+            l1_chain_id: Default::default(),
+            block_time: Default::default(),
+            seq_window_size: Default::default(),
+            max_sequencer_drift: Default::default(),
+            channel_timeout: Default::default(),
+            upgrades: Default::default(),
+            activation_admin_address: Default::default(),
+            genesis: Default::default(),
+            granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+            blobs_enabled_l1_timestamp: Default::default(),
+            fee_config: FeeConfig {
+                eip1559_elasticity: 2,
+                eip1559_denominator: 8,
+                eip1559_denominator_canyon: 8,
+            },
+            batch_inbox_address: Default::default(),
+            deposit_contract_address: Default::default(),
+            system_config_address: Default::default(),
+            protocol_versions_address: Default::default(),
+            unsafe_block_signer: Default::default(),
+            max_gas_limit: Default::default(),
+            bootnodes: Bootnodes::EMPTY,
+            genesis_json: Default::default(),
+        }
+    }
 }
 
 /// Raw bootnode strings split by the stack layer that should consume them.
@@ -280,7 +265,10 @@ impl ChainConfig {
         &self,
         upgrade: BaseUpgrade,
     ) -> Option<Address> {
-        Self::activation_admin_address_for_upgrade_by_chain_id(self.chain_id, upgrade)
+        match upgrade {
+            BaseUpgrade::Beryl | BaseUpgrade::Cobalt => self.activation_admin_address,
+            _ => None,
+        }
     }
 
     /// Returns the Beryl activation registry admin address for built-in chains that need one.
@@ -296,7 +284,7 @@ impl ChainConfig {
 
     /// Returns the Beryl activation registry admin address for this chain, if configured.
     pub const fn beryl_activation_admin_address(&self) -> Option<Address> {
-        Self::beryl_activation_admin_address_by_chain_id(self.chain_id)
+        self.activation_admin_address
     }
 
     /// Returns the full [`RollupConfig`] for the given L2 chain ID.
@@ -309,70 +297,39 @@ impl ChainConfig {
         Self::rollup_config_by_chain_id(chain.id())
     }
 
-    /// Returns the EIP-1559 [`FeeConfig`] for this chain.
-    pub const fn fee_config(&self) -> FeeConfig {
-        FeeConfig {
-            eip1559_elasticity: self.eip1559_elasticity,
-            eip1559_denominator: self.eip1559_denominator,
-            eip1559_denominator_canyon: self.eip1559_denominator_canyon,
-        }
-    }
-
     /// Returns the [`UpgradeConfig`] (Base upgrade activation timestamps) for this chain.
-    pub const fn upgrade_config(&self) -> UpgradeConfig {
+    pub fn upgrade_config(&self) -> UpgradeConfig {
         UpgradeConfig {
-            regolith_time: Some(self.regolith_timestamp),
-            canyon_time: Some(self.canyon_timestamp),
-            delta_time: Some(self.delta_timestamp),
-            ecotone_time: Some(self.ecotone_timestamp),
-            fjord_time: Some(self.fjord_timestamp),
-            granite_time: Some(self.granite_timestamp),
-            holocene_time: Some(self.holocene_timestamp),
-            pectra_blob_schedule_time: self.pectra_blob_schedule_timestamp,
-            isthmus_time: Some(self.isthmus_timestamp),
-            jovian_time: Some(self.jovian_timestamp),
+            regolith_time: self.upgrades[crate::BaseUpgrade::Regolith].as_timestamp(),
+            canyon_time: self.upgrades[crate::BaseUpgrade::Canyon].as_timestamp(),
+            delta_time: self.upgrades[crate::BaseUpgrade::Delta].as_timestamp(),
+            ecotone_time: self.upgrades[crate::BaseUpgrade::Ecotone].as_timestamp(),
+            fjord_time: self.upgrades[crate::BaseUpgrade::Fjord].as_timestamp(),
+            granite_time: self.upgrades[crate::BaseUpgrade::Granite].as_timestamp(),
+            holocene_time: self.upgrades[crate::BaseUpgrade::Holocene].as_timestamp(),
+            pectra_blob_schedule_time: self.upgrades[crate::BaseUpgrade::PectraBlobSchedule]
+                .as_timestamp(),
+            isthmus_time: self.upgrades[crate::BaseUpgrade::Isthmus].as_timestamp(),
+            jovian_time: self.upgrades[crate::BaseUpgrade::Jovian].as_timestamp(),
             base: BaseUpgradeConfig {
-                azul: self.azul_timestamp,
-                beryl: self.beryl_timestamp,
-                cobalt: self.cobalt_timestamp,
-                denim: self.denim_timestamp,
-                zenith: None,
+                azul: self.upgrades[crate::BaseUpgrade::Azul].as_timestamp(),
+                beryl: self.upgrades[crate::BaseUpgrade::Beryl].as_timestamp(),
+                cobalt: self.upgrades[crate::BaseUpgrade::Cobalt].as_timestamp(),
+                denim: self.upgrades[crate::BaseUpgrade::Denim].as_timestamp(),
+                zenith: self.upgrades[BaseUpgrade::Zenith].as_timestamp(),
             },
-        }
-    }
-
-    /// Returns the [`ChainGenesis`] (L1/L2 genesis anchor + initial system config) for this chain.
-    pub const fn chain_genesis(&self) -> ChainGenesis {
-        ChainGenesis {
-            l1: BlockNumHash { hash: self.genesis_l1_hash, number: self.genesis_l1_number },
-            l2: BlockNumHash { hash: self.genesis_l2_hash, number: self.genesis_l2_number },
-            l2_time: self.genesis_l2_time,
-            system_config: Some(SystemConfig {
-                batcher_address: self.genesis_batcher_address,
-                overhead: self.genesis_overhead,
-                scalar: self.genesis_scalar,
-                gas_limit: self.genesis_gas_limit,
-                base_fee_scalar: None,
-                blob_base_fee_scalar: None,
-                eip1559_denominator: None,
-                eip1559_elasticity: None,
-                operator_fee_scalar: None,
-                operator_fee_constant: None,
-                min_base_fee: None,
-                da_footprint_gas_scalar: None,
-            }),
         }
     }
 
     /// Returns the full [`RollupConfig`] for this chain, derived from its [`ChainConfig`].
     pub fn rollup_config(&self) -> RollupConfig {
         RollupConfig {
-            genesis: self.chain_genesis(),
+            genesis: self.genesis,
             block_time: self.block_time,
             max_sequencer_drift: self.max_sequencer_drift,
             seq_window_size: self.seq_window_size,
             channel_timeout: self.channel_timeout,
-            granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+            granite_channel_timeout: self.granite_channel_timeout,
             l1_chain_id: self.l1_chain_id,
             l2_chain_id: Chain::from_id(self.chain_id),
             upgrades: self.upgrade_config(),
@@ -380,15 +337,57 @@ impl ChainConfig {
             deposit_contract_address: self.deposit_contract_address,
             l1_system_config_address: self.system_config_address,
             protocol_versions_address: self.protocol_versions_address,
-            blobs_enabled_l1_timestamp: None,
-            chain_op_config: self.fee_config(),
+            blobs_enabled_l1_timestamp: self.blobs_enabled_l1_timestamp,
+            chain_op_config: self.fee_config,
+        }
+    }
+}
+
+impl EthereumHardforks for ChainConfig {
+    fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
+        self.upgrades.activation(self.chain_id, fork)
+    }
+}
+
+impl Upgrades for ChainConfig {
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
+        self.upgrades.activation(self.chain_id, fork)
+    }
+
+    fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
+    }
+}
+
+impl From<&RollupConfig> for ChainConfig {
+    fn from(rollup: &RollupConfig) -> Self {
+        Self {
+            chain_id: rollup.l2_chain_id.id(),
+            l1_chain_id: rollup.l1_chain_id,
+            genesis: rollup.genesis,
+            block_time: rollup.block_time,
+            max_sequencer_drift: rollup.max_sequencer_drift,
+            seq_window_size: rollup.seq_window_size,
+            channel_timeout: rollup.channel_timeout,
+            granite_channel_timeout: rollup.granite_channel_timeout,
+            blobs_enabled_l1_timestamp: rollup.blobs_enabled_l1_timestamp,
+            upgrades: ChainUpgrades::from(&rollup.upgrades),
+            fee_config: rollup.chain_op_config,
+            batch_inbox_address: rollup.batch_inbox_address,
+            deposit_contract_address: rollup.deposit_contract_address,
+            system_config_address: rollup.l1_system_config_address,
+            protocol_versions_address: rollup.protocol_versions_address,
+            activation_admin_address: Self::beryl_activation_admin_address_by_chain_id(
+                rollup.l2_chain_id.id(),
+            ),
+            ..Default::default()
         }
     }
 }
 
 impl From<&ChainConfig> for FeeConfig {
     fn from(cfg: &ChainConfig) -> Self {
-        cfg.fee_config()
+        cfg.fee_config
     }
 }
 
@@ -400,7 +399,7 @@ impl From<&ChainConfig> for UpgradeConfig {
 
 impl From<&ChainConfig> for ChainGenesis {
     fn from(cfg: &ChainConfig) -> Self {
-        cfg.chain_genesis()
+        cfg.genesis
     }
 }
 
@@ -411,6 +410,52 @@ impl From<&ChainConfig> for RollupConfig {
 }
 
 const MAINNET: ChainConfig = ChainConfig {
+    genesis: ChainGenesis {
+        l1: BlockNumHash {
+            hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
+            number: 17_481_768,
+        },
+        l2: BlockNumHash {
+            hash: b256!("f712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd"),
+            number: 0,
+        },
+        l2_time: 1_686_789_347,
+        system_config: Some(SystemConfig {
+            batcher_address: address!("5050f69a9786f081509234f1a7f4684b5e5b76c9"),
+            overhead: uint!(0xbc_U256),
+            scalar: uint!(0xa6fe0_U256),
+            gas_limit: 30_000_000,
+            base_fee_scalar: None,
+            blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
+            operator_fee_scalar: None,
+            operator_fee_constant: None,
+            min_base_fee: None,
+            da_footprint_gas_scalar: None,
+        }),
+    },
+    granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+    blobs_enabled_l1_timestamp: None,
+    upgrades: ChainUpgrades::from_conditions([
+        ForkCondition::Block(0),
+        ForkCondition::Timestamp(1_686_789_347),
+        ForkCondition::Timestamp(1_704_992_401),
+        ForkCondition::Timestamp(1_708_560_000),
+        ForkCondition::Timestamp(1_710_374_401),
+        ForkCondition::Timestamp(1_720_627_201),
+        ForkCondition::Timestamp(1_726_070_401),
+        ForkCondition::Timestamp(1_736_445_601),
+        ForkCondition::Never,
+        ForkCondition::Timestamp(1_746_806_401),
+        ForkCondition::Timestamp(1_764_691_201),
+        ForkCondition::Timestamp(1_779_991_200),
+        ForkCondition::Timestamp(1_782_410_400),
+        ForkCondition::Never,
+        ForkCondition::Never,
+        ForkCondition::Never,
+    ]),
+    activation_admin_address: Some(MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
     chain_id: 8453,
     l1_chain_id: 1,
 
@@ -419,35 +464,11 @@ const MAINNET: ChainConfig = ChainConfig {
     max_sequencer_drift: 600,
     channel_timeout: 300,
 
-    bedrock_block: 0,
-    regolith_timestamp: 1_686_789_347,
-    canyon_timestamp: 1_704_992_401,
-    delta_timestamp: 1_708_560_000,
-    ecotone_timestamp: 1_710_374_401,
-    fjord_timestamp: 1_720_627_201,
-    granite_timestamp: 1_726_070_401,
-    holocene_timestamp: 1_736_445_601,
-    pectra_blob_schedule_timestamp: None,
-    isthmus_timestamp: 1_746_806_401,
-    jovian_timestamp: 1_764_691_201,
-    azul_timestamp: Some(1_779_991_200),
-    beryl_timestamp: Some(1_782_410_400),
-    cobalt_timestamp: None,
-    denim_timestamp: None,
-
-    genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
-    genesis_l1_number: 17_481_768,
-    genesis_l2_hash: b256!("f712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd"),
-    genesis_l2_number: 0,
-    genesis_l2_time: 1_686_789_347,
-    genesis_batcher_address: address!("5050f69a9786f081509234f1a7f4684b5e5b76c9"),
-    genesis_overhead: uint!(0xbc_U256),
-    genesis_scalar: uint!(0xa6fe0_U256),
-    genesis_gas_limit: 30_000_000,
-
-    eip1559_elasticity: 6,
-    eip1559_denominator: 50,
-    eip1559_denominator_canyon: 250,
+    fee_config: FeeConfig {
+        eip1559_elasticity: 6,
+        eip1559_denominator: 50,
+        eip1559_denominator_canyon: 250,
+    },
 
     batch_inbox_address: address!("ff00000000000000000000000000000000008453"),
     deposit_contract_address: address!("49048044d57e1c92a77f79988d21fa8faf74e97e"),
@@ -457,7 +478,6 @@ const MAINNET: ChainConfig = ChainConfig {
     unsafe_block_signer: Some(address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a")),
 
     max_gas_limit: 105_000_000,
-    prune_delete_limit: 20_000,
 
     bootnodes: Bootnodes {
         execution: &[
@@ -485,6 +505,52 @@ const MAINNET: ChainConfig = ChainConfig {
 };
 
 const SEPOLIA: ChainConfig = ChainConfig {
+    genesis: ChainGenesis {
+        l1: BlockNumHash {
+            hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
+            number: 4_370_868,
+        },
+        l2: BlockNumHash {
+            hash: b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4"),
+            number: 0,
+        },
+        l2_time: 1_695_768_288,
+        system_config: Some(SystemConfig {
+            batcher_address: address!("6cdebe940bc0f26850285caca097c11c33103e47"),
+            overhead: uint!(0x834_U256),
+            scalar: uint!(0xf4240_U256),
+            gas_limit: 25_000_000,
+            base_fee_scalar: None,
+            blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
+            operator_fee_scalar: None,
+            operator_fee_constant: None,
+            min_base_fee: None,
+            da_footprint_gas_scalar: None,
+        }),
+    },
+    granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+    blobs_enabled_l1_timestamp: None,
+    upgrades: ChainUpgrades::from_conditions([
+        ForkCondition::Block(0),
+        ForkCondition::Timestamp(1_695_768_288),
+        ForkCondition::Timestamp(1_699_981_200),
+        ForkCondition::Timestamp(1_703_203_200),
+        ForkCondition::Timestamp(1_708_534_800),
+        ForkCondition::Timestamp(1_716_998_400),
+        ForkCondition::Timestamp(1_723_478_400),
+        ForkCondition::Timestamp(1_732_633_200),
+        ForkCondition::Timestamp(1_742_486_400),
+        ForkCondition::Timestamp(1_744_905_600),
+        ForkCondition::Timestamp(1_763_568_001),
+        ForkCondition::Timestamp(1_776_708_000),
+        ForkCondition::Timestamp(1_781_805_600),
+        ForkCondition::Never,
+        ForkCondition::Never,
+        ForkCondition::Never,
+    ]),
+    activation_admin_address: Some(SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS),
     chain_id: 84532,
     l1_chain_id: 11155111,
 
@@ -493,35 +559,11 @@ const SEPOLIA: ChainConfig = ChainConfig {
     max_sequencer_drift: 600,
     channel_timeout: 300,
 
-    bedrock_block: 0,
-    regolith_timestamp: 1_695_768_288,
-    canyon_timestamp: 1_699_981_200,
-    delta_timestamp: 1_703_203_200,
-    ecotone_timestamp: 1_708_534_800,
-    fjord_timestamp: 1_716_998_400,
-    granite_timestamp: 1_723_478_400,
-    holocene_timestamp: 1_732_633_200,
-    pectra_blob_schedule_timestamp: Some(1_742_486_400),
-    isthmus_timestamp: 1_744_905_600,
-    jovian_timestamp: 1_763_568_001,
-    azul_timestamp: Some(1_776_708_000),
-    beryl_timestamp: Some(1_781_805_600),
-    cobalt_timestamp: None,
-    denim_timestamp: None,
-
-    genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
-    genesis_l1_number: 4_370_868,
-    genesis_l2_hash: b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4"),
-    genesis_l2_number: 0,
-    genesis_l2_time: 1_695_768_288,
-    genesis_batcher_address: address!("6cdebe940bc0f26850285caca097c11c33103e47"),
-    genesis_overhead: uint!(0x834_U256),
-    genesis_scalar: uint!(0xf4240_U256),
-    genesis_gas_limit: 25_000_000,
-
-    eip1559_elasticity: 10,
-    eip1559_denominator: 50,
-    eip1559_denominator_canyon: 250,
+    fee_config: FeeConfig {
+        eip1559_elasticity: 10,
+        eip1559_denominator: 50,
+        eip1559_denominator_canyon: 250,
+    },
 
     batch_inbox_address: address!("ff00000000000000000000000000000000084532"),
     deposit_contract_address: address!("49f53e41452c74589e85ca1677426ba426459e85"),
@@ -531,7 +573,6 @@ const SEPOLIA: ChainConfig = ChainConfig {
     unsafe_block_signer: Some(address!("b830b99c95Ea32300039624Cb567d324D4b1D83C")),
 
     max_gas_limit: 45_000_000,
-    prune_delete_limit: 10_000,
 
     bootnodes: Bootnodes {
         execution: &[
@@ -550,6 +591,46 @@ const SEPOLIA: ChainConfig = ChainConfig {
 };
 
 const DEVNET: ChainConfig = ChainConfig {
+    genesis: ChainGenesis {
+        l1: BlockNumHash { hash: B256::ZERO, number: 0 },
+        l2: BlockNumHash { hash: B256::ZERO, number: 0 },
+        l2_time: 0,
+        system_config: Some(SystemConfig {
+            batcher_address: Address::ZERO,
+            overhead: U256::ZERO,
+            scalar: U256::ZERO,
+            gas_limit: 30_000_000,
+            base_fee_scalar: None,
+            blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
+            operator_fee_scalar: None,
+            operator_fee_constant: None,
+            min_base_fee: None,
+            da_footprint_gas_scalar: None,
+        }),
+    },
+    granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+    blobs_enabled_l1_timestamp: None,
+    upgrades: ChainUpgrades::from_conditions([
+        ForkCondition::Block(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Never,
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Timestamp(0),
+        ForkCondition::Never,
+        ForkCondition::Never,
+        ForkCondition::Never,
+        ForkCondition::Never,
+    ]),
+    activation_admin_address: Some(DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
     chain_id: 84538453,
     l1_chain_id: 1337,
 
@@ -558,35 +639,11 @@ const DEVNET: ChainConfig = ChainConfig {
     max_sequencer_drift: 600,
     channel_timeout: 300,
 
-    bedrock_block: 0,
-    regolith_timestamp: 0,
-    canyon_timestamp: 0,
-    delta_timestamp: 0,
-    ecotone_timestamp: 0,
-    fjord_timestamp: 0,
-    granite_timestamp: 0,
-    holocene_timestamp: 0,
-    pectra_blob_schedule_timestamp: None,
-    isthmus_timestamp: 0,
-    jovian_timestamp: 0,
-    azul_timestamp: Some(0),
-    beryl_timestamp: None,
-    cobalt_timestamp: None,
-    denim_timestamp: None,
-
-    genesis_l1_hash: B256::ZERO,
-    genesis_l1_number: 0,
-    genesis_l2_hash: B256::ZERO,
-    genesis_l2_number: 0,
-    genesis_l2_time: 0,
-    genesis_batcher_address: Address::ZERO,
-    genesis_overhead: U256::ZERO,
-    genesis_scalar: U256::ZERO,
-    genesis_gas_limit: 30_000_000,
-
-    eip1559_elasticity: 6,
-    eip1559_denominator: 50,
-    eip1559_denominator_canyon: 250,
+    fee_config: FeeConfig {
+        eip1559_elasticity: 6,
+        eip1559_denominator: 50,
+        eip1559_denominator_canyon: 250,
+    },
 
     batch_inbox_address: Address::ZERO,
     deposit_contract_address: Address::ZERO,
@@ -596,7 +653,6 @@ const DEVNET: ChainConfig = ChainConfig {
     unsafe_block_signer: None,
 
     max_gas_limit: 30_000_000,
-    prune_delete_limit: 20_000,
 
     bootnodes: Bootnodes::EMPTY,
 
@@ -604,6 +660,52 @@ const DEVNET: ChainConfig = ChainConfig {
 };
 
 const ZERONET: ChainConfig = ChainConfig {
+    genesis: ChainGenesis {
+        l1: BlockNumHash {
+            hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
+            number: 3_083_762,
+        },
+        l2: BlockNumHash {
+            hash: b256!("572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162"),
+            number: 0,
+        },
+        l2_time: 1_782_348_588,
+        system_config: Some(SystemConfig {
+            batcher_address: address!("4c810fec547f6c143db51953af51a1de79bead21"),
+            overhead: U256::ZERO,
+            scalar: uint!(0x010000000000000000000000000000000000000000000000000c3c9d00000558_U256),
+            gas_limit: 25_000_000,
+            base_fee_scalar: None,
+            blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
+            operator_fee_scalar: None,
+            operator_fee_constant: None,
+            min_base_fee: None,
+            da_footprint_gas_scalar: None,
+        }),
+    },
+    granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+    blobs_enabled_l1_timestamp: None,
+    upgrades: ChainUpgrades::from_conditions([
+        ForkCondition::Block(0),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Never,
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_588),
+        ForkCondition::Timestamp(1_782_348_888),
+        ForkCondition::Timestamp(1_782_349_188),
+        ForkCondition::Never,
+        ForkCondition::Never,
+        ForkCondition::Never,
+    ]),
+    activation_admin_address: Some(ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS),
     chain_id: 763360,
     l1_chain_id: 560048,
 
@@ -612,35 +714,11 @@ const ZERONET: ChainConfig = ChainConfig {
     max_sequencer_drift: 600,
     channel_timeout: 300,
 
-    bedrock_block: 0,
-    regolith_timestamp: 1_782_348_588,
-    canyon_timestamp: 1_782_348_588,
-    delta_timestamp: 1_782_348_588,
-    ecotone_timestamp: 1_782_348_588,
-    fjord_timestamp: 1_782_348_588,
-    granite_timestamp: 1_782_348_588,
-    holocene_timestamp: 1_782_348_588,
-    pectra_blob_schedule_timestamp: None,
-    isthmus_timestamp: 1_782_348_588,
-    jovian_timestamp: 1_782_348_588,
-    azul_timestamp: Some(1_782_348_888),
-    beryl_timestamp: Some(1_782_349_188),
-    cobalt_timestamp: None,
-    denim_timestamp: None,
-
-    genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
-    genesis_l1_number: 3_083_762,
-    genesis_l2_hash: b256!("572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162"),
-    genesis_l2_number: 0,
-    genesis_l2_time: 1_782_348_588,
-    genesis_batcher_address: address!("4c810fec547f6c143db51953af51a1de79bead21"),
-    genesis_overhead: U256::ZERO,
-    genesis_scalar: uint!(0x010000000000000000000000000000000000000000000000000c3c9d00000558_U256),
-    genesis_gas_limit: 25_000_000,
-
-    eip1559_elasticity: 6,
-    eip1559_denominator: 50,
-    eip1559_denominator_canyon: 250,
+    fee_config: FeeConfig {
+        eip1559_elasticity: 6,
+        eip1559_denominator: 50,
+        eip1559_denominator_canyon: 250,
+    },
 
     batch_inbox_address: address!("00975f9c430b216f84ec52374d7f5eb8eec3139a"),
     deposit_contract_address: address!("7e3b97c95c823f385ff6770411f6e12f8e09ac9b"),
@@ -650,7 +728,6 @@ const ZERONET: ChainConfig = ChainConfig {
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
 
     max_gas_limit: 25_000_000,
-    prune_delete_limit: 10_000,
 
     bootnodes: Bootnodes {
         execution: &[
@@ -673,10 +750,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rollup_boundary_preserves_genesis_and_consensus_settings() {
+        let mut rollup = ChainConfig::mainnet().rollup_config();
+        rollup.granite_channel_timeout = 123;
+        rollup.blobs_enabled_l1_timestamp = Some(456);
+        rollup.genesis.system_config.as_mut().unwrap().min_base_fee = Some(789);
+        rollup.upgrades.base.zenith = Some(999);
+        let config = ChainConfig::from(&rollup);
+        assert_eq!(config.rollup_config(), rollup);
+    }
+
+    #[test]
     fn mainnet_fee_config_matches_const() {
         // Guard against drift between the hardcoded `FeeConfig::BASE_MAINNET` constant
-        // (used as a serde default) and the canonical `ChainConfig::mainnet().fee_config()`.
-        assert_eq!(ChainConfig::mainnet().fee_config(), FeeConfig::base_mainnet());
+        // (used as a serde default) and the canonical `ChainConfig::mainnet().fee_config`.
+        assert_eq!(ChainConfig::mainnet().fee_config, FeeConfig::base_mainnet());
     }
 
     #[test]
@@ -706,7 +794,10 @@ mod tests {
     #[test]
     fn genesis_active_upgrades_use_genesis_timestamps() {
         for chain in [ChainConfig::mainnet(), ChainConfig::sepolia()] {
-            assert_eq!(chain.regolith_timestamp, chain.genesis_l2_time);
+            assert_eq!(
+                chain.upgrades[crate::BaseUpgrade::Regolith].as_timestamp().unwrap_or_default(),
+                chain.genesis.l2_time
+            );
         }
 
         let chain = ChainConfig::zeronet();
@@ -722,7 +813,7 @@ mod tests {
             BaseUpgrade::Isthmus,
             BaseUpgrade::Jovian,
         ] {
-            assert_eq!(upgrades.activation_timestamp(upgrade), Some(chain.genesis_l2_time));
+            assert_eq!(upgrades.activation_timestamp(upgrade), Some(chain.genesis.l2_time));
         }
     }
 
@@ -763,9 +854,15 @@ mod tests {
 
     #[test]
     fn zeronet_beryl_is_scheduled() {
-        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_782_349_188));
+        assert_eq!(
+            ChainConfig::zeronet().upgrades[crate::BaseUpgrade::Beryl].as_timestamp(),
+            Some(1_782_349_188)
+        );
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_782_349_188));
-        assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
+        assert_eq!(
+            ChainConfig::zeronet().upgrades[crate::BaseUpgrade::Cobalt].as_timestamp(),
+            None
+        );
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
     }
 

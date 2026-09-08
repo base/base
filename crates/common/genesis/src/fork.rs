@@ -1,5 +1,6 @@
 use alloy_hardforks::EthereumHardfork;
-use base_common_genesis::BaseUpgrade;
+
+use crate::BaseUpgrade;
 
 /// A typed execution rule identifier. Ethereum rules derive their activation from Base upgrades.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

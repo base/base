@@ -19,7 +19,7 @@ mod upgrades;
 pub use upgrades::Upgrades;
 
 mod chain;
-pub use chain::ChainUpgrades;
+pub use base_common_genesis::ChainUpgrades;
 
 mod macros;
 pub use macros::RollupConfigSource;
@@ -30,5 +30,4 @@ pub use ethereum::{Devnet, Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-mod fork;
-pub use fork::ExecutionFork;
+pub use base_common_genesis::ExecutionFork;

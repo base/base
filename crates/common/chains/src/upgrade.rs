@@ -63,25 +63,7 @@ impl BaseUpgradeExt for BaseUpgrade {
     }
 
     fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13] {
-        let azul = cfg.azul_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
-        let beryl = cfg.beryl_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
-        let cobalt = cfg.cobalt_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
-        let denim = cfg.denim_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
-        [
-            (Self::Bedrock, ForkCondition::Block(cfg.bedrock_block)),
-            (Self::Regolith, ForkCondition::Timestamp(cfg.regolith_timestamp)),
-            (Self::Canyon, ForkCondition::Timestamp(cfg.canyon_timestamp)),
-            (Self::Ecotone, ForkCondition::Timestamp(cfg.ecotone_timestamp)),
-            (Self::Fjord, ForkCondition::Timestamp(cfg.fjord_timestamp)),
-            (Self::Granite, ForkCondition::Timestamp(cfg.granite_timestamp)),
-            (Self::Holocene, ForkCondition::Timestamp(cfg.holocene_timestamp)),
-            (Self::Isthmus, ForkCondition::Timestamp(cfg.isthmus_timestamp)),
-            (Self::Jovian, ForkCondition::Timestamp(cfg.jovian_timestamp)),
-            (Self::Azul, azul),
-            (Self::Beryl, beryl),
-            (Self::Cobalt, cobalt),
-            (Self::Denim, denim),
-        ]
+        BaseUpgrade::EXECUTION_VARIANTS.map(|fork| (fork, cfg.upgrades[fork]))
     }
 
     fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade {
@@ -314,30 +296,66 @@ mod tests {
     #[test]
     fn test_reverse_lookup_base_chains() {
         let test_cases = [
-            (Chain::base_mainnet(), ChainConfig::mainnet().canyon_timestamp, BaseUpgrade::Canyon),
-            (Chain::base_mainnet(), ChainConfig::mainnet().ecotone_timestamp, BaseUpgrade::Ecotone),
-            (Chain::base_mainnet(), ChainConfig::mainnet().jovian_timestamp, BaseUpgrade::Jovian),
-            (Chain::base_sepolia(), ChainConfig::sepolia().canyon_timestamp, BaseUpgrade::Canyon),
-            (Chain::base_sepolia(), ChainConfig::sepolia().ecotone_timestamp, BaseUpgrade::Ecotone),
-            (Chain::base_sepolia(), ChainConfig::sepolia().jovian_timestamp, BaseUpgrade::Jovian),
             (
                 Chain::base_mainnet(),
-                ChainConfig::mainnet().beryl_timestamp.unwrap(),
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Canyon]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+                BaseUpgrade::Canyon,
+            ),
+            (
+                Chain::base_mainnet(),
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Ecotone]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+                BaseUpgrade::Ecotone,
+            ),
+            (
+                Chain::base_mainnet(),
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+                BaseUpgrade::Jovian,
+            ),
+            (
+                Chain::base_sepolia(),
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Canyon]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+                BaseUpgrade::Canyon,
+            ),
+            (
+                Chain::base_sepolia(),
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Ecotone]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+                BaseUpgrade::Ecotone,
+            ),
+            (
+                Chain::base_sepolia(),
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+                BaseUpgrade::Jovian,
+            ),
+            (
+                Chain::base_mainnet(),
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Beryl].as_timestamp().unwrap(),
                 BaseUpgrade::Beryl,
             ),
             (
                 Chain::base_sepolia(),
-                ChainConfig::sepolia().azul_timestamp.unwrap(),
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Azul].as_timestamp().unwrap(),
                 BaseUpgrade::Azul,
             ),
             (
                 Chain::base_sepolia(),
-                ChainConfig::sepolia().beryl_timestamp.unwrap(),
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Beryl].as_timestamp().unwrap(),
                 BaseUpgrade::Beryl,
             ),
             (
                 Chain::from_id(ChainConfig::zeronet().chain_id),
-                ChainConfig::zeronet().beryl_timestamp.unwrap(),
+                ChainConfig::zeronet().upgrades[crate::BaseUpgrade::Beryl].as_timestamp().unwrap(),
                 BaseUpgrade::Beryl,
             ),
         ];
@@ -356,36 +374,72 @@ mod tests {
     #[test]
     fn test_reverse_lookup_base_specific_sequence() {
         let mut cfg = ChainConfig::mainnet().clone();
-        cfg.azul_timestamp = Some(cfg.jovian_timestamp + 10);
-        cfg.beryl_timestamp = Some(cfg.jovian_timestamp + 20);
-        cfg.cobalt_timestamp = Some(cfg.jovian_timestamp + 30);
+        cfg.upgrades.insert(
+            crate::BaseUpgrade::Azul,
+            ForkCondition::Timestamp(
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 10,
+            ),
+        );
+        cfg.upgrades.insert(
+            crate::BaseUpgrade::Beryl,
+            ForkCondition::Timestamp(
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 20,
+            ),
+        );
+        cfg.upgrades.insert(
+            crate::BaseUpgrade::Cobalt,
+            ForkCondition::Timestamp(
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 30,
+            ),
+        );
 
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 9),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 9
+            ),
             BaseUpgrade::Jovian
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 10),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 10
+            ),
             BaseUpgrade::Azul
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 19),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 19
+            ),
             BaseUpgrade::Azul
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 20),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 20
+            ),
             BaseUpgrade::Beryl
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 29),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 29
+            ),
             BaseUpgrade::Beryl
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 30),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 30
+            ),
             BaseUpgrade::Cobalt
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 50),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 50
+            ),
             BaseUpgrade::Cobalt
         );
     }
@@ -393,26 +447,43 @@ mod tests {
     #[test]
     fn test_reverse_lookup_defaults_to_beryl_after_base_thresholds() {
         let mut cfg = ChainConfig::mainnet().clone();
-        cfg.azul_timestamp = Some(cfg.jovian_timestamp + 10);
-        cfg.beryl_timestamp = None;
+        cfg.upgrades.insert(
+            crate::BaseUpgrade::Azul,
+            ForkCondition::Timestamp(
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 10,
+            ),
+        );
+        cfg.upgrades.insert(crate::BaseUpgrade::Beryl, ForkCondition::Never);
 
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 9),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 9
+            ),
             BaseUpgrade::Jovian
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 10),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 10
+            ),
             BaseUpgrade::Azul
         );
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 20),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default() + 20
+            ),
             BaseUpgrade::Azul
         );
 
-        cfg.azul_timestamp = None;
+        cfg.upgrades.insert(crate::BaseUpgrade::Azul, ForkCondition::Never);
 
         assert_eq!(
-            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp),
+            upgrade_from_config_and_timestamp(
+                &cfg,
+                cfg.upgrades[crate::BaseUpgrade::Jovian].as_timestamp().unwrap_or_default()
+            ),
             BaseUpgrade::Jovian
         );
     }

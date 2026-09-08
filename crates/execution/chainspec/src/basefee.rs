@@ -89,7 +89,7 @@ mod tests {
     use alloy_primitives::Bytes;
     use base_common_consensus::JovianExtraData;
     use base_common_genesis::BaseUpgrade;
-    use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
+    use reth_chainspec::{ChainSpec, ForkCondition};
 
     use super::*;
     use crate::BaseChainSpec;
@@ -99,10 +99,11 @@ mod tests {
     fn get_chainspec() -> Arc<BaseChainSpec> {
         let mut base_sepolia_spec = BaseChainSpec::sepolia();
         base_sepolia_spec
-            .hardforks
+            .config
+            .upgrades
             .insert(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         Arc::new(BaseChainSpec::from(ChainSpec {
-            chain: base_sepolia_spec.chain,
+            chain: base_sepolia_spec.chain(),
             genesis: base_sepolia_spec.genesis,
             genesis_header: base_sepolia_spec.genesis_header,
             ..Default::default()

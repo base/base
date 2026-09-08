@@ -662,10 +662,15 @@ mod tests {
 
         let upgrades = BaseChainSpec::mainnet();
 
-        let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
-            .l1_block_info(&upgrades, &tx, &mut l1_block_info)
-            .expect("should parse revm l1 info")
-            .build();
+        let receipt = ReceiptFieldsBuilder::new(
+            ChainConfig::mainnet().upgrades[base_common_chains::BaseUpgrade::Jovian]
+                .as_timestamp()
+                .unwrap_or_default(),
+            u64::MAX,
+        )
+        .l1_block_info(&upgrades, &tx, &mut l1_block_info)
+        .expect("should parse revm l1 info")
+        .build();
 
         assert_eq!(receipt.l1_block_info.da_footprint_gas_scalar, Some(DA_FOOTPRINT_GAS_SCALAR));
     }
@@ -709,7 +714,10 @@ mod tests {
                 gas_used: 100,
                 next_log_index: 0,
                 meta: TransactionMeta {
-                    timestamp: ChainConfig::mainnet().jovian_timestamp,
+                    timestamp: ChainConfig::mainnet().upgrades
+                        [base_common_chains::BaseUpgrade::Jovian]
+                        .as_timestamp()
+                        .unwrap_or_default(),
                     ..Default::default()
                 },
             },
@@ -763,7 +771,10 @@ mod tests {
                 gas_used: 100,
                 next_log_index: 0,
                 meta: TransactionMeta {
-                    timestamp: ChainConfig::mainnet().isthmus_timestamp,
+                    timestamp: ChainConfig::mainnet().upgrades
+                        [base_common_chains::BaseUpgrade::Isthmus]
+                        .as_timestamp()
+                        .unwrap_or_default(),
                     ..Default::default()
                 },
             },

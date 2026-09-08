@@ -25,10 +25,10 @@ impl BaseChainSpecBuilder {
     pub fn base_mainnet() -> Self {
         let base_mainnet = BaseChainSpec::mainnet();
         Self {
-            chain: Some(base_mainnet.chain),
+            chain: Some(base_mainnet.chain()),
             genesis: Some(base_mainnet.genesis),
-            hardforks: base_mainnet.hardforks,
-            activation_admin_address: base_mainnet.activation_admin_address,
+            hardforks: base_mainnet.config.upgrades,
+            activation_admin_address: base_mainnet.config.activation_admin_address,
         }
     }
 
@@ -184,17 +184,20 @@ impl BaseChainSpecBuilder {
     /// [`Self::genesis`]).
     pub fn try_build(self) -> Result<BaseChainSpec, BaseChainSpecError> {
         let mut spec = BaseChainSpec {
-            chain: self.chain.expect("chain ID must be set"),
+            config: base_common_chains::ChainConfig {
+                chain_id: self.chain.expect("chain ID must be set").id(),
+                upgrades: self.hardforks,
+                activation_admin_address: self.activation_admin_address,
+                ..Default::default()
+            },
             genesis: self.genesis.expect("genesis must be set"),
-            hardforks: self.hardforks,
-            activation_admin_address: self.activation_admin_address,
             paris_block_and_final_difficulty: Some((0, U256::ZERO)),
             ..Default::default()
         };
         BaseChainSpec::validate_beryl_activation_admin(
-            &spec.hardforks,
-            spec.activation_admin_address,
-            spec.chain.id(),
+            &spec.config.upgrades,
+            spec.config.activation_admin_address,
+            spec.chain().id(),
         )?;
         spec.refresh_genesis_header();
         Ok(spec)

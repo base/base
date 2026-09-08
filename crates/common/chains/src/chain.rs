@@ -1,216 +1,11 @@
-use core::ops::Index;
+use alloy_hardforks::ForkCondition;
+use base_common_genesis::{BaseUpgrade, ChainUpgrades};
 
-// Production imports for upgrade implementations
-use EthereumHardfork::{
-    Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao,
-    Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris, Petersburg,
-    SpuriousDragon, Tangerine,
-};
-use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_primitives::U256;
-use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
-
-use crate::{BaseUpgradeExt, ExecutionFork, Upgrades};
-
-/// Number of upgrades in the Base execution fork ladder
-/// ([`BaseUpgrade::EXECUTION_VARIANTS`]).
-const EXECUTION_FORK_COUNT: usize = BaseUpgrade::EXECUTION_VARIANTS.len();
-
-/// A type allowing to configure activation [`ForkCondition`]s for a given list of
-/// [`BaseUpgrade`]s.
-///
-/// Zips together [`EthereumHardfork`]s and [`BaseUpgrade`]s. Base upgrades whenever Ethereum
-/// upgrades. When Ethereum upgrades, a new [`BaseUpgrade`] piggybacks on top of the new
-/// [`EthereumHardfork`] to include (or to noop) the L1 changes on L2.
-///
-/// Base can also upgrade independently of Ethereum. The relation between Ethereum and Base
-/// upgrades is described by predicate [`EthereumHardfork`] `=>` [`BaseUpgrade`], since a Base
-/// chain can undergo a [`BaseUpgrade`] without an [`EthereumHardfork`], but not the other way
-/// around.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChainUpgrades {
-    /// Activation conditions for the execution fork ladder, indexed by
-    /// [`BaseUpgrade::execution_idx`]. Upgrades absent from the input default to
-    /// [`ForkCondition::Never`].
-    forks: [ForkCondition; EXECUTION_FORK_COUNT],
-    /// Genesis-only Zenith activation; never changed by the runtime execution registry.
-    pub zenith: ForkCondition,
-}
-
-impl ChainUpgrades {
-    /// Creates a new [`ChainUpgrades`] from the given list of forks.
-    ///
-    /// Only execution-ladder upgrades ([`BaseUpgrade::EXECUTION_VARIANTS`]) are stored; any
-    /// contract-only upgrades (e.g. `Delta`, `PectraBlobSchedule`) in the input are ignored.
-    /// When an upgrade appears more than once, the last entry wins.
-    pub fn new(forks: impl IntoIterator<Item = (BaseUpgrade, ForkCondition)>) -> Self {
-        let mut conditions = [ForkCondition::Never; EXECUTION_FORK_COUNT];
-        let mut zenith = ForkCondition::Never;
-        for (upgrade, condition) in forks {
-            if upgrade == BaseUpgrade::Zenith {
-                zenith = condition;
-            }
-            if let Some(idx) = upgrade.execution_idx() {
-                conditions[idx] = condition;
-            }
-        }
-        Self { forks: conditions, zenith }
-    }
-
-    /// Iterates over the configured Base execution ladder.
-    pub fn iter(&self) -> impl Iterator<Item = (BaseUpgrade, ForkCondition)> + '_ {
-        BaseUpgrade::EXECUTION_VARIANTS
-            .into_iter()
-            .map(|fork| (fork, self[fork]))
-            .chain(core::iter::once((BaseUpgrade::Zenith, self.zenith)))
-    }
-
-    /// Looks up a typed execution rule.
-    pub fn fork(&self, fork: impl Into<ExecutionFork>) -> ForkCondition {
-        match fork.into() {
-            ExecutionFork::Base(fork) => self[fork],
-            ExecutionFork::Ethereum(fork) => self[fork],
-        }
-    }
-
-    /// Updates a Base upgrade, including the corresponding Ethereum rule.
-    pub fn insert(&mut self, fork: impl Into<ExecutionFork>, condition: ForkCondition) {
-        if let Some(upgrade) = fork.into().base_upgrade() {
-            if let Some(index) = upgrade.execution_idx() {
-                self.forks[index] = condition;
-            }
-        }
-    }
-
-    /// Removes a configured Base activation.
-    pub fn remove(&mut self, fork: &BaseUpgrade) {
-        self.insert(*fork, ForkCondition::Never);
-    }
-
-    /// Looks up a scheduled execution rule.
-    pub fn get(&self, fork: impl Into<ExecutionFork>) -> Option<ForkCondition> {
-        let condition = self.fork(fork);
-        (condition != ForkCondition::Never).then_some(condition)
-    }
-
-    /// Iterates over derived Ethereum rules and Base upgrades in protocol order.
-    pub fn forks_iter(&self) -> impl Iterator<Item = (ExecutionFork, ForkCondition)> + '_ {
-        EthereumHardfork::VARIANTS
-            .iter()
-            .copied()
-            .take_while(|fork| *fork != EthereumHardfork::Shanghai)
-            .map(|fork| (ExecutionFork::Ethereum(fork), self[fork]))
-            .chain(self.iter().flat_map(|(fork, condition)| {
-                fork.execution_hardfork()
-                    .map(|eth| (ExecutionFork::Ethereum(eth), condition))
-                    .into_iter()
-                    .chain(core::iter::once((ExecutionFork::Base(fork), condition)))
-            }))
-            .filter(|(_, condition)| *condition != ForkCondition::Never)
-    }
-
-    /// Resolves one execution rule using the current runtime activation registry.
-    pub fn activation(&self, chain_id: u64, fork: impl Into<ExecutionFork>) -> ForkCondition {
-        let fork = fork.into();
-        if let Some(upgrade) = fork.base_upgrade().filter(|upgrade| upgrade.is_execution()) {
-            if let Some(activation) = RuntimeUpgradeRegistry::activation(chain_id, upgrade) {
-                return match activation {
-                    UpgradeActivation::Never => ForkCondition::Never,
-                    UpgradeActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
-                };
-            }
-        }
-        self.fork(fork)
-    }
-
-    /// Takes one consistent snapshot of the configured schedule and runtime overrides.
-    pub fn runtime(&self, chain_id: u64) -> Self {
-        let mut schedule = self.clone();
-        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(chain_id) {
-            for (upgrade, activation) in overrides.activations {
-                if upgrade.is_execution() {
-                    schedule.insert(
-                        upgrade,
-                        match activation {
-                            UpgradeActivation::Never => ForkCondition::Never,
-                            UpgradeActivation::Timestamp(timestamp) => {
-                                ForkCondition::Timestamp(timestamp)
-                            }
-                        },
-                    );
-                }
-            }
-        }
-        schedule
-    }
-
-    /// Creates a new [`ChainUpgrades`] with Base mainnet configuration.
-    pub fn mainnet() -> Self {
-        Self::new(BaseUpgrade::mainnet())
-    }
-
-    /// Creates a new [`ChainUpgrades`] with Base Sepolia configuration.
-    pub fn sepolia() -> Self {
-        Self::new(BaseUpgrade::sepolia())
-    }
-
-    /// Creates a new [`ChainUpgrades`] with devnet configuration.
-    pub fn devnet() -> Self {
-        Self::new(BaseUpgrade::devnet())
-    }
-
-    /// Creates a new [`ChainUpgrades`] with Base Zeronet configuration.
-    pub fn zeronet() -> Self {
-        Self::new(BaseUpgrade::zeronet())
-    }
-}
-
-impl EthereumHardforks for ChainUpgrades {
-    fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        self[fork]
-    }
-}
+use crate::Upgrades;
 
 impl Upgrades for ChainUpgrades {
     fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
         self[fork]
-    }
-}
-
-impl Index<BaseUpgrade> for ChainUpgrades {
-    type Output = ForkCondition;
-
-    fn index(&self, hf: BaseUpgrade) -> &Self::Output {
-        // Contract-only upgrades are absent from the execution fork ladder.
-        if hf == BaseUpgrade::Zenith {
-            &self.zenith
-        } else {
-            hf.execution_idx().map_or(&ForkCondition::Never, |idx| &self.forks[idx])
-        }
-    }
-}
-
-impl Index<EthereumHardfork> for ChainUpgrades {
-    type Output = ForkCondition;
-
-    fn index(&self, hf: EthereumHardfork) -> &Self::Output {
-        if let Some(base_upgrade) = BaseUpgrade::from_ethereum_hardfork(hf) {
-            return &self[base_upgrade];
-        }
-
-        match hf {
-            // Dao Upgrade is not needed for ChainUpgrades
-            Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
-            Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
-            | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
-            London | ArrowGlacier | GrayGlacier => &self[BaseUpgrade::Bedrock],
-            Paris => &ForkCondition::TTD {
-                activation_block_number: 0,
-                fork_block: Some(0),
-                total_difficulty: U256::ZERO,
-            },
-            _ => unreachable!(),
-        }
     }
 }
 
@@ -220,57 +15,97 @@ mod tests {
         Azul, Bedrock, Beryl, Canyon, Cobalt, Denim, Ecotone, Fjord, Granite, Holocene, Isthmus,
         Jovian, Regolith, Zenith,
     };
-    use alloy_hardforks::EthereumHardfork;
+    use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 
     use super::*;
     use crate::ChainConfig;
 
     #[test]
     fn base_mainnet_fork_conditions() {
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert_eq!(
             base_mainnet_forks[Bedrock],
-            ForkCondition::Block(ChainConfig::mainnet().bedrock_block)
+            ForkCondition::Block(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Bedrock]
+                    .block_number()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Regolith],
-            ForkCondition::Timestamp(ChainConfig::mainnet().regolith_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Regolith]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Canyon],
-            ForkCondition::Timestamp(ChainConfig::mainnet().canyon_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Canyon]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Ecotone],
-            ForkCondition::Timestamp(ChainConfig::mainnet().ecotone_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Ecotone]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Fjord],
-            ForkCondition::Timestamp(ChainConfig::mainnet().fjord_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Fjord]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Granite],
-            ForkCondition::Timestamp(ChainConfig::mainnet().granite_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Granite]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Holocene],
-            ForkCondition::Timestamp(ChainConfig::mainnet().holocene_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Holocene]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Isthmus],
-            ForkCondition::Timestamp(ChainConfig::mainnet().isthmus_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Isthmus]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Jovian],
-            ForkCondition::Timestamp(ChainConfig::mainnet().jovian_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Azul],
-            ForkCondition::Timestamp(ChainConfig::mainnet().azul_timestamp.unwrap())
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Azul].as_timestamp().unwrap()
+            )
         );
         assert_eq!(
             base_mainnet_forks[Beryl],
-            ForkCondition::Timestamp(ChainConfig::mainnet().beryl_timestamp.unwrap())
+            ForkCondition::Timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Beryl].as_timestamp().unwrap()
+            )
         );
         assert_eq!(base_mainnet_forks[Cobalt], ForkCondition::Never);
         assert_eq!(base_mainnet_forks[Denim], ForkCondition::Never);
@@ -279,50 +114,90 @@ mod tests {
 
     #[test]
     fn base_sepolia_fork_conditions() {
-        let base_sepolia_forks = ChainUpgrades::sepolia();
+        let base_sepolia_forks = crate::ChainConfig::sepolia().upgrades.clone();
         assert_eq!(
             base_sepolia_forks[Bedrock],
-            ForkCondition::Block(ChainConfig::sepolia().bedrock_block)
+            ForkCondition::Block(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Bedrock]
+                    .block_number()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Regolith],
-            ForkCondition::Timestamp(ChainConfig::sepolia().regolith_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Regolith]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Canyon],
-            ForkCondition::Timestamp(ChainConfig::sepolia().canyon_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Canyon]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Ecotone],
-            ForkCondition::Timestamp(ChainConfig::sepolia().ecotone_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Ecotone]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Fjord],
-            ForkCondition::Timestamp(ChainConfig::sepolia().fjord_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Fjord]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Granite],
-            ForkCondition::Timestamp(ChainConfig::sepolia().granite_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Granite]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Holocene],
-            ForkCondition::Timestamp(ChainConfig::sepolia().holocene_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Holocene]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Isthmus],
-            ForkCondition::Timestamp(ChainConfig::sepolia().isthmus_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Isthmus]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks.fork_condition(Jovian),
-            ForkCondition::Timestamp(ChainConfig::sepolia().jovian_timestamp)
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Azul],
-            ForkCondition::Timestamp(ChainConfig::sepolia().azul_timestamp.unwrap())
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Azul].as_timestamp().unwrap()
+            )
         );
         assert_eq!(
             base_sepolia_forks[Beryl],
-            ForkCondition::Timestamp(ChainConfig::sepolia().beryl_timestamp.unwrap())
+            ForkCondition::Timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Beryl].as_timestamp().unwrap()
+            )
         );
         assert_eq!(base_sepolia_forks[Cobalt], ForkCondition::Never);
         assert_eq!(base_sepolia_forks[Denim], ForkCondition::Never);
@@ -331,57 +206,79 @@ mod tests {
 
     #[test]
     fn is_jovian_active_at_timestamp() {
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert!(
-            base_mainnet_forks
-                .is_jovian_active_at_timestamp(ChainConfig::mainnet().jovian_timestamp)
+            base_mainnet_forks.is_jovian_active_at_timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert!(
-            !base_mainnet_forks
-                .is_jovian_active_at_timestamp(ChainConfig::mainnet().jovian_timestamp - 1)
+            !base_mainnet_forks.is_jovian_active_at_timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+                    - 1
+            )
         );
         assert!(
-            base_mainnet_forks
-                .is_jovian_active_at_timestamp(ChainConfig::mainnet().jovian_timestamp + 1000)
+            base_mainnet_forks.is_jovian_active_at_timestamp(
+                ChainConfig::mainnet().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+                    + 1000
+            )
         );
 
-        let base_sepolia_forks = ChainUpgrades::sepolia();
+        let base_sepolia_forks = crate::ChainConfig::sepolia().upgrades.clone();
         assert!(
-            base_sepolia_forks
-                .is_jovian_active_at_timestamp(ChainConfig::sepolia().jovian_timestamp)
+            base_sepolia_forks.is_jovian_active_at_timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+            )
         );
         assert!(
-            !base_sepolia_forks
-                .is_jovian_active_at_timestamp(ChainConfig::sepolia().jovian_timestamp - 1)
+            !base_sepolia_forks.is_jovian_active_at_timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+                    - 1
+            )
         );
         assert!(
-            base_sepolia_forks
-                .is_jovian_active_at_timestamp(ChainConfig::sepolia().jovian_timestamp + 1000)
+            base_sepolia_forks.is_jovian_active_at_timestamp(
+                ChainConfig::sepolia().upgrades[crate::BaseUpgrade::Jovian]
+                    .as_timestamp()
+                    .unwrap_or_default()
+                    + 1000
+            )
         );
     }
 
     #[test]
     fn is_azul_active_at_timestamp() {
         // Azul is scheduled on mainnet at 1779991200
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert!(!base_mainnet_forks.is_azul_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_azul_active_at_timestamp(1_779_991_199));
         assert!(base_mainnet_forks.is_azul_active_at_timestamp(1_779_991_200));
         assert!(base_mainnet_forks.is_azul_active_at_timestamp(u64::MAX));
 
         // Azul is scheduled on sepolia at 1776708000
-        let base_sepolia_forks = ChainUpgrades::sepolia();
+        let base_sepolia_forks = crate::ChainConfig::sepolia().upgrades.clone();
         assert!(!base_sepolia_forks.is_azul_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_azul_active_at_timestamp(1_776_707_999));
         assert!(base_sepolia_forks.is_azul_active_at_timestamp(1_776_708_000));
         assert!(base_sepolia_forks.is_azul_active_at_timestamp(u64::MAX));
 
         // Azul is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
-        let devnet_forks = ChainUpgrades::devnet();
+        let devnet_forks = crate::ChainConfig::devnet().upgrades.clone();
         assert!(devnet_forks.is_azul_active_at_timestamp(0));
 
         // Azul is scheduled on zeronet at 1782348888
-        let zeronet_forks = ChainUpgrades::zeronet();
+        let zeronet_forks = crate::ChainConfig::zeronet().upgrades.clone();
         assert!(!zeronet_forks.is_azul_active_at_timestamp(0));
         assert!(!zeronet_forks.is_azul_active_at_timestamp(1_782_348_887));
         assert!(zeronet_forks.is_azul_active_at_timestamp(1_782_348_888));
@@ -390,19 +287,19 @@ mod tests {
 
     #[test]
     fn is_beryl_active_at_timestamp() {
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert!(!base_mainnet_forks.is_beryl_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_beryl_active_at_timestamp(1_782_410_399));
         assert!(base_mainnet_forks.is_beryl_active_at_timestamp(1_782_410_400));
         assert!(base_mainnet_forks.is_beryl_active_at_timestamp(u64::MAX));
 
-        let base_sepolia_forks = ChainUpgrades::sepolia();
+        let base_sepolia_forks = crate::ChainConfig::sepolia().upgrades.clone();
         assert!(!base_sepolia_forks.is_beryl_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_beryl_active_at_timestamp(1_781_805_599));
         assert!(base_sepolia_forks.is_beryl_active_at_timestamp(1_781_805_600));
         assert!(base_sepolia_forks.is_beryl_active_at_timestamp(u64::MAX));
 
-        let zeronet_forks = ChainUpgrades::zeronet();
+        let zeronet_forks = crate::ChainConfig::zeronet().upgrades.clone();
         assert!(!zeronet_forks.is_beryl_active_at_timestamp(0));
         assert!(!zeronet_forks.is_beryl_active_at_timestamp(1_782_349_187));
         assert!(zeronet_forks.is_beryl_active_at_timestamp(1_782_349_188));
@@ -411,47 +308,47 @@ mod tests {
 
     #[test]
     fn is_zenith_active_at_timestamp() {
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert!(!base_mainnet_forks.is_zenith_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_zenith_active_at_timestamp(u64::MAX));
 
-        let devnet_forks = ChainUpgrades::devnet();
+        let devnet_forks = crate::ChainConfig::devnet().upgrades.clone();
         assert!(!devnet_forks.is_zenith_active_at_timestamp(0));
     }
 
     #[test]
     fn is_denim_active_at_timestamp() {
         // Denim is unscheduled on all built-in chains.
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(u64::MAX));
 
-        let devnet_forks = ChainUpgrades::devnet();
+        let devnet_forks = crate::ChainConfig::devnet().upgrades.clone();
         assert!(!devnet_forks.is_denim_active_at_timestamp(0));
         assert!(!devnet_forks.is_denim_active_at_timestamp(u64::MAX));
     }
 
     #[test]
     fn osaka_tracks_base_azul_activation() {
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         assert_eq!(
             base_mainnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(1_779_991_200)
         );
 
-        let base_sepolia_forks = ChainUpgrades::sepolia();
+        let base_sepolia_forks = crate::ChainConfig::sepolia().upgrades.clone();
         assert_eq!(
             base_sepolia_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(1_776_708_000)
         );
 
-        let devnet_forks = ChainUpgrades::devnet();
+        let devnet_forks = crate::ChainConfig::devnet().upgrades.clone();
         assert_eq!(
             devnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::ZERO_TIMESTAMP
         );
 
-        let zeronet_forks = ChainUpgrades::zeronet();
+        let zeronet_forks = crate::ChainConfig::zeronet().upgrades.clone();
         assert_eq!(
             zeronet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(1_782_348_888)
@@ -460,18 +357,12 @@ mod tests {
 
     #[test]
     fn test_ethereum_fork_activation_consistency() {
-        let base_mainnet_forks = ChainUpgrades::mainnet();
+        let base_mainnet_forks = crate::ChainConfig::mainnet().upgrades.clone();
         for ethereum_upgrade in EthereumHardfork::VARIANTS {
             let _ = base_mainnet_forks.ethereum_fork_activation(*ethereum_upgrade);
         }
         for base_upgrade in BaseUpgrade::VARIANTS {
             let _ = base_mainnet_forks.fork_condition(*base_upgrade);
         }
-    }
-}
-
-impl Default for ChainUpgrades {
-    fn default() -> Self {
-        Self::new([])
     }
 }

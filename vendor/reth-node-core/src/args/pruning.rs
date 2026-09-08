@@ -271,6 +271,7 @@ impl PruningArgs {
                     .map(PruneMode::Before);
             }
             config = PruneConfig {
+                delete_limit: config.delete_limit,
                 block_interval: config.block_interval,
                 segments,
                 minimum_pruning_distance: config.minimum_pruning_distance,
@@ -280,6 +281,7 @@ impl PruningArgs {
         // If --minimal is set, use minimal storage mode with aggressive pruning.
         if self.minimal {
             config = PruneConfig {
+                delete_limit: config.delete_limit,
                 block_interval: config.block_interval,
                 segments: DefaultPruningValues::get_global().minimal_prune_modes.clone(),
                 minimum_pruning_distance: config.minimum_pruning_distance,

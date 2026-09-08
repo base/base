@@ -3444,7 +3444,9 @@ mod tests {
         let l1_only_cost = base_execution_evm::RethL1BlockInfo::l1_tx_data_fee(
             &mut l1_block_info,
             Arc::clone(&chain_spec),
-            chain_config.isthmus_timestamp,
+            chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                .as_timestamp()
+                .unwrap_or_default(),
             &encoded,
             false,
         )
@@ -3452,7 +3454,12 @@ mod tests {
         let full_additional_cost = l1_block_info.tx_cost(
             &encoded,
             U256::from(gas_limit),
-            BaseSpecId::from_timestamp(Arc::clone(&chain_spec), chain_config.isthmus_timestamp),
+            BaseSpecId::from_timestamp(
+                Arc::clone(&chain_spec),
+                chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
         );
         let base_tx_cost = U256::from(envelope.value()).saturating_add(U256::from(
             envelope.max_fee_per_gas().saturating_mul(envelope.gas_limit() as u128),
@@ -3481,7 +3488,9 @@ mod tests {
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
         let header = alloy_consensus::Header {
-            timestamp: chain_config.isthmus_timestamp,
+            timestamp: chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                .as_timestamp()
+                .unwrap_or_default(),
             ..Default::default()
         };
         let l1_info_tx: BaseTransactionSigned = TxDeposit {
@@ -3547,7 +3556,9 @@ mod tests {
 
         let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
         let header = alloy_consensus::Header {
-            timestamp: chain_config.isthmus_timestamp,
+            timestamp: chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                .as_timestamp()
+                .unwrap_or_default(),
             ..Default::default()
         };
         let l1_info_tx: BaseTransactionSigned = TxDeposit {
@@ -3571,7 +3582,12 @@ mod tests {
             state.payer_auth,
             signed.tx().max_fee_per_gas,
         );
-        let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
+        let spec_id = BaseSpecId::from_timestamp(
+            &chain_spec,
+            chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                .as_timestamp()
+                .unwrap_or_default(),
+        );
         let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
         let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
 
