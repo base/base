@@ -97,7 +97,7 @@ mod tests {
     const JOVIAN_TIMESTAMP: u64 = 1900000000;
 
     fn get_chainspec() -> Arc<BaseChainSpec> {
-        let mut base_sepolia_spec = BaseChainSpec::sepolia().inner;
+        let mut base_sepolia_spec = BaseChainSpec::sepolia();
         base_sepolia_spec
             .hardforks
             .insert(BaseUpgrade::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));

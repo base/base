@@ -1247,7 +1247,7 @@ impl DepositContract {
 
 /// Verifies [`ChainSpec`] configuration against expected data in given cases.
 #[cfg(any(test, feature = "test-utils"))]
-pub fn test_fork_ids(spec: &ChainSpec, cases: &[(Head, ForkId)]) {
+pub fn test_fork_ids(spec: &impl Hardforks, cases: &[(Head, ForkId)]) {
     for (block, expected_id) in cases {
         let computed_id = spec.fork_id(block);
         assert_eq!(

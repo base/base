@@ -386,7 +386,7 @@ pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
     let genesis = include_str!("./artifacts/genesis.json.tmpl");
     let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
     let mut spec = BaseChainSpec::from_genesis(genesis);
-    spec.inner.hardforks.insert(BaseUpgrade::Azul, ForkCondition::Timestamp(0));
+    spec.hardforks.insert(BaseUpgrade::Azul, ForkCondition::Timestamp(0));
     Arc::new(spec)
 }
 

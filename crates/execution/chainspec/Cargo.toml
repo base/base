@@ -16,7 +16,6 @@ auto_impl = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-derive_more = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
@@ -47,7 +46,6 @@ std = [
 	"base-common-genesis/std",
 	"base-common-rpc-types/std",
 	"base-protocol/std",
-	"derive_more/std",
 	"reth-chainspec/std",
 	"reth-ethereum-forks/std",
 	"reth-network-peers/std",
