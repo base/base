@@ -16,10 +16,10 @@ workspace = true
 [dependencies]
 alloy-serde = { workspace = true }
 alloy-consensus = { workspace = true }
-revm = { workspace = true, optional = true }
 alloy-network-primitives = { workspace = true }
 alloy-evm = { workspace = true, optional = true }
 alloy-network = { workspace = true, optional = true }
+base-evm-context = { workspace = true, optional = true}
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
 base-common-evm = { workspace = true, optional = true }
@@ -36,49 +36,45 @@ similar-asserts = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
+
 [features]
-default = [ "std" ]
+default = ["std"]
 std = [
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-evm?/std",
-	"alloy-network-primitives/std",
-	"alloy-primitives/std",
-	"alloy-rpc-types-eth/std",
-	"alloy-serde/std",
-	"base-common-consensus/std",
-	"base-common-evm?/std",
-	"derive_more/std",
-	"revm?/std",
-	"serde/std",
-	"serde_json/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-evm?/std",
+    "alloy-network-primitives/std",
+    "alloy-primitives/std",
+    "alloy-rpc-types-eth/std",
+    "alloy-serde/std",
+    "base-common-consensus/std",
+    "base-common-evm?/std",
+    "derive_more/std",
+    "base-evm-context?/std",
+    "serde/std",
+    "serde_json/std",
 ]
 arbitrary = [
-	"alloy-consensus/arbitrary",
-	"alloy-eips/arbitrary",
-	"alloy-primitives/arbitrary",
-	"alloy-rpc-types-eth/arbitrary",
-	"alloy-serde/arbitrary",
-	"base-common-consensus/arbitrary",
-	"dep:arbitrary",
-	"revm?/arbitrary",
-	"std",
+    "alloy-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-rpc-types-eth/arbitrary",
+    "alloy-serde/arbitrary",
+    "base-common-consensus/arbitrary",
+    "dep:arbitrary",
+    "std",
 ]
-k256 = [ "alloy-rpc-types-eth/k256", "base-common-consensus/k256" ]
+k256 = ["alloy-rpc-types-eth/k256", "base-common-consensus/k256"]
 serde = [
-	"alloy-consensus/serde",
-	"alloy-eips/serde",
-	"alloy-network-primitives/serde",
-	"alloy-primitives/serde",
-	"alloy-rpc-types-eth/serde",
-	"base-common-consensus/serde",
-	"base-common-evm?/serde",
-	"revm?/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-network-primitives/serde",
+    "alloy-primitives/serde",
+    "alloy-rpc-types-eth/serde",
+    "base-common-consensus/serde",
+    "base-common-evm?/serde",
+    "base-evm-context?/serde",
 ]
-network = [ "dep:alloy-network" ]
-eip8130 = [ "dep:alloy-evm", "dep:base-common-evm", "dep:revm", "std" ]
-reth = [
-	"eip8130",
-	"network",
-	"std",
-]
+network = ["dep:alloy-network"]
+eip8130 = ["dep:alloy-evm", "dep:base-common-evm", "std", "dep:base-evm-context"]
+reth = ["eip8130", "network", "std"]

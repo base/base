@@ -10,14 +10,13 @@ pub type EvmFactoryFor = base_common_evm::BaseEvmFactory;
 pub type SpecFor = base_common_evm::BaseSpecId;
 
 /// Helper to access [`alloy_evm::EvmFactory::BlockEnv`] for a given [`crate::BaseEvmConfig`].
-pub type BlockEnvFor = revm::context::BlockEnv;
+pub type BlockEnvFor = base_evm_context::BlockEnv;
 
 /// Helper to access [`alloy_evm::EvmFactory::Evm`] for a given [`crate::BaseEvmConfig`].
 pub type EvmFor<DB, I = NoOpInspector> = base_common_evm::BaseEvm<DB, I>;
 
 /// Helper to access [`alloy_evm::EvmFactory::Error`] for a given [`crate::BaseEvmConfig`].
-pub type EvmErrorFor<DB> =
-    revm::context_interface::result::EVMError<DB, base_common_evm::BaseTransactionError>;
+pub type EvmErrorFor<DB> = base_evm_context::EVMError<DB, base_common_evm::BaseTransactionError>;
 
 /// Helper to access [`alloy_evm::EvmFactory::Context`] for a given [`crate::BaseEvmConfig`].
 pub type EvmContextFor<DB> = base_common_evm::BaseContext<DB>;
@@ -26,7 +25,7 @@ pub type EvmContextFor<DB> = base_common_evm::BaseContext<DB>;
 pub type HaltReasonFor = base_common_evm::BaseHaltReason;
 
 /// Helper to access [`alloy_evm::EvmFactory::Tx`] for a given [`crate::BaseEvmConfig`].
-pub type TxEnvFor = base_common_evm::BaseTransaction<revm::context::TxEnv>;
+pub type TxEnvFor = base_common_evm::BaseTransaction<base_evm_context::TxEnv>;
 
 /// Helper to access [`alloy_evm::block::BlockExecutorFactory::ExecutionCtx`] for a given [`crate::BaseEvmConfig`].
 pub type ExecutionCtxFor = base_common_evm::BaseBlockExecutionCtx;

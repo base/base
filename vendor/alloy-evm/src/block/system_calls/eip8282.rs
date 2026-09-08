@@ -17,7 +17,7 @@ use core::fmt::Debug;
 
 use alloy_eips::eip7002::SYSTEM_ADDRESS;
 use alloy_primitives::{Address, Bytes, address};
-use revm::context_interface::result::{ExecutionResult, ResultAndState};
+use base_evm_context::{ExecutionResult, ResultAndState};
 
 use crate::{
     Evm,

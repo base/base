@@ -22,7 +22,7 @@ pub trait BaseTxEnv {
     fn eip8130_signed(&self) -> Option<&Eip8130Signed>;
 }
 
-impl<T: revm::context::Transaction> BaseTxEnv for BaseTransaction<T> {
+impl<T: base_evm_context::Transaction> BaseTxEnv for BaseTransaction<T> {
     fn encoded_bytes(&self) -> Option<&Bytes> {
         self.enveloped_tx.as_ref()
     }

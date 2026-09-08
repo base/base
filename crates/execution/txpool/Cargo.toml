@@ -26,6 +26,7 @@ reth-provider = { workspace = true }
 alloy-consensus = { workspace = true }
 base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-context = { workspace = true }
 base-common-genesis = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -59,11 +60,12 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "time", "rt-multi-thread", "macros"] }
+
 [features]
 default = [ "metrics" ]
 metrics = [
-	"base-common-evm/metrics",
-	"base-metrics/metrics",
-	"base-observability-events/metrics",
-	"dep:metrics",
+    "base-common-evm/metrics",
+    "base-metrics/metrics",
+    "base-observability-events/metrics",
+    "dep:metrics",
 ]

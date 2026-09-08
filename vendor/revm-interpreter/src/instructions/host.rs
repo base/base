@@ -1,10 +1,6 @@
 use core::cmp::min;
 
-use revm_context_interface::{
-    context::{SStoreResult, StateLoad},
-    host::LoadError,
-    journaled_state::AccountInfoLoad,
-};
+use base_evm_context::{AccountInfoLoad, LoadError, SStoreResult, StateLoad};
 use revm_primitives::{
     Address, B256, BLOCK_HASH_HISTORY, Bytes, Log, LogData, U256,
     hardfork::SpecId::{self, *},

@@ -4,10 +4,8 @@ use alloc::vec::Vec;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::{eip2718::WithEncoded, eip7685::Requests};
-use revm::{
-    Inspector, context::result::ResultAndState, context_interface::either::Either,
-    inspector::NoOpInspector,
-};
+use base_evm_context::{ResultAndState, either::Either};
+use revm::{Inspector, inspector::NoOpInspector};
 
 use crate::{Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx, ToTxEnv};
 
@@ -56,7 +54,7 @@ impl<T> Default for BlockExecutionResult<T> {
 ///
 /// This trait combines the requirements for a transaction to be executable by a block executor:
 /// - Must be convertible to the EVM's transaction environment, such as revm's
-///   [`TxEnv`](revm::context::TxEnv)
+///   [`TxEnv`](base_evm_context::TxEnv)
 /// - Must provide access to the transaction and signer via [`RecoveredTx`]
 ///
 /// The trait ensures that the block executor can both execute the transaction in the EVM
@@ -215,8 +213,8 @@ pub trait BlockExecutor {
     /// 1. `Self::Transaction` (consensus tx) →
     ///    [`Recovered<Self::Transaction>`](alloy_consensus::transaction::Recovered) (with sender)
     /// 2. [`Recovered<Self::Transaction>`](alloy_consensus::transaction::Recovered) →
-    ///    [`TxEnv`](revm::context::TxEnv) (via [`FromRecoveredTx`])
-    /// 3. [`TxEnv`](revm::context::TxEnv) → EVM execution → [`Self::Result`](BlockExecutor::Result)
+    ///    [`TxEnv`](base_evm_context::TxEnv) (via [`FromRecoveredTx`])
+    /// 3. [`TxEnv`](base_evm_context::TxEnv) → EVM execution → [`Self::Result`](BlockExecutor::Result)
     /// 4. [`Self::Result`](BlockExecutor::Result) + `Self::Transaction` → `Self::Receipt`
     ///
     /// Common examples:
@@ -377,7 +375,7 @@ pub trait BlockExecutor {
     /// commit the resulting state changes. The output can be inspected and potentially
     /// committed later using [`commit_transaction`](Self::commit_transaction).
     ///
-    /// Returns a [`revm::context_interface::result::ResultAndState`] containing the execution
+    /// Returns a [`base_evm_context::ResultAndState`] containing the execution
     /// result and state changes.
     ///
     /// # Use Cases

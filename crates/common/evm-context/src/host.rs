@@ -7,8 +7,9 @@ use revm_primitives::{
 use revm_state::Bytecode;
 
 use crate::{
+    StateLoad,
     cfg::GasParams,
-    context::{SStoreResult, SelfDestructResult, StateLoad},
+    context::{SStoreResult, SelfDestructResult},
     journaled_state::{AccountInfoLoad, AccountLoad},
 };
 

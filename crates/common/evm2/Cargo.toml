@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 alloy-eips = { workspace = true }
 alloy-consensus = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-l1-fees = { workspace = true }

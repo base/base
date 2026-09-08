@@ -5,9 +5,8 @@ use alloc::vec;
 use alloy_eips::Encodable2718;
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_evm_context::{Transaction, TxEnv};
 use revm::{
-    context::TxEnv,
-    context_interface::transaction::Transaction,
     handler::SystemCallTx,
     primitives::{Address, B256, Bytes, TxKind, U256},
 };
@@ -246,7 +245,7 @@ impl<T: alloy_evm::TransactionEnvMut> alloy_evm::TransactionEnvMut for BaseTrans
         self.base.set_nonce(nonce);
     }
 
-    fn set_access_list(&mut self, access_list: revm::context_interface::transaction::AccessList) {
+    fn set_access_list(&mut self, access_list: base_evm_context::AccessList) {
         self.base.set_access_list(access_list);
     }
 }
@@ -350,10 +349,8 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction<TxEnv> {
 mod tests {
     use alloy_eips::Encodable2718;
     use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
-    use revm::{
-        context_interface::Transaction,
-        primitives::{Address, B256, Bytes},
-    };
+    use base_evm_context::Transaction;
+    use revm::primitives::{Address, B256, Bytes};
 
     use super::*;
 

@@ -2,17 +2,13 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
+use base_evm_context::{
+    BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, Evm as RevmEvm,
+    ExecResultAndState, ExecutionResult, FrameStack, JournalTr, ResultAndState, TxEnv,
+};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
     InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
-    context::{
-        BlockEnv, CfgEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
-        result::ExecResultAndState,
-    },
-    context_interface::{
-        ContextTr, JournalTr,
-        result::{EVMError, ExecutionResult, ResultAndState},
-    },
     handler::{
         EthFrame, EvmTr, FrameInitOrResult, Handler, ItemOrResult, PrecompileProvider,
         SystemCallTx, evm::FrameTr, instructions::EthInstructions,
@@ -486,7 +482,8 @@ mod tests {
         JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
         JOVIAN_PAIRING_MAX_INPUT_SIZE,
     };
-    use revm::{context::CfgEnv, database::EmptyDB};
+    use base_evm_context::CfgEnv;
+    use revm::database::EmptyDB;
     use rstest::rstest;
 
     use super::*;

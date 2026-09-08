@@ -4,9 +4,9 @@ use core::iter::Peekable;
 use alloy_primitives::{Address, U64, U256, map::HashSet};
 use alloy_rpc_types_eth::TransactionInfo;
 use alloy_rpc_types_trace::parity::*;
+use base_evm_context::{ExecutionResult, HaltReasonTr, ResultAndState};
 use revm::{
     DatabaseRef,
-    context_interface::result::{ExecutionResult, HaltReasonTr, ResultAndState},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Account,
 };

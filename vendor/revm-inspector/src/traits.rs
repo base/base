@@ -1,4 +1,4 @@
-use revm_context::{ContextTr, FrameStack, JournalTr};
+use base_evm_context::{ContextTr, FrameStack, JournalTr};
 use revm_handler::{
     EthFrame, EvmTr, FrameInitOrResult, FrameResult, ItemOrResult,
     evm::{ContextDbError, FrameInitResult, FrameTr},

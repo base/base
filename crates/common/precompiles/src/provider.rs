@@ -5,7 +5,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::StorageFeatures;
 use revm::{
     handler::EthPrecompiles,
-    precompile::{self, Precompiles, bn254, modexp, secp256r1},
+    precompile,
+    precompile::{Precompiles, bn254, modexp, secp256r1},
     primitives::{OnceLock, hardfork::SpecId},
 };
 

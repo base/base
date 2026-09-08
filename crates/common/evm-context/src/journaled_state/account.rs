@@ -15,8 +15,8 @@ use revm_state::{Account, Bytecode, EvmStorageSlot, TransactionId};
 
 use super::entry::JournalEntryTr;
 use crate::{
-    ErasedError,
-    context::{SStoreResult, StateLoad},
+    ErasedError, StateLoad,
+    context::SStoreResult,
     journaled_state::{JournalLoadErasedError, JournalLoadError, entry::JournalEntry},
 };
 

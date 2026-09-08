@@ -31,6 +31,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use base_common_consensus::BaseBlock;
+use base_evm_context::Cfg;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::BaseEvmConfig;
 use reth_primitives_traits::{
@@ -41,7 +42,6 @@ use reth_storage_api::{
     errors::ProviderError,
 };
 use reth_tasks::Runtime;
-use revm::context_interface::Cfg;
 
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;
 use crate::{
@@ -1518,7 +1518,7 @@ pub fn ensure_intrinsic_gas<T: EthPoolTransaction>(
     // EIP-2780 replaces the flat intrinsic base cost with a decomposed one that depends on
     // `tx.to` and `tx.value`.
     let eip2780 = fork_tracker.is_amsterdam_activated().then(|| {
-        revm::context_interface::cfg::gas_params::Eip2780TxInfo {
+        base_evm_context::Eip2780TxInfo {
             value: transaction.value(),
             // Self-transfer: a `Call` whose recipient is the sender itself.
             is_self_transfer: transaction.kind().to() == Some(&transaction.sender()),

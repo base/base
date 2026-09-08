@@ -38,7 +38,6 @@ pub use handler::{InspectorHandler, inspect_instructions};
 pub use inspect::{InspectCommitEvm, InspectEvm, InspectSystemCallEvm};
 pub use inspector::*;
 pub use noop::NoOpInspector;
-pub use revm_context as context;
 pub use revm_handler as evm_handler;
 pub use revm_interpreter as interpreter;
 pub use revm_primitives as primitives;
@@ -49,7 +48,7 @@ pub use traits::*;
 #[cfg(test)]
 mod tests {
     use ::revm_handler::{MainBuilder, MainContext};
-    use revm_context::{BlockEnv, CfgEnv, Context, Journal, TxEnv};
+    use base_evm_context::{BlockEnv, CfgEnv, Context, Journal, TxEnv};
     use revm_database::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_interpreter::{InstructionResult, InterpreterTypes, interpreter::EthInterpreter};
     use revm_primitives::TxKind;
@@ -77,7 +76,7 @@ mod tests {
             Context<BlockEnv, TxEnv, CfgEnv, BenchmarkDB, Journal<BenchmarkDB>, ()>,
             EthInterpreter,
         >,
-    ) -> revm_context::result::ExecutionResult {
+    ) -> base_evm_context::ExecutionResult {
         let bytecode = Bytecode::new_raw(bytecode.to_vec().into());
         let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(inspector);

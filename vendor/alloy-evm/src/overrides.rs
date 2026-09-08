@@ -10,11 +10,10 @@ use alloy_rpc_types_eth::{
     BlockOverrides,
     state::{AccountOverride, StateOverride},
 };
+use base_evm_context::{BlobExcessGasAndPrice, BlockEnv};
 use revm::{
     Database, DatabaseCommit,
     bytecode::BytecodeDecodeError,
-    context::BlockEnv,
-    context_interface::block::BlobExcessGasAndPrice,
     database::{CacheDB, State},
     state::{Account, AccountStatus, Bytecode, EvmStorageSlot, TransactionId},
 };
@@ -372,10 +371,9 @@ mod tests {
     #[test]
     fn test_create2_state_diff_inspect_bug() {
         use alloy_primitives::{Bytes, TxKind};
+        use base_evm_context::{Context, ContextTr, Journal, JournalTr, TxEnv};
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
-            context::{Context, Journal, TxEnv},
-            context_interface::{ContextTr, JournalTr},
             database_interface::EmptyDB,
             inspector::Inspector,
             interpreter::{CreateInputs, CreateOutcome},
@@ -384,8 +382,13 @@ mod tests {
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
-        type TestCtx =
-            Context<revm::context::BlockEnv, TxEnv, revm::context::CfgEnv, TestDb, Journal<TestDb>>;
+        type TestCtx = Context<
+            base_evm_context::BlockEnv,
+            TxEnv,
+            base_evm_context::CfgEnv,
+            TestDb,
+            Journal<TestDb>,
+        >;
 
         // --- Bytecode construction ---
 
@@ -648,9 +651,8 @@ mod tests {
     #[test]
     fn test_create2_state_diff_eth_evm_factory() {
         use alloy_primitives::{Bytes, TxKind};
+        use base_evm_context::{CfgEnv, ContextTr, JournalTr, TxEnv};
         use revm::{
-            context::{CfgEnv, TxEnv},
-            context_interface::{ContextTr, JournalTr},
             database_interface::EmptyDB,
             inspector::Inspector,
             interpreter::{CreateInputs, CreateOutcome},
@@ -727,7 +729,7 @@ mod tests {
         let mut cfg = CfgEnv::default();
         cfg.spec = SpecId::CANCUN;
         cfg.chain_id = 1;
-        let env = EvmEnv { block_env: revm::context::BlockEnv::default(), cfg_env: cfg };
+        let env = EvmEnv { block_env: base_evm_context::BlockEnv::default(), cfg_env: cfg };
 
         let factory = EthEvmFactory;
 
@@ -776,10 +778,9 @@ mod tests {
     #[test]
     fn test_create2_delegatecall_state_diff_inspect() {
         use alloy_primitives::{Bytes, TxKind};
+        use base_evm_context::{Context, ContextTr, Journal, JournalTr, TxEnv};
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
-            context::{Context, Journal, TxEnv},
-            context_interface::{ContextTr, JournalTr},
             database_interface::EmptyDB,
             inspector::Inspector,
             interpreter::{CreateInputs, CreateOutcome},
@@ -788,8 +789,13 @@ mod tests {
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
-        type TestCtx =
-            Context<revm::context::BlockEnv, TxEnv, revm::context::CfgEnv, TestDb, Journal<TestDb>>;
+        type TestCtx = Context<
+            base_evm_context::BlockEnv,
+            TxEnv,
+            base_evm_context::CfgEnv,
+            TestDb,
+            Journal<TestDb>,
+        >;
 
         // Implementation contract code: SSTORE(0, 0xBEEF), STOP
         // When DELEGATECALLed, this writes 0xBEEF to slot 0 of the caller's storage.

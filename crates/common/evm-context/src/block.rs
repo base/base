@@ -1,10 +1,9 @@
 //! Block related types and functions.
 //!
 //! [`Block`] trait is used to retrieve block information required for execution.
-pub mod blob;
-
+mod blob;
 use auto_impl::auto_impl;
-pub use blob::{BlobExcessGasAndPrice, calc_blob_gasprice};
+pub use blob::{BlobExcessGasAndPrice, calc_blob_gasprice, *};
 use revm_primitives::{Address, B256, U256};
 
 /// Trait for retrieving block information required for execution.

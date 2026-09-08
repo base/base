@@ -11,7 +11,8 @@ use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
-use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
+use base_evm_context::JournalCheckpoint;
+use revm::state::Bytecode;
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},

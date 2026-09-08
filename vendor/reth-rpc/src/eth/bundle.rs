@@ -7,6 +7,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_evm::env::BlockEnvironment;
 use alloy_primitives::{Keccak256, U256, uint};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
+use base_evm_context::{Block, ResultAndState};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::Evm;
 use jsonrpsee::core::RpcResult;
@@ -21,9 +22,7 @@ use reth_tasks::pool::BlockingTaskGuard;
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
 };
-use revm::{
-    DatabaseCommit, DatabaseRef, context::Block, context_interface::result::ResultAndState,
-};
+use revm::{DatabaseCommit, DatabaseRef};
 
 /// `Eth` bundle implementation.
 pub struct EthBundle<Eth> {

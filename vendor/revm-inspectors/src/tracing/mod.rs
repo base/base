@@ -1,11 +1,10 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, mem};
 
+use base_evm_context::{ContextTr, JournalTr, LocalContextTr};
 use revm::{
     Inspector, JournalEntry,
-    bytecode::opcode::{self, OpCode},
-    context::{JournalTr, LocalContextTr},
-    context_interface::ContextTr,
+    bytecode::{opcode, opcode::OpCode},
     inspector::JournalExt,
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Interpreter,

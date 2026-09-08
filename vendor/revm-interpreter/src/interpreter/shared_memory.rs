@@ -6,7 +6,7 @@ use core::{
 };
 use std::{rc::Rc, vec::Vec};
 
-use revm_context_interface::cfg::GasParams;
+use base_evm_context::GasParams;
 use revm_primitives::{B256, U256, hex};
 
 use super::MemoryTr;
@@ -49,7 +49,7 @@ pub struct SharedMemory {
     my_checkpoint: usize,
     /// Child checkpoint that we need to free context to.
     child_checkpoint: Option<usize>,
-    /// Memory limit. See [`Cfg`](revm_context_interface::Cfg).
+    /// Memory limit. See [`Cfg`](base_evm_context::Cfg).
     #[cfg(feature = "memory_limit")]
     memory_limit: u64,
 }

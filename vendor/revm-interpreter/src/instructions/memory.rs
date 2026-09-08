@@ -1,6 +1,6 @@
 use core::cmp::max;
 
-use revm_context_interface::Host;
+use base_evm_context::Host;
 use revm_primitives::U256;
 
 use crate::{

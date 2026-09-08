@@ -4,14 +4,12 @@ use core::{fmt::Debug, hash::Hash};
 
 use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::{Address, B256, Bytes};
+use base_evm_context::{
+    CfgEnv, ContextTr, DBErrorMarker, ExecutionResult, HaltReasonTr, ResultAndState,
+};
 pub use revm::Database;
 use revm::{
     DatabaseCommit, Inspector,
-    context::{CfgEnv, DBErrorMarker, result::ExecutionResult},
-    context_interface::{
-        ContextTr,
-        result::{HaltReasonTr, ResultAndState},
-    },
     inspector::{JournalExt, NoOpInspector},
 };
 
@@ -29,13 +27,13 @@ pub trait Evm {
     /// The transaction object that the EVM will execute.
     ///
     /// This type represents the transaction environment that the EVM operates on internally.
-    /// Typically this is [`revm::context::TxEnv`], which contains all necessary transaction
+    /// Typically this is [`base_evm_context::TxEnv`], which contains all necessary transaction
     /// data like sender, gas limits, value, and calldata.
     ///
     /// The EVM accepts flexible transaction inputs through the [`IntoTxEnv`] trait. This means
     /// that while the EVM internally works with `Self::Tx` (usually `TxEnv`), users can pass
     /// various transaction formats to [`Evm::transact`], including:
-    /// - Direct [`TxEnv`](revm::context::TxEnv) instances
+    /// - Direct [`TxEnv`](base_evm_context::TxEnv) instances
     /// - [`Recovered<T>`](alloy_consensus::transaction::Recovered) where `T` implements
     ///   [`crate::FromRecoveredTx`]
     /// - [`WithEncoded<Recovered<T>>`](alloy_eips::eip2718::WithEncoded) where `T` implements
@@ -79,7 +77,7 @@ pub trait Evm {
     ///
     /// This is the primary method for executing transactions. It accepts flexible input types
     /// that can be converted to the EVM's transaction environment, including:
-    /// - [`TxEnv`](revm::context::TxEnv) - Direct transaction environment
+    /// - [`TxEnv`](base_evm_context::TxEnv) - Direct transaction environment
     /// - [`Recovered<T>`](alloy_consensus::transaction::Recovered) - Consensus transaction with
     ///   recovered sender
     /// - [`WithEncoded<Recovered<T>>`](alloy_eips::eip2718::WithEncoded) - Transaction with sender
@@ -96,7 +94,7 @@ pub trait Evm {
     /// Executes a system call.
     ///
     /// Note: this will only keep the target `contract` in the state. This is done because revm is
-    /// loading [`revm::context::Block::beneficiary`] into state by default, and we need to avoid it
+    /// loading [`base_evm_context::Block::beneficiary`] into state by default, and we need to avoid it
     /// by also covering edge cases when beneficiary is set to the system contract address.
     fn transact_system_call(
         &mut self,

@@ -4,12 +4,12 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use revm_context_interface::FrameStack;
+use base_evm_context::FrameStack;
 
 /// Main EVM structure that contains all data needed for execution.
 #[derive(Debug, Clone)]
 pub struct Evm<CTX, INSP, I, P, F> {
-    /// [`revm_context_interface::ContextTr`] of the EVM it is used to fetch data from database.
+    /// [`base_evm_context::ContextTr`] of the EVM it is used to fetch data from database.
     pub ctx: CTX,
     /// Inspector of the EVM it is used to inspect the EVM.
     /// Its trait are defined in revm-inspector crate.

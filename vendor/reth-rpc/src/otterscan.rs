@@ -15,6 +15,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::{
     BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };
+use base_evm_context::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use reth_rpc_api::{EthApiServer, OtterscanServer};
 use reth_rpc_eth_api::{
@@ -23,7 +24,6 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, utils::binary_search};
 use reth_rpc_server_types::result::internal_rpc_err;
-use revm::context_interface::result::ExecutionResult;
 use revm_inspectors::{
     tracing::{TracingInspectorConfig, types::CallTraceNode},
     transfer::{TransferInspector, TransferKind},

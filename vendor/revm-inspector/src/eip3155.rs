@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use revm_context::{Cfg, ContextTr, JournalTr, Transaction};
+use base_evm_context::{Cfg, ContextTr, JournalTr, Transaction};
 use revm_interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterResult,
     InterpreterTypes, Stack,

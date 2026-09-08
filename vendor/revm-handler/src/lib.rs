@@ -46,8 +46,6 @@ pub use precompile_provider::{
     EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
 };
 pub use revm_bytecode as bytecode;
-pub use revm_context as context;
-pub use revm_context_interface as context_interface;
 pub use revm_interpreter as interpreter;
 pub use revm_precompile as precompile;
 pub use revm_primitives as primitives;

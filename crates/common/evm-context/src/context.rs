@@ -5,7 +5,6 @@ use std::string::String;
 use auto_impl::auto_impl;
 use revm_primitives::StorageValue;
 
-pub use crate::journaled_state::StateLoad;
 use crate::{
     Block, Cfg, Database, Host, JournalTr, LocalContextTr, Transaction, result::FromStringError,
 };

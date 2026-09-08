@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes};
-use revm::context::{CfgEnv, either};
+use base_evm_context::{CfgEnv, either};
 
 use crate::{Evm, EvmEnv};
 
@@ -41,14 +41,14 @@ where
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
-    ) -> Result<revm::context::result::ResultAndState<Self::HaltReason>, Self::Error> {
+    ) -> Result<base_evm_context::ResultAndState<Self::HaltReason>, Self::Error> {
         either::for_both!(self, evm => evm.transact_raw(tx))
     }
 
     fn transact(
         &mut self,
         tx: impl crate::IntoTxEnv<Self::Tx>,
-    ) -> Result<revm::context::result::ResultAndState<Self::HaltReason>, Self::Error> {
+    ) -> Result<base_evm_context::ResultAndState<Self::HaltReason>, Self::Error> {
         either::for_both!(self, evm => evm.transact(tx))
     }
 
@@ -57,14 +57,14 @@ where
         caller: Address,
         contract: Address,
         data: Bytes,
-    ) -> Result<revm::context::result::ResultAndState<Self::HaltReason>, Self::Error> {
+    ) -> Result<base_evm_context::ResultAndState<Self::HaltReason>, Self::Error> {
         either::for_both!(self, evm => evm.transact_system_call(caller, contract, data))
     }
 
     fn transact_commit(
         &mut self,
         tx: impl crate::IntoTxEnv<Self::Tx>,
-    ) -> Result<revm::context::result::ExecutionResult<Self::HaltReason>, Self::Error>
+    ) -> Result<base_evm_context::ExecutionResult<Self::HaltReason>, Self::Error>
     where
         Self::DB: revm::DatabaseCommit,
     {

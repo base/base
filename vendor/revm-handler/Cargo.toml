@@ -33,14 +33,13 @@ path = "src/lib.rs"
 [dependencies]
 auto_impl = { workspace = true }
 revm-state = { workspace = true }
-revm-context = { workspace = true }
 derive-where = { workspace = true }
 revm-bytecode = { workspace = true }
 base-state-api = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
+base-evm-context = { workspace = true }
 revm-interpreter = { workspace = true }
-revm-context-interface = { workspace = true }
 serde = { workspace = true, features = [
     "derive",
     "rc",
@@ -58,9 +57,9 @@ serde = [
     "dep:serde",
     "revm-primitives/serde",
     "revm-state/serde",
-    "revm-context-interface/serde",
+    "base-evm-context/serde",
     "revm-bytecode/serde",
-    "revm-context/serde",
+    "base-evm-context/serde",
     "revm-database/serde",
     "base-state-api/serde",
     "revm-interpreter/serde",
@@ -70,8 +69,8 @@ serde-json = ["serde"]
 std = [
     "serde?/std",
     "revm-bytecode/std",
-    "revm-context/std",
-    "revm-context-interface/std",
+    "base-evm-context/std",
+    "base-evm-context/std",
     "revm-database/std",
     "base-state-api/std",
     "revm-interpreter/std",

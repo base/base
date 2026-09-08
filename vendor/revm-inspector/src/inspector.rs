@@ -1,5 +1,5 @@
 use auto_impl::auto_impl;
-use revm_context::{Database, Journal, JournalEntry, JournalTr};
+use base_evm_context::{Database, Journal, JournalEntry, JournalTr};
 use revm_handler::FrameResult;
 use revm_interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter,

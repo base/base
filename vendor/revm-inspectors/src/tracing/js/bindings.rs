@@ -10,6 +10,7 @@ use alloc::{
 use core::cell::RefCell;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
+use base_evm_context::DBErrorMarker;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsObject, JsResult, JsValue, js_string,
     native_function::NativeFunction,
@@ -19,7 +20,6 @@ use boa_gc::{Finalize, Trace, empty_trace};
 use revm::{
     Database, DatabaseRef,
     bytecode::opcode::{OpCode, PUSH0, PUSH32},
-    context_interface::DBErrorMarker,
     interpreter::{SharedMemory, Stack},
     primitives::KECCAK_EMPTY,
     state::{AccountInfo, Bytecode, EvmState},

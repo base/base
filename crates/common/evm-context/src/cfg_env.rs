@@ -1,6 +1,5 @@
 //! This module contains [`CfgEnv`] and implements [`Cfg`] trait for it.
-pub use revm_context_interface::Cfg;
-use revm_context_interface::cfg::GasParams;
+use base_evm_context::{Cfg, GasParams};
 use revm_primitives::{eip170, eip3860, eip7825, eip7954, hardfork::SpecId};
 
 /// EVM configuration
@@ -67,7 +66,7 @@ pub struct CfgEnv<SPEC = SpecId> {
     /// with initials cap of 30M.
     pub tx_gas_limit_cap: Option<u64>,
     /// A hard memory limit in bytes beyond which
-    /// [OutOfGasError::Memory][revm_context_interface::result::OutOfGasError::Memory] cannot be resized.
+    /// [OutOfGasError::Memory][base_evm_context::OutOfGasError::Memory] cannot be resized.
     ///
     /// In cases where the gas limit may be extraordinarily high, it is recommended to set this to
     /// a sane value to prevent memory allocation panics.

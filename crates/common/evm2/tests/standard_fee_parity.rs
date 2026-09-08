@@ -21,14 +21,9 @@ use base_common_evm::{
 use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
+use base_evm_context::{BlockEnv as RevmBlockEnv, CfgEnv, Context, ResultAndState, TxEnv};
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
-use revm::{
-    ExecuteEvm,
-    context::{BlockEnv as RevmBlockEnv, CfgEnv, Context, TxEnv},
-    context_interface::result::ResultAndState,
-    database::InMemoryDB as RevmDb,
-    state::AccountInfo as RevmAccountInfo,
-};
+use revm::{ExecuteEvm, database::InMemoryDB as RevmDb, state::AccountInfo as RevmAccountInfo};
 
 const SENDER: Address = Address::repeat_byte(0x11);
 const TARGET: Address = Address::repeat_byte(0x22);

@@ -1,10 +1,8 @@
 use core::cmp;
 
-use revm_context_interface::{
-    Block, Cfg, ContextTr,
-    cfg::GasParams,
-    result::{InvalidHeader, InvalidTransaction},
-    transaction::{Transaction, TransactionType},
+use base_evm_context::{
+    Block, Cfg, ContextTr, GasParams, InvalidHeader, InvalidTransaction, Transaction,
+    TransactionType,
 };
 use revm_interpreter::InitialAndFloorGas;
 use revm_primitives::{B256, eip4844, hardfork::SpecId};
@@ -248,7 +246,7 @@ pub fn validate_initial_tx_gas(
     is_eip7623_disabled: bool,
     is_amsterdam_eip8037_enabled: bool,
     tx_gas_limit_cap: u64,
-    eip2780: Option<revm_context_interface::cfg::gas_params::Eip2780TxInfo>,
+    eip2780: Option<base_evm_context::Eip2780TxInfo>,
 ) -> Result<InitialAndFloorGas, InvalidTransaction> {
     validate_initial_tx_gas_with_gas_params(
         tx,
@@ -270,7 +268,7 @@ pub fn validate_initial_tx_gas_with_gas_params(
     is_eip7623_disabled: bool,
     is_amsterdam_eip8037_enabled: bool,
     tx_gas_limit_cap: u64,
-    eip2780: Option<revm_context_interface::cfg::gas_params::Eip2780TxInfo>,
+    eip2780: Option<base_evm_context::Eip2780TxInfo>,
 ) -> Result<InitialAndFloorGas, InvalidTransaction> {
     let mut gas = gas_params.initial_tx_gas_for_tx(&tx, eip2780);
 
@@ -317,11 +315,11 @@ pub fn validate_initial_tx_gas_with_gas_params(
 
 #[cfg(test)]
 mod tests {
-    use revm_bytecode::opcode;
-    use revm_context::{
-        Context, ContextTr, TxEnv,
-        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output},
+    use base_evm_context::{
+        Context, ContextTr, EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output,
+        TxEnv,
     };
+    use revm_bytecode::opcode;
     use revm_database::{CacheDB, EmptyDB};
     use revm_primitives::{B256, Bytes, TxKind, address, eip3860, eip7954, hardfork::SpecId};
     use revm_state::{AccountInfo, Bytecode};
@@ -632,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_transact_many_with_transaction_index_error() {
-        use revm_context::result::TransactionIndexedError;
+        use base_evm_context::TransactionIndexedError;
 
         let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();
@@ -697,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_transact_many_finalize_with_error() {
-        use revm_context::result::TransactionIndexedError;
+        use base_evm_context::TransactionIndexedError;
 
         let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();
@@ -717,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_transact_many_commit_with_error() {
-        use revm_context::result::TransactionIndexedError;
+        use base_evm_context::TransactionIndexedError;
 
         let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();

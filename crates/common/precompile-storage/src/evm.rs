@@ -9,9 +9,8 @@ use alloc::string::ToString;
 
 use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
+use base_evm_context::{GasParams, JournalCheckpoint};
 use revm::{
-    context::journaled_state::JournalCheckpoint,
-    context_interface::cfg::GasParams,
     interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
@@ -382,10 +381,8 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 mod tests {
     use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
     use alloy_primitives::{Address, Bytes, U256};
-    use revm::{
-        context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
-        state::Bytecode,
-    };
+    use base_evm_context::GasParams;
+    use revm::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
 
     use crate::{
         BytesLikeHandler, Handler, StorageCtx,

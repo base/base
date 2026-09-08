@@ -4,14 +4,11 @@ use alloc::boxed::Box;
 use core::{error::Error, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256};
+use base_evm_context::{
+    Cfg, ContextTr, DBErrorMarker, InvalidTransaction, JournalCheckpoint, JournalLoadError,
+    JournalTr, JournaledAccountTr, TransferError,
+};
 use revm::{
-    context::{
-        Cfg, ContextTr, DBErrorMarker, JournalTr,
-        journaled_state::{
-            JournalCheckpoint, JournalLoadError, TransferError, account::JournaledAccountTr,
-        },
-        result::InvalidTransaction,
-    },
     interpreter::{SStoreResult, StateLoad},
     primitives::{StorageKey, StorageValue},
     state::{Account, AccountInfo, Bytecode},
@@ -48,9 +45,9 @@ impl EvmInternalsError {
     }
 }
 
-/// Dyn-compatible wrapper around [`revm::context::Transaction`].
+/// Dyn-compatible wrapper around [`base_evm_context::Transaction`].
 ///
-/// [`revm::context::Transaction`] is not dyn-compatible because of methods returning
+/// [`base_evm_context::Transaction`] is not dyn-compatible because of methods returning
 /// associated types (e.g. `access_list`, `authorization_list`). This trait mirrors
 /// the dyn-compatible subset of those methods, allowing transaction data to be
 /// accessed through `&dyn TransactionTr` in [`EvmInternals`].
@@ -167,78 +164,78 @@ pub trait TransactionTr {
 
 impl<T> TransactionTr for T
 where
-    T: revm::context::Transaction,
+    T: base_evm_context::Transaction,
 {
     fn tx_type(&self) -> u8 {
-        revm::context::Transaction::tx_type(self)
+        base_evm_context::Transaction::tx_type(self)
     }
 
     fn caller(&self) -> Address {
-        revm::context::Transaction::caller(self)
+        base_evm_context::Transaction::caller(self)
     }
 
     fn gas_limit(&self) -> u64 {
-        revm::context::Transaction::gas_limit(self)
+        base_evm_context::Transaction::gas_limit(self)
     }
 
     fn value(&self) -> U256 {
-        revm::context::Transaction::value(self)
+        base_evm_context::Transaction::value(self)
     }
 
     fn input(&self) -> &Bytes {
-        revm::context::Transaction::input(self)
+        base_evm_context::Transaction::input(self)
     }
 
     fn nonce(&self) -> u64 {
-        revm::context::Transaction::nonce(self)
+        base_evm_context::Transaction::nonce(self)
     }
 
     fn kind(&self) -> TxKind {
-        revm::context::Transaction::kind(self)
+        base_evm_context::Transaction::kind(self)
     }
 
     fn chain_id(&self) -> Option<u64> {
-        revm::context::Transaction::chain_id(self)
+        base_evm_context::Transaction::chain_id(self)
     }
 
     fn gas_price(&self) -> u128 {
-        revm::context::Transaction::gas_price(self)
+        base_evm_context::Transaction::gas_price(self)
     }
 
     fn blob_versioned_hashes(&self) -> &[B256] {
-        revm::context::Transaction::blob_versioned_hashes(self)
+        base_evm_context::Transaction::blob_versioned_hashes(self)
     }
 
     fn max_fee_per_blob_gas(&self) -> u128 {
-        revm::context::Transaction::max_fee_per_blob_gas(self)
+        base_evm_context::Transaction::max_fee_per_blob_gas(self)
     }
 
     fn total_blob_gas(&self) -> u64 {
-        revm::context::Transaction::total_blob_gas(self)
+        base_evm_context::Transaction::total_blob_gas(self)
     }
 
     fn calc_max_data_fee(&self) -> U256 {
-        revm::context::Transaction::calc_max_data_fee(self)
+        base_evm_context::Transaction::calc_max_data_fee(self)
     }
 
     fn authorization_list_len(&self) -> usize {
-        revm::context::Transaction::authorization_list_len(self)
+        base_evm_context::Transaction::authorization_list_len(self)
     }
 
     fn max_fee_per_gas(&self) -> u128 {
-        revm::context::Transaction::max_fee_per_gas(self)
+        base_evm_context::Transaction::max_fee_per_gas(self)
     }
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        revm::context::Transaction::max_priority_fee_per_gas(self)
+        base_evm_context::Transaction::max_priority_fee_per_gas(self)
     }
 
     fn effective_gas_price(&self, base_fee: u128) -> u128 {
-        revm::context::Transaction::effective_gas_price(self, base_fee)
+        base_evm_context::Transaction::effective_gas_price(self, base_fee)
     }
 
     fn max_balance_spending(&self) -> Result<U256, InvalidTransaction> {
-        revm::context::Transaction::max_balance_spending(self)
+        base_evm_context::Transaction::max_balance_spending(self)
     }
 
     fn effective_balance_spending(
@@ -246,7 +243,7 @@ where
         base_fee: u128,
         blob_price: u128,
     ) -> Result<U256, InvalidTransaction> {
-        revm::context::Transaction::effective_balance_spending(self, base_fee, blob_price)
+        base_evm_context::Transaction::effective_balance_spending(self, base_fee, blob_price)
     }
 }
 

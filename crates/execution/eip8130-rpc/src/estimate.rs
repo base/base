@@ -9,6 +9,7 @@ use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_evm_context::{Block, BlockEnv, ExecutionResult, TxEnv};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_api::{
@@ -19,7 +20,6 @@ use reth_rpc_eth_types::{
     BaseEthApiError,
     error::api::{FromEvmHalt, FromRevert},
 };
-use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
 /// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.

@@ -2,11 +2,8 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{eip7825::MAX_TX_GAS_LIMIT_OSAKA, eip7840::BlobParams};
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B256, BlockNumber, BlockTimestamp, ChainId, U256};
-use revm::{
-    context::{BlockEnv, CfgEnv},
-    context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
-};
+use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
+use revm::primitives::hardfork::SpecId;
 
 use crate::EvmEnv;
 

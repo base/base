@@ -399,13 +399,13 @@ mod tests {
     use base_common_consensus::{BaseBlock, BaseReceipt};
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
+    use base_evm_context::{BlockEnv, CfgEnv};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
     use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
     use revm::{
-        context::{BlockEnv, CfgEnv},
         database::{BundleState, CacheDB},
         database_interface::EmptyDBTyped,
         inspector::NoOpInspector,

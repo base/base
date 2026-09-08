@@ -1,8 +1,6 @@
 //! Base-specific [`BaseContextTr`] trait alias and [`BaseError`] type alias.
-use revm::{
-    context_interface::{Cfg, ContextTr, Database, JournalTr, result::EVMError},
-    state::EvmState,
-};
+use base_evm_context::{Cfg, ContextTr, Database, EVMError, JournalTr};
+use revm::state::EvmState;
 
 use crate::{BaseSpecId, BaseTransactionError, L1BlockInfo, transaction::BaseTxTr};
 

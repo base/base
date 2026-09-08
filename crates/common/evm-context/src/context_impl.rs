@@ -1,18 +1,16 @@
 //! This module contains [`Context`] struct and implements [`ContextTr`] trait for it.
+use base_evm_context::{
+    AccountInfoLoad, Block, Cfg, ContextError, ContextSetters, ContextTr, GasParams, Host,
+    JournalTr, LoadError, LocalContextTr, SStoreResult, SelfDestructResult, StateLoad, Transaction,
+    TransactionType,
+};
 use base_state_api::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use derive_where::derive_where;
-use revm_context_interface::{
-    Block, Cfg, ContextTr, Host, JournalTr, LocalContextTr, Transaction, TransactionType,
-    cfg::GasParams,
-    context::{ContextError, ContextSetters, SStoreResult, SelfDestructResult, StateLoad},
-    host::LoadError,
-    journaled_state::AccountInfoLoad,
-};
 use revm_primitives::{
     Address, B256, Log, StorageKey, StorageValue, U256, hardfork::SpecId, hints_util::cold_path,
 };
 
-use crate::{LocalContext, block::BlockEnv, cfg::CfgEnv, journal::Journal, tx::TxEnv};
+use crate::{BlockEnv, CfgEnv, LocalContext, journal::Journal, tx::TxEnv};
 
 /// EVM context contains data that EVM needs for execution.
 #[derive_where(Clone, Debug; BLOCK, CFG, CHAIN, TX, DB, JOURNAL, <DB as Database>::Error, LOCAL)]

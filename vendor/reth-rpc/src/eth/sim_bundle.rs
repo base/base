@@ -11,6 +11,7 @@ use alloy_rpc_types_mev::{
     BundleItem, Inclusion, MevSendBundle, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
     SimBundleResponse, Validity,
 };
+use base_evm_context::{Block, ResultAndState};
 use base_execution_evm::Evm;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
@@ -23,9 +24,7 @@ use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transa
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;
 use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
-use revm::{
-    DatabaseCommit, DatabaseRef, context::Block, context_interface::result::ResultAndState,
-};
+use revm::{DatabaseCommit, DatabaseRef};
 use tracing::trace;
 
 /// Maximum bundle depth

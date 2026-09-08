@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::request::{TransactionInputError, TransactionRequest};
-use revm::{context::TxEnv, context_interface::either::Either};
+use base_evm_context::{TxEnv, either::Either};
 use thiserror::Error;
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
 pub trait TryIntoTxEnv<
     T,
     Spec = revm::primitives::hardfork::SpecId,
-    BlockEnv = revm::context::BlockEnv,
+    BlockEnv = base_evm_context::BlockEnv,
 >
 {
     /// An associated error that can occur during the conversion.

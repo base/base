@@ -7,12 +7,9 @@ use alloy_rpc_types_trace::geth::{
     GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace, NoopFrame, PreStateConfig,
     erc7562::Erc7562Config, mux::MuxConfig,
 };
+use base_evm_context::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
 use revm::{
     DatabaseRef, Inspector,
-    context_interface::{
-        Block, ContextTr, Transaction,
-        result::{HaltReasonTr, ResultAndState},
-    },
     handler::FrameResult,
     inspector::JournalExt,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},

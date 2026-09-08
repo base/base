@@ -19,8 +19,8 @@
 //! ```
 //!
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
+use base_evm_context::{ContextSetters, ContextTr, Evm, ExecResultAndState, JournalTr, TxEnv};
 use base_state_api::DatabaseCommit;
-use revm_context::{ContextSetters, ContextTr, Evm, JournalTr, TxEnv, result::ExecResultAndState};
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
 use revm_state::EvmState;
@@ -271,9 +271,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use revm_context::{
-        Context, Transaction,
-        result::{ExecutionResult, Output, ResultGas, SuccessReason},
+    use base_evm_context::{
+        Context, ExecutionResult, Output, ResultGas, SuccessReason, Transaction,
     };
     use revm_database::InMemoryDB;
     use revm_primitives::{StorageKey, U256, b256, bytes};

@@ -15,6 +15,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_evm_context::{Block, BlockEnv};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{
@@ -40,10 +41,7 @@ use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors:
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
-use revm::{
-    context::{Block, BlockEnv},
-    database::State,
-};
+use revm::database::State;
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{

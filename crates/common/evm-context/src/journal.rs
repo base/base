@@ -2,28 +2,25 @@
 //!
 //! Entry submodule contains [`JournalEntry`] and [`JournalEntryTr`] traits.
 //! and inner submodule contains [`JournalInner`] struct that contains state.
-pub mod inner;
-pub mod warm_addresses;
-
+mod inner;
+mod warm_addresses;
 use core::ops::{Deref, DerefMut};
 use std::vec::Vec;
 
+use base_evm_context::{
+    AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalEntry, JournalEntryTr,
+    JournalLoadError, JournalTr, JournaledAccount, SStoreResult, SelfDestructResult, StateLoad,
+    TransferError,
+};
 use base_state_api::Database;
 pub use inner::{JournalCfg, JournalInner};
 use revm_bytecode::Bytecode;
-pub use revm_context_interface::journaled_state::entry::{JournalEntry, JournalEntryTr};
-use revm_context_interface::{
-    context::{SStoreResult, SelfDestructResult, StateLoad},
-    journaled_state::{
-        AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalLoadError, JournalTr,
-        TransferError, account::JournaledAccount,
-    },
-};
 use revm_primitives::{
     Address, AddressMap, AddressSet, B256, HashSet, Log, StorageKey, StorageValue, U256,
     hardfork::SpecId,
 };
 use revm_state::{Account, EvmState};
+pub use warm_addresses::*;
 
 /// A journal of state changes internal to the EVM
 ///

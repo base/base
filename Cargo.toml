@@ -274,7 +274,7 @@ base-balance-monitor = { path = "crates/utilities/balance-monitor", default-feat
 # revm
 revm = { path = "vendor/revm", default-features = false }
 revm-state = { path = "vendor/revm-state", default-features = false }
-revm-context = { path = "vendor/revm-context", default-features = false }
+base-evm-context = { path = "crates/common/evm-context", default-features = false }
 revm-handler = { path = "vendor/revm-handler", default-features = false }
 revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
 revm-database = { path = "vendor/revm-database", default-features = false }
@@ -283,7 +283,6 @@ revm-precompile = { path = "vendor/revm-precompile", default-features = false }
 revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
 revm-primitives = { path = "vendor/revm-primitives", default-features = false }
 revm-interpreter = { path = "vendor/revm-interpreter", default-features = false }
-revm-context-interface = { path = "vendor/revm-context-interface", default-features = false }
 base-state-api = { path = "crates/common/state-api", default-features = false }
 
 # evm2

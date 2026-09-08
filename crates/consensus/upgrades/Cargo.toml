@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 revm = {workspace = true}
 alloy-eips = { workspace = true }
+base-evm-context = { workspace = true }
 base-common-consensus = { workspace = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 [dev-dependencies]

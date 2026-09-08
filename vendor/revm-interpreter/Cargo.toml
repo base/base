@@ -38,13 +38,13 @@ path = "tests/miri_read_slice_oob.rs"
 revm-state = { workspace = true }
 revm-bytecode = { workspace = true }
 revm-primitives = { workspace = true }
-revm-context-interface = { workspace = true }
 serde = { workspace = true, features = [
     "derive",
     "rc",
     "derive",
     "rc",
 ], optional = true }
+base-evm-context = { workspace = true }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }
 [lints]
@@ -55,5 +55,18 @@ arbitrary = ["std", "revm-primitives/arbitrary"]
 default = ["std"]
 hashbrown = ["revm-primitives/hashbrown"]
 memory_limit = []
-serde = ["dep:serde", "revm-primitives/serde", "revm-bytecode/serde", "revm-context-interface/serde", "revm-state/serde"]
-std = ["serde?/std", "revm-primitives/std", "revm-context-interface/std", "revm-bytecode/std", "revm-state/std", "serde_json/std"]
+serde = [
+    "dep:serde",
+    "revm-primitives/serde",
+    "revm-bytecode/serde",
+    "base-evm-context/serde",
+    "revm-state/serde",
+]
+std = [
+    "serde?/std",
+    "revm-primitives/std",
+    "base-evm-context/std",
+    "revm-bytecode/std",
+    "revm-state/std",
+    "serde_json/std",
+]

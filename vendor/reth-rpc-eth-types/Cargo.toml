@@ -36,6 +36,7 @@ base-common-evm = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
+base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-errors = {workspace = true}

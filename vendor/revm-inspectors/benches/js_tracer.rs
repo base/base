@@ -7,11 +7,10 @@ use std::{collections::BTreeMap, hint::black_box};
 use alloy_hardforks::{EthereumHardfork, ethereum::mainnet::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types_trace::geth::AccountState;
+use base_evm_context::{ContextTr, TransactTo, TxEnv};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use revm::{
     InspectEvm, MainBuilder, MainContext,
-    context::TxEnv,
-    context_interface::{ContextTr, TransactTo},
     database::CacheDB,
     database_interface::EmptyDB,
     inspector::InspectorEvmTr,

@@ -2,10 +2,8 @@
 
 use alloc::vec;
 
-use revm::{
-    context::{TxEnv, tx::TxEnvBuilder},
-    primitives::{B256, Bytes},
-};
+use base_evm_context::{TxEnv, TxEnvBuilder};
+use revm::primitives::{B256, Bytes};
 
 use super::{
     core::BaseTransaction,

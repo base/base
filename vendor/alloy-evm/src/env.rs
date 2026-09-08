@@ -3,15 +3,12 @@
 use core::{any::Any, fmt::Debug};
 
 use alloy_primitives::U256;
-use revm::{
-    context::{BlockEnv, CfgEnv, TxEnv},
-    context_interface::{TransactionType, transaction::AccessList},
-    primitives::hardfork::SpecId,
-};
+use base_evm_context::{AccessList, BlockEnv, CfgEnv, TransactionType, TxEnv};
+use revm::primitives::hardfork::SpecId;
 
 /// Container type that holds both the configuration and block environment for EVM execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvmEnv<Spec = SpecId, BlockEnv = revm::context::BlockEnv> {
+pub struct EvmEnv<Spec = SpecId, BlockEnv = base_evm_context::BlockEnv> {
     /// The configuration environment with handler settings
     pub cfg_env: CfgEnv<Spec>,
     /// The block environment containing block-specific data
@@ -161,14 +158,14 @@ impl<Spec, BlockEnv> From<(CfgEnv<Spec>, BlockEnv)> for EvmEnv<Spec, BlockEnv> {
 
 /// Trait for types that can be used as a block environment.
 ///
-/// Assumes that the type wraps an inner [`revm::context::BlockEnv`].
-pub trait BlockEnvironment: revm::context::Block + Any + Debug + Send + Sync + 'static {
-    /// Returns a mutable reference to the inner [`revm::context::BlockEnv`].
-    fn inner_mut(&mut self) -> &mut revm::context::BlockEnv;
+/// Assumes that the type wraps an inner [`base_evm_context::BlockEnv`].
+pub trait BlockEnvironment: base_evm_context::Block + Any + Debug + Send + Sync + 'static {
+    /// Returns a mutable reference to the inner [`base_evm_context::BlockEnv`].
+    fn inner_mut(&mut self) -> &mut base_evm_context::BlockEnv;
 }
 
 impl BlockEnvironment for BlockEnv {
-    fn inner_mut(&mut self) -> &mut revm::context::BlockEnv {
+    fn inner_mut(&mut self) -> &mut base_evm_context::BlockEnv {
         self
     }
 }
@@ -176,9 +173,9 @@ impl BlockEnvironment for BlockEnv {
 /// Abstraction over mutable transaction environment.
 ///
 /// Provides setters for common transaction fields, complementing
-/// the read-only accessors on `revm::context::Transaction`.
+/// the read-only accessors on `base_evm_context::Transaction`.
 pub trait TransactionEnvMut:
-    revm::context::Transaction + Debug + Clone + Send + Sync + 'static
+    base_evm_context::Transaction + Debug + Clone + Send + Sync + 'static
 {
     /// Sets the gas limit.
     fn set_gas_limit(&mut self, gas_limit: u64);
@@ -257,7 +254,7 @@ impl EvmLimitParams {
 
 #[cfg(test)]
 mod tests {
-    use revm::context::{Block, Cfg};
+    use base_evm_context::{Block, Cfg};
 
     use super::*;
 
@@ -301,7 +298,7 @@ mod tests {
     #[test]
     fn test_evm_env_with_osaka_limits() {
         // osaka() has tx_gas_limit_cap set to EIP-7825's cap.
-        use revm::context::{BlockEnv, CfgEnv};
+        use base_evm_context::{BlockEnv, CfgEnv};
 
         let limits = EvmLimitParams::osaka();
         let cfg_env = CfgEnv::new_with_spec(SpecId::OSAKA);

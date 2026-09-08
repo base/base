@@ -35,6 +35,7 @@ base-state-api = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 jsonrpsee-types = { workspace = true }
+base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 alloy-rpc-client = { workspace = true }

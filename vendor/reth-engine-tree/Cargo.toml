@@ -29,6 +29,7 @@ reth-provider = { workspace = true }
 base-state-api = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
+base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-chain-state = { workspace = true }

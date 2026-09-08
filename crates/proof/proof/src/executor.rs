@@ -4,13 +4,14 @@ use alloc::boxed::Box;
 use core::fmt::Debug;
 
 use alloy_consensus::{Header, Sealed};
-use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
+use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_evm::{BaseSpecId, BaseTxEnv};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_evm_context::BlockEnv;
 use base_proof_driver::Executor;
 use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
 use base_proof_mpt::TrieHinter;

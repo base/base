@@ -4,12 +4,9 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, keccak256};
 use base_common_consensus::{OpTxType, TxDeposit};
 use base_common_evm::{BaseSpecId, BaseUpgrade, DefaultBase, DepositTransactionParts};
+use base_evm_context::{CfgEnv, ExecutionResult, Output};
 use revm::{
     Context, ExecuteCommitEvm, MainBuilder,
-    context::{
-        CfgEnv,
-        result::{ExecutionResult, Output},
-    },
     database::{CacheDB, EmptyDB},
     interpreter::Host,
 };

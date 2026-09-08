@@ -1,13 +1,8 @@
-use revm_context::{
-    LocalContextTr,
-    result::{ExecutionResult, FromStringError},
-};
-use revm_context_interface::{
-    Cfg, ContextTr, Database, JournalTr, Transaction,
-    cfg::gas_params,
-    context::{ContextError, take_error},
-    journaled_state::JournalCheckpoint,
-    result::{HaltReasonTr, InvalidHeader, InvalidTransaction, ResultGas},
+use base_evm_context as gas_params;
+use base_evm_context::{
+    Cfg, ContextError, ContextTr, Database, ExecutionResult, FromStringError, HaltReasonTr,
+    InvalidHeader, InvalidTransaction, JournalCheckpoint, JournalTr, LocalContextTr, ResultGas,
+    Transaction, take_error,
 };
 use revm_interpreter::{
     GasTracker, InitialAndFloorGas, SharedMemory, interpreter_action::FrameInit,
@@ -412,7 +407,7 @@ pub trait Handler {
 
     /* PRE EXECUTION */
 
-    /// Loads access list and beneficiary account, marking them as warm in the [`revm_context::Journal`].
+    /// Loads access list and beneficiary account, marking them as warm in the [`base_evm_context::Journal`].
     #[inline]
     fn load_accounts(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
         pre_execution::load_accounts(evm)

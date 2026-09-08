@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 base-runtime = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-network = { workspace = true }
+base-state-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-transport = { workspace = true }
 base-test-utils = { workspace = true }

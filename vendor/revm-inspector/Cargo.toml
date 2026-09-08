@@ -34,10 +34,10 @@ path = "src/lib.rs"
 either = { workspace = true }
 auto_impl = { workspace = true }
 revm-state = { workspace = true }
-revm-context = { workspace = true }
 revm-handler = { workspace = true }
 base-state-api = { workspace = true }
 revm-primitives = { workspace = true }
+base-evm-context = { workspace = true }
 revm-interpreter = { workspace = true }
 serde_json = { workspace = true, features = [
     "alloc",
@@ -57,7 +57,7 @@ workspace = true
 [features]
 default = ["std"]
 serde = [
-    "revm-context/serde",
+    "base-evm-context/serde",
     "revm-database/serde",
     "base-state-api/serde",
     "revm-handler/serde",
@@ -71,7 +71,7 @@ std = [
     "serde?/std",
     "serde_json?/std",
     "serde_json?/preserve_order",
-    "revm-context/std",
+    "base-evm-context/std",
     "revm-database/std",
     "base-state-api/std",
     "revm-handler/std",

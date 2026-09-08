@@ -16,13 +16,10 @@ use alloy_evm::{
 use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_evm_context::{Block, ResultAndState};
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
-use revm::{
-    DatabaseCommit,
-    context::{Block, result::ResultAndState},
-    database::DatabaseCommitExt,
-};
+use revm::{DatabaseCommit, database::DatabaseCommitExt};
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
@@ -383,9 +380,9 @@ mod tests {
         BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
     };
     use base_common_genesis::BaseUpgrade;
+    use base_evm_context::BlockEnv;
     use revm::{
         Context,
-        context::BlockEnv,
         database::{CacheDB, EmptyDB, InMemoryDB},
         inspector::NoOpInspector,
         primitives::HashMap,

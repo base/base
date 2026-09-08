@@ -51,6 +51,10 @@ use base_common_consensus::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
+use base_evm_context::{
+    Block, BlockEnv, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
+    LocalContextTr, Output, ResultGas, SuccessReason, TxEnv, take_error,
+};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
@@ -59,12 +63,6 @@ use base_execution_eip8130::{
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
     Inspector,
-    context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
-    context_interface::{
-        Block, Cfg, ContextTr, JournalTr,
-        context::take_error,
-        result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
-    },
     handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
     interpreter::{
@@ -1762,17 +1760,13 @@ mod tests {
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
     use base_common_precompiles::INonceManager;
+    use base_evm_context::{BlockEnv, CfgEnv, Context};
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;
     use revm::{
-        Database,
-        bytecode::Bytecode,
-        context::{BlockEnv, CfgEnv, Context},
-        database::InMemoryDB,
-        database_interface::DBErrorMarker,
-        inspector::NoOpInspector,
-        state::AccountInfo,
+        Database, bytecode::Bytecode, database::InMemoryDB, database_interface::DBErrorMarker,
+        inspector::NoOpInspector, state::AccountInfo,
     };
 
     use super::*;
@@ -1827,7 +1821,7 @@ mod tests {
         Eip8130Signed::new(tx, eoa_sig(key, hash), Bytes::new())
     }
 
-    fn into_base_tx(signed: &Eip8130Signed) -> BaseTransaction<revm::context::TxEnv> {
+    fn into_base_tx(signed: &Eip8130Signed) -> BaseTransaction<base_evm_context::TxEnv> {
         let envelope = BaseTxEnvelope::Eip8130(signed.clone());
         let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
         BaseTransaction::from_encoded_tx(&envelope, Address::ZERO, encoded)

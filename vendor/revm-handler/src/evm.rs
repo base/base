@@ -1,6 +1,5 @@
 use auto_impl::auto_impl;
-use revm_context::{ContextTr, Database, Evm, FrameStack};
-use revm_context_interface::context::ContextError;
+use base_evm_context::{ContextError, ContextTr, Database, Evm, FrameStack};
 use revm_interpreter::{
     InterpreterResult, interpreter::EthInterpreter, interpreter_action::FrameInit,
 };

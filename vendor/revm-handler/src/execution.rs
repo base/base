@@ -1,9 +1,8 @@
 use std::boxed::Box;
 
-use revm_context::{ContextTr, Database, JournalTr};
-use revm_context_interface::{
-    Cfg, Transaction,
-    journaled_state::{JournalCheckpoint, JournalLoadError, account::JournaledAccountTr},
+use base_evm_context::{
+    Cfg, ContextTr, Database, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccountTr,
+    Transaction,
 };
 use revm_interpreter::{
     CallInput, CallInputs, CallScheme, CallValue, CreateInputs, CreateScheme, FrameInput,

@@ -9,11 +9,11 @@ mod shared_memory;
 mod stack;
 
 // re-exports
+use base_evm_context::{GasParams, LoadError};
 pub use ext_bytecode::ExtBytecode;
 pub use input::InputsImpl;
 pub use return_data::ReturnDataImpl;
 use revm_bytecode::Bytecode;
-use revm_context_interface::{cfg::GasParams, host::LoadError};
 use revm_primitives::{Bytes, hardfork::SpecId, hints_util::cold_path};
 pub use runtime_flags::RuntimeFlags;
 pub use shared_memory::{SharedMemory, num_words, resize_memory};
@@ -335,7 +335,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
 #[unsafe(no_mangle)]
 pub fn asm_run(
     interpreter: &mut Interpreter<EthInterpreter>,
-    host: &mut revm_context_interface::DummyHost,
+    host: &mut base_evm_context::DummyHost,
 ) {
     let table = crate::instruction_table();
     let gas_table = crate::gas_table();

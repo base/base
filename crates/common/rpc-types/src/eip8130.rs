@@ -9,7 +9,7 @@ use base_common_consensus::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
 };
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
-use revm::context::TxEnv;
+use base_evm_context::TxEnv;
 
 use crate::{BaseTransactionRequest, Eip8130AuthScheme};
 

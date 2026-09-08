@@ -8,8 +8,8 @@ use alloc::string::String;
 
 use alloy_evm::block::BlockExecutionError;
 use base_common_consensus::EIP1559ParamError;
+use base_evm_context::DBErrorMarker;
 use base_proof_mpt::TrieNodeError;
-use revm::context::DBErrorMarker;
 use thiserror::Error;
 
 /// Errors that can occur when validating EIP-1559 parameters from block header extra data.

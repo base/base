@@ -23,15 +23,11 @@ use base_common_evm::{
 // evm2 side.
 use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
 use base_common_genesis::BaseUpgrade;
+use base_evm_context::{CfgEnv, Context, ExecutionResult, Output, ResultAndState, TxEnv};
 use evm2::{Evm, Precompiles, bytecode::Bytecode as Evm2Bytecode, env::BlockEnv, evm::InMemoryDB};
 use revm::{
-    ExecuteEvm,
-    bytecode::Bytecode as RevmBytecode,
-    context::{CfgEnv, Context, TxEnv},
-    context_interface::result::{ExecutionResult, Output, ResultAndState},
-    database::InMemoryDB as RevmDb,
-    primitives::TxKind as RevmTxKind,
-    state::AccountInfo as RevmAccountInfo,
+    ExecuteEvm, bytecode::Bytecode as RevmBytecode, database::InMemoryDB as RevmDb,
+    primitives::TxKind as RevmTxKind, state::AccountInfo as RevmAccountInfo,
 };
 
 const SENDER: Address = Address::repeat_byte(0x11);

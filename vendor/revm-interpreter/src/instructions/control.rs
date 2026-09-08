@@ -1,4 +1,4 @@
-use revm_context_interface::{Host, cfg::GasParams};
+use base_evm_context::{GasParams, Host};
 use revm_primitives::{Bytes, U256, hints_util::cold_path};
 
 use crate::{

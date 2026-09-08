@@ -20,6 +20,7 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-consensus = { workspace = true }
 base-common-flz = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-genesis = { workspace = true }
@@ -40,35 +41,36 @@ rstest = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 serde_json = { workspace = true, features = ["alloc", "preserve_order"] }
+
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-evm/std",
-	"alloy-primitives/std",
-	"base-common-chains/std",
-	"base-common-consensus/std",
-	"base-common-flz/std",
-	"base-common-genesis/std",
-	"base-common-l1-fees/std",
-	"base-common-precompiles/std",
-	"base-metrics?/std",
-	"base-precompile-storage/std",
-	"dep:base-execution-eip8130",
-	"revm/std",
-	"serde?/std",
-	"thiserror/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-evm/std",
+    "alloy-primitives/std",
+    "base-common-chains/std",
+    "base-common-consensus/std",
+    "base-common-flz/std",
+    "base-common-genesis/std",
+    "base-common-l1-fees/std",
+    "base-common-precompiles/std",
+    "base-metrics?/std",
+    "base-precompile-storage/std",
+    "dep:base-execution-eip8130",
+    "revm/std",
+    "serde?/std",
+    "thiserror/std",
 ]
 serde = [
-	"alloy-consensus/serde",
-	"alloy-eips/serde",
-	"alloy-primitives/serde",
-	"base-common-chains/serde",
-	"base-common-consensus/serde",
-	"base-common-genesis/serde",
-	"dep:serde",
-	"revm/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "base-common-chains/serde",
+    "base-common-consensus/serde",
+    "base-common-genesis/serde",
+    "dep:serde",
+    "revm/serde",
 ]
 reth = [ "std" ]
 metrics = [

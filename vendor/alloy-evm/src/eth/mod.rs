@@ -6,11 +6,12 @@ use core::{
 };
 
 use alloy_primitives::{Address, Bytes};
+use base_evm_context::{
+    BlockEnv, CfgEnv, DBErrorMarker, EVMError, Evm as RevmEvm, HaltReason, ResultAndState, TxEnv,
+};
 pub use env::NextEvmEnvAttributes;
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
-    context::{BlockEnv, CfgEnv, DBErrorMarker, Evm as RevmEvm, TxEnv},
-    context_interface::result::{EVMError, HaltReason, ResultAndState},
     handler::{EthFrame, EthPrecompiles, PrecompileProvider, instructions::EthInstructions},
     inspector::NoOpInspector,
     interpreter::{InterpreterResult, interpreter::EthInterpreter},

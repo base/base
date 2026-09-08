@@ -15,6 +15,7 @@ use alloy_rpc_types_eth::{
     state::{EvmOverrides, StateOverride},
 };
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
+use base_evm_context::{Block, Cfg, ResultAndState, Transaction};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BlockBuilder, CancelOnDrop, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor,
@@ -32,8 +33,6 @@ use reth_storage_api::{BlockIdReader, ProviderTx};
 use reth_storage_errors::provider::ProviderError;
 use revm::{
     Database, DatabaseCommit,
-    context::Block,
-    context_interface::{Cfg, Transaction, result::ResultAndState},
     database::{EvmDatabaseError, State},
 };
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};

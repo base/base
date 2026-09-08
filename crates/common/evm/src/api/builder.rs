@@ -1,9 +1,9 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
+use base_evm_context::FrameStack;
 use revm::{
     Database,
-    context::FrameStack,
     handler::{EthFrame, instructions::EthInstructions},
     interpreter::interpreter::EthInterpreter,
 };
@@ -98,7 +98,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
     fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<DB, (), P> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
-            revm::context::Evm {
+            base_evm_context::Evm {
                 ctx: self,
                 inspector: (),
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
@@ -116,7 +116,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
     ) -> BaseEvm<DB, INSP, P> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
-            revm::context::Evm {
+            base_evm_context::Evm {
                 ctx: self,
                 inspector,
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
@@ -138,10 +138,10 @@ mod tests {
         ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
         IActivationRegistry, PolicyRegistryStorage,
     };
+    use base_evm_context::{CfgEnv, TxEnv};
     use revm::{
         Context, DatabaseRef, ExecuteEvm,
         bytecode::Bytecode,
-        context::{CfgEnv, TxEnv},
         handler::EvmTr,
         inspector::NoOpInspector,
         primitives::{Bytes, StorageKey, StorageValue, TxKind},

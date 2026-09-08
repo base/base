@@ -1,10 +1,11 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
+use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
 use base_common_evm::{BaseSpecId, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
+use base_evm_context::BlockEnv;
 use base_proof::{
     BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
     OraclePipeline,

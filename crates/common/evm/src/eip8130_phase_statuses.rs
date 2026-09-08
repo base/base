@@ -28,7 +28,7 @@
 //! current statuses as `execute`'s last step.
 //!
 //! [`BaseReceiptBuilder`]: crate::BaseReceiptBuilder
-//! [`ExecutionResult`]: revm::context_interface::result::ExecutionResult
+//! [`ExecutionResult`]: base_evm_context::ExecutionResult
 //! [`set`]: Eip8130PhaseStatuses::set
 //! [`take`]: Eip8130PhaseStatuses::take
 //! [`clear`]: Eip8130PhaseStatuses::clear

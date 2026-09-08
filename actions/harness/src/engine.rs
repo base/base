@@ -34,7 +34,7 @@ use base_consensus_node::{
     EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, CachedReads, CancelOnDrop};
+use base_execution_evm::{BaseEvmConfig, CancelOnDrop};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,
     NoopPayloadTransactions, PayloadConfig,
@@ -42,6 +42,7 @@ use base_execution_payload_builder::{
 use base_execution_payload_types::{BuiltPayload, PayloadAttributes};
 use base_execution_txpool::BasePooledTransaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_state_api::CachedReads;
 use base_test_utils::build_test_genesis;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;

@@ -1,8 +1,10 @@
-use revm::precompile::{
-    self as precompile, Precompile, PrecompileHalt, PrecompileId, PrecompileOutput,
-    PrecompileResult,
-    bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS},
-    call_eth_precompile,
+use revm::{
+    precompile,
+    precompile::{
+        Precompile, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult,
+        bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS},
+        call_eth_precompile,
+    },
 };
 
 /// Max input size for the BLS12-381 G1 MSM precompile after the Isthmus upgrade.

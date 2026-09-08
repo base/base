@@ -18,11 +18,9 @@ use base_common_evm::{
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_evm_context::BlockEnv;
 use base_proof_mpt::TrieHinter;
-use revm::{
-    context::BlockEnv,
-    database::{State, states::bundle_state::BundleRetention},
-};
+use revm::database::{State, states::bundle_state::BundleRetention};
 
 use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 

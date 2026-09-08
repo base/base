@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use revm_context_interface::{ContextTr, LocalContextTr};
+use base_evm_context::{ContextTr, LocalContextTr};
 use revm_primitives::{Address, B256, Bytes, U256};
 use revm_state::Bytecode;
 
@@ -14,13 +14,13 @@ use crate::interpreter_types::MemoryTr;
 pub enum CallInput {
     /// Bytes of the call data.
     Bytes(Bytes),
-    /// The Range points to the SharedMemory buffer. Buffer can be found in [`revm_context_interface::LocalContextTr::shared_memory_buffer_slice`] function.
+    /// The Range points to the SharedMemory buffer. Buffer can be found in [`base_evm_context::LocalContextTr::shared_memory_buffer_slice`] function.
     /// And can be accessed with `evm.ctx().local().shared_memory_buffer()`
     ///
     /// # Warning
     ///
     /// Use it with caution, CallInput shared buffer can be overridden if context from child call is returned so
-    /// recommendation is to fetch buffer at first Inspector call and clone it from [`revm_context_interface::LocalContextTr::shared_memory_buffer_slice`] function.
+    /// recommendation is to fetch buffer at first Inspector call and clone it from [`base_evm_context::LocalContextTr::shared_memory_buffer_slice`] function.
     SharedBuffer(Range<usize>),
 }
 

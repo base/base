@@ -2,7 +2,8 @@
 
 use alloy_evm::{block::TxResult as TxResultTrait, eth::EthTxResult};
 use alloy_primitives::Address;
-use revm::{context::result::ResultAndState, state::AccountInfo};
+use base_evm_context::ResultAndState;
+use revm::state::AccountInfo;
 
 /// The result of executing a Base transaction.
 #[derive(Debug)]

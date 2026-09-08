@@ -2,8 +2,8 @@
 //!
 //! It is used to optimize access to precompile addresses.
 
+use base_evm_context::JournalLoadError;
 use bitvec::{bitvec, vec::BitVec};
-use revm_context_interface::journaled_state::JournalLoadError;
 use revm_primitives::{
     Address, AddressMap, AddressSet, HashSet, SHORT_ADDRESS_CAP, StorageKey, short_address,
 };

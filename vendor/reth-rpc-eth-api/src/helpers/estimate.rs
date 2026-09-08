@@ -5,6 +5,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
 use base_common_rpc_types::BaseTransactionRequest;
+use base_evm_context::{Block, Cfg, ExecutionResult, Transaction};
 use base_execution_evm::{
     Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor, env::BlockEnvironment,
 };
@@ -20,8 +21,6 @@ use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GA
 use reth_storage_api::StateProvider;
 use reth_storage_errors::provider::ProviderError;
 use revm::{
-    context::Block,
-    context_interface::{Cfg, Transaction, result::ExecutionResult},
     database::{EvmDatabaseError, State},
     primitives::KECCAK_EMPTY,
 };

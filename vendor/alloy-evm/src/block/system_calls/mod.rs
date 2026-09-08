@@ -6,7 +6,8 @@ use alloy_eips::{
 };
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes};
-use revm::{DatabaseCommit, context::Block};
+use base_evm_context::Block;
+use revm::DatabaseCommit;
 
 use crate::{Evm, block::BlockExecutionError};
 

@@ -17,8 +17,8 @@ use alloc::string::ToString;
 
 use alloy_evm::EvmInternals;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
+use base_evm_context::JournalCheckpoint;
 use revm::{
-    context::journaled_state::JournalCheckpoint,
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };

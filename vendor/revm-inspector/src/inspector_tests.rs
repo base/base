@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use revm_context::{CfgEnv, Context, TxEnv};
+    use base_evm_context::{CfgEnv, Context, TxEnv};
     use revm_database::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_handler::{ExecuteEvm, MainBuilder, MainContext};
     use revm_primitives::{

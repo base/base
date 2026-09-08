@@ -1,8 +1,7 @@
 use std::string::{String, ToString};
 
 use auto_impl::auto_impl;
-use revm_context::{Cfg, LocalContextTr};
-use revm_context_interface::{ContextTr, JournalTr};
+use base_evm_context::{Cfg, ContextTr, JournalTr, LocalContextTr};
 use revm_interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult};
 use revm_precompile::{PrecompileOutput, PrecompileSpecId, PrecompileStatus, Precompiles};
 use revm_primitives::{Address, AddressSet, Bytes, hardfork::SpecId};
@@ -161,8 +160,9 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for EthPrecompiles {
 
 #[cfg(test)]
 mod tests {
-    use revm_context::{Context, Evm, FrameStack, TxEnv};
-    use revm_context_interface::result::{ExecutionResult, HaltReason, OutOfGasError};
+    use base_evm_context::{
+        Context, Evm, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
+    };
     use revm_database::InMemoryDB;
     use revm_interpreter::interpreter::EthInterpreter;
     use revm_primitives::{TxKind, U256, address, hardfork::SpecId};

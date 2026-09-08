@@ -1,6 +1,6 @@
 use core::cell::OnceCell;
 
-use revm_context_interface::CreateScheme;
+use base_evm_context::CreateScheme;
 use revm_primitives::{Address, B256, Bytes, U256, keccak256};
 
 /// Inputs for a create call

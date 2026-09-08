@@ -5,11 +5,10 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types_eth::{AccessList, AccessListItem};
+use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
 use revm::{
     Inspector,
     bytecode::opcode,
-    context::{JournalTr, transaction::AuthorizationTr},
-    context_interface::{ContextTr, Transaction},
     inspector::JournalExt,
     interpreter::{
         Interpreter,

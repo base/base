@@ -2,7 +2,8 @@
 //! [`super::EthBlockExecutor`].
 
 use alloy_consensus::{Eip658Value, ReceiptEnvelope, TransactionEnvelope, TxEnvelope, TxType};
-use revm::{context::result::ExecutionResult, state::EvmState};
+use base_evm_context::ExecutionResult;
+use revm::state::EvmState;
 
 use crate::Evm;
 

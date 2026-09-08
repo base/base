@@ -16,7 +16,7 @@ use alloy_eips::{
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
 };
 use alloy_primitives::{Address, Bytes, TxKind};
-use revm::{context::TxEnv, context_interface::either::Either};
+use base_evm_context::{TxEnv, either::Either};
 
 /// Trait marking types that can be converted into a transaction environment.
 ///

@@ -1,6 +1,6 @@
 [package]
-name = "revm-context"
-description = "Revm context crates"
+name = "base-evm-context"
+description = "Base EVM execution context and environments"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,12 +11,6 @@ exclude.workspace = true
 authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
-build = false
-autolib = false
-autobins = false
-autoexamples = false
-autotests = false
-autobenches = false
 readme = "README.md"
 
 [package.metadata.docs.rs]
@@ -26,25 +20,19 @@ rustdoc-args = [
     "docsrs",
 ]
 
-[lib]
-name = "revm_context"
-path = "src/lib.rs"
-
 [dependencies]
 bitvec = { workspace = true }
 cfg-if = { workspace = true }
+either = { workspace = true }
+auto_impl = { workspace = true }
 revm-state = { workspace = true }
 derive-where = { workspace = true }
 revm-bytecode = { workspace = true }
+alloy-eip2930 = { workspace = true }
 base-state-api = { workspace = true }
 revm-primitives = { workspace = true }
-revm-context-interface = { workspace = true }
-serde = { workspace = true, features = [
-    "derive",
-    "rc",
-    "derive",
-    "rc",
-], optional = true }
+alloy-eip7702 = { workspace = true, features = ["k256"] }
+serde = { workspace = true, features = ["derive", "rc"], optional = true }
 [dev-dependencies]
 revm-database = { workspace = true }
 [lints]
@@ -77,20 +65,25 @@ serde = [
     "dep:serde",
     "revm-primitives/serde",
     "revm-state/serde",
-    "revm-context-interface/serde",
     "revm-bytecode/serde",
     "revm-database/serde",
     "base-state-api/serde",
     "derive-where/serde",
     "bitvec/serde",
+    "alloy-eip7702/serde",
+    "alloy-eip2930/serde",
+    "either/serde",
 ]
 std = [
     "serde?/std",
     "revm-bytecode/std",
-    "revm-context-interface/std",
     "revm-database/std",
     "base-state-api/std",
     "revm-primitives/std",
     "revm-state/std",
     "bitvec/std",
+    "alloy-eip7702/std",
+    "alloy-eip2930/std",
+    "either/std",
 ]
+serde-json = ["serde"]

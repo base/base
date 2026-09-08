@@ -7,10 +7,8 @@ use alloy_consensus::{Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{B256, Bytes, Log};
-use revm::{
-    DatabaseCommit, Inspector, context::Block, context_interface::result::ResultAndState,
-    database::DatabaseCommitExt,
-};
+use base_evm_context::{Block, ResultAndState};
+use revm::{DatabaseCommit, Inspector, database::DatabaseCommitExt};
 
 use super::{
     EthEvmFactory, dao_fork, eip6110,

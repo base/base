@@ -11,6 +11,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_evm_context::{Block, Cfg as _};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
@@ -34,10 +35,7 @@ use reth_transaction_pool::{
     error::InvalidPoolTransactionError,
 };
 use reth_trie_common::ComputedTrieData;
-use revm::{
-    context_interface::{Block, Cfg as _},
-    database::State,
-};
+use revm::database::State;
 use tokio::sync::Mutex;
 use tracing::debug;
 

@@ -1,9 +1,9 @@
 //! Transaction trait [`Transaction`] and associated types.
 mod alloy_types;
-pub mod eip2930;
-pub mod eip7702;
+mod eip2930;
+mod eip7702;
 mod either;
-pub mod transaction_type;
+mod transaction_type;
 
 use core::{cmp::min, fmt::Debug};
 use std::boxed::Box;

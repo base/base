@@ -19,6 +19,7 @@ base-proof = { workspace = true }
 base-protocol = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }

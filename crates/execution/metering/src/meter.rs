@@ -13,12 +13,12 @@ use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
+use base_evm_context::GasParams;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
 use revm::{
-    context_interface::cfg::GasParams,
     database::State,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
@@ -402,7 +402,7 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     let authorization_gas = authorization_count.saturating_mul(per_empty_account_cost);
 
     let eip2780 = spec.into_eth_spec().is_enabled_in(SpecId::AMSTERDAM).then(|| {
-        revm::context_interface::cfg::gas_params::Eip2780TxInfo {
+        base_evm_context::Eip2780TxInfo {
             value: tx.value(),
             // Self-transfer: a `Call` whose recipient is the sender itself.
             is_self_transfer: tx.kind().to() == Some(tx.signer_ref()),

@@ -1,12 +1,12 @@
 //! Configuration for the EVM. Containing [`SpecId`].
 
-pub mod gas;
-pub mod gas_params;
-
+mod gas;
+pub use gas::*;
+mod gas_params;
 use core::{fmt::Debug, hash::Hash};
 
 use auto_impl::auto_impl;
-pub use gas_params::{GasId, GasParams};
+pub use gas_params::{GasId, GasParams, *};
 use revm_primitives::{Address, TxKind, U256, hardfork::SpecId};
 
 /// Configuration for the EVM.

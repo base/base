@@ -104,7 +104,7 @@ impl GasParams {
     /// Use to override default gas cost
     ///
     /// ```rust
-    /// use revm_context_interface::cfg::gas_params::{GasParams, GasId};
+    /// use base_evm_context::::{GasParams, GasId};
     /// use revm_primitives::hardfork::SpecId;
     ///
     /// let mut gas_table = GasParams::new_spec(SpecId::default());
@@ -920,7 +920,7 @@ impl GasParams {
     /// # Examples
     ///
     /// ```
-    /// use revm_context_interface::cfg::gas_params::GasParams;
+    /// use base_evm_context::GasParams;
     /// use revm_primitives::hardfork::SpecId;
     ///
     /// let gas_params = GasParams::new_spec(SpecId::BERLIN);
@@ -1198,7 +1198,7 @@ impl GasId {
     /// # Examples
     ///
     /// ```
-    /// use revm_context_interface::cfg::gas_params::GasId;
+    /// use base_evm_context::GasId;
     ///
     /// assert_eq!(GasId::exp_byte_gas().name(), "exp_byte_gas");
     /// assert_eq!(GasId::memory_linear_cost().name(), "memory_linear_cost");
@@ -1287,7 +1287,7 @@ impl GasId {
     /// # Examples
     ///
     /// ```
-    /// use revm_context_interface::cfg::gas_params::GasId;
+    /// use base_evm_context::GasId;
     ///
     /// assert_eq!(GasId::from_name("exp_byte_gas"), Some(GasId::exp_byte_gas()));
     /// assert_eq!(GasId::from_name("memory_linear_cost"), Some(GasId::memory_linear_cost()));
@@ -1732,7 +1732,7 @@ mod tests {
 
     #[test]
     fn test_tx_access_list_cost() {
-        use crate::cfg::gas;
+        use crate as gas;
 
         // Test with Berlin spec (when access list was introduced)
         let gas_params = GasParams::new_spec(SpecId::BERLIN);

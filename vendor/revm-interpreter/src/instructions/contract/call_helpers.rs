@@ -1,6 +1,6 @@
 use core::{cmp::min, ops::Range};
 
-use revm_context_interface::{Host, cfg::GasParams, host::LoadError};
+use base_evm_context::{GasParams, Host, LoadError};
 use revm_primitives::{
     Address, B256, U256,
     hardfork::SpecId::{self, *},

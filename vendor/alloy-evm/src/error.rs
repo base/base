@@ -2,10 +2,7 @@
 
 use core::{any::Any, error::Error};
 
-use revm::{
-    context::DBErrorMarker,
-    context_interface::result::{EVMError, InvalidTransaction},
-};
+use base_evm_context::{DBErrorMarker, EVMError, InvalidTransaction};
 
 /// Abstraction over transaction validation error.
 pub trait InvalidTxError: Error + Send + Sync + Any + 'static {

@@ -8,16 +8,15 @@ use alloc::{
 use core::borrow::Borrow;
 
 use alloy_primitives::{Address, Bytes, U256};
+use base_evm_context::{
+    Block, ContextTr, ExecutionResult, HaltReasonTr, JournalTr, Output, ResultAndState, TransactTo,
+    Transaction,
+};
 pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{Context, JsError, JsObject, JsResult, JsValue, Source, js_string};
 use revm::{
     DatabaseRef, Inspector,
     bytecode::OpCode,
-    context::JournalTr,
-    context_interface::{
-        Block, ContextTr, TransactTo, Transaction,
-        result::{ExecutionResult, HaltReasonTr, Output, ResultAndState},
-    },
     database::WrapDatabaseRef,
     inspector::JournalExt,
     interpreter::{
@@ -759,9 +758,9 @@ fn js_error_to_revert(err: JsError) -> InterpreterResult {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, bytes, hex};
+    use base_evm_context::TxEnv;
     use revm::{
         InspectEvm, MainBuilder, MainContext,
-        context::TxEnv,
         database::CacheDB,
         database_interface::EmptyDB,
         inspector::InspectorEvmTr,

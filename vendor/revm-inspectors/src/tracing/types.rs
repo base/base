@@ -18,7 +18,7 @@ use alloy_rpc_types_trace::{
     },
 };
 use revm::{
-    bytecode::opcode::{self, OpCode},
+    bytecode::{opcode, opcode::OpCode},
     interpreter::{CallScheme, CreateScheme, InstructionResult},
 };
 

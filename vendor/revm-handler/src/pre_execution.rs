@@ -4,13 +4,11 @@
 
 use core::cmp::Ordering;
 
-use revm_bytecode::Bytecode;
-use revm_context_interface::{
-    Block, Cfg, ContextTr, Database,
-    journaled_state::{JournalCheckpoint, JournalTr, account::JournaledAccountTr},
-    result::InvalidTransaction,
-    transaction::{AccessListItemTr, AuthorizationTr, Transaction, TransactionType},
+use base_evm_context::{
+    AccessListItemTr, AuthorizationTr, Block, Cfg, ContextTr, Database, InvalidTransaction,
+    JournalCheckpoint, JournalTr, JournaledAccountTr, Transaction, TransactionType,
 };
+use revm_bytecode::Bytecode;
 use revm_interpreter::GasTracker;
 use revm_primitives::{Address, AddressMap, HashSet, StorageKey, TxKind, U256, hardfork::SpecId};
 use revm_state::AccountInfo;
@@ -442,7 +440,7 @@ pub fn apply_auth_list_eip2780<
 ///
 /// The refund per existing account authorization is
 /// `PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST` (25000 - 12500 = 12500), see
-/// [`GasParams::tx_eip7702_auth_refund_regular`](revm_context_interface::cfg::gas_params::GasParams::tx_eip7702_auth_refund_regular).
+/// [`GasParams::tx_eip7702_auth_refund_regular`](base_evm_context::GasParams::tx_eip7702_auth_refund_regular).
 ///
 /// Returns the number of refunded (already existing) accounts.
 #[inline]
@@ -510,7 +508,7 @@ pub fn apply_auth_list<
 
 #[cfg(test)]
 mod tests {
-    use revm_context_interface::result::InvalidTransaction;
+    use base_evm_context::InvalidTransaction;
     use revm_state::AccountInfo;
 
     use super::validate_account_nonce_and_code;

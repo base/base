@@ -16,6 +16,7 @@ workspace = true
 revm = { workspace = true }
 alloy-evm = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-genesis = { workspace = true }
 base-precompile-macros = { workspace = true }
@@ -58,13 +59,13 @@ required-features = ["test-utils"]
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
-	"alloy-evm/std",
-	"alloy-primitives/std",
-	"alloy-sol-types/std",
-	"base-common-chains/std",
-	"base-common-genesis/std",
-	"base-precompile-storage/std",
-	"revm/std",
+    "alloy-evm/std",
+    "alloy-primitives/std",
+    "alloy-sol-types/std",
+    "base-common-chains/std",
+    "base-common-genesis/std",
+    "base-precompile-storage/std",
+    "revm/std",
 ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
@@ -79,7 +80,7 @@ optional_fee_charge = [ "revm/optional_fee_charge" ]
 optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
 test-utils = [
-	"base-common-chains/test-utils",
-	"base-common-genesis/test-utils",
-	"base-precompile-storage/test-utils",
+    "base-common-chains/test-utils",
+    "base-common-genesis/test-utils",
+    "base-precompile-storage/test-utils",
 ]

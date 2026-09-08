@@ -335,6 +335,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-sol-types",
  "auto_impl",
+ "base-evm-context",
  "derive_more",
  "revm",
  "serde_json",
@@ -3200,6 +3201,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "arbitrary",
+ "base-evm-context",
  "bincode 2.0.1",
  "bytes",
  "modular-bitfield",
@@ -3231,6 +3233,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-l1-fees",
  "base-common-precompiles",
+ "base-evm-context",
  "base-execution-eip8130",
  "base-metrics",
  "base-precompile-storage",
@@ -3257,6 +3260,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-l1-fees",
+ "base-evm-context",
  "evm2",
  "revm",
 ]
@@ -3328,6 +3332,7 @@ dependencies = [
  "alloy-sol-types",
  "base-common-chains",
  "base-common-genesis",
+ "base-evm-context",
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion 0.8.2",
@@ -3351,9 +3356,9 @@ dependencies = [
  "arbitrary",
  "base-common-consensus",
  "base-common-evm",
+ "base-evm-context",
  "derive_more",
  "rand 0.9.5",
- "revm",
  "serde",
  "serde_json",
  "similar-asserts",
@@ -3815,8 +3820,28 @@ dependencies = [
  "alloy-primitives",
  "base-common-consensus",
  "base-common-evm",
+ "base-evm-context",
  "revm",
  "rstest",
+]
+
+[[package]]
+name = "base-evm-context"
+version = "0.0.0"
+dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702",
+ "auto_impl",
+ "base-state-api",
+ "bitvec",
+ "cfg-if",
+ "derive-where",
+ "either",
+ "revm-bytecode",
+ "revm-database",
+ "revm-primitives",
+ "revm-state",
+ "serde",
 ]
 
 [[package]]
@@ -3979,6 +4004,7 @@ dependencies = [
  "base-common-evm",
  "base-common-precompiles",
  "base-common-rpc-types",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-evm",
  "jsonrpsee",
@@ -4033,6 +4059,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-rpc-types-engine",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-payload-types",
@@ -4098,6 +4125,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types-engine",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-eip8130",
@@ -4297,6 +4325,7 @@ dependencies = [
  "base-common-flz",
  "base-common-genesis",
  "base-common-precompiles",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-eip8130",
  "base-execution-evm",
@@ -4459,6 +4488,7 @@ dependencies = [
  "base-common-evm",
  "base-common-precompiles",
  "base-common-rpc-types",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-node-core",
@@ -4661,6 +4691,7 @@ dependencies = [
  "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
+ "base-evm-context",
  "base-precompile-macros",
  "derive_more",
  "proptest",
@@ -4690,6 +4721,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-rpc-types-engine",
  "base-consensus-derive",
+ "base-evm-context",
  "base-proof-driver",
  "base-proof-executor",
  "base-proof-mpt",
@@ -4720,6 +4752,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-consensus-derive",
+ "base-evm-context",
  "base-proof",
  "base-proof-driver",
  "base-proof-executor",
@@ -4791,6 +4824,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-rpc-types-engine",
+ "base-evm-context",
  "base-proof-mpt",
  "base-protocol",
  "getrandom 0.2.17",
@@ -15844,6 +15878,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types-engine",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -16845,6 +16880,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -17052,6 +17088,7 @@ dependencies = [
  "auto_impl",
  "base-common-consensus",
  "base-common-rpc-types",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-evm",
  "dyn-clone",
@@ -17102,6 +17139,7 @@ dependencies = [
  "base-common-evm",
  "base-common-flz",
  "base-common-rpc-types",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-protocol",
@@ -17489,6 +17527,7 @@ dependencies = [
  "assert_matches",
  "auto_impl",
  "base-common-consensus",
+ "base-evm-context",
  "base-execution-chainspec",
  "base-execution-evm",
  "bitflags 2.13.1",
@@ -17690,10 +17729,9 @@ dependencies = [
 name = "revm"
 version = "0.0.0"
 dependencies = [
+ "base-evm-context",
  "base-state-api",
  "revm-bytecode",
- "revm-context",
- "revm-context-interface",
  "revm-database",
  "revm-handler",
  "revm-inspector",
@@ -17717,36 +17755,6 @@ dependencies = [
  "revm-primitives",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "revm-context"
-version = "0.0.0"
-dependencies = [
- "base-state-api",
- "bitvec",
- "cfg-if",
- "derive-where",
- "revm-bytecode",
- "revm-context-interface",
- "revm-database",
- "revm-primitives",
- "revm-state",
- "serde",
-]
-
-[[package]]
-name = "revm-context-interface"
-version = "0.0.0"
-dependencies = [
- "alloy-eip2930",
- "alloy-eip7702",
- "auto_impl",
- "base-state-api",
- "either",
- "revm-primitives",
- "revm-state",
- "serde",
 ]
 
 [[package]]
@@ -17774,11 +17782,10 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "auto_impl",
+ "base-evm-context",
  "base-state-api",
  "derive-where",
  "revm-bytecode",
- "revm-context",
- "revm-context-interface",
  "revm-database",
  "revm-interpreter",
  "revm-precompile",
@@ -17792,9 +17799,9 @@ name = "revm-inspector"
 version = "0.0.0"
 dependencies = [
  "auto_impl",
+ "base-evm-context",
  "base-state-api",
  "either",
- "revm-context",
  "revm-database",
  "revm-handler",
  "revm-interpreter",
@@ -17814,6 +17821,7 @@ dependencies = [
  "alloy-rpc-types-trace",
  "alloy-sol-types",
  "anstyle",
+ "base-evm-context",
  "boa_engine",
  "boa_gc",
  "colorchoice",
@@ -17829,8 +17837,8 @@ dependencies = [
 name = "revm-interpreter"
 version = "0.0.0"
 dependencies = [
+ "base-evm-context",
  "revm-bytecode",
- "revm-context-interface",
  "revm-primitives",
  "revm-state",
  "serde",
@@ -17850,6 +17858,7 @@ dependencies = [
  "arrayref",
  "aurora-engine-modexp",
  "aws-lc-rs",
+ "base-evm-context",
  "blst",
  "c-kzg",
  "cfg-if",
@@ -17858,7 +17867,6 @@ dependencies = [
  "k256 0.13.4",
  "p256 0.13.2",
  "rand 0.10.2",
- "revm-context-interface",
  "revm-primitives",
  "ripemd 0.2.0",
  "rstest",

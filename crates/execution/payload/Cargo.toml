@@ -29,6 +29,7 @@ base-state-api = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
+base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-execution-cache = { workspace = true }

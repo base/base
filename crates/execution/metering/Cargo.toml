@@ -20,6 +20,7 @@ base-bundles = { workspace = true }
 revm-bytecode = { workspace = true }
 reth-provider = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-runner = { workspace = true }
 base-common-consensus = { workspace = true }

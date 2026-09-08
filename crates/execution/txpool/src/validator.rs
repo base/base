@@ -20,6 +20,7 @@ use base_common_consensus::{
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
+use base_evm_context::JournalCheckpoint;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
@@ -43,10 +44,7 @@ use reth_transaction_pool::{
     error::{InvalidPoolTransactionError, PoolTransactionError},
     validate::ValidTransaction,
 };
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    state::{AccountInfo, Bytecode},
-};
+use revm::state::{AccountInfo, Bytecode};
 
 use crate::{
     BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,

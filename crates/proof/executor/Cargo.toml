@@ -24,6 +24,7 @@ alloy-trie = { workspace = true }
 base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-context = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-consensus = { workspace = true }
 serde_json = { workspace = true, optional = true }
@@ -42,6 +43,45 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] 
 base-common-chains = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"], optional = true }
+
 [features]
-std = ["alloy-consensus/std", "alloy-eips/std", "alloy-evm/std", "alloy-primitives/std", "alloy-rlp/std", "alloy-rpc-types-engine?/std", "alloy-trie/std", "base-common-chains?/std", "base-common-consensus/std", "base-common-evm/std", "base-common-genesis/std", "base-common-rpc-types-engine/std", "base-proof-mpt/std", "base-protocol/std", "getrandom_0_2_17/std", "revm/std", "serde?/std", "serde_json?/std", "thiserror/std", "tracing/std"]
-test-utils = ["base-common-chains?/test-utils", "base-common-genesis/test-utils", "base-protocol/test-utils", "dep:alloy-provider", "dep:alloy-rpc-client", "dep:alloy-rpc-types-engine", "dep:alloy-transport", "dep:alloy-transport-http", "dep:base-common-chains", "dep:rand", "dep:rocksdb", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:tokio", "std"]
+std = [
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-evm/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "alloy-rpc-types-engine?/std",
+    "alloy-trie/std",
+    "base-common-chains?/std",
+    "base-common-consensus/std",
+    "base-common-evm/std",
+    "base-common-genesis/std",
+    "base-common-rpc-types-engine/std",
+    "base-proof-mpt/std",
+    "base-protocol/std",
+    "getrandom_0_2_17/std",
+    "revm/std",
+    "serde?/std",
+    "serde_json?/std",
+    "thiserror/std",
+    "tracing/std",
+]
+test-utils = [
+    "base-common-chains?/test-utils",
+    "base-common-genesis/test-utils",
+    "base-protocol/test-utils",
+    "dep:alloy-provider",
+    "dep:alloy-rpc-client",
+    "dep:alloy-rpc-types-engine",
+    "dep:alloy-transport",
+    "dep:alloy-transport-http",
+    "dep:base-common-chains",
+    "dep:rand",
+    "dep:rocksdb",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tempfile",
+    "dep:tokio",
+    "std",
+]

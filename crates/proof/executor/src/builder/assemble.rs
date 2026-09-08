@@ -10,9 +10,10 @@ use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_evm_context::BlockEnv;
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use base_protocol::OutputRoot;
-use revm::{context::BlockEnv, database::BundleState};
+use revm::database::BundleState;
 
 use super::StatelessL2Builder;
 use crate::{

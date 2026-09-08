@@ -1,12 +1,13 @@
 //! Journaled state trait [`JournalTr`] and related types.
 
-pub mod account;
-pub mod entry;
-
+mod account;
+pub use account::*;
+mod entry;
 use core::ops::{Deref, DerefMut};
 use std::{borrow::Cow, vec::Vec};
 
 use base_state_api::Database;
+pub use entry::*;
 use revm_primitives::{
     Address, AddressMap, AddressSet, B256, Bytes, HashSet, Log, StorageKey, StorageValue, U256,
     hardfork::SpecId,
@@ -17,7 +18,6 @@ use crate::{
     ErasedError,
     context::{SStoreResult, SelfDestructResult},
     host::LoadError,
-    journaled_state::account::JournaledAccountTr,
 };
 /// Trait that contains database and journal of all changes that were made to the state.
 pub trait JournalTr {

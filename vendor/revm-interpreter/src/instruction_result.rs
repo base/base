@@ -1,10 +1,6 @@
 use core::fmt::Debug;
 
-use revm_context_interface::{
-    host::LoadError,
-    journaled_state::TransferError,
-    result::{HaltReason, OutOfGasError, SuccessReason},
-};
+use base_evm_context::{HaltReason, LoadError, OutOfGasError, SuccessReason, TransferError};
 
 /// Result type returned by instruction implementations.
 ///

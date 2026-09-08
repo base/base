@@ -1,6 +1,6 @@
 use core::ptr;
 
-use revm_context_interface::{Host, cfg::GasParams};
+use base_evm_context::{GasParams, Host};
 use revm_primitives::{B256, KECCAK_EMPTY, U256};
 
 use crate::{

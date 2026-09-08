@@ -17,7 +17,7 @@ use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 #[cfg(feature = "alloy-compat")]
 use alloy_rpc_types_eth::ConversionError;
 #[cfg(feature = "evm")]
-use revm::context::TxEnv;
+use base_evm_context::TxEnv;
 
 use super::OpTxType;
 

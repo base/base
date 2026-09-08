@@ -11,6 +11,7 @@ use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode, request::Transacti
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
+use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
 use reth_execution_errors::{BlockExecutionError, BlockValidationError};
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
 use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};
@@ -22,13 +23,7 @@ use reth_transaction_pool::error::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
 };
-use revm::{
-    context_interface::result::{
-        EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError,
-    },
-    database::EvmDatabaseError,
-    state::bal::BalError,
-};
+use revm::{database::EvmDatabaseError, state::bal::BalError};
 use revm_inspectors::tracing::{DebugInspectorError, MuxError};
 use tokio::sync::oneshot::error::RecvError;
 

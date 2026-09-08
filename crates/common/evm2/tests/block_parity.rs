@@ -19,12 +19,10 @@ use base_common_evm2::{
 };
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
+use base_evm_context::{BlockEnv as RevmBlockEnv, CfgEnv, Context, TxEnv};
 use evm2::{Evm, Precompiles, env::BlockEnv, ethereum::TxEnvelope, evm::InMemoryDB};
 use revm::{
-    ExecuteCommitEvm,
-    context::{BlockEnv as RevmBlockEnv, CfgEnv, Context, TxEnv},
-    database::InMemoryDB as RevmDb,
-    state::AccountInfo as RevmAccountInfo,
+    ExecuteCommitEvm, database::InMemoryDB as RevmDb, state::AccountInfo as RevmAccountInfo,
 };
 
 const SENDER: Address = Address::repeat_byte(0x11);

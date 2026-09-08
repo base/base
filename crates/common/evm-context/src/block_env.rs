@@ -1,5 +1,5 @@
 //! This module contains [`BlockEnv`] and it implements [`Block`] trait.
-use revm_context_interface::block::{BlobExcessGasAndPrice, Block};
+use base_evm_context::{BlobExcessGasAndPrice, Block};
 use revm_primitives::{Address, B256, U256, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE};
 
 /// The block environment

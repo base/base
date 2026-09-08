@@ -25,6 +25,10 @@ pub mod interpreter_action;
 /// Type traits and definitions for interpreter customization.
 pub mod interpreter_types;
 
+pub use base_evm_context as host;
+// Reexport primary types.
+pub use base_evm_context::CreateScheme;
+pub use base_evm_context::{Host, InitialAndFloorGas, SStoreResult, SelfDestructResult, StateLoad};
 pub use gas::{Gas, GasTracker};
 pub use instruction_context::InstructionContext;
 pub use instruction_result::*;
@@ -38,13 +42,5 @@ pub use interpreter_action::{
 };
 pub use interpreter_types::InterpreterTypes;
 pub use revm_bytecode as bytecode;
-pub use revm_context_interface as context_interface;
-// Reexport primary types.
-pub use revm_context_interface::{
-    CreateScheme, Host,
-    cfg::gas::InitialAndFloorGas,
-    context::{SStoreResult, SelfDestructResult, StateLoad},
-    host,
-};
 pub use revm_primitives as primitives;
 pub use revm_state as state;

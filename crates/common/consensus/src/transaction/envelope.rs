@@ -6,7 +6,8 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::Encodable2718;
 #[cfg(feature = "evm")]
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
+use alloy_evm::FromRecoveredTx;
+use alloy_evm::FromTxWithEncoded;
 #[cfg(feature = "alloy-compat")]
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
@@ -15,7 +16,7 @@ use alloy_rpc_types_eth::{ConversionError, Transaction as AlloyRpcTransaction};
 #[cfg(feature = "alloy-compat")]
 use alloy_serde::WithOtherFields;
 #[cfg(feature = "evm")]
-use revm::context::TxEnv;
+use base_evm_context::TxEnv;
 
 use crate::{
     BasePooledTransaction, TxDeposit,

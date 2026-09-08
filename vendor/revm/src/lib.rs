@@ -4,19 +4,15 @@
 
 // reexport dependencies
 #[doc(inline)]
+// Export items.
+pub use base_evm_context::Context;
+pub use base_evm_context::{Journal, JournalEntry};
+#[doc(inline)]
 pub use base_state_api as database_interface;
 pub use base_state_api::{Database, DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
 #[doc(inline)]
 pub use revm_bytecode as bytecode;
 #[doc(inline)]
-pub use revm_context as context;
-// Export items.
-pub use revm_context::{
-    Context,
-    journal::{Journal, JournalEntry},
-};
-#[doc(inline)]
-pub use revm_context_interface as context_interface;
 #[doc(inline)]
 pub use revm_database as database;
 #[doc(inline)]

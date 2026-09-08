@@ -36,7 +36,7 @@ pub enum CallError<E> {
 pub fn caller_gas_allowance<DB, T>(db: &mut DB, env: &T) -> Result<u64, CallError<DB::Error>>
 where
     DB: Database,
-    T: revm::context_interface::Transaction,
+    T: base_evm_context::Transaction,
 {
     // Get the caller account.
     let caller = db.basic(env.caller()).map_err(CallError::Database)?;

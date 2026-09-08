@@ -7,11 +7,11 @@ use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
+use base_evm_context::{EVMError, InvalidTransaction};
 use base_execution_evm::{BaseBlockExecutionError, ProviderError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_rpc_convert::{EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
-use revm::context_interface::result::{EVMError, InvalidTransaction};
 
 use crate::{
     EthApiError,

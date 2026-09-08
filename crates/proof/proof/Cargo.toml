@@ -27,6 +27,7 @@ alloy-genesis = { workspace = true }
 base-proof-mpt = { workspace = true }
 alloy-consensus = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }

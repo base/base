@@ -1,6 +1,8 @@
+use base_evm_context::{
+    Block, BlockEnv, Cfg, CfgEnv, Context, Database, Evm, FrameStack, Journal, JournalTr,
+    Transaction, TxEnv,
+};
 use base_state_api::EmptyDB;
-use revm_context::{BlockEnv, Cfg, CfgEnv, Context, Evm, FrameStack, Journal, TxEnv};
-use revm_context_interface::{Block, Database, JournalTr, Transaction};
 use revm_interpreter::interpreter::EthInterpreter;
 use revm_primitives::hardfork::SpecId;
 
@@ -78,12 +80,11 @@ impl MainContext for Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<EmptyDB>,
 mod test {
     use alloy_signer::{Either, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
+    use base_evm_context::{Authorization, Context, TxEnv};
     use revm_bytecode::{
         Bytecode,
         opcode::{PUSH1, SSTORE},
     };
-    use revm_context::{Context, TxEnv};
-    use revm_context_interface::transaction::Authorization;
     use revm_database::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use revm_primitives::{StorageKey, StorageValue, TxKind, U256, hardfork::SpecId};
 

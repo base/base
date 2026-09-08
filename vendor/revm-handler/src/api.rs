@@ -1,13 +1,11 @@
 use std::vec::Vec;
 
-use base_state_api::DatabaseCommit;
-use revm_context::{
-    Block, ContextSetters, ContextTr, Database, Evm, JournalTr, Transaction,
-    result::{
-        EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
-        ResultAndState, ResultVecAndState, TransactionIndexedError,
-    },
+use base_evm_context::{
+    Block, ContextSetters, ContextTr, Database, EVMError, Evm, ExecResultAndState, ExecutionResult,
+    HaltReason, InvalidTransaction, JournalTr, ResultAndState, ResultVecAndState, Transaction,
+    TransactionIndexedError,
 };
+use base_state_api::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_state::EvmState;
 

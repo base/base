@@ -1,11 +1,7 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::Address;
-use revm::{
-    Context, Inspector,
-    context::{BlockEnv, DBErrorMarker, TxEnv},
-    context_interface::result::EVMError,
-    inspector::NoOpInspector,
-};
+use base_evm_context::{BlockEnv, DBErrorMarker, EVMError, TxEnv};
+use revm::{Context, Inspector, inspector::NoOpInspector};
 
 use crate::{
     BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
@@ -102,11 +98,8 @@ impl EvmFactory for BaseEvmFactory {
 #[cfg(test)]
 mod tests {
     use alloy_evm::EvmEnv;
-    use revm::{
-        context::{BlockEnv, CfgEnv},
-        database::EmptyDB,
-        inspector::NoOpInspector,
-    };
+    use base_evm_context::{BlockEnv, CfgEnv};
+    use revm::{database::EmptyDB, inspector::NoOpInspector};
 
     use super::*;
     use crate::BaseUpgrade;

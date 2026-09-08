@@ -31,6 +31,7 @@ futures-util = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
 base-execution-evm = { workspace = true }

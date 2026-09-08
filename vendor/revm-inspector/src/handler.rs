@@ -1,6 +1,4 @@
-use revm_context::{
-    ContextTr, JournalEntry, JournalTr, journaled_state::JournalCheckpoint, result::ExecutionResult,
-};
+use base_evm_context::{ContextTr, ExecutionResult, JournalCheckpoint, JournalEntry, JournalTr};
 use revm_handler::{
     EvmTr, FrameResult, Handler, ItemOrResult, evm::FrameTr, execution::runtime_oog_unwind,
     post_execution::build_result_gas,

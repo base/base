@@ -7,6 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_evm_context::{BlockEnv, TxEnv};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee::{
@@ -18,7 +19,6 @@ use reth_rpc_eth_api::{
     helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},
 };
 use reth_storage_api::BlockReaderIdExt;
-use revm::context::{BlockEnv, TxEnv};
 use tracing::debug;
 
 use crate::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};

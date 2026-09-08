@@ -2,7 +2,7 @@
 use core::cell::RefCell;
 use std::{rc::Rc, string::String, vec::Vec};
 
-use revm_context_interface::LocalContextTr;
+use base_evm_context::LocalContextTr;
 
 /// Local context that is filled by execution.
 #[derive(Clone, Debug)]

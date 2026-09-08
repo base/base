@@ -1,14 +1,11 @@
 use core::cmp::min;
 use std::{borrow::ToOwned, boxed::Box, vec::Vec};
 
-use derive_where::derive_where;
-use revm_context::result::FromStringError;
-use revm_context_interface::{
-    Cfg, ContextTr, Database,
-    context::{ContextError, take_error},
-    journaled_state::{JournalCheckpoint, JournalTr, account::JournaledAccountTr},
-    local::{FrameToken, OutFrame},
+use base_evm_context::{
+    Cfg, ContextError, ContextTr, Database, FrameToken, FromStringError, JournalCheckpoint,
+    JournalTr, JournaledAccountTr, OutFrame, take_error,
 };
+use derive_where::derive_where;
 use revm_interpreter::{
     CallInput, CallInputs, CallOutcome, CallValue, CreateInputs, CreateOutcome, CreateScheme,
     FrameInput, Gas, GasTracker, InputsImpl, InstructionResult, Interpreter, InterpreterAction,

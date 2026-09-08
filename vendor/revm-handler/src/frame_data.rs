@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use revm_context_interface::{cfg::GasParams, result::Output};
+use base_evm_context::{GasParams, Output};
 use revm_interpreter::{CallOutcome, CreateOutcome, Gas, InstructionResult, InterpreterResult};
 use revm_primitives::Address;
 

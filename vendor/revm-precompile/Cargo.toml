@@ -39,7 +39,6 @@ sha2_0_11_0 = { workspace = true }
 ark-serialize = { workspace = true }
 revm-primitives = { workspace = true }
 aurora-engine-modexp = { workspace = true }
-revm-context-interface = { workspace = true }
 ark-ff = { workspace = true, features = ["asm"] }
 k256 = { workspace = true, features = ["ecdsa"] }
 p256 = { workspace = true, features = ["ecdsa"] }
@@ -56,6 +55,7 @@ secp256k1_0_31_1 = { workspace = true, features = [
     "rand",
     "global-context",
 ], optional = true }
+base-evm-context = { workspace = true }
 [dev-dependencies]
 ark-std = { workspace = true }
 p256 = { workspace = true, features = ["ecdsa"] }
@@ -76,4 +76,18 @@ hashbrown = ["revm-primitives/hashbrown"]
 p256-aws-lc-rs = ["dep:aws-lc-rs"]
 portable = ["c-kzg?/portable", "blst?/portable"]
 secp256k1 = ["dep:secp256k1_0_31_1"]
-std = ["revm-primitives/std", "revm-context-interface/std", "k256/std", "c-kzg?/std", "secp256k1_0_31_1?/std", "ark-bn254_0_6_0/std", "ark-bls12-381/std", "aurora-engine-modexp/std", "ark-ec/std", "ark-ff/std", "ark-serialize/std", "ark-std/std", "p256/std"]
+std = [
+    "revm-primitives/std",
+    "base-evm-context/std",
+    "k256/std",
+    "c-kzg?/std",
+    "secp256k1_0_31_1?/std",
+    "ark-bn254_0_6_0/std",
+    "ark-bls12-381/std",
+    "aurora-engine-modexp/std",
+    "ark-ec/std",
+    "ark-ff/std",
+    "ark-serialize/std",
+    "ark-std/std",
+    "p256/std",
+]

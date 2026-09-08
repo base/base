@@ -1,10 +1,8 @@
 //! Contains the transaction trait abstraction.
 
 use auto_impl::auto_impl;
-use revm::{
-    context_interface::transaction::Transaction,
-    primitives::{B256, Bytes},
-};
+use base_evm_context::Transaction;
+use revm::primitives::{B256, Bytes};
 
 use crate::{DEPOSIT_TRANSACTION_TYPE, EIP8130_TRANSACTION_TYPE, Eip8130TransactionParts};
 

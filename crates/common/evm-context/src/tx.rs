@@ -2,14 +2,11 @@
 use core::fmt::Debug;
 use std::{vec, vec::Vec};
 
-use base_state_api::{BENCH_CALLER, BENCH_TARGET};
-use revm_context_interface::{
-    either::Either,
-    transaction::{
-        AccessList, AccessListItem, Authorization, RecoveredAuthority, RecoveredAuthorization,
-        SignedAuthorization, Transaction,
-    },
+use base_evm_context::{
+    AccessList, AccessListItem, Authorization, RecoveredAuthority, RecoveredAuthorization,
+    SignedAuthorization, Transaction, either::Either,
 };
+use base_state_api::{BENCH_CALLER, BENCH_TARGET};
 use revm_primitives::{Address, B256, Bytes, TxKind, U256, eip7825};
 
 use crate::TransactionType;

@@ -3,24 +3,19 @@ use alloc::{boxed::Box, vec::Vec};
 
 use base_common_consensus::Predeploys;
 use base_common_genesis::BaseUpgrade;
+use base_evm_context::{
+    Block, Cfg, ContextTr, EVMError, ExecutionResult, FromStringError, InitialAndFloorGas,
+    InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr, LocalContextTr,
+    ResultGas, Transaction, take_error,
+};
 use revm::{
-    context::{
-        LocalContextTr,
-        journaled_state::{JournalCheckpoint, account::JournaledAccountTr},
-        result::InvalidTransaction,
-    },
-    context_interface::{
-        Block, Cfg, ContextTr, JournalTr, Transaction,
-        cfg::gas::InitialAndFloorGas,
-        context::take_error,
-        result::{EVMError, ExecutionResult, FromStringError, ResultGas},
-    },
     handler::{
         EthFrame, EvmTr, FrameResult, Handler, MainnetHandler,
         evm::FrameTr,
         handle_reservoir_remaining_gas,
         handler::EvmTrError,
-        post_execution::{self, reimburse_caller},
+        post_execution,
+        post_execution::reimburse_caller,
         pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
     },
     inspector::{Inspector, InspectorEvmTr, InspectorHandler},
@@ -399,10 +394,10 @@ mod tests {
 
     use alloy_primitives::uint;
     use base_common_consensus::Predeploys;
+    use base_evm_context::{BlockEnv, CfgEnv, Context, TxEnv};
     use revm::{
         InspectEvm,
         bytecode::Bytecode,
-        context::{BlockEnv, CfgEnv, Context, TxEnv},
         database::InMemoryDB,
         database_interface::EmptyDB,
         handler::{EthFrame, Handler},
@@ -809,9 +804,7 @@ mod tests {
 
     /// Runs CLZ bytecode (`PUSH1 0x80, CLZ, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`)
     /// against the given spec and returns the execution result.
-    fn run_clz_bytecode(
-        spec: BaseSpecId,
-    ) -> revm::context_interface::result::ExecutionResult<BaseHaltReason> {
+    fn run_clz_bytecode(spec: BaseSpecId) -> base_evm_context::ExecutionResult<BaseHaltReason> {
         let contract = Address::from([0x42; 20]);
         let mut db = InMemoryDB::default();
         db.insert_account_info(

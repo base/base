@@ -255,9 +255,9 @@ impl CachedPrecompileMetrics {
 
 #[cfg(test)]
 mod tests {
+    use base_evm_context::TxEnv;
     use base_execution_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
     use revm::{
-        context::TxEnv,
         database::EmptyDB,
         precompile::{PrecompileOutput, PrecompileStatus},
         primitives::hardfork::SpecId,

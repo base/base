@@ -15,10 +15,10 @@ use alloy_rpc_types_trace::geth::{
     GethDefaultTracingOptions, PreStateConfig, PreStateFrame, PreStateMode, StructLog,
     erc7562::{AccessedSlots, CallFrameType, ContractSize, Erc7562Config, Erc7562Frame},
 };
+use base_evm_context::{HaltReasonTr, ResultAndState};
 use revm::{
     DatabaseRef,
     bytecode::opcode,
-    context_interface::result::{HaltReasonTr, ResultAndState},
     primitives::KECCAK_EMPTY,
     state::{AccountInfo, EvmState},
 };
@@ -117,7 +117,7 @@ impl<'a> GethTraceBuilder<'a> {
     /// Generate a geth-style trace e.g. for `debug_traceTransaction`
     ///
     /// This expects the gas used and return value for the
-    /// [[revm::context::result::ExecutionResult]] of the executed
+    /// [[base_evm_context::ExecutionResult]] of the executed
     /// transaction.
     pub fn geth_traces(
         &self,
@@ -152,7 +152,7 @@ impl<'a> GethTraceBuilder<'a> {
     /// This decodes all call frames from the recorded traces.
     ///
     /// This expects the gas used and return value for the
-    /// [revm::context::result::ExecutionResult] of the executed
+    /// [base_evm_context::ExecutionResult] of the executed
     /// transaction.
     pub fn geth_call_traces(&self, opts: CallConfig, gas_used: u64) -> CallFrame {
         if self.nodes.is_empty() {

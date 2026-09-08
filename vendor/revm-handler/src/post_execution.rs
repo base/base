@@ -1,9 +1,6 @@
-use revm_context::journaled_state::account::JournaledAccountTr;
-use revm_context_interface::{
-    Block, Cfg, ContextTr, Database, LocalContextTr, Transaction,
-    cfg::GasParams,
-    journaled_state::JournalTr,
-    result::{ExecutionResult, HaltReason, HaltReasonTr, ResultGas},
+use base_evm_context::{
+    Block, Cfg, ContextTr, Database, ExecutionResult, GasParams, HaltReason, HaltReasonTr,
+    JournalTr, JournaledAccountTr, LocalContextTr, ResultGas, Transaction,
 };
 use revm_interpreter::{Gas, InitialAndFloorGas, SuccessOrHalt};
 use revm_primitives::{U256, hardfork::SpecId};

@@ -2,12 +2,10 @@
 //! `reth_rpc_eth_api::EthApiTypes`.
 
 use alloy_primitives::Bytes;
+use base_evm_context::{ExecutionResult, HaltReason};
 use base_execution_evm::{EvmErrorFor, HaltReasonFor};
 use reth_storage_errors::provider::ProviderError;
-use revm::{
-    context::result::ExecutionResult, context_interface::result::HaltReason,
-    database::EvmDatabaseError,
-};
+use revm::database::EvmDatabaseError;
 
 use super::RpcInvalidTransactionError;
 use crate::{EthApiError, RevertError, simulate::EthSimulateError};

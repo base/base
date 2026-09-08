@@ -1,4 +1,4 @@
-use revm_context_interface::{ContextTr, JournalTr, result::HaltReason};
+use base_evm_context::{ContextTr, HaltReason, JournalTr};
 use revm_interpreter::interpreter_action::FrameInit;
 use revm_state::EvmState;
 

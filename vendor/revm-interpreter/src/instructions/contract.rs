@@ -2,11 +2,11 @@ mod call_helpers;
 
 use std::boxed::Box;
 
+use base_evm_context::CreateScheme;
 pub use call_helpers::{
     get_memory_input_and_out_ranges, load_acc_and_calc_gas, load_account_delegated,
     load_account_delegated_handle_error, resize_memory,
 };
-use revm_context_interface::CreateScheme;
 use revm_primitives::{Bytes, U256, hardfork::SpecId};
 
 use crate::{

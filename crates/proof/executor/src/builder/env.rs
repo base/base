@@ -7,11 +7,8 @@ use alloy_primitives::U256;
 use base_common_evm::{BaseSpecId, BaseUpgrade};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_proof_mpt::TrieHinter;
-use revm::{
-    context::{BlockEnv, CfgEnv},
-    context_interface::block::BlobExcessGasAndPrice,
-};
 
 use super::StatelessL2Builder;
 use crate::{
@@ -169,8 +166,8 @@ mod tests {
     use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_evm_context::BlobExcessGasAndPrice;
     use base_proof_mpt::NoopTrieHinter;
-    use revm::context_interface::block::BlobExcessGasAndPrice;
 
     use crate::{NoopTrieDBProvider, StatelessL2Builder};
 

@@ -7,7 +7,7 @@ use alloy_evm::{
 };
 use alloy_primitives::Bytes;
 use base_common_evm::BaseTransaction as BaseRevm;
-use revm::context::TxEnv;
+use base_evm_context::TxEnv;
 
 use crate::BaseTransactionRequest;
 

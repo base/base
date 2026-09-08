@@ -25,6 +25,7 @@ path = "src/lib.rs"
 
 [[bench]]
 name = "js_tracer"
+required-features = ["js-tracer"]
 path = "benches/js_tracer.rs"
 harness = false
 
@@ -33,6 +34,7 @@ revm = { workspace = true }
 thiserror = { workspace = true }
 colorchoice = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 boa_gc = { workspace = true, optional = true }

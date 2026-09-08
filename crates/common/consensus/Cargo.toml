@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-context = { workspace = true }
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
@@ -41,58 +42,59 @@ rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
+
 [features]
 default = [ "std" ]
 std = [
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-evm?/std",
-	"alloy-primitives/std",
-	"alloy-rlp/std",
-	"alloy-rpc-types-eth?/std",
-	"alloy-serde?/std",
-	"alloy-sol-types/std",
-	"reth-codecs?/std",
-	"reth-zstd-compressors?/std",
-	"revm?/std",
-	"serde?/std",
-	"thiserror/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-evm?/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "alloy-rpc-types-eth?/std",
+    "alloy-serde?/std",
+    "alloy-sol-types/std",
+    "reth-codecs?/std",
+    "reth-zstd-compressors?/std",
+    "revm?/std",
+    "serde?/std",
+    "thiserror/std",
 ]
 alloy-compat = [ "dep:alloy-network", "dep:alloy-rpc-types-eth", "serde" ]
 k256 = [ "alloy-consensus/k256", "alloy-primitives/k256" ]
 kzg = [ "alloy-consensus/kzg", "alloy-eips/kzg", "std" ]
 arbitrary = [
-	"alloy-consensus/arbitrary",
-	"alloy-eips/arbitrary",
-	"alloy-primitives/arbitrary",
-	"alloy-primitives/rand",
-	"alloy-rpc-types-eth?/arbitrary",
-	"alloy-serde?/arbitrary",
-	"dep:arbitrary",
-	"reth-codecs?/arbitrary",
-	"revm?/arbitrary",
-	"std",
+    "alloy-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-primitives/rand",
+    "alloy-rpc-types-eth?/arbitrary",
+    "alloy-serde?/arbitrary",
+    "dep:arbitrary",
+    "reth-codecs?/arbitrary",
+    "revm?/arbitrary",
+    "std",
 ]
 serde = [
-	"alloy-consensus/serde",
-	"alloy-eips/serde",
-	"alloy-primitives/serde",
-	"alloy-rpc-types-eth?/serde",
-	"bytes?/serde",
-	"dep:alloy-serde",
-	"dep:serde",
-	"reth-codecs?/serde",
-	"revm?/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "alloy-rpc-types-eth?/serde",
+    "bytes?/serde",
+    "dep:alloy-serde",
+    "dep:serde",
+    "reth-codecs?/serde",
+    "revm?/serde",
 ]
 serde-bincode-compat = [ "alloy-consensus/serde-bincode-compat", "serde_with" ]
 evm = [ "dep:alloy-evm", "dep:revm" ]
 reth = [
-	"dep:bytes",
-	"dep:modular-bitfield",
-	"dep:reth-codecs",
-	"dep:reth-zstd-compressors",
-	"k256",
-	"serde",
-	"serde-bincode-compat",
-	"std",
+    "dep:bytes",
+    "dep:modular-bitfield",
+    "dep:reth-codecs",
+    "dep:reth-zstd-compressors",
+    "k256",
+    "serde",
+    "serde-bincode-compat",
+    "std",
 ]

@@ -18,6 +18,7 @@ tracing = { workspace = true }
 alloy-evm = { workspace = true }
 thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-precompile-macros = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
@@ -32,12 +33,12 @@ required-features = ["test-utils"]
 [features]
 default = [ "std" ]
 std = [
-	"alloy-evm/std",
-	"alloy-primitives/std",
-	"alloy-sol-types/std",
-	"derive_more/std",
-	"revm/std",
-	"thiserror/std",
-	"tracing/std",
+    "alloy-evm/std",
+    "alloy-primitives/std",
+    "alloy-sol-types/std",
+    "derive_more/std",
+    "revm/std",
+    "thiserror/std",
+    "tracing/std",
 ]
 test-utils = [ "std" ]

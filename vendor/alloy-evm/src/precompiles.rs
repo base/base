@@ -13,9 +13,9 @@ use alloy_primitives::{
     Address, U256,
     map::{AddressMap, AddressSet},
 };
+use base_evm_context::ContextTr;
 use revm::{
     Context, Journal,
-    context::ContextTr,
     handler::{EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileFn, PrecompileId, PrecompileResult, Precompiles},
@@ -553,8 +553,8 @@ impl<BlockEnv, TxEnv, CfgEnv, DB, Chain>
     PrecompileProvider<Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB>, Chain>> for PrecompilesMap
 where
     BlockEnv: BlockEnvironment,
-    TxEnv: revm::context::Transaction,
-    CfgEnv: revm::context::Cfg,
+    TxEnv: base_evm_context::Transaction,
+    CfgEnv: base_evm_context::Cfg,
     DB: Database,
 {
     type Output = InterpreterResult;
@@ -986,8 +986,8 @@ impl core::error::Error for MovePrecompileError {}
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, address};
+    use base_evm_context::BlockEnv;
     use revm::{
-        context::BlockEnv,
         database::EmptyDB,
         precompile::{PrecompileId, PrecompileOutput},
         primitives::hardfork::SpecId,
