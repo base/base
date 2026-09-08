@@ -73,7 +73,6 @@ alloy-dyn-abi = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, optional = true }
 revm-inspectors = { workspace = true, features = ["default"] }
 tracing-futures = { workspace = true, features = ["default"] }
-reth-rpc-convert = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["witness"]}
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["reth"] }

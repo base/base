@@ -1,6 +1,7 @@
 //! Concrete Base transaction, receipt, log, and header conversion.
 
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{SignableTransaction, error::ValueError, transaction::Recovered};
+use alloy_primitives::{Signature, U256};
 use alloy_rpc_types_eth::{Log, TransactionInfo};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_rpc_types::{
@@ -10,8 +11,7 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::{
-    FromConsensusHeader, FromConsensusTx, TransactionConversionError, TryIntoSimTx, TryIntoTxEnv,
-    TxInfoMapper, transaction::ConvertReceiptInput,
+    TransactionConversionError, TryIntoTxEnv, transaction::ConvertReceiptInput,
 };
 use reth_storage_api::BlockReader;
 
@@ -69,8 +69,10 @@ where
         let (tx, signer) = tx.into_parts();
         let tx_info = self.mapper.try_map(&tx, tx_info)?;
 
-        base_common_rpc_types::Transaction::from_consensus_tx(tx, signer, tx_info)
-            .map_err(Into::into)
+        Ok(base_common_rpc_types::Transaction::from_transaction(
+            Recovered::new_unchecked(tx, signer),
+            tx_info,
+        ))
     }
 
     /// Builds the Base transaction used by eth_simulateV1.
@@ -78,9 +80,12 @@ where
         &self,
         request: BaseTransactionRequest,
     ) -> Result<BaseTxEnvelope, BaseEthApiError> {
-        Ok(request
-            .try_into_sim_tx()
-            .map_err(|e| TransactionConversionError::FromTxReq(e.to_string()))?)
+        let tx = request.build_typed_tx().map_err(|request| {
+            TransactionConversionError::FromTxReq(
+                ValueError::new(request, "Required fields missing").to_string(),
+            )
+        })?;
+        Ok(tx.into_signed(Signature::new(U256::ZERO, U256::ZERO, false)).into())
     }
 
     /// Builds the Base execution environment for an RPC transaction request.
@@ -125,6 +130,10 @@ where
         header: reth_primitives_traits::SealedHeader,
         block_size: usize,
     ) -> Result<BaseHeaderResponse, BaseEthApiError> {
-        Ok(BaseHeaderResponse::from_consensus_header(header, block_size))
+        Ok(BaseHeaderResponse::new(alloy_rpc_types_eth::Header::from_consensus(
+            header.into(),
+            None,
+            Some(U256::from(block_size)),
+        )))
     }
 }

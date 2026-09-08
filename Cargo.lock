@@ -16998,7 +16998,6 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-rpc-api",
- "reth-rpc-convert",
  "reth-rpc-engine-api",
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
@@ -17117,7 +17116,6 @@ dependencies = [
  "alloy-evm",
  "base-common-consensus",
  "reth-primitives-traits",
- "reth-rpc-traits",
  "serde_json",
  "thiserror 2.0.19",
 ]
@@ -17299,21 +17297,6 @@ dependencies = [
  "reth-network-api",
  "serde",
  "strum 0.27.2",
-]
-
-[[package]]
-name = "reth-rpc-traits"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-network",
- "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-signer",
- "base-common-consensus",
- "base-common-rpc-types",
- "reth-primitives-traits",
- "thiserror 2.0.19",
 ]
 
 [[package]]

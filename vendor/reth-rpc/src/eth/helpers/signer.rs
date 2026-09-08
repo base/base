@@ -1,11 +1,13 @@
 //! An abstraction over ethereum signers.
 
+use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
-use alloy_eips::eip2718::Decodable2718;
+use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Signature, eip191_hash_message, map::AddressMap};
 use alloy_signer::SignerSync;
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
-use reth_rpc_convert::SignableTxRequest;
+use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types::BaseTransactionRequest;
 use reth_rpc_eth_api::helpers::{EthSigner, signer::Result};
 use reth_rpc_eth_types::SignError;
 
@@ -19,9 +21,9 @@ pub struct DevSigner {
 impl DevSigner {
     /// Generates provided number of random dev signers
     /// which satisfy [`EthSigner`] trait
-    pub fn random_signers<T: Decodable2718, TxReq: SignableTxRequest<T>>(
+    pub fn random_signers(
         num: u32,
-    ) -> Vec<Box<dyn EthSigner<T, TxReq> + 'static>> {
+    ) -> Vec<Box<dyn EthSigner<BaseTxEnvelope, BaseTransactionRequest> + 'static>> {
         let mut signers = Vec::with_capacity(num as usize);
         for _ in 0..num {
             let sk = PrivateKeySigner::random();
@@ -30,17 +32,18 @@ impl DevSigner {
             let addresses = vec![address];
 
             let accounts = AddressMap::from_iter([(address, sk)]);
-            signers.push(Box::new(Self { addresses, accounts }) as Box<dyn EthSigner<T, TxReq>>);
+            signers.push(Box::new(Self { addresses, accounts })
+                as Box<dyn EthSigner<BaseTxEnvelope, BaseTransactionRequest>>);
         }
         signers
     }
 
     /// Generates dev signers deterministically from a fixed mnemonic.
     /// Uses the Ethereum derivation path: `m/44'/60'/0'/0/{index}`
-    pub fn from_mnemonic<T: Decodable2718, TxReq: SignableTxRequest<T>>(
+    pub fn from_mnemonic(
         mnemonic: &str,
         num: u32,
-    ) -> Vec<Box<dyn EthSigner<T, TxReq> + 'static>> {
+    ) -> Vec<Box<dyn EthSigner<BaseTxEnvelope, BaseTransactionRequest> + 'static>> {
         let mut signers = Vec::with_capacity(num as usize);
 
         for i in 0..num {
@@ -55,7 +58,8 @@ impl DevSigner {
             let addresses = vec![address];
             let accounts = AddressMap::from_iter([(address, sk)]);
 
-            signers.push(Box::new(Self { addresses, accounts }) as Box<dyn EthSigner<T, TxReq>>);
+            signers.push(Box::new(Self { addresses, accounts })
+                as Box<dyn EthSigner<BaseTxEnvelope, BaseTransactionRequest>>);
         }
 
         signers
@@ -72,7 +76,7 @@ impl DevSigner {
 }
 
 #[async_trait::async_trait]
-impl<T: Decodable2718, TxReq: SignableTxRequest<T>> EthSigner<T, TxReq> for DevSigner {
+impl EthSigner<BaseTxEnvelope, BaseTransactionRequest> for DevSigner {
     fn accounts(&self) -> Vec<Address> {
         self.addresses.clone()
     }
@@ -88,17 +92,23 @@ impl<T: Decodable2718, TxReq: SignableTxRequest<T>> EthSigner<T, TxReq> for DevS
         self.sign_hash(hash, address)
     }
 
-    async fn sign_transaction(&self, request: TxReq, address: &Address) -> Result<T> {
+    async fn sign_transaction(
+        &self,
+        request: BaseTransactionRequest,
+        address: &Address,
+    ) -> Result<BaseTxEnvelope> {
         // create local signer wallet from signing key
         let signer = self.accounts.get(address).ok_or(SignError::NoAccount)?.clone();
 
-        // build and sign transaction with signer
-        let tx = request
-            .try_build_and_sign(&signer)
+        let mut tx = request.build_typed_tx().map_err(|_| SignError::InvalidTransactionRequest)?;
+        if tx.is_deposit() {
+            return Err(SignError::InvalidTransactionRequest);
+        }
+        let signature = signer
+            .sign_transaction(&mut tx)
             .await
             .map_err(|_| SignError::InvalidTransactionRequest)?;
-
-        Ok(tx)
+        Ok(tx.into_signed(signature).into())
     }
 
     fn sign_typed_data(&self, address: Address, payload: &TypedData) -> Result<Signature> {
@@ -112,7 +122,6 @@ mod tests {
     use alloy_consensus::Transaction;
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
-    use reth_ethereum_primitives::TransactionSigned;
 
     use super::*;
 
@@ -194,7 +203,7 @@ mod tests {
         let data: TypedData = serde_json::from_str(eip_712_example).unwrap();
         let signer = build_signer();
         let from = *signer.addresses.first().unwrap();
-        let sig = EthSigner::<reth_ethereum_primitives::TransactionSigned>::sign_typed_data(
+        let sig = EthSigner::<BaseTxEnvelope, BaseTransactionRequest>::sign_typed_data(
             &signer, from, &data,
         )
         .unwrap();
@@ -219,10 +228,9 @@ mod tests {
         let message = b"Test message";
         let signer = build_signer();
         let from = *signer.addresses.first().unwrap();
-        let sig =
-            EthSigner::<reth_ethereum_primitives::TransactionSigned>::sign(&signer, from, message)
-                .await
-                .unwrap();
+        let sig = EthSigner::<BaseTxEnvelope, BaseTransactionRequest>::sign(&signer, from, message)
+            .await
+            .unwrap();
         let expected = Signature::new(
             U256::from_str_radix(
                 "54313da7432e4058b8d22491b2e7dbb19c7186c35c24155bec0820a8a2bfe0c1",
@@ -258,8 +266,8 @@ mod tests {
             nonce: Some(0u64),
             ..Default::default()
         };
-        let txn_signed: std::result::Result<TransactionSigned, SignError> =
-            signer.sign_transaction(request, &from).await;
+        let txn_signed: std::result::Result<BaseTxEnvelope, SignError> =
+            EthSigner::sign_transaction(&signer, request.into(), &from).await;
         assert!(txn_signed.is_ok());
 
         assert_eq!(Bytes::from(message.to_vec()), txn_signed.unwrap().input().0);

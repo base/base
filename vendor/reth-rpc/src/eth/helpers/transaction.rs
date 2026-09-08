@@ -179,7 +179,7 @@ mod tests {
         crate::test_utils::RpcTestUtils::api_builder(
             mock_provider,
             pool,
-            NoopNetwork::default(),
+            NoopNetwork::default().with_chain_id(evm_config.chain_spec().chain_id()),
             evm_config,
         )
         .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)

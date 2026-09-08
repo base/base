@@ -382,7 +382,6 @@ reth-cli-runner = { path = "vendor/reth-cli-runner", default-features = false }
 reth-tokio-util = { path = "vendor/reth-tokio-util", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
-reth-rpc-traits = { path = "vendor/reth-rpc-traits", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }
 reth-chain-state = { path = "vendor/reth-chain-state", default-features = false }
 reth-trie-common = { path = "vendor/reth-trie-common", default-features = false }

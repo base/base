@@ -3,14 +3,12 @@
 use std::fmt::{Debug, Formatter};
 
 use alloy_rpc_types_eth::TransactionInfo;
-use base_common_consensus::{BaseReceipt, BaseTransaction, BaseTransactionInfo, DepositInfo};
-use reth_primitives_traits::SignedTransaction;
-use reth_rpc_convert::TxInfoMapper;
+use base_common_consensus::{BaseReceipt, BaseTransactionInfo, BaseTxEnvelope, DepositInfo};
 use reth_storage_api::{ReceiptProvider, TransactionsProvider, errors::ProviderError};
 
 use crate::BaseTimeCache;
 
-/// Base implementation of [`TxInfoMapper`].
+/// Enriches transaction metadata with Base deposit and timestamp fields.
 ///
 /// For deposits, receipt is fetched to extract `deposit_nonce` and `deposit_receipt_version`.
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
@@ -38,17 +36,19 @@ impl<Provider> BaseTxInfoMapper<Provider> {
     }
 }
 
-impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
+impl<Provider> BaseTxInfoMapper<Provider>
 where
-    T: BaseTransaction + SignedTransaction,
-    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt = BaseReceipt>,
+    Provider:
+        TransactionsProvider<Transaction = BaseTxEnvelope> + ReceiptProvider<Receipt = BaseReceipt>,
 {
-    type Out = BaseTransactionInfo;
-    type Err = ProviderError;
-
-    fn try_map(&self, tx: &T, tx_info: TransactionInfo) -> Result<Self::Out, ProviderError> {
+    /// Loads deposit receipt fields and the block timestamp for a transaction.
+    pub fn try_map(
+        &self,
+        tx: &BaseTxEnvelope,
+        tx_info: TransactionInfo,
+    ) -> Result<BaseTransactionInfo, ProviderError> {
         let deposit_meta = if tx.is_deposit() {
-            self.provider.receipt_by_hash(*tx.tx_hash())?.and_then(|receipt| {
+            self.provider.receipt_by_hash(tx.tx_hash())?.and_then(|receipt| {
                 receipt.as_deposit_receipt().map(|receipt| DepositInfo {
                     deposit_receipt_version: receipt.deposit_receipt_version,
                     deposit_nonce: receipt.deposit_nonce,
@@ -61,9 +61,14 @@ where
 
         let block_timestamp_ms =
             match (tx_info.block_hash, tx_info.block_number, tx_info.block_timestamp) {
-                (Some(block_hash), Some(block_number), Some(block_timestamp)) => self
-                    .base_time
-                    .get::<T, _>(&self.provider, block_hash, block_number, block_timestamp)?,
+                (Some(block_hash), Some(block_number), Some(block_timestamp)) => {
+                    self.base_time.get::<BaseTxEnvelope, _>(
+                        &self.provider,
+                        block_hash,
+                        block_number,
+                        block_timestamp,
+                    )?
+                }
                 _ => None,
             };
 
