@@ -29,6 +29,8 @@ use reth_tasks::{
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
+use crate::{BaseTimeCache, SequencerClient};
+
 const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
 
 /// `Eth` API implementation.
@@ -49,7 +51,7 @@ const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
 pub struct EthApi<N: RpcNodeCore> {
     /// All nested fields bundled together.
     #[deref]
-    pub(super) inner: Arc<EthApiInner<N>>,
+    pub inner: Arc<BaseEthApiInner<N>>,
 }
 
 impl<N> Clone for EthApi<N>
@@ -142,7 +144,13 @@ where
 
 /// Container type `EthApi`
 #[expect(missing_debug_implementations)]
-pub struct EthApiInner<N: RpcNodeCore> {
+pub struct BaseEthApiInner<N: RpcNodeCore> {
+    /// Configured sequencer transaction forwarder.
+    pub sequencer_client: Option<SequencerClient>,
+    /// Minimum priority fee for Base gas suggestions.
+    pub min_suggested_priority_fee: U256,
+    /// Validated BaseTime timestamp cache.
+    pub base_time: BaseTimeCache,
     /// The components of the node.
     components: N,
     /// All configured Signers
@@ -207,7 +215,7 @@ pub struct EthApiInner<N: RpcNodeCore> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<N> EthApiInner<N>
+impl<N> BaseEthApiInner<N>
 where
     N: RpcNodeCore,
 {
@@ -255,6 +263,9 @@ where
         task_spawner.spawn_critical_task("tx-batcher", processor);
 
         Self {
+            sequencer_client: None,
+            min_suggested_priority_fee: U256::from(1_000_000),
+            base_time: BaseTimeCache::default(),
             components,
             signers,
             eth_cache,
@@ -284,7 +295,7 @@ where
     }
 }
 
-impl<N> EthApiInner<N>
+impl<N> BaseEthApiInner<N>
 where
     N: RpcNodeCore,
 {

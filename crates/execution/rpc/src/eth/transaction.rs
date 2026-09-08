@@ -34,11 +34,11 @@ where
     BaseEthApiError: FromEvmError,
 {
     fn signers(&self) -> &SignersForRpc<Self::Provider> {
-        self.inner.eth_api.signers()
+        self.inner.signers()
     }
 
     fn send_raw_transaction_sync_timeout(&self) -> Duration {
-        self.inner.eth_api.send_raw_transaction_sync_timeout()
+        self.inner.send_raw_transaction_sync_timeout()
     }
 
     // Reth decodes and recovers raw RPC transactions into the pool's concrete transaction type
@@ -70,7 +70,7 @@ where
         );
 
         // broadcast raw transaction to subscribers if there is any.
-        self.eth_api().broadcast_raw_transaction(tx.clone());
+        self.inner.broadcast_raw_transaction(tx.clone());
 
         // On Base, transactions are forwarded directly to the sequencer to be included in
         // blocks that it builds.
@@ -81,7 +81,7 @@ where
                 })?;
 
             // Retain tx in local tx pool after forwarding, for local RPC usage.
-            let _ = self.inner.eth_api.add_pool_transaction(origin, pool_transaction).await.inspect_err(|err| {
+            let _ = self.inner.add_pool_transaction(origin, pool_transaction).await.inspect_err(|err| {
                 warn!(target: "rpc::eth", error = %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
             });
 

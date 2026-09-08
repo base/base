@@ -7,30 +7,71 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub mod config;
-pub mod debug;
-pub mod engine;
-pub mod error;
-pub mod eth;
-pub mod metrics;
-pub mod miner;
-pub mod sequencer;
-pub mod state;
+mod config;
+
+pub use config::*;
+mod debug;
+pub use debug::*;
+mod engine;
+pub use engine::*;
+mod error;
+pub use error::*;
+mod eth;
+pub use eth::*;
+mod metrics;
+pub use metrics::*;
+mod miner;
+pub use miner::*;
+mod sequencer;
+pub use sequencer::*;
+mod state;
+pub use state::*;
 mod trace_middleware;
 pub use trace_middleware::{
     InboundOtelContext, OtelHttpMiddleware, OtelHttpMiddlewareLayer, OtelRpcMiddleware,
     OtelRpcMiddlewareLayer,
 };
-pub mod witness;
+mod witness;
+pub use witness::*;
 
-pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
-#[cfg(feature = "client")]
-pub use engine::BaseEngineApiClient;
-pub use engine::{BaseEngineApi, BaseEngineApiServer, ENGINE_CAPABILITIES};
-pub use error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};
-pub use eth::{BaseEthApi, BaseEthApiBuilder, BaseReceiptBuilder, BaseTimeCache};
-pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics};
-#[cfg(feature = "client")]
-pub use miner::MinerApiExtClient;
-pub use miner::MinerApiExtServer;
-pub use sequencer::{SequencerClient, SequencerClientInner};
+mod rpc;
+pub use rpc::*;
+
+mod core_debug;
+pub use core_debug::*;
+
+mod otterscan;
+pub use otterscan::*;
+
+mod admin;
+pub use admin::*;
+
+mod web3;
+pub use web3::*;
+
+mod eth_backend;
+pub use eth_backend::*;
+
+mod core_engine;
+pub use core_engine::*;
+
+mod trace;
+pub use trace::*;
+
+mod net;
+pub use net::*;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
+mod txpool;
+pub use txpool::*;
+
+mod validation;
+pub use validation::*;
+
+mod reth;
+pub use reth::*;
+
+mod core_miner;
+pub use core_miner::*;

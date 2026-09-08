@@ -58,7 +58,6 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
 [dev-dependencies]
-reth-rpc = { workspace = true }
 reth-trie = { workspace = true }
 reth-trie-db = { workspace = true }
 alloy-network = { workspace = true }
@@ -68,6 +67,7 @@ reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
+base-execution-rpc = { workspace = true }
 base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
@@ -120,7 +120,7 @@ js-tracer = [
     "base-node-core/js-tracer",
     "reth-node-builder/js-tracer",
     "reth-rpc-eth-types/js-tracer",
-    "reth-rpc/js-tracer",
+    "base-execution-rpc/js-tracer",
 ]
 test-utils = [
     "alloy-genesis",

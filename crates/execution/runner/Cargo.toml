@@ -28,7 +28,6 @@ reth-node-core = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
-reth-tracing = { workspace = true, features = ["default"] }
 base-common-network = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }

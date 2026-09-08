@@ -20,12 +20,12 @@ where
 {
     #[inline]
     fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {
-        self.inner.eth_api.pending_block()
+        self.inner.pending_block()
     }
 
     #[inline]
     fn pending_block_kind(&self) -> PendingBlockKind {
-        self.inner.eth_api.pending_block_kind()
+        self.inner.pending_block_kind()
     }
 
     /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.

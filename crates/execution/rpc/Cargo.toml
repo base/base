@@ -12,71 +12,108 @@ description = "Ethereum RPC implementation for Base."
 workspace = true
 
 [dependencies]
-revm = {workspace = true}
+sha2 = { workspace = true }
 serde = { workspace = true }
 tower = { workspace = true }
-tracing = { workspace = true }
-reth-rpc = { workspace = true }
 thiserror = { workspace = true }
-alloy-eips = { workspace = true }
+itertools = { workspace = true }
+dyn-clone = { workspace = true }
 alloy-serde = { workspace = true }
 async-trait = { workspace = true }
+pin-project = { workspace = true }
 base-metrics = { workspace = true }
 reth-rpc-api = { workspace = true }
+alloy-signer = { workspace = true }
+reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-api = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
+base-state-api = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
-alloy-primitives = { workspace = true }
+alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-rpc-eth-api = { workspace = true }
+base-evm-context = { workspace = true }
+reth-network-api = { workspace = true }
 reth-payload-util = { workspace = true }
+reth-storage-errors = {workspace = true}
 opentelemetry-http = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
+reth-network-types = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 base-execution-trie = { workspace = true }
+alloy-rpc-types-mev = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-rpc-server-types = { workspace = true }
+alloy-rpc-types-trace = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
 reth-primitives-traits = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
+reth-engine-primitives = { workspace = true }
+alloy-rpc-types-txpool = { workspace = true }
 base-execution-chainspec = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-execution-consensus = { workspace = true }
 base-observability-events = { workspace = true }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true }
-tokio = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tracing = { workspace = true, features = ["attributes"]}
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+alloy-rpc-types = { workspace = true, features = ["eth"] }
+parking_lot = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "sync"] }
 opentelemetry = { workspace = true, features = ["default"] }
+alloy-dyn-abi = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
-derive_more = { workspace = true, features = ["constructor"] }
+revm-inspectors = { workspace = true, features = ["default"] }
+tracing-futures = { workspace = true, features = ["default"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"]}
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
+alloy-rpc-types-engine = { workspace = true, features = ["kzg"]}
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
-base-execution-evm = { workspace = true, features = ["default"] }
+reth-execution-types = { workspace = true, features = ["serde"] }
+alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
+base-evm-handler = { workspace = true, features = ["overrides"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
-base-execution-txpool = { workspace = true, features = ["default"] }
+reth-network-peers = { workspace = true, features = ["secp256k1"] }
+derive_more = { workspace = true, features = ["constructor", "full"] }
+base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-common-rpc-types = { workspace = true, features = ["default", "reth"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-execution-txpool = { workspace = true, features = ["default"], optional = false}
+revm = {workspace = true,features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit"]}
 [dev-dependencies]
+reth-db-api = { workspace = true }
+reth-testing-utils = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["client"] }
+alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["reth"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
+base-execution-txpool = { workspace = true, features = ["test-utils"]}
 base-execution-chainspec = { workspace = true, features = ["default"] }
 
 [features]
-default = [ "metrics" ]
-client = [
-	"jsonrpsee/async-client",
-	"jsonrpsee/client",
-	"reth-rpc-eth-api/client",
-]
+default = ["metrics"]
+client = ["jsonrpsee/async-client", "jsonrpsee/client", "reth-rpc-eth-api/client"]
 metrics = [
     "base-execution-payload-builder/metrics",
     "base-execution-trie/metrics",
@@ -85,3 +122,5 @@ metrics = [
     "dep:metrics",
     "base-execution-evm/metrics",
 ]
+test-utils = ["base-execution-evm/test-utils"]
+js-tracer = ["revm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer", "reth-rpc-eth-api/js-tracer"]

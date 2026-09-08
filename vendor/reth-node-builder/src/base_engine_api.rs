@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types::engine::ClientVersionV1;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadStore};
-use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
+use base_execution_rpc::{BaseEngineApi, ENGINE_CAPABILITIES};
 use reth_node_api::{AddOnsContext, FullNodeComponents};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_rpc_engine_api::{EngineApi, EngineCapabilities};

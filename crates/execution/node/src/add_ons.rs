@@ -1,9 +1,7 @@
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::{
-    config::{BaseEthConfigApiServer, BaseEthConfigHandler},
-    eth::{BaseEthApiBuilder, BaseNodeEthApi},
-    miner::{BaseMinerExtApi, MinerApiExtServer},
-    witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
+    BaseDebugWitnessApi, BaseEthApiBuilder, BaseEthConfigApiServer, BaseEthConfigHandler,
+    BaseMinerExtApi, BaseNodeEthApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
 };
 use base_execution_txpool::{BasePooledTx, TransactionPool};
 use reth_node_api::{FullNodeComponents, NodeAddOns};

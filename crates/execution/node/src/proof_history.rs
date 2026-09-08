@@ -3,10 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
-use base_execution_rpc::{
-    debug::{DebugApiExt, DebugApiOverrideServer},
-    eth::proofs::{EthApiExt, EthApiOverrideServer},
-};
+use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
 use base_execution_trie::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
 };

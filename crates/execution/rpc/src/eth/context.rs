@@ -17,9 +17,9 @@ pub struct EthApiCtx<'a, N: FullNodeComponents> {
 }
 
 impl<'a, N: FullNodeComponents> EthApiCtx<'a, N> {
-    /// Provides a [`reth_rpc::EthApiBuilder`] with preconfigured config and components.
-    pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N> {
-        reth_rpc::EthApiBuilder::new_with_components(self.components.clone())
+    /// Provides a [`crate::EthApiBuilder`] with preconfigured config and components.
+    pub fn eth_api_builder(self) -> crate::EthApiBuilder<N> {
+        crate::EthApiBuilder::new_with_components(self.components.clone())
             .eth_cache(self.cache)
             .task_spawner(self.components.task_executor().clone())
             .gas_cap(self.config.rpc_gas_cap.into())

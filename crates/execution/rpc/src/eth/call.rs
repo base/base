@@ -26,21 +26,21 @@ where
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {
-        self.inner.eth_api.gas_cap()
+        self.inner.gas_cap()
     }
 
     #[inline]
     fn max_simulate_blocks(&self) -> u64 {
-        self.inner.eth_api.max_simulate_blocks()
+        self.inner.max_simulate_blocks()
     }
 
     #[inline]
     fn evm_memory_limit(&self) -> u64 {
-        self.inner.eth_api.evm_memory_limit()
+        self.inner.evm_memory_limit()
     }
 
     #[inline]
     fn compute_state_root_for_eth_simulate(&self) -> bool {
-        self.inner.eth_api.compute_state_root_for_eth_simulate()
+        self.inner.compute_state_root_for_eth_simulate()
     }
 }

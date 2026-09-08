@@ -342,7 +342,6 @@ alloy-hardforks-legacy = { path = "vendor/alloy-hardforks-legacy", default-featu
 reth-db = { path = "vendor/reth-db", default-features = false }
 reth-cli = { path = "vendor/reth-cli", default-features = false }
 reth-ipc = { path = "vendor/reth-ipc", default-features = false }
-reth-rpc = { path = "vendor/reth-rpc", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }

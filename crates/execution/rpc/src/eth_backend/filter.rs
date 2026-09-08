@@ -122,7 +122,7 @@ where
     /// # Create a filter service for an existing API
     ///
     /// ```no_run
-    /// use reth_rpc::EthFilter;
+    /// use crate::EthFilter;
     /// use reth_rpc_eth_api::EthApiTypes;
     /// use reth_tasks::Runtime;
     ///
@@ -1383,7 +1383,7 @@ mod tests {
     use reth_testing_utils::generators;
 
     use super::*;
-    use crate::eth::EthApi;
+    use crate::eth_backend::EthApi;
 
     #[test]
     fn test_block_range_iter() {

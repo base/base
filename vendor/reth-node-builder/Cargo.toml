@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 rayon = { workspace = true }
 fdlimit = { workspace = true }
-reth-rpc = { workspace = true }
 reth-exex = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-prune = { workspace = true }
@@ -91,7 +90,7 @@ base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = []
-js-tracer = ["reth-rpc/js-tracer", "reth-rpc-eth-types/js-tracer"]
+js-tracer = ["base-execution-rpc/js-tracer", "reth-rpc-eth-types/js-tracer"]
 test-utils = [
     "reth-db/test-utils",
     "reth-chain-state/test-utils",

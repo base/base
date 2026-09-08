@@ -63,4 +63,3 @@ pub use reth_node_core::cli::config::{
 };
 // re-export the core config for convenience
 pub use reth_node_core::node_config::NodeConfig;
-use reth_rpc as _;

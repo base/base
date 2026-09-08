@@ -1,8 +1,12 @@
 //! Base `eth_` endpoint implementation.
 
-pub mod proofs;
-pub mod receipt;
-pub mod transaction;
+mod proofs;
+
+pub use proofs::*;
+mod receipt;
+pub use receipt::*;
+mod transaction;
+pub use transaction::*;
 
 mod base_time;
 use base_execution_evm::BaseEvmConfig;
@@ -13,10 +17,7 @@ mod call;
 mod pending_block;
 mod pubsub;
 
-use std::{
-    fmt::{self, Formatter},
-    sync::Arc,
-};
+use std::{fmt, sync::Arc};
 
 use alloy_primitives::U256;
 use eyre::WrapErr;
@@ -24,7 +25,6 @@ pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_node_api::FullNodeComponents;
 mod context;
 pub use context::EthApiCtx;
-use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
     BaseRpcConverter, EthApiTypes, FromEvmError, FullEthApiServer, RpcNodeCore, RpcNodeCoreExt,
     helpers::{
@@ -38,24 +38,17 @@ use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
 
-use crate::{BaseEthApiError, SequencerClient};
-
-/// Adapter for [`EthApiInner`], which holds all the data required to serve core `eth_` API.
-pub type EthApiNodeBackend<N> = EthApiInner<N>;
+use crate::{BaseEthApiError, BaseEthApiInner, SequencerClient};
 
 /// Base `Eth` API implementation.
 ///
 /// This type provides the functionality for handling `eth_` related requests.
 ///
-/// This wraps a default `Eth` implementation, and provides additional functionality where the
-/// Base spec deviates from the default (ethereum) spec, e.g. transaction forwarding to the
-/// sequencer, receipts, additional RPC fields for transaction receipts.
-///
-/// This type implements the [`FullEthApi`](reth_rpc_eth_api::helpers::FullEthApi) by implemented
-/// all the `Eth` helper traits and prerequisite traits.
+/// Owns the shared backend services and Base transaction forwarding, fee policy, and timestamp
+/// cache used by the RPC endpoints.
 pub struct BaseEthApi<N: RpcNodeCore> {
     /// Gateway to node's core components.
-    inner: Arc<BaseEthApiInner<N>>,
+    pub inner: Arc<BaseEthApiInner<N>>,
 }
 
 impl<N: RpcNodeCore> Clone for BaseEthApi<N> {
@@ -67,17 +60,15 @@ impl<N: RpcNodeCore> Clone for BaseEthApi<N> {
 impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Creates a new `BaseEthApi`.
     pub fn new(
-        eth_api: EthApiNodeBackend<N>,
+        mut eth_api: BaseEthApiInner<N>,
         sequencer_client: Option<SequencerClient>,
         min_suggested_priority_fee: U256,
         base_time: BaseTimeCache,
     ) -> Self {
-        let inner = Arc::new(BaseEthApiInner {
-            eth_api,
-            sequencer_client,
-            min_suggested_priority_fee,
-            base_time,
-        });
+        eth_api.sequencer_client = sequencer_client;
+        eth_api.min_suggested_priority_fee = min_suggested_priority_fee;
+        eth_api.base_time = base_time;
+        let inner = Arc::new(eth_api);
         Self { inner }
     }
 
@@ -86,13 +77,9 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         BaseEthApiBuilder::new()
     }
 
-    /// Returns a reference to the [`EthApiNodeBackend`].
-    pub fn eth_api(&self) -> &EthApiNodeBackend<N> {
-        self.inner.eth_api()
-    }
     /// Returns the configured sequencer client, if any.
     pub fn sequencer_client(&self) -> Option<&SequencerClient> {
-        self.inner.sequencer_client()
+        self.inner.sequencer_client.as_ref()
     }
 
     /// Returns the shared cache of validated `BaseTime` timestamps.
@@ -106,7 +93,7 @@ where
     N: RpcNodeCore,
 {
     fn converter(&self) -> &BaseRpcConverter<Self::Provider> {
-        self.inner.eth_api.converter()
+        self.inner.converter()
     }
 }
 
@@ -121,22 +108,22 @@ where
 
     #[inline]
     fn pool(&self) -> &Self::Pool {
-        self.inner.eth_api.pool()
+        self.inner.pool()
     }
 
     #[inline]
     fn evm_config(&self) -> &BaseEvmConfig {
-        self.inner.eth_api.evm_config()
+        self.inner.evm_config()
     }
 
     #[inline]
     fn network(&self) -> &Self::Network {
-        self.inner.eth_api.network()
+        self.inner.network()
     }
 
     #[inline]
     fn provider(&self) -> &Self::Provider {
-        self.inner.eth_api.provider()
+        self.inner.provider()
     }
 }
 
@@ -146,7 +133,7 @@ where
 {
     #[inline]
     fn cache(&self) -> &EthStateCache {
-        self.inner.eth_api.cache()
+        self.inner.cache()
     }
 }
 
@@ -156,7 +143,7 @@ where
 {
     #[inline]
     fn starting_block(&self) -> U256 {
-        self.inner.eth_api.starting_block()
+        self.inner.starting_block()
     }
 }
 
@@ -166,22 +153,22 @@ where
 {
     #[inline]
     fn io_task_spawner(&self) -> &Runtime {
-        self.inner.eth_api.task_spawner()
+        self.inner.task_spawner()
     }
 
     #[inline]
     fn tracing_task_pool(&self) -> &BlockingTaskPool {
-        self.inner.eth_api.blocking_task_pool()
+        self.inner.blocking_task_pool()
     }
 
     #[inline]
     fn tracing_task_guard(&self) -> &BlockingTaskGuard {
-        self.inner.eth_api.blocking_task_guard()
+        self.inner.blocking_task_guard()
     }
 
     #[inline]
     fn blocking_io_task_guard(&self) -> &Arc<tokio::sync::Semaphore> {
-        self.inner.eth_api.blocking_io_request_semaphore()
+        self.inner.blocking_io_request_semaphore()
     }
 }
 
@@ -192,17 +179,16 @@ where
 {
     #[inline]
     fn gas_oracle(&self) -> &GasPriceOracle<Self::Provider> {
-        self.inner.eth_api.gas_oracle()
+        self.inner.gas_oracle()
     }
 
     #[inline]
     fn fee_history_cache(&self) -> &FeeHistoryCache {
-        self.inner.eth_api.fee_history_cache()
+        self.inner.fee_history_cache()
     }
 
     async fn suggested_priority_fee(&self) -> Result<U256, BaseEthApiError> {
         self.inner
-            .eth_api
             .gas_oracle()
             .op_suggest_tip_cap(self.inner.min_suggested_priority_fee)
             .await
@@ -224,7 +210,7 @@ where
 {
     #[inline]
     fn max_proof_window(&self) -> u64 {
-        self.inner.eth_api.eth_proof_window()
+        self.inner.eth_proof_window()
     }
 }
 
@@ -252,39 +238,6 @@ where
 impl<N: RpcNodeCore> fmt::Debug for BaseEthApi<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseEthApi").finish_non_exhaustive()
-    }
-}
-
-/// Container type `BaseEthApi`
-pub struct BaseEthApiInner<N: RpcNodeCore> {
-    /// Gateway to node's core components.
-    eth_api: EthApiNodeBackend<N>,
-    /// Sequencer client, configured to forward submitted transactions to sequencer of the given
-    /// Base network.
-    sequencer_client: Option<SequencerClient>,
-    /// Minimum priority fee enforced by rollup-specific logic.
-    ///
-    /// See also <https://github.com/ethereum-optimism/op-geth/blob/d4e0fe9bb0c2075a9bff269fb975464dd8498f75/eth/gasprice/optimism-gasprice.go#L38-L38>
-    min_suggested_priority_fee: U256,
-    /// Shared cache of validated `BaseTime` timestamps.
-    base_time: BaseTimeCache,
-}
-
-impl<N: RpcNodeCore> fmt::Debug for BaseEthApiInner<N> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BaseEthApiInner").finish()
-    }
-}
-
-impl<N: RpcNodeCore> BaseEthApiInner<N> {
-    /// Returns a reference to the [`EthApiNodeBackend`].
-    const fn eth_api(&self) -> &EthApiNodeBackend<N> {
-        &self.eth_api
-    }
-
-    /// Returns the configured sequencer client, if any.
-    const fn sequencer_client(&self) -> Option<&SequencerClient> {
-        self.sequencer_client.as_ref()
     }
 }
 

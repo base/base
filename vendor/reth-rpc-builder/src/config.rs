@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, path::PathBuf};
 
+use base_execution_rpc::ValidationApiConfig;
 use jsonrpsee::server::ServerConfigBuilder;
 use reth_node_core::{args::RpcServerArgs, utils::get_or_create_jwt_secret_from_path};
-use reth_rpc::ValidationApiConfig;
 use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig, GasPriceOracleConfig};
 use reth_rpc_layer::{JwtError, JwtSecret};
 use reth_rpc_server_types::RpcModuleSelection;

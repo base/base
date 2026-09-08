@@ -17,7 +17,7 @@ use base_execution_rpc::BaseEngineApiClient;
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
-use reth_tracing::tracing::debug;
+use tracing::debug;
 use url::Url;
 
 use crate::test_utils::DEFAULT_JWT_SECRET;

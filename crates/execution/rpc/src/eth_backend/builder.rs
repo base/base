@@ -16,11 +16,11 @@ use reth_rpc_server_types::constants::{
 };
 use reth_tasks::{Runtime, pool::BlockingTaskPool};
 
-use crate::{EthApi, eth::core::EthApiInner};
+use crate::{EthApi, eth_backend::core::BaseEthApiInner};
 
 /// A helper to build the `EthApi` handler instance.
 ///
-/// This builder type contains all settings to create an [`EthApiInner`] or an [`EthApi`] instance
+/// This builder type contains all settings to create an [`BaseEthApiInner`] or an [`EthApi`] instance
 /// directly.
 #[derive(Debug)]
 pub struct EthApiBuilder<N: RpcNodeCore> {
@@ -329,7 +329,7 @@ where
         self
     }
 
-    /// Builds the [`EthApiInner`] instance.
+    /// Builds the [`BaseEthApiInner`] instance.
     ///
     /// If not configured, this will spawn the cache backend: [`EthStateCache::spawn_with`].
     ///
@@ -337,7 +337,7 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build_inner(self) -> EthApiInner<N> {
+    pub fn build_inner(self) -> BaseEthApiInner<N> {
         let Self {
             components,
             rpc_converter,
@@ -385,7 +385,7 @@ where
             },
         );
 
-        EthApiInner::new(
+        BaseEthApiInner::new(
             components,
             eth_cache,
             gas_oracle,

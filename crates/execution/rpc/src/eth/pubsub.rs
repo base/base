@@ -13,7 +13,7 @@ where
     N: RpcNodeCore,
 {
     fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
-        let converter = self.eth_api().converter();
+        let converter = self.inner.converter();
         let base_time = self.base_time_cache().clone();
         self.provider().canonical_state_stream().flat_map(move |new_chain| {
             let headers = new_chain

@@ -36,6 +36,10 @@ use base_common_rpc_types::{
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_rpc::{
+    AdminApi, DebugApi, EngineEthApi, EthApiBuilder, EthBundle, MinerApi, NetApi, OtterscanApi,
+    RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
+};
 use base_execution_txpool::{NoopTransactionPool, TransactionPool};
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
@@ -55,10 +59,6 @@ pub use reth_ipc::server::{
     Builder as IpcServerBuilder, RpcServiceBuilder as IpcRpcServiceBuilder,
 };
 use reth_network_api::{NetworkInfo, Peers, noop::NoopNetwork};
-use reth_rpc::{
-    AdminApi, DebugApi, EngineEthApi, EthApiBuilder, EthBundle, MinerApi, NetApi, OtterscanApi,
-    RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
-};
 use reth_rpc_api::servers::*;
 use reth_rpc_engine_api::RethEngineApi;
 use reth_rpc_eth_api::{
@@ -99,11 +99,11 @@ pub use eth::EthHandlers;
 
 // Rpc server metrics
 mod metrics;
+use base_execution_rpc::EthSimBundle;
 pub use metrics::{MeteredBatchRequestsFuture, MeteredRequestFuture, RpcRequestMetricsService};
 use reth_chain_state::{
     CanonStateSubscriptions, ForkChoiceSubscriptions, PersistedBlockSubscriptions,
 };
-use reth_rpc::eth::sim_bundle::EthSimBundle;
 
 use crate::middleware::RethRpcMiddleware;
 

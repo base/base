@@ -1,4 +1,4 @@
-use reth_rpc::{EthFilter, EthPubSub};
+use base_execution_rpc::{EthFilter, EthPubSub};
 use reth_rpc_eth_api::EthApiTypes;
 use reth_rpc_eth_types::EthConfig;
 use reth_tasks::Runtime;

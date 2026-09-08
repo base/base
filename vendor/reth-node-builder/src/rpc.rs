@@ -9,7 +9,10 @@ use std::{
 
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
-use base_execution_rpc::eth::{BaseEthApiBuilder, BaseNodeEthApi, EthApiCtx};
+use base_execution_rpc::{
+    AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, EthApiTypes,
+    FullEthApiServer,
+};
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
@@ -19,10 +22,6 @@ use reth_chain_state::CanonStateSubscriptions;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{AddOnsContext, FullNodeComponents, NodeAddOns, TreeConfig};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
-use reth_rpc::{
-    AdminApi,
-    eth::{DevSigner, EthApiTypes, FullEthApiServer},
-};
 use reth_rpc_api::eth::helpers::EthTransactions;
 pub use reth_rpc_builder::{
     Identity, Stack,
@@ -251,7 +250,7 @@ pub struct RpcModuleContainer<'a, Node: FullNodeComponents, EthApi: EthApiTypes>
 /// [`AuthRpcModule`].
 ///
 /// This can be used to access installed modules, or create commonly used handlers like
-/// [`reth_rpc::eth::EthApi`], and ultimately merge additional rpc handler into the configured
+/// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`] as well as configured authenticated methods
 /// [`AuthRpcModule`].
 #[expect(missing_debug_implementations)]

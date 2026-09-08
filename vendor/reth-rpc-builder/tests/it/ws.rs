@@ -159,7 +159,8 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
 
     reth_tracing::init_test_tracing();
 
-    let pool: reth_rpc::test_utils::TestPool = reth_rpc::test_utils::RpcTestUtils::pool();
+    let pool: base_execution_rpc::test_utils::TestPool =
+        base_execution_rpc::test_utils::RpcTestUtils::pool();
     let pool_clone = pool.clone();
 
     let builder = RpcModuleBuilder::default()
@@ -204,12 +205,13 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         },
         alloy_primitives::Signature::test_signature(),
     );
-    let tx = <reth_rpc::test_utils::TestPool as TransactionPool>::Transaction::from_pooled(
-        alloy_consensus::transaction::Recovered::new_unchecked(
-            base_common_consensus::BasePooledTransaction::from(signed),
-            alloy_primitives::Address::ZERO,
-        ),
-    );
+    let tx =
+        <base_execution_rpc::test_utils::TestPool as TransactionPool>::Transaction::from_pooled(
+            alloy_consensus::transaction::Recovered::new_unchecked(
+                base_common_consensus::BasePooledTransaction::from(signed),
+                alloy_primitives::Address::ZERO,
+            ),
+        );
     let expected_hash = *tx.hash();
     pool_clone.add_transaction(TransactionOrigin::External, tx).await.unwrap();
 
