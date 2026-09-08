@@ -145,6 +145,14 @@ impl ProposerService {
             Arc::clone(&factory_client),
             config.game_type,
         ));
+        let anchor_block = anchor_registry.anchor_snapshot().await?.anchor_root.l2_block_number;
+        let startup_intervals = intervals.for_starting_block(anchor_block).await?;
+        info!(
+            anchor_block,
+            block_interval = startup_intervals.block_interval,
+            intermediate_block_interval = startup_intervals.intermediate_block_interval,
+            "Validated proposal interval resolver"
+        );
         let submit_timeout =
             config.tx_manager.as_ref().map_or(Some(DEFAULT_SUBMIT_TIMEOUT), |tx| {
                 (!tx.tx_send_timeout.is_zero())

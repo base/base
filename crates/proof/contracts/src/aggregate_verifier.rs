@@ -253,6 +253,7 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// Cobalt switches the verifier to a shorter cadence at a fixed L2 block, so
     /// the pair is a function of the game's starting block. Callers must resolve
     /// it per game rather than reading `BLOCK_INTERVAL` once at startup.
+    /// Legacy implementations fall back to their fixed interval getters.
     async fn read_intervals_for_starting_block(
         &self,
         impl_address: Address,
@@ -488,10 +489,25 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
     ) -> Result<(u64, u64), ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
-        let result = contract_call!(
+        let result = match contract_call!(
             contract.intervalsForStartingBlock(U256::from(starting_block)).call(),
             "intervalsForStartingBlock failed"
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error) if error.is_missing_method() => {
+                let (block_interval, intermediate_block_interval) = futures::try_join!(
+                    self.read_block_interval(impl_address),
+                    self.read_intermediate_block_interval(impl_address),
+                )?;
+                if !block_interval.is_multiple_of(intermediate_block_interval) {
+                    return Err(ContractError::validation(format!(
+                        "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+                    )));
+                }
+                return Ok((block_interval, intermediate_block_interval));
+            }
+            Err(error) => return Err(error),
+        };
 
         let block_interval: u64 = result
             ._0
