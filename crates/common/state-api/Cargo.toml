@@ -46,6 +46,7 @@ arbitrary = {workspace = true, optional = true, features = ["derive"]}
 reth-codecs = {workspace = true, optional = true, features = ["alloy"]}
 [dev-dependencies]
 proptest = {workspace = true}
+mockall = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 serde = {workspace = true, features = ["derive"]}
 arbitrary = {workspace = true, features = ["derive"]}

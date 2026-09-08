@@ -11,12 +11,13 @@ use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{CachedReads, CancelOnDrop};
+use base_execution_evm::CancelOnDrop;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, PayloadAttributes,
     PayloadBuilderError, PayloadKind,
 };
 use base_execution_txpool::BasePooledTx;
+use base_state_api::CachedReads;
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;

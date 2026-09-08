@@ -63,8 +63,6 @@ pub use alloy_evm::{
 mod next_block;
 pub use next_block::NextBlockEnvAttributes;
 
-mod cached;
-pub use cached::{CachedAccount, CachedReads, CachedReadsDBRef, CachedReadsDbMut};
 mod cancelled;
 pub use cancelled::{CancelOnDrop, ManualCancel};
 #[cfg(feature = "witness")]

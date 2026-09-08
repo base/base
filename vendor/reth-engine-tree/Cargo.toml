@@ -26,6 +26,7 @@ alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
 reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
+base-state-api = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-storage-api = { workspace = true }

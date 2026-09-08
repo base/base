@@ -1,4 +1,4 @@
-use core::convert::Infallible;
+use core::{cell::RefCell, convert::Infallible};
 use std::vec::Vec;
 
 use auto_impl::auto_impl;
@@ -151,6 +151,36 @@ pub trait DatabaseRef {
 
     /// Gets block hash by block number.
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error>;
+}
+
+/// Interior mutability lets a mutable cache serve immutable database reads.
+impl<DB: Database> DatabaseRef for RefCell<DB> {
+    type Error = DB::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.borrow_mut().basic(address)
+    }
+
+    fn code_by_hash_ref(&self, hash: B256) -> Result<Bytecode, Self::Error> {
+        self.borrow_mut().code_by_hash(hash)
+    }
+
+    fn storage_ref(&self, address: Address, key: StorageKey) -> Result<StorageValue, Self::Error> {
+        self.borrow_mut().storage(address, key)
+    }
+
+    fn storage_by_account_id_ref(
+        &self,
+        address: Address,
+        id: AccountId,
+        key: StorageKey,
+    ) -> Result<StorageValue, Self::Error> {
+        self.borrow_mut().storage_by_account_id(address, id, key)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.borrow_mut().block_hash(number)
+    }
 }
 
 /// Wraps a [`DatabaseRef`] to provide a [`Database`] implementation.

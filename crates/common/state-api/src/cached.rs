@@ -1,15 +1,18 @@
-//! Database adapters for payload building.
+//! Shared reads cached across repeated execution and speculative prewarming.
 use core::cell::RefCell;
 
 use alloy_primitives::{
     Address, B256, U256,
     map::{AddressMap, B256Map, Entry, HashMap, U256Map},
 };
-use revm::{Database, DatabaseRef, bytecode::Bytecode, state::AccountInfo};
+use revm_bytecode::Bytecode;
+use revm_state::AccountInfo;
+
+use crate::{Database, DatabaseRef};
 
 /// A container type that caches reads from an underlying [`DatabaseRef`].
 ///
-/// This is intended to be used in conjunction with `revm::db::State`
+/// This is intended to be used in conjunction with an execution state cache
 /// during payload building which repeatedly accesses the same data.
 ///
 /// [`CachedReads::as_db_mut`] transforms this type into a [`Database`] implementation that uses
@@ -18,16 +21,16 @@ use revm::{Database, DatabaseRef, bytecode::Bytecode, state::AccountInfo};
 /// # Example
 ///
 /// ```
-/// use base_execution_evm::CachedReads;
-/// use revm::{DatabaseRef, database::State};
+/// use base_state_api::{CachedReads, Database, DatabaseRef};
+/// use alloy_primitives::Address;
 ///
 /// fn build_payload<DB: DatabaseRef>(db: DB) {
 ///     let mut cached_reads = CachedReads::default();
-///     let db = cached_reads.as_db_mut(db);
+///     let mut db = cached_reads.as_db_mut(db);
 ///     // this is `Database` and can be used to build a payload, it never commits to `CachedReads` or the underlying database, but all reads from the underlying database are cached in `CachedReads`.
 ///     // Subsequent payload build attempts can use cached reads and avoid hitting the underlying database.
 ///     // Note: `cached_reads` must outlive `db` to satisfy lifetime requirements.
-///     let state = State::builder().with_database(db).build();
+///     let _account = db.basic(Address::ZERO);
 /// }
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -52,8 +55,8 @@ impl CachedReads {
     }
 
     /// Gets a [`DatabaseRef`] that will cache reads from the given database.
-    pub const fn as_db<DB>(&mut self, db: DB) -> CachedReadsDBRef<'_, DB> {
-        self.as_db_mut(db).into_db()
+    pub const fn as_db<DB>(&mut self, db: DB) -> RefCell<CachedReadsDbMut<'_, DB>> {
+        RefCell::new(self.as_db_mut(db))
     }
 
     /// Gets a mutable [`Database`] that will cache reads from the underlying database.
@@ -87,28 +90,6 @@ pub struct CachedReadsDbMut<'a, DB> {
     pub cached: &'a mut CachedReads,
     /// The underlying database.
     pub db: DB,
-}
-
-impl<'a, DB> CachedReadsDbMut<'a, DB> {
-    /// Converts this [`Database`] implementation into a [`DatabaseRef`] that will still cache
-    /// reads.
-    pub const fn into_db(self) -> CachedReadsDBRef<'a, DB> {
-        CachedReadsDBRef { inner: RefCell::new(self) }
-    }
-
-    /// Returns access to wrapped [`DatabaseRef`].
-    pub const fn inner(&self) -> &DB {
-        &self.db
-    }
-}
-
-impl<DB, T> AsRef<T> for CachedReadsDbMut<'_, DB>
-where
-    DB: AsRef<T>,
-{
-    fn as_ref(&self) -> &T {
-        self.inner().as_ref()
-    }
 }
 
 impl<DB: DatabaseRef> Database for CachedReadsDbMut<'_, DB> {
@@ -164,41 +145,6 @@ impl<DB: DatabaseRef> Database for CachedReadsDbMut<'_, DB> {
     }
 }
 
-/// A [`DatabaseRef`] that caches reads inside [`CachedReads`].
-///
-/// This is intended to be used as the [`DatabaseRef`] for
-/// `revm::db::State` for repeated payload build jobs.
-///
-/// The lifetime parameter `'a` matches the lifetime of the underlying [`CachedReadsDbMut`],
-/// which in turn is tied to the [`CachedReads`] cache. [`RefCell`] is used here to provide
-/// interior mutability for the [`DatabaseRef`] trait (which requires `&self`), while the
-/// lifetime ensures the cache remains valid throughout the wrapper's usage.
-#[derive(Debug)]
-pub struct CachedReadsDBRef<'a, DB> {
-    /// The inner cache reads db mut.
-    pub inner: RefCell<CachedReadsDbMut<'a, DB>>,
-}
-
-impl<DB: DatabaseRef> DatabaseRef for CachedReadsDBRef<'_, DB> {
-    type Error = <DB as DatabaseRef>::Error;
-
-    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.inner.borrow_mut().basic(address)
-    }
-
-    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.inner.borrow_mut().code_by_hash(code_hash)
-    }
-
-    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.inner.borrow_mut().storage(address, index)
-    }
-
-    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        self.inner.borrow_mut().block_hash(number)
-    }
-}
-
 /// Cached account contains the account state with storage
 /// but lacks the account status.
 #[derive(Debug, Clone)]
@@ -210,14 +156,82 @@ pub struct CachedAccount {
 }
 
 impl CachedAccount {
-    fn new(info: Option<AccountInfo>) -> Self {
+    /// Creates an account entry with no cached storage slots.
+    pub fn new(info: Option<AccountInfo>) -> Self {
         Self { info, storage: U256Map::default() }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
+    use alloy_primitives::Bytes;
+    use mockall::predicate::eq;
+
     use super::*;
+
+    mockall::mock! {
+        pub Source {}
+        impl DatabaseRef for Source {
+            type Error = Infallible;
+            fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Infallible>;
+            fn code_by_hash_ref(&self, hash: B256) -> Result<Bytecode, Infallible>;
+            fn storage_ref(&self, address: Address, key: U256) -> Result<U256, Infallible>;
+            fn block_hash_ref(&self, number: u64) -> Result<B256, Infallible>;
+        }
+    }
+
+    #[test]
+    fn mutable_and_immutable_reads_share_cached_values() {
+        let address = Address::repeat_byte(1);
+        let hash = B256::repeat_byte(2);
+        let block_hash = B256::repeat_byte(3);
+        let account = AccountInfo { nonce: 7, ..Default::default() };
+        let code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+        let mut source = MockSource::new();
+        let loaded_account = account.clone();
+        source
+            .expect_basic_ref()
+            .with(eq(address))
+            .once()
+            .returning(move |_| Ok(Some(loaded_account.clone())));
+        let loaded_code = code.clone();
+        source
+            .expect_code_by_hash_ref()
+            .with(eq(hash))
+            .once()
+            .returning(move |_| Ok(loaded_code.clone()));
+        source
+            .expect_storage_ref()
+            .with(eq(address), eq(U256::from(9)))
+            .once()
+            .returning(|_, _| Ok(U256::from(11)));
+        source.expect_block_hash_ref().with(eq(12)).once().returning(move |_| Ok(block_hash));
+        let mut cache = CachedReads::default();
+        {
+            let mut db = cache.as_db_mut(&source);
+            assert_eq!(db.basic(address).unwrap(), Some(account.clone()));
+            assert_eq!(db.code_by_hash(hash).unwrap(), code);
+            assert_eq!(db.storage(address, U256::from(9)).unwrap(), U256::from(11));
+            assert_eq!(db.block_hash(12).unwrap(), block_hash);
+        }
+        let db = cache.as_db(&source);
+        assert_eq!(db.basic_ref(address).unwrap(), Some(account));
+        assert_eq!(db.code_by_hash_ref(hash).unwrap(), code);
+        assert_eq!(db.storage_ref(address, U256::from(9)).unwrap(), U256::from(11));
+        assert_eq!(db.block_hash_ref(12).unwrap(), block_hash);
+    }
+
+    #[test]
+    fn missing_accounts_are_cached() {
+        let mut source = MockSource::new();
+        source.expect_basic_ref().with(eq(Address::ZERO)).once().returning(|_| Ok(None));
+        let mut cache = CachedReads::default();
+        let db = cache.as_db(&source);
+        assert!(db.basic_ref(Address::ZERO).unwrap().is_none());
+        assert!(db.basic_ref(Address::ZERO).unwrap().is_none());
+    }
 
     #[test]
     fn test_extend_with_two_cached_reads() {
