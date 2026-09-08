@@ -2,11 +2,10 @@
 
 use std::{ffi::OsString, fmt, path::PathBuf, sync::Arc};
 
+use base_cli_utils::{ChainSpecParser, CliContext};
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::NodeBuilder;
 use clap::{Args, Parser, value_parser};
-use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_runner::CliContext;
 use reth_db::init_db;
 use reth_node_core::{
     args::{

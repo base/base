@@ -2,10 +2,9 @@
 
 use std::sync::Arc;
 
+use base_cli_utils::{ChainSpecParser, CliContext};
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_runner::CliContext;
 
 use crate::common::CliNodeComponents;
 

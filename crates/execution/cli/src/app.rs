@@ -1,11 +1,11 @@
 use std::{fmt, sync::Arc};
 
+use base_cli_utils::CliRunner;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use eyre::{Result, eyre};
 use reth_cli_commands::launcher::Launcher;
-use reth_cli_runner::CliRunner;
 use reth_node_core::args::{OtlpInitStatus, OtlpLogsStatus};
 use reth_node_metrics::recorder::install_prometheus_recorder;
 use reth_rpc_server_types::RpcModuleValidator;

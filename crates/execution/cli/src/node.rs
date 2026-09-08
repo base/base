@@ -2,12 +2,12 @@
 
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
+use base_cli_utils::CliContext;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::NodeBuilder;
 use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
-use reth_cli_runner::CliContext;
 use reth_db::init_db;
 use reth_node_core::{
     args::{

@@ -19,7 +19,6 @@ workspace = true
 tracing = { workspace = true }
 base-cli-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
-reth-cli-runner = { workspace = true }
 base-builder-cli = { workspace = true }
 base-node-runner = { workspace = true }
 reth-cli-commands = { workspace = true }

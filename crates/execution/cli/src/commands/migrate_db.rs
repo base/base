@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use base_alloy_consensus::OpPrimitives;
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::{BaseChainSpec, OpChainSpec};
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 
 /// Migrate storage from v1 (MDBX-only) to v2 (MDBX + `RocksDB` + static files).
 #[derive(Debug, Parser)]

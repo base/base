@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_provider::BlockHashReader;
 use tracing::info;
 

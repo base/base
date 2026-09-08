@@ -1,15 +1,3 @@
-//! A tokio based CLI runner.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-//! Entrypoint for running commands.
-
 use std::{future::Future, pin::pin, sync::mpsc, time::Duration};
 
 use reth_tasks::{PanickedTaskError, TaskExecutor};
@@ -178,7 +166,7 @@ impl CliRunner {
 }
 
 /// Extracts the task manager handle from the runtime and creates the [`CliContext`].
-fn cli_context(
+pub fn cli_context(
     runtime: &reth_tasks::Runtime,
 ) -> (CliContext, JoinHandle<Result<(), PanickedTaskError>>) {
     let handle =
@@ -229,7 +217,7 @@ impl CliRunnerConfig {
 /// Runs the given future to completion or until a critical task panicked.
 ///
 /// Returns the error if a task panicked, or the given future returned an error.
-async fn run_to_completion_or_panic<F, E>(
+pub async fn run_to_completion_or_panic<F, E>(
     task_manager_handle: JoinHandle<Result<(), PanickedTaskError>>,
     fut: F,
 ) -> Result<(), E>
@@ -252,7 +240,7 @@ where
 /// Runs the future to completion or until:
 /// - `ctrl-c` is received.
 /// - `SIGTERM` is received (unix only).
-async fn run_until_ctrl_c<F, E>(fut: F) -> Result<(), E>
+pub async fn run_until_ctrl_c<F, E>(fut: F) -> Result<(), E>
 where
     F: Future<Output = Result<(), E>>,
     E: Send + Sync + 'static + From<std::io::Error>,
@@ -301,7 +289,7 @@ const DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// Dropping the runtime on the current thread could block due to tokio pool teardown.
 /// Instead, we drop it on a separate thread and optionally wait for completion.
-fn runtime_shutdown(rt: reth_tasks::Runtime, wait: bool) {
+pub fn runtime_shutdown(rt: reth_tasks::Runtime, wait: bool) {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("rt-shutdown".to_string())

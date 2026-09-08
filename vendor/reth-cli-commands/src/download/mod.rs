@@ -101,6 +101,7 @@ use std::{
 
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use archive::run_modular_downloads;
+use base_cli_utils::ChainSpecParser;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
 use extract::stream_and_extract;
@@ -109,7 +110,6 @@ use manifest::{ComponentSelection, SnapshotComponentType, SnapshotManifest};
 pub use planning::{DownloadPlan, DownloadPlanArchive};
 use planning::{PlannedDownloads, collect_planned_archives, summarize_download_startup};
 use progress::{DownloadProgress, DownloadRequestLimiter};
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_db::{Database, init_db};
 use reth_db_api::transaction::DbTx;

@@ -4,9 +4,9 @@ use base_execution_chainspec::BaseChainSpec;
 use clap::builder::TypedValueParser;
 
 #[derive(Debug, Clone)]
-struct Parser<C>(std::marker::PhantomData<C>);
+pub struct ChainSpecValueParser<C>(std::marker::PhantomData<C>);
 
-impl<C: ChainSpecParser> TypedValueParser for Parser<C> {
+impl<C: ChainSpecParser> TypedValueParser for ChainSpecValueParser<C> {
     type Value = Arc<BaseChainSpec>;
 
     fn parse_ref(
@@ -56,7 +56,7 @@ pub trait ChainSpecParser: Clone + Send + Sync + 'static {
 
     /// Produces a [`TypedValueParser`] for this chain spec parser.
     fn parser() -> impl TypedValueParser<Value = Arc<BaseChainSpec>> {
-        Parser(std::marker::PhantomData::<Self>)
+        ChainSpecValueParser(std::marker::PhantomData::<Self>)
     }
 
     /// Produces a help message for the chain spec argument.

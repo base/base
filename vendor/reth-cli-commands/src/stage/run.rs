@@ -5,11 +5,10 @@
 use std::{any::Any, net::SocketAddr, sync::Arc};
 
 use alloy_eips::BlockHashOrNumber;
+use base_cli_utils::{ChainSpecParser, CliContext};
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::metrics_hooks;
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_runner::CliContext;
 use reth_cli_util::get_secret_key;
 use reth_config::config::{HashingConfig, SenderRecoveryConfig, TransactionLookupConfig};
 use reth_downloaders::{

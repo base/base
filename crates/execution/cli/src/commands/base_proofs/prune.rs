@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
@@ -12,7 +13,6 @@ use base_node_core::{
     TWELVE_HOURS_IN_BLOCKS,
 };
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
 use tracing::info;

@@ -4,7 +4,7 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
-use base_node_core::{HasRollupArgs, RollupArgs};
+use base_node_core::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
@@ -398,12 +398,6 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
     }
 }
 
-impl HasRollupArgs for StandardNodeArgs {
-    fn rollup_args(&self) -> &RollupArgs {
-        &self.rpc.rollup_args
-    }
-}
-
 impl From<&StandardNodeArgs> for TxForwardingConfig {
     fn from(args: &StandardNodeArgs) -> Self {
         if !args.rpc.enable_tx_forwarding || args.rpc.builder_rpc_urls.is_empty() {
@@ -422,14 +416,6 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
 pub struct StandardBaseRethNode;
 
 impl StandardBaseRethNode {
-    /// Applies a configured L1 upgrade signal to the execution chain spec before startup.
-    pub async fn apply_initial_upgrade_signal<A: HasRollupArgs + ?Sized>(
-        builder: BaseNodeBuilder,
-        args: &A,
-    ) -> eyre::Result<BaseNodeBuilder> {
-        Self::apply_initial_upgrade_signal_from_rollup_args(builder, args.rollup_args()).await
-    }
-
     /// Applies a configured L1 upgrade signal from rollup args before startup.
     pub async fn apply_initial_upgrade_signal_from_rollup_args(
         builder: BaseNodeBuilder,
@@ -587,7 +573,9 @@ impl StandardBaseRethNode {
 
     /// Launches the node and waits for it to exit.
     pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
-        let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
+        let builder =
+            Self::apply_initial_upgrade_signal_from_rollup_args(builder, &args.rpc.rollup_args)
+                .await?;
 
         Self::runner_with_version_metrics(args)?.run(builder).await
     }
@@ -735,12 +723,6 @@ mod tests {
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
         }
-    }
-
-    #[test]
-    fn standard_node_args_provides_embedded_rollup_args() {
-        let args = StandardNodeArgs::from(default_rpc_standard_node_args());
-        assert!(std::ptr::eq(args.rollup_args(), &args.rpc.rollup_args));
     }
 
     #[test]

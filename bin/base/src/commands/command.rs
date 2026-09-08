@@ -1,8 +1,8 @@
 //! Top-level command dispatch for the unified Base binary.
 
+use base_cli_utils::CliRunner;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use clap::Subcommand;
-use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{

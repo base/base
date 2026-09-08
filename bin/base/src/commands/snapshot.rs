@@ -1,11 +1,11 @@
 //! `base snapshot` subcommand group: snapshot manifest generation and download.
 
+use base_cli_utils::CliRunner;
 use base_execution_cli::{
     chainspec::BaseChainSpecParser,
     commands::{SnapshotManifestCommand, download},
 };
 use clap::{Parser, Subcommand};
-use reth_cli_runner::CliRunner;
 
 /// Snapshot manifest generation and download utilities.
 #[derive(Parser, Debug)]

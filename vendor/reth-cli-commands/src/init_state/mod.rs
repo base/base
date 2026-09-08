@@ -4,9 +4,9 @@ use std::{io::BufReader, path::PathBuf, sync::Arc};
 
 use alloy_consensus::BlockHeader as AlloyBlockHeader;
 use alloy_primitives::B256;
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_db_common::init::init_from_state_dump;
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::{

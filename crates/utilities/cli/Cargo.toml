@@ -14,20 +14,24 @@ workspace = true
 [dependencies]
 metrics = { workspace = true }
 dirs-next = { workspace = true }
+reth-tasks = { workspace = true }
+alloy-genesis = { workspace = true }
 reth-node-core = { workspace = true }
 tracing-appender = { workspace = true }
 opentelemetry_sdk = { workspace = true }
-tracing = { workspace = true, features = ["std"] }
+base-execution-chainspec = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
 tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 opentelemetry = { workspace = true, features = ["default"] }
-tokio = { workspace = true, features = ["default", "full"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
 metrics-process = { workspace = true, features = ["metrics-rs"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 reth-tracing-otlp = { workspace = true, optional = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full", "macros", "rt-multi-thread", "signal"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter", "json", "tracing-log"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
@@ -35,9 +39,6 @@ rstest = { workspace = true, features = ["default"] }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
 backtrace = { workspace = true, features = ["default"] }
+
 [features]
-otlp = [
-	"dep:reth-tracing-otlp",
-	"reth-node-core/otlp",
-	"reth-tracing-otlp/otlp",
-]
+otlp = ["dep:reth-tracing-otlp", "reth-node-core/otlp", "reth-tracing-otlp/otlp"]

@@ -340,7 +340,6 @@ alloy-hardforks-legacy = { path = "vendor/alloy-hardforks-legacy", default-featu
 
 # reth
 reth-db = { path = "vendor/reth-db", default-features = false }
-reth-cli = { path = "vendor/reth-cli", default-features = false }
 reth-ipc = { path = "vendor/reth-ipc", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
@@ -371,7 +370,6 @@ reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 reth-db-common = { path = "vendor/reth-db-common", default-features = false }
 reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
 reth-db-models = { path = "vendor/reth-db-models", default-features = false }
-reth-cli-runner = { path = "vendor/reth-cli-runner", default-features = false }
 reth-tokio-util = { path = "vendor/reth-tokio-util", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }

@@ -2,13 +2,13 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
 };
 use base_node_core::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::{primitives::AlloyBlockHeader as _, version::version_metadata};
 use reth_provider::{BlockReader, TransactionVariant};

@@ -9,7 +9,7 @@ use base_builder_core::{
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
-use base_node_core::{HasRollupArgs, RollupArgs};
+use base_node_core::RollupArgs;
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
@@ -201,12 +201,6 @@ pub struct Args {
     pub shadow_indexer: ShadowIndexerArgs,
 }
 
-impl HasRollupArgs for Args {
-    fn rollup_args(&self) -> &RollupArgs {
-        &self.rollup_args
-    }
-}
-
 impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
@@ -321,12 +315,6 @@ mod tests {
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
-    }
-
-    #[test]
-    fn builder_args_provides_embedded_rollup_args() {
-        let args = Args::default();
-        assert!(std::ptr::eq(args.rollup_args(), &args.rollup_args));
     }
 
     #[test]

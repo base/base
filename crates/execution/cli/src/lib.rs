@@ -26,13 +26,13 @@ mod standard_node;
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
+use base_cli_utils::CliRunner;
 use base_node_core::{NodeBuilder, RollupArgs, WithLaunchContext};
 use chainspec::BaseChainSpecParser;
 use clap::Parser;
 use commands::Commands;
 use futures::Future;
 use reth_cli_commands::launcher::FnLauncher;
-use reth_cli_runner::CliRunner;
 use reth_db::DatabaseEnv;
 use reth_node_core::{
     args::{LogArgs, TraceArgs},

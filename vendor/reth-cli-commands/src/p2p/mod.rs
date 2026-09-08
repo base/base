@@ -4,9 +4,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::hash_or_num_value_parser;
 use reth_config::Config;
 use reth_network::{BlockDownloaderProvider, NetworkConfigBuilder};

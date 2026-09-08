@@ -1,10 +1,10 @@
 //! Database debugging tool
 use std::sync::Arc;
 
+use base_cli_utils::ChainSpecParser;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_db::{DatabaseError, mdbx::tx::Tx};
 use reth_db_api::{
     tables,

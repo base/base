@@ -1,9 +1,9 @@
 //! Command that dumps genesis block JSON configuration to stdout
 use std::sync::Arc;
 
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_cli::chainspec::ChainSpecParser;
 
 /// Dumps genesis block JSON configuration to stdout
 #[derive(Debug, Parser)]

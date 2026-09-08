@@ -22,21 +22,21 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-metrics = { workspace = true }
-alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-base-execution-chainspec = { workspace = true }
 alloy-signer = { workspace = true, optional = true }
+alloy-hardforks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
 alloy-signer-local = { workspace = true, optional = true }
 parking_lot = { workspace = true, features = ["default"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros"] }
+base-execution-chainspec = { workspace = true, optional = true}
 base-common-consensus = { workspace = true, features = ["reth"] }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
@@ -63,6 +63,7 @@ serde = [
     "reth-storage-api/serde",
 ]
 test-utils = [
+    "dep:alloy-hardforks",
     "alloy-primitives/getrandom",
     "alloy-signer",
     "alloy-signer-local",
@@ -70,4 +71,5 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-trie/test-utils",
     "reth-trie-sparse/test-utils",
+    "dep:base-execution-chainspec",
 ]

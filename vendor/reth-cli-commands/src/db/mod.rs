@@ -3,10 +3,9 @@ use std::{
     sync::Arc,
 };
 
+use base_cli_utils::{ChainSpecParser, CliContext};
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_runner::CliContext;
 use reth_db::version::{DB_VERSION, DatabaseVersionError, get_db_version};
 use reth_db_common::DbTool;
 

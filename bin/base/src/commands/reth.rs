@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use base_cli_utils::CliRunner;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     BaseCliComponents,
@@ -12,7 +13,6 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::{config_cmd, db, dump_genesis, init_cmd, prune, re_execute, stage};
-use reth_cli_runner::CliRunner;
 
 /// Execution-layer maintenance utilities for `base`.
 #[derive(Parser, Debug)]

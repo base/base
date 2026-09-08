@@ -2670,7 +2670,6 @@ dependencies = [
  "eyre",
  "figment",
  "reth-cli-commands",
- "reth-cli-runner",
  "serde",
  "tokio",
  "tokio-util",
@@ -2938,6 +2937,7 @@ dependencies = [
  "async-trait",
  "base-builder-core",
  "base-bundles",
+ "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
@@ -2989,7 +2989,6 @@ dependencies = [
  "parking_lot",
  "rand 0.9.5",
  "reth-chain-state",
- "reth-cli",
  "reth-cli-commands",
  "reth-cli-util",
  "reth-db",
@@ -3122,7 +3121,9 @@ dependencies = [
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
+ "alloy-genesis",
  "backtrace",
+ "base-execution-chainspec",
  "base-metrics",
  "clap",
  "dirs-next",
@@ -3134,6 +3135,7 @@ dependencies = [
  "opentelemetry 0.32.0",
  "opentelemetry_sdk",
  "reth-node-core",
+ "reth-tasks",
  "reth-tracing-otlp",
  "rstest",
  "serde",
@@ -3913,9 +3915,7 @@ dependencies = [
  "jsonrpsee",
  "proptest",
  "reqwest",
- "reth-cli",
  "reth-cli-commands",
- "reth-cli-runner",
  "reth-cli-util",
  "reth-db",
  "reth-db-api",
@@ -15399,19 +15399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis",
- "base-execution-chainspec",
- "clap",
- "eyre",
- "reth-cli-runner",
- "reth-db",
- "serde_json",
-]
-
-[[package]]
 name = "reth-cli-commands"
 version = "0.0.0"
 dependencies = [
@@ -15423,6 +15410,7 @@ dependencies = [
  "alloy-rlp",
  "arbitrary",
  "backon",
+ "base-cli-utils",
  "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-consensus",
@@ -15445,8 +15433,6 @@ dependencies = [
  "ratatui",
  "rayon",
  "reqwest",
- "reth-cli",
- "reth-cli-runner",
  "reth-cli-util",
  "reth-codecs",
  "reth-config",
@@ -15493,15 +15479,6 @@ dependencies = [
  "tracing",
  "url",
  "zstd",
-]
-
-[[package]]
-name = "reth-cli-runner"
-version = "0.0.0"
-dependencies = [
- "reth-tasks",
- "tokio",
- "tracing",
 ]
 
 [[package]]

@@ -2,6 +2,7 @@
 
 use std::{path::Path, sync::Arc};
 
+use base_cli_utils::CliRunner;
 use base_consensus_cli::{
     CliMetrics, ConsensusFollowNodeArgs, ConsensusNodeArgs, ConsensusNodeConfigArgs,
     ConsensusNodeOverrides, ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
@@ -11,7 +12,6 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
-use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 

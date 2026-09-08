@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use base_cli_utils::{ChainSpecParser, parse_genesis};
 use base_common_chains::ChainConfig;
 use base_execution_chainspec::BaseChainSpec;
-use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 
 /// Base chain specification parser.
 #[derive(Debug, Clone, Default)]

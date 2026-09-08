@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
-use reth_cli::chainspec::ChainSpecParser;
 use reth_config::Config;
 use reth_db::DatabaseEnv;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};

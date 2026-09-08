@@ -5,6 +5,7 @@ use std::sync::Arc;
 use base_builder_cli::Args as BuilderArgs;
 use base_builder_core::{BlockServiceBuilder, BuilderApiExtension};
 use base_builder_metering::MeteringStoreExtension;
+use base_cli_utils::CliRunner;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
@@ -17,7 +18,6 @@ use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
-use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
 use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};

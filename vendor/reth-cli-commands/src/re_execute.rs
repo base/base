@@ -11,11 +11,11 @@ use std::{
 
 use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{Address, B256, U256};
+use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::Executor;
 use clap::Parser;
 use eyre::WrapErr;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_primitives_traits::{Account, GotExpected, format_gas_throughput};
 use reth_provider::{
