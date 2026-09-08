@@ -160,6 +160,8 @@ impl HashedPostStateProvider for StateProviderTest {
     }
 }
 
+reth_storage_api::impl_state_database!([] StateProviderTest where []);
+
 impl reth_storage_api::StateReadProvider for StateProviderTest {
     fn storage(
         &self,

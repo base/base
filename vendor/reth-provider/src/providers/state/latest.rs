@@ -260,6 +260,8 @@ impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_
     }
 }
 
+reth_storage_api::impl_state_database!(['__state, Provider: DBProvider + BlockHashReader + StorageSettingsCache] LatestStateProviderRef<'__state, Provider> where []);
+
 impl<Provider: DBProvider + BlockHashReader + StorageSettingsCache>
     reth_storage_api::StateReadProvider for LatestStateProviderRef<'_, Provider>
 {

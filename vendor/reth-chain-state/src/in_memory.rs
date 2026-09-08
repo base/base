@@ -1025,6 +1025,8 @@ mod tests {
 
     struct MockStateProvider;
 
+    reth_storage_api::impl_state_database!([] MockStateProvider where []);
+
     impl reth_storage_api::StateReadProvider for MockStateProvider {
         fn storage(
             &self,

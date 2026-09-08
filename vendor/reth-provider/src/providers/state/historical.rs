@@ -631,6 +631,16 @@ where
     }
 }
 
+reth_storage_api::impl_state_database!(['__state, Provider] HistoricalStateProviderRef<'__state, Provider> where [Provider: DBProvider
+        + BlockNumReader
+        + BlockHashReader
+        + ChangeSetReader
+        + StorageChangeSetReader
+        + PruneCheckpointReader
+        + StageCheckpointReader
+        + StorageSettingsCache
+        + RocksDBProviderFactory,]);
+
 impl<Provider> reth_storage_api::StateReadProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider

@@ -168,6 +168,8 @@ impl<S: AccountReader> AccountReader for InstrumentedStateProvider<S> {
     }
 }
 
+reth_storage_api::impl_state_database!([S: reth_storage_api::StateReadProvider] InstrumentedStateProvider<S> where []);
+
 impl<S: reth_storage_api::StateReadProvider> reth_storage_api::StateReadProvider
     for InstrumentedStateProvider<S>
 {

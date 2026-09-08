@@ -125,8 +125,6 @@ mod tests {
     use reth_storage_errors::provider::{ProviderError, ProviderResult};
     use revm::Database;
 
-    use super::StateProviderDatabase;
-
     mockall::mock! {
         pub Reads {}
         impl AccountReader for Reads {
@@ -144,6 +142,8 @@ mod tests {
         }
     }
 
+    reth_storage_api::impl_state_database!([] MockReads where []);
+
     #[test]
     fn execution_reads_do_not_require_proof_capabilities() {
         let address = Address::repeat_byte(1);
@@ -159,20 +159,20 @@ mod tests {
             .once()
             .returning(|_, _| Ok(None));
         reads.expect_block_hash().with(eq(10)).once().returning(|_| Ok(None));
-        let mut db = StateProviderDatabase::new(reads);
+        let mut db = reads;
         assert_eq!(db.basic(address).unwrap(), Some(account.into()));
         assert_eq!(db.code_by_hash(hash).unwrap(), revm::bytecode::Bytecode::default());
-        assert_eq!(db.storage(address, slot).unwrap(), U256::ZERO);
-        assert_eq!(db.block_hash(10).unwrap(), B256::ZERO);
+        assert_eq!(Database::storage(&mut db, address, slot).unwrap(), U256::ZERO);
+        assert_eq!(Database::block_hash(&mut db, 10).unwrap(), B256::ZERO);
     }
 
     #[test]
     fn execution_reads_preserve_provider_errors() {
         let mut reads = MockReads::new();
         reads.expect_storage().once().returning(|_, _| Err(ProviderError::UnsupportedProvider));
-        let mut db = StateProviderDatabase::new(reads);
+        let mut db = reads;
         assert!(matches!(
-            db.storage(Address::ZERO, U256::ZERO),
+            Database::storage(&mut db, Address::ZERO, U256::ZERO),
             Err(ProviderError::UnsupportedProvider)
         ));
     }

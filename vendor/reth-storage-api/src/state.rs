@@ -55,7 +55,12 @@ impl<T: ?Sized> StateProvider for T where
 
 /// Account, bytecode, storage, and block-hash reads without proof machinery.
 #[auto_impl(&, Arc, Box)]
-pub trait StateReadProvider: BlockHashReader + AccountReader + BytecodeReader {
+pub trait StateReadProvider:
+    BlockHashReader
+    + AccountReader
+    + BytecodeReader
+    + revm::DatabaseRef<Error = reth_storage_errors::provider::ProviderError>
+{
     /// Get storage of given account.
     fn storage(
         &self,
@@ -218,3 +223,27 @@ pub trait StateProviderFactory: BlockIdReader + Send {
     /// This will return `None` if there's no pending state.
     fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>>;
 }
+
+crate::impl_read_only_database!(['a] dyn StateReadProvider + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateReadProvider + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateReadProvider + Send + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateReadProvider + Send + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateReadProvider + Sync + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateReadProvider + Sync + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateReadProvider + Send + Sync + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateReadProvider + Send + Sync + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateProvider + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateProvider + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateProvider + Send + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateProvider + Send + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateProvider + Sync + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateProvider + Sync + 'a) where []);
+
+crate::impl_read_only_database!(['a] dyn StateProvider + Send + Sync + 'a where []);
+crate::impl_read_only_database!(['a, 'b] &'b (dyn StateProvider + Send + Sync + 'a) where []);

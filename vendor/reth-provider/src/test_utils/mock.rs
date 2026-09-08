@@ -1040,6 +1040,8 @@ impl HashedPostStateProvider for MockEthProvider {
     }
 }
 
+reth_storage_api::impl_state_database!([] MockEthProvider where []);
+
 impl reth_storage_api::StateReadProvider for MockEthProvider {
     fn storage(
         &self,

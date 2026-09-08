@@ -233,6 +233,8 @@ impl HashedPostStateProvider for MemoryOverlayStateProviderRef<'_> {
     }
 }
 
+reth_storage_api::impl_state_database!(['__state, ] MemoryOverlayStateProviderRef<'__state> where []);
+
 impl reth_storage_api::StateReadProvider for MemoryOverlayStateProviderRef<'_> {
     fn storage(
         &self,

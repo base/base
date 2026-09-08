@@ -289,6 +289,8 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
     }
 }
 
+reth_storage_api::impl_state_database!(['__state, S: BaseProofsBatchSession] BaseProofsBatchStateProviderRef<'__state, S> where []);
+
 impl<S: BaseProofsBatchSession> reth_storage_api::StateReadProvider
     for BaseProofsBatchStateProviderRef<'_, S>
 {

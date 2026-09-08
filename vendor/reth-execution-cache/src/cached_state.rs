@@ -884,6 +884,8 @@ fn nonzero_storage_value(value: StorageValue) -> Option<StorageValue> {
     if value.is_zero() { None } else { Some(value) }
 }
 
+reth_storage_api::impl_state_database!([S: reth_storage_api::StateReadProvider] CachedStateProvider<S> where []);
+
 impl<S: reth_storage_api::StateReadProvider> reth_storage_api::StateReadProvider
     for CachedStateProvider<S>
 {

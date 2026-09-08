@@ -152,6 +152,8 @@ impl HashedPostStateProvider for StateProviderTraitObjWrapper {
     }
 }
 
+reth_storage_api::impl_state_database!([] StateProviderTraitObjWrapper where []);
+
 impl reth_storage_api::StateReadProvider for StateProviderTraitObjWrapper {
     fn storage(
         &self,

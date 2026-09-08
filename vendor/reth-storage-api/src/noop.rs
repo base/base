@@ -538,6 +538,8 @@ impl StateReader for NoopProvider {
     }
 }
 
+crate::impl_state_database!([] NoopProvider where []);
+
 impl crate::StateReadProvider for NoopProvider {
     fn storage(
         &self,
