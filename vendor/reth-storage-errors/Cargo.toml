@@ -19,12 +19,14 @@ revm = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-codecs = { workspace = true }
+reth-trie-common = {workspace = true}
 reth-prune-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+
 [features]
 default = ["std"]
 std = [
@@ -38,4 +40,5 @@ std = [
     "reth-static-file-types/std",
     "revm/std",
     "reth-codecs/std",
+    "reth-trie-common/std",
 ]

@@ -33,7 +33,7 @@ use serde_json as _;
 
 /// Re-export sparse trie error types.
 pub mod errors {
-    pub use reth_execution_errors::{
+    pub use reth_trie_common::{
         SparseStateTrieError, SparseStateTrieErrorKind, SparseStateTrieResult, SparseTrieError,
         SparseTrieErrorKind, SparseTrieResult,
     };

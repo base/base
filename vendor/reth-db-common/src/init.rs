@@ -17,7 +17,6 @@ use reth_db_api::{
     transaction::DbTxMut,
 };
 use reth_etl::Collector;
-use reth_execution_errors::StateRootError;
 use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader, StorageEntry};
 use reth_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
@@ -29,6 +28,7 @@ use reth_provider::{
 };
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
+use reth_storage_errors::StateRootError;
 use reth_trie::{
     IntermediateStateRootState, StateRoot as StateRootComputer, StateRootProgress,
     prefix_set::TriePrefixSets,

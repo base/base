@@ -2,8 +2,7 @@ use std::cmp::{Ordering, Reverse};
 
 use alloy_primitives::B256;
 use alloy_trie::BranchNodeCompact;
-use reth_execution_errors::StateRootError;
-use reth_storage_errors::db::DatabaseError;
+use reth_storage_errors::{StateRootError, db::DatabaseError};
 use tracing::trace;
 
 use crate::{

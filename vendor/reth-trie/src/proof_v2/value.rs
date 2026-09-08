@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use alloy_primitives::{B256, U256, map::B256Map};
 use alloy_rlp::Encodable;
-use reth_execution_errors::trie::StateProofError;
 use reth_primitives_traits::Account;
+use reth_storage_errors::StateProofError;
 
 use crate::{
     hashed_cursor::HashedCursorFactory, prefix_set::PrefixSet, proof_v2::ProofCalculator,

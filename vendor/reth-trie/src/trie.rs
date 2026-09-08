@@ -2,8 +2,8 @@ use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{BufMut, Encodable};
 use alloy_trie::proof::AddedRemovedKeys;
-use reth_execution_errors::{StateRootError, StorageRootError};
 use reth_primitives_traits::Account;
+use reth_storage_errors::{StateRootError, StorageRootError};
 use tracing::{Span, debug, instrument, trace};
 
 use crate::{

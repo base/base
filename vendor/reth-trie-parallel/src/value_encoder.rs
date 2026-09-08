@@ -8,9 +8,8 @@ use std::{
 use alloy_primitives::{B256, map::B256Map};
 use alloy_rlp::Encodable;
 use crossbeam_channel::Receiver as CrossbeamReceiver;
-use reth_execution_errors::trie::StateProofError;
 use reth_primitives_traits::{Account, dashmap::DashMap};
-use reth_storage_errors::db::DatabaseError;
+use reth_storage_errors::{StateProofError, db::DatabaseError};
 use reth_trie::{
     ProofTrieNodeV2,
     hashed_cursor::HashedStorageCursor,

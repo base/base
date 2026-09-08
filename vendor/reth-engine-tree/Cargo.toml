@@ -34,7 +34,6 @@ reth-trie-common = { workspace = true }
 reth-chain-state = { workspace = true }
 base-evm-handler = { workspace = true }
 reth-storage-errors = {workspace = true}
-reth-execution-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-execution-cache = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
@@ -108,7 +107,6 @@ test-utils = [
     "reth-provider/test-utils",
     "reth-prune-types",
     "reth-prune-types?/test-utils",
-    "base-execution-evm/test-utils",
     "reth-stages-api/test-utils",
     "reth-stages/test-utils",
     "reth-static-file",
@@ -116,7 +114,6 @@ test-utils = [
     "reth-trie/test-utils",
     "reth-trie-common/test-utils",
     "reth-trie-sparse/test-utils",
-    "reth-prune-types?/test-utils",
     "reth-trie-parallel/test-utils",
     "reth-tasks/test-utils",
     "reth-execution-cache/test-utils",

@@ -11,8 +11,7 @@ use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
-use base_evm_handler::{CallError, StateOverrideError};
-use reth_execution_errors::{BlockExecutionError, BlockValidationError};
+use base_evm_handler::{BlockExecutionError, BlockValidationError, CallError, StateOverrideError};
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
 use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{

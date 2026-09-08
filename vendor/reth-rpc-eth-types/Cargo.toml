@@ -43,7 +43,6 @@ reth-storage-errors = {workspace = true}
 base-common-chains = { workspace = true }
 base-execution-evm = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
-reth-execution-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-transaction-pool = { workspace = true }

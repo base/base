@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 revm = { workspace = true }
+thiserror = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 bytes = { workspace = true, optional = true }
@@ -54,13 +55,74 @@ plain_hasher = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["serde"] }
 alloy-trie = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+
 [features]
 default = ["std"]
-std = ["alloy-consensus/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-rlp/std", "alloy-rpc-types-eth?/std", "alloy-serde?/std", "alloy-trie/std", "arrayvec?/std", "bytes?/std", "derive_more/std", "nybbles/std", "reth-primitives-traits/std", "serde?/std", "serde_with?/std", "serde_json/std", "revm/std", "reth-codecs?/std", "alloy-eips/std"]
+std = [
+    "alloy-consensus/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "alloy-rpc-types-eth?/std",
+    "alloy-serde?/std",
+    "alloy-trie/std",
+    "arrayvec?/std",
+    "bytes?/std",
+    "derive_more/std",
+    "nybbles/std",
+    "reth-primitives-traits/std",
+    "serde?/std",
+    "serde_with?/std",
+    "serde_json/std",
+    "revm/std",
+    "reth-codecs?/std",
+    "alloy-eips/std",
+    "thiserror/std",
+]
 eip1186 = ["alloy-rpc-types-eth/serde", "dep:alloy-serde"]
-serde = ["dep:serde", "arrayvec?/serde", "bytes?/serde", "nybbles/serde", "alloy-primitives/serde", "alloy-consensus/serde", "alloy-trie/serde", "alloy-rpc-types-eth?/serde", "reth-primitives-traits/serde", "reth-codecs?/serde", "revm/serde", "alloy-eips/serde"]
+serde = [
+    "dep:serde",
+    "arrayvec?/serde",
+    "bytes?/serde",
+    "nybbles/serde",
+    "alloy-primitives/serde",
+    "alloy-consensus/serde",
+    "alloy-trie/serde",
+    "alloy-rpc-types-eth?/serde",
+    "reth-primitives-traits/serde",
+    "reth-codecs?/serde",
+    "revm/serde",
+    "alloy-eips/serde",
+]
 reth-codec = ["dep:reth-codecs", "dep:bytes", "dep:arrayvec"]
-serde-bincode-compat = ["serde", "alloy-consensus/serde-bincode-compat", "dep:serde_with", "alloy-genesis/serde-bincode-compat", "alloy-rpc-types-eth?/serde-bincode-compat", "alloy-eips/serde-bincode-compat"]
-test-utils = ["dep:plain_hasher", "dep:hash-db", "arbitrary", "reth-primitives-traits/test-utils", "reth-codecs/test-utils"]
-arbitrary = ["std", "dep:reth-codecs", "alloy-trie/arbitrary", "dep:arbitrary", "alloy-serde?/arbitrary", "reth-primitives-traits/arbitrary", "alloy-consensus/arbitrary", "alloy-primitives/arbitrary", "nybbles/arbitrary", "reth-codecs/arbitrary", "alloy-rpc-types-eth?/arbitrary", "alloy-eips/arbitrary", "revm/arbitrary"]
+serde-bincode-compat = [
+    "serde",
+    "alloy-consensus/serde-bincode-compat",
+    "dep:serde_with",
+    "alloy-genesis/serde-bincode-compat",
+    "alloy-rpc-types-eth?/serde-bincode-compat",
+    "alloy-eips/serde-bincode-compat",
+]
+test-utils = [
+    "dep:plain_hasher",
+    "dep:hash-db",
+    "arbitrary",
+    "reth-primitives-traits/test-utils",
+    "reth-codecs/test-utils",
+]
+arbitrary = [
+    "std",
+    "dep:reth-codecs",
+    "alloy-trie/arbitrary",
+    "dep:arbitrary",
+    "alloy-serde?/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "alloy-consensus/arbitrary",
+    "alloy-primitives/arbitrary",
+    "nybbles/arbitrary",
+    "reth-codecs/arbitrary",
+    "alloy-rpc-types-eth?/arbitrary",
+    "alloy-eips/arbitrary",
+    "revm/arbitrary",
+]
 rayon = ["dep:rayon"]

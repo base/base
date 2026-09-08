@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+use base_evm_handler::BlockExecutionError;
 use reth_codecs::DecompressError;
 use reth_db::DatabaseError;
-use reth_execution_errors::BlockExecutionError;
 use reth_provider::ProviderError;
 use reth_trie_common::Nibbles;
 use thiserror::Error;
@@ -155,7 +155,7 @@ pub type BaseProofsStorageResult<T> = Result<T, BaseProofsStorageError>;
 
 #[cfg(test)]
 mod tests {
-    use reth_execution_errors::BlockValidationError;
+    use base_evm_handler::BlockValidationError;
 
     use super::*;
 

@@ -1,9 +1,9 @@
 use alloc::{borrow::Cow, boxed::Box};
 
 use alloy_primitives::{B256, map::B256Map};
-use reth_execution_errors::{SparseTrieErrorKind, SparseTrieResult};
 use reth_trie_common::{
-    BranchNodeMasks, Nibbles, ProofTrieNodeV2, ProofV2TargetParent, RlpNode, TrieMask, TrieNodeV2,
+    BranchNodeMasks, Nibbles, ProofTrieNodeV2, ProofV2TargetParent, RlpNode, SparseTrieErrorKind,
+    SparseTrieResult, TrieMask, TrieNodeV2,
 };
 
 use crate::{

@@ -15,8 +15,7 @@ use alloy_serde::WithOtherFields;
 #[cfg(feature = "evm")]
 use base_evm_context::TxEnv;
 #[cfg(feature = "evm")]
-use base_evm_handler::FromRecoveredTx;
-use base_evm_handler::FromTxWithEncoded;
+use base_evm_handler::{FromRecoveredTx, FromTxWithEncoded};
 
 use crate::{
     BasePooledTransaction, TxDeposit,

@@ -103,3 +103,6 @@ pub mod serde_bincode_compat {
 pub use alloy_trie::{
     BranchNodeCompact, EMPTY_ROOT_HASH, HashBuilder, TrieMask, TrieMaskIter, nodes::*, proof,
 };
+
+mod errors;
+pub use errors::*;

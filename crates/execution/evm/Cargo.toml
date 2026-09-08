@@ -38,7 +38,6 @@ alloy-rpc-types-debug = { workspace = true, optional = true }
 base-common-chains = { workspace = true, features = ["default"] }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
-reth-execution-errors = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth", "evm"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
@@ -65,14 +64,13 @@ std = [
     "base-common-consensus/std",
     "base-common-evm/std",
     "base-execution-chainspec/std",
-    "reth-execution-errors/std",
+    "base-evm-handler/std",
     "reth-primitives-traits/std",
     "thiserror/std",
     "base-execution-consensus/std",
     "base-execution-payload-types/std",
     "dep:rayon",
     "revm/std",
-    "base-evm-handler/std",
     "reth-execution-types/std",
     "reth-storage-errors/std",
     "futures-util/std",

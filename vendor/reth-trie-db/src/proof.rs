@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, keccak256, map::HashMap};
 use reth_db_api::transaction::DbTx;
-use reth_execution_errors::StateProofError;
+use reth_storage_errors::StateProofError;
 use reth_trie::{
     AccountProof, HashedPostStateSorted, HashedStorage, MultiProof, MultiProofTargets,
     StorageMultiProof, TrieInput,

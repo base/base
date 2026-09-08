@@ -1,5 +1,5 @@
 use alloy_rlp::Encodable;
-use reth_execution_errors::trie::StateProofError;
+use reth_storage_errors::StateProofError;
 use reth_trie_common::{
     BranchNodeMasks, BranchNodeV2, LeafNode, LeafNodeRef, Nibbles, ProofTrieNodeV2, RlpNode,
     TrieMask, TrieNodeV2,

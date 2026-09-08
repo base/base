@@ -7,12 +7,12 @@ use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
-pub use base_evm_handler::{BlockExecutor, BlockExecutorFactory, GasOutput};
+pub use base_evm_handler::{
+    BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
+    InternalBlockExecutionError,
+};
 use base_evm_handler::{
     CommitChanges, Evm, EvmEnv, EvmFactory, ExecutableTxParts, RecoveredTx, ToTxEnv,
-};
-pub use reth_execution_errors::{
-    BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };
 use reth_execution_types::BlockExecutionResult;
 pub use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};

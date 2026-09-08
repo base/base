@@ -5,7 +5,7 @@ use alloy_primitives::{
     map::{B256Map, HashMap},
 };
 use reth_db::DatabaseError;
-use reth_execution_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
+use reth_storage_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
     StateRoot, StorageRoot, TrieType,
     hashed_cursor::HashedPostStateCursorFactory,

@@ -4,7 +4,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::{BufMut, Encodable};
 use alloy_trie::proof::AddedRemovedKeys;
-use reth_execution_errors::trie::StateProofError;
+use reth_storage_errors::StateProofError;
 use reth_trie_common::{
     AccountProof, BranchNodeMasks, BranchNodeMasksMap, DecodedMultiProofV2, MultiProof,
     MultiProofTargets, MultiProofTargetsV2, StorageMultiProof, proof::ProofRetainer,

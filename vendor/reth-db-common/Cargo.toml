@@ -25,8 +25,8 @@ alloy-genesis = { workspace = true }
 reth-provider = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-types = { workspace = true }
+reth-storage-errors = {workspace = true}
 boyer-moore-magiclen = { workspace = true }
-reth-execution-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-execution-chainspec = { workspace = true }

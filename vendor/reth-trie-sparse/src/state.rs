@@ -2,9 +2,9 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{B256, map::B256Map};
 use either::Either;
-use reth_execution_errors::{SparseStateTrieResult, SparseTrieErrorKind};
 use reth_trie_common::{
-    DecodedMultiProof, MultiProof, Nibbles, ProofTrieNodeV2,
+    DecodedMultiProof, MultiProof, Nibbles, ProofTrieNodeV2, SparseStateTrieResult,
+    SparseTrieErrorKind,
     updates::{StorageTrieUpdates, TrieUpdates},
 };
 #[cfg(feature = "std")]
@@ -598,12 +598,12 @@ mod tests {
     };
     use arbitrary::Arbitrary;
     use rand::{Rng, SeedableRng, rngs::StdRng};
-    use reth_execution_errors::{SparseStateTrieErrorKind, SparseTrieErrorKind};
     use reth_primitives_traits::Account;
     use reth_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
     use reth_trie_common::{
-        BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode, StorageMultiProof,
-        TrieAccount, TrieMask, TrieNodeV2,
+        BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode,
+        SparseStateTrieErrorKind, SparseTrieErrorKind, StorageMultiProof, TrieAccount, TrieMask,
+        TrieNodeV2,
         proof::{ProofNodes, ProofRetainer},
     };
 

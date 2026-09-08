@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use alloy_primitives::{B256, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_trie::{BranchNodeCompact, TrieMask};
-use reth_execution_errors::trie::StateProofError;
+use reth_storage_errors::StateProofError;
 use reth_trie_common::{
     BranchNodeMasks, BranchNodeRef, BranchNodeV2, Nibbles, ProofTrieNodeV2, ProofV2Target, RlpNode,
     TrieNodeV2, prefix_set::PrefixSet,

@@ -26,11 +26,11 @@ reth-codecs = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
+base-evm-handler = {workspace = true}
 reth-tokio-util = { workspace = true }
 reth-static-file = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = {workspace = true}
-reth-execution-errors = {workspace = true}
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-execution-consensus = { workspace = true }

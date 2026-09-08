@@ -15,9 +15,10 @@ use base_common_evm::{
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
-use base_evm_handler::{BlockExecutorFactory, BlockExecutorFor, Database, EvmFactory, IntoTxEnv};
+use base_evm_handler::{
+    BlockExecutionError, BlockExecutorFactory, BlockExecutorFor, Database, EvmFactory, IntoTxEnv,
+};
 use base_execution_chainspec::BaseChainSpec;
-use reth_execution_errors::BlockExecutionError;
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};

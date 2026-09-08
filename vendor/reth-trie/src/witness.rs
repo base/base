@@ -4,10 +4,10 @@ use alloy_primitives::{
 };
 use alloy_rlp::{EMPTY_STRING_CODE, Encodable};
 use alloy_trie::{EMPTY_ROOT_HASH, nodes::BranchNodeRef};
-use reth_execution_errors::{SparseStateTrieErrorKind, StateProofError, TrieWitnessError};
+use reth_storage_errors::{StateProofError, TrieWitnessError};
 use reth_trie_common::{
     DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState, MultiProofTargetsV2, ProofV2Target,
-    TrieNodeV2,
+    SparseStateTrieErrorKind, TrieNodeV2,
 };
 use reth_trie_sparse::{LeafUpdate, SparseStateTrie, SparseTrie as _, TrieNodeEpoch};
 

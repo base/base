@@ -12,6 +12,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_evm_context::{Block, Cfg as _};
+use base_evm_handler::{BlockExecutionError, BlockValidationError};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
@@ -19,7 +20,6 @@ use base_execution_evm::{
 };
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
-use reth_execution_errors::{BlockExecutionError, BlockValidationError};
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,

@@ -8,9 +8,8 @@ use alloy_primitives::{
     map::{B256Map, HashMap, HashSet},
 };
 use alloy_trie::BranchNodeCompact;
-use reth_execution_errors::SparseTrieResult;
 use reth_trie_common::{
-    BranchNodeMasks, Nibbles, ProofTrieNodeV2, ProofV2TargetParent, TrieNodeV2,
+    BranchNodeMasks, Nibbles, ProofTrieNodeV2, ProofV2TargetParent, SparseTrieResult, TrieNodeV2,
 };
 
 #[cfg(feature = "trie-debug")]

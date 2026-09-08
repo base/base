@@ -114,7 +114,7 @@ use alloy_primitives::{
     map::{AddressMap, B256Set},
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError};
-use base_evm_handler::Evm;
+use base_evm_handler::{BlockExecutionError, Evm};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm::{
     BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
@@ -129,7 +129,6 @@ use reth_engine_primitives::{
     ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
 };
 use reth_execution_cache::{CacheFillMode, CacheStats};
-use reth_execution_errors::BlockExecutionError;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
     SealedHeader, SignerRecoverable,

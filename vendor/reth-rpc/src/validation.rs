@@ -19,6 +19,7 @@ use alloy_rpc_types_engine::{
 };
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_evm_handler::BlockExecutionError;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};
 use base_execution_evm::{BaseEvmConfig, Executor};
@@ -26,7 +27,6 @@ use base_state_api::CachedReads;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_engine_primitives::PayloadValidator;
-use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionOutput;
 use reth_metrics::{
     Metrics, metrics,

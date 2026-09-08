@@ -4,7 +4,7 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
 use base_common_chains::Upgrades;
 use base_common_evm::{BaseSpecId, L1BlockInfo};
-use reth_execution_errors::BlockExecutionError;
+use base_evm_handler::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
 
 use crate::{BaseBlockExecutionError, L1BlockInfoError};

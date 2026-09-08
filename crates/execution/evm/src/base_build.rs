@@ -10,10 +10,9 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_common_evm::BaseBlockExecutionCtx;
 use base_evm_context::Block as _;
-use base_evm_handler::BlockExecutorFactory;
+use base_evm_handler::{BlockExecutionError, BlockExecutorFactory};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
-use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
 
 use crate::execute::{BlockAssembler, BlockAssemblerInput};

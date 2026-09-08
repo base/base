@@ -23,3 +23,6 @@ pub use provider::{ProviderError, ProviderResult};
 
 /// Any error
 pub mod any;
+
+mod trie;
+pub use trie::*;

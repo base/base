@@ -20,9 +20,9 @@ revm = { workspace = true }
 thiserror = { workspace = true }
 reth-trie = { workspace = true }
 reth-provider = { workspace = true }
+reth-trie-common = {workspace = true}
 base-evm-handler = { workspace = true }
 reth-storage-errors = { workspace = true }
-reth-execution-errors = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
 reth-tasks = { workspace = true, features = ["rayon"] }

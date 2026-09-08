@@ -20,7 +20,6 @@ reth-trie = { workspace = true }
 reth-db-api = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-errors = { workspace = true }
-reth-execution-errors = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 reth-storage-api = { workspace = true, features = ["db-api"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
@@ -43,6 +42,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 similar-asserts = { workspace = true, features = ["default", "serde"] }
 reth-trie-common = { workspace = true, features = ["test-utils", "arbitrary"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
+
 [features]
 metrics = ["reth-trie/metrics"]
 serde = [

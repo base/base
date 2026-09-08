@@ -12,10 +12,9 @@ use cursor::{ArenaCursor, NextResult, SeekResult};
 use nodes::{
     ArenaSparseNode, ArenaSparseNodeBranch, ArenaSparseNodeBranchChild, ArenaSparseNodeState,
 };
-use reth_execution_errors::SparseTrieResult;
 use reth_trie_common::{
     BranchNodeMasks, BranchNodeRef, EMPTY_ROOT_HASH, ExtensionNodeRef, LeafNodeRef, Nibbles,
-    ProofTrieNodeV2, ProofV2TargetParent, RlpNode, TrieNodeV2,
+    ProofTrieNodeV2, ProofV2TargetParent, RlpNode, SparseTrieResult, TrieNodeV2,
 };
 use slotmap::{DefaultKey, SlotMap};
 use smallvec::SmallVec;

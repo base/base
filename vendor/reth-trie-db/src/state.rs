@@ -8,9 +8,8 @@ use reth_db_api::{
     models::{AccountBeforeTx, BlockNumberAddress},
     transaction::DbTx,
 };
-use reth_execution_errors::StateRootError;
 use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader, StorageSettingsCache};
-use reth_storage_errors::provider::ProviderError;
+use reth_storage_errors::{StateRootError, provider::ProviderError};
 use reth_trie::{
     HashedPostStateSorted, HashedStorageSorted, StateRoot, StateRootProgress, TrieInputSorted,
     hashed_cursor::HashedPostStateCursorFactory, trie_cursor::InMemoryTrieCursorFactory,
@@ -359,10 +358,10 @@ mod tests {
         tables,
         transaction::DbTxMut,
     };
-    use reth_execution_errors::StateRootError;
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
     use reth_storage_api::StorageSettingsCache;
+    use reth_storage_errors::StateRootError;
     use reth_trie::{
         HashedPostState, HashedPostStateSorted, HashedStorage, KeccakKeyHasher, StateRoot,
     };

@@ -21,11 +21,11 @@ serde = { workspace = true }
 itertools = { workspace = true }
 pin-project = { workspace = true }
 reth-fs-util = { workspace = true }
+base-evm-handler = {workspace = true}
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-engine-tree = { workspace = true }
 base-execution-evm = { workspace = true }
-reth-execution-errors = {workspace = true}
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }

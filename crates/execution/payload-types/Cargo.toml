@@ -21,20 +21,20 @@ either = { workspace = true }
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
+base-evm-handler = {workspace = true}
 alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-errors = {workspace = true}
-reth-execution-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+pin-project = { workspace = true, optional = true}
 alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
-pin-project = { workspace = true, optional = true}
 tracing = { workspace = true, features = ["attributes"], optional = true}
 tokio-stream = { workspace = true, features = ["default", "sync"], optional = true}
 [dev-dependencies]

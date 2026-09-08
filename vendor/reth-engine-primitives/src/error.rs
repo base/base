@@ -1,10 +1,8 @@
 use alloc::boxed::Box;
 
 use alloy_rpc_types_engine::ForkchoiceUpdateError;
+use base_evm_handler::{BlockExecutionError, BlockValidationError, InternalBlockExecutionError};
 use base_execution_consensus::ConsensusError;
-use reth_execution_errors::{
-    BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
-};
 use reth_storage_errors::provider::ProviderError;
 
 /// Represents all error cases when handling a new payload.

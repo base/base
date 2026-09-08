@@ -44,10 +44,9 @@ use alloy_primitives::{
     map::{B256Map, B256Set},
 };
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
-use reth_execution_errors::StateProofError;
 use reth_primitives_traits::{FastInstant as Instant, dashmap::DashMap};
 use reth_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
-use reth_storage_errors::db::DatabaseError;
+use reth_storage_errors::{StateProofError, db::DatabaseError};
 use reth_tasks::Runtime;
 use reth_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
