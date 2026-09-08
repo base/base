@@ -7,9 +7,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
-use base_execution_evm::{
-    BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor, StateProviderDatabase,
-};
+use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor};
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
@@ -74,11 +72,11 @@ where
             "Executing block range"
         );
 
-        let mut executor = self.evm_config.batch_executor(StateProviderDatabase::new(
+        let mut executor = self.evm_config.batch_executor(
             self.provider
                 .history_by_block_number(self.range.start().saturating_sub(1))
                 .map_err(BlockExecutionError::other)?,
-        ));
+        );
 
         let mut fetch_block_duration = Duration::default();
         let mut execution_duration = Duration::default();
@@ -200,11 +198,11 @@ where
             .map_err(BlockExecutionError::other)?;
 
         // Configure the executor to use the previous block's state.
-        let executor = self.evm_config.batch_executor(StateProviderDatabase::new(
+        let executor = self.evm_config.batch_executor(
             self.provider
                 .history_by_block_number(block_number.saturating_sub(1))
                 .map_err(BlockExecutionError::other)?,
-        ));
+        );
 
         trace!(target: "exex::backfill", number = block_number, txs = block_with_senders.body().transaction_count(), "Executing block");
 

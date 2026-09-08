@@ -156,7 +156,7 @@ where
         }
 
         let state_provider = self.provider().history_by_block_number(start_block - 1)?;
-        let db = base_execution_evm::StateProviderDatabase::new(&state_provider);
+        let db = state_provider.as_ref();
 
         let mut blocks = Vec::with_capacity(block_count as usize);
         for block_number in start_block..start_block + block_count {

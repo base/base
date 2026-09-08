@@ -4,7 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_consensus::BaseReceipt;
-use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -113,9 +113,7 @@ fn sort_bundle_state_for_comparison(bundle_state: &BundleState) -> BundleStateSo
 }
 
 /// Extracts execution data including codes, preimages, and hashed state from database
-fn collect_execution_data(
-    mut db: State<StateProviderDatabase<StateProviderBox>>,
-) -> eyre::Result<CollectionResult> {
+fn collect_execution_data(mut db: State<StateProviderBox>) -> eyre::Result<CollectionResult> {
     let bundle_state = db.take_bundle();
     let mut codes = BTreeMap::new();
     let mut preimages = BTreeMap::new();
@@ -212,9 +210,9 @@ where
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
     ) -> eyre::Result<(ExecutionWitness, BundleState)> {
-        let mut executor = self.evm_config.batch_executor(StateProviderDatabase::new(
-            self.provider.state_by_block_hash(parent_header.hash())?,
-        ));
+        let mut executor = self
+            .evm_config
+            .batch_executor(self.provider.state_by_block_hash(parent_header.hash())?);
 
         executor.execute_one(block)?;
         let db = executor.into_state();
@@ -532,7 +530,7 @@ mod tests {
         // Create a State with StateProviderTest
         let state_provider = StateProviderTest::default();
         let mut state = State::builder()
-            .with_database(StateProviderDatabase::new(Box::new(state_provider) as StateProviderBox))
+            .with_database(Box::new(state_provider) as StateProviderBox)
             .with_bundle_update()
             .build();
 

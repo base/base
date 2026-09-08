@@ -6,7 +6,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, TxKind, U256, b256};
 use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTypedTransaction};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
@@ -58,7 +58,7 @@ where
 
     // Execute the block to produce a block execution output
     let mut block_execution_output = BaseEvmConfig::new(chain_spec)
-        .batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)))
+        .batch_executor(LatestStateProvider::new(provider))
         .execute(block)?;
     block_execution_output.state.reverts.sort();
 
@@ -174,8 +174,7 @@ where
     let provider = provider_factory.provider()?;
 
     let evm_config = BaseEvmConfig::new(chain_spec);
-    let executor =
-        evm_config.batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)));
+    let executor = evm_config.batch_executor(LatestStateProvider::new(provider));
 
     let mut execution_outcome = executor.execute_batch(vec![&block1, &block2])?;
     execution_outcome.state_mut().reverts.sort();

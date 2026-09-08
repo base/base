@@ -363,11 +363,6 @@ where
     }
 }
 
-// The `Journal: core::fmt::Debug` bound is required by the EIP-8130 path:
-// `Eip8130Executor::execute` borrows the journal through
-// `EvmInternals::from_context`, whose bounds require `Debug`. This is a public
-// API surface addition over the prior `JournalExt`-only bound, but revm's
-// journal types derive `Debug`, so it is satisfied by every in-tree consumer.
 impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
     DB: AlloyDatabase,
@@ -375,12 +370,7 @@ where
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
-        + ContextTr<
-            Db = DB,
-            Tx = BaseTransaction<TxEnv>,
-            Block = BlockEnv,
-            Journal: JournalExt + core::fmt::Debug,
-        >,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
 {
     type DB = DB;
     type Tx = BaseTransaction<TxEnv>;

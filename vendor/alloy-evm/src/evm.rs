@@ -1,9 +1,10 @@
 //! Abstraction over EVM.
 
-use core::{error::Error, fmt::Debug, hash::Hash};
+use core::{fmt::Debug, hash::Hash};
 
 use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::{Address, B256, Bytes};
+pub use revm::Database;
 use revm::{
     DatabaseCommit, Inspector,
     context::{CfgEnv, DBErrorMarker, result::ExecutionResult},
@@ -15,10 +16,6 @@ use revm::{
 };
 
 use crate::{EvmEnv, EvmError, IntoTxEnv, env::BlockEnvironment, tracing::TxTracer};
-
-/// Helper trait to bound [`revm::Database::Error`] with common requirements.
-pub trait Database: revm::Database<Error: Error + Send + Sync + 'static> + Debug {}
-impl<T> Database for T where T: revm::Database<Error: Error + Send + Sync + 'static> + Debug {}
 
 /// An instance of an ethereum virtual machine.
 ///

@@ -14,9 +14,7 @@ use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{
-    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _, StateProviderDatabase,
-};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
 use revm::{
@@ -585,8 +583,7 @@ where
     }
 
     // Create state database
-    let state_db = StateProviderDatabase::new(state_provider);
-    let mut db = State::builder().with_database(state_db).with_bundle_update().build();
+    let mut db = State::builder().with_database_ref(state_provider).with_bundle_update().build();
 
     // Override sender nonces to match their first transaction's nonce and collect
     // account info for pre-flight validation.

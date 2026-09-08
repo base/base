@@ -16,7 +16,7 @@ use base_common_consensus::{
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use reth_config::config::StageConfig;
 use reth_db::tables;
 use reth_db_api::{
@@ -554,7 +554,7 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
     let output = {
         let provider = provider_factory.database_provider_rw()?;
         let state_provider = provider.latest();
-        let db = StateProviderDatabase::new(&*state_provider);
+        let db = &*state_provider;
         evm_config.batch_executor(db).execute(&preview_block)?
     };
     let child_was_destroyed =
@@ -1104,7 +1104,7 @@ fn execute_and_commit_block(
 
     let output = {
         let state_provider = provider.latest();
-        let db = StateProviderDatabase::new(&*state_provider);
+        let db = &*state_provider;
         let executor = evm_config.batch_executor(db);
         executor.execute(&block_with_senders)?
     };

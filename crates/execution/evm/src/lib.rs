@@ -67,8 +67,6 @@ mod cached;
 pub use cached::{CachedAccount, CachedReads, CachedReadsDBRef, CachedReadsDbMut};
 mod cancelled;
 pub use cancelled::{CancelOnDrop, ManualCancel};
-mod database;
-pub use database::StateProviderDatabase;
 #[cfg(feature = "witness")]
 mod witness;
 #[cfg(feature = "witness")]

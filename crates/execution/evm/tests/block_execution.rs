@@ -12,8 +12,7 @@ use base_common_consensus::{
 use base_common_evm::BaseTime;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{
-    BaseEvmConfig, BasicBlockExecutor, Executor, StateProviderDatabase,
-    test_utils::StateProviderTest,
+    BaseEvmConfig, BasicBlockExecutor, Executor, test_utils::StateProviderTest,
 };
 use base_protocol::BaseTimeUpdateTx;
 use reth_primitives_traits::{Account, RecoveredBlock};
@@ -121,7 +120,7 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
         parent_beacon_block_root: Some(Default::default()),
         ..Default::default()
     };
-    let output = BasicBlockExecutor::new(evm_config(chain_spec), StateProviderDatabase::new(&db))
+    let output = BasicBlockExecutor::new(evm_config(chain_spec), &db)
         .execute(&RecoveredBlock::new_unhashed(
             Block {
                 header,
@@ -192,7 +191,7 @@ fn base_deposit_fields_pre_canyon() {
             .into();
 
     let provider = evm_config(chain_spec);
-    let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
+    let mut executor = BasicBlockExecutor::new(provider, &db);
 
     executor.with_state_mut(|state| {
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).unwrap();
@@ -252,7 +251,7 @@ fn base_deposit_fields_post_canyon() {
             .into();
 
     let provider = evm_config(chain_spec);
-    let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
+    let mut executor = BasicBlockExecutor::new(provider, &db);
 
     executor.with_state_mut(|state| {
         state.load_cache_account(Predeploys::L1_BLOCK_INFO).unwrap();

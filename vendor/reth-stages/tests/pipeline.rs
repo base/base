@@ -11,7 +11,7 @@ use base_common_consensus::{
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use reth_config::config::StageConfig;
 use reth_db_common::init::init_genesis;
 use reth_downloaders::{
@@ -36,7 +36,7 @@ use reth_prune_types::PruneModes;
 use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;
-use reth_storage_api::{ChangeSetReader, StateProvider, StorageChangeSetReader};
+use reth_storage_api::{ChangeSetReader, StorageChangeSetReader};
 use reth_testing_utils::generators::{self, generate_key};
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
 use reth_trie_db::DatabaseStateRoot;
@@ -297,7 +297,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         // Execute in a scope so state_provider is dropped before we use provider for writes
         let output = {
             let state_provider = provider.latest();
-            let db = StateProviderDatabase::new(&*state_provider);
+            let db = &*state_provider;
             let executor = evm_config.batch_executor(db);
             executor.execute(&block_with_senders)?
         };

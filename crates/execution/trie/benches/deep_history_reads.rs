@@ -3,7 +3,7 @@
 //! Seeds a [`RocksDB`] proofs-history store with `BASE_ACCOUNTS` accounts, each
 //! one updated `VERSIONS_PER_KEY` times across sequential blocks, so every
 //! `HashedAccountHistory` user-key has a long version chain. Then drives
-//! `TARGET_ACCOUNTS` reads through the same `StateProviderDatabase` path that
+//! `TARGET_ACCOUNTS` reads through the same the shared database interface path that
 //! block execution uses, at two read snapshots: chain head (latest version
 //! sits at the start of the chain) and chain midpoint (the cursor must skip
 //! over the newer half of the chain before landing on its answer).
@@ -17,7 +17,6 @@ use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_execution_evm::StateProviderDatabase;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,
@@ -181,10 +180,7 @@ fn read_accounts_at_block(fixture: &DeepHistoryFixture, max_block: u64) -> usize
         &fixture.storage,
         max_block,
     );
-    let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(&provider))
-        .with_bundle_update()
-        .build();
+    let mut state = State::builder().with_database(&provider).with_bundle_update().build();
 
     let mut reads = 0;
     for target in &fixture.targets {

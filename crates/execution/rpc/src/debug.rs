@@ -9,7 +9,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_execution_evm::{BaseEvmConfig, ExecutionWitnessRecord, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, ExecutionWitnessRecord, Executor};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, PayloadConfig,
     builder::{BasePayloadBuilderCtx, Builder},
@@ -242,7 +242,7 @@ where
                 .state_provider(Some(BlockId::Number(block.parent_num_hash().number.into())))
                 .await
                 .map_err(EthApiError::from)?;
-            let db = StateProviderDatabase::new(&state_provider);
+            let db = state_provider.as_ref();
             let block_executor = this.eth_api.evm_config().executor(db);
 
             let mut witness = None;
@@ -251,7 +251,7 @@ where
             let _ = block_executor
                 .execute_with_state_closure(&block, |statedb: &State<_>| {
                     witness = Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
-                        &statedb.database.0,
+                        &statedb.database,
                         self.inner.eth_api.provider(),
                         block_number,
                         mode,

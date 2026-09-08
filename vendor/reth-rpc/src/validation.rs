@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};
-use base_execution_evm::{BaseEvmConfig, CachedReads, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, CachedReads, Executor};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_engine_primitives::PayloadValidator;
@@ -180,7 +180,7 @@ where
         let mut request_cache = self.cached_reads(parent_header_hash).await;
 
         let (output, block_access_list_hash) = {
-            let cached_db = request_cache.as_db_mut(StateProviderDatabase::new(&state_provider));
+            let cached_db = request_cache.as_db_mut(&state_provider);
             let mut executor = self.evm_config.batch_executor(cached_db);
 
             let result = executor.execute_one(&block)?;

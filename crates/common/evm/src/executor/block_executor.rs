@@ -19,7 +19,7 @@ use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
 use revm::{
-    Database as _, DatabaseCommit,
+    DatabaseCommit,
     context::{Block, result::ResultAndState},
     database::DatabaseCommitExt,
 };

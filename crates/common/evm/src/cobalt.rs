@@ -85,7 +85,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_genesis::BaseUpgrade;
-    use revm::{Database as _, database::InMemoryDB, state::AccountInfo};
+    use revm::{database::InMemoryDB, state::AccountInfo};
 
     use super::*;
 

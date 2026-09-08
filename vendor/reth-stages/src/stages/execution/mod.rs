@@ -13,7 +13,7 @@ use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics};
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
 use reth_db::{static_file::HeaderMask, tables};
@@ -296,7 +296,7 @@ where
 
         self.ensure_consistency(provider, input.checkpoint().block_number, None)?;
 
-        let db = StateProviderDatabase(LatestStateProviderRef::new(provider));
+        let db = LatestStateProviderRef::new(provider);
         let mut executor = self.evm_config.batch_executor(db);
 
         // Progress tracking

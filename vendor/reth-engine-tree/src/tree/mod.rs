@@ -16,7 +16,7 @@ use alloy_rpc_types_engine::{
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
-use base_execution_evm::{BaseEvmConfig, StateProviderDatabase};
+use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, NewPayloadError, PayloadAttributes,

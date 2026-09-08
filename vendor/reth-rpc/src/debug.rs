@@ -530,7 +530,7 @@ where
                     .execute_with_state_closure(&block, |statedb: &State<_>| {
                         witness =
                             Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
-                                &statedb.database.database.0,
+                                &statedb.database.database,
                                 eth_api.provider(),
                                 block_number,
                                 mode,

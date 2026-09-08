@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{Address, B256, U256};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{Executor, StateProviderDatabase};
+use base_execution_evm::Executor;
 use clap::Parser;
 use eyre::WrapErr;
 use reth_cli::chainspec::ChainSpecParser;
@@ -139,11 +139,9 @@ impl<C: ChainSpecParser> Command<C> {
 
                 let db_at = {
                     |block_number: u64| {
-                        StateProviderDatabase(
-                            provider
+                        provider
                                 .history_by_block_number(block_number)
-                                .unwrap(),
-                        )
+                                .unwrap()
                     }
                 };
 

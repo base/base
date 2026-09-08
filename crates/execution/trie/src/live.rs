@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use derive_more::Constructor;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use reth_provider::{
@@ -86,7 +86,7 @@ where
             parent_block_number,
         );
 
-        let db = StateProviderDatabase::new(&state_provider);
+        let db = &state_provider;
         let block_executor = self.evm_config.batch_executor(db);
 
         let execution_result = block_executor.execute(&(*block).clone())?;
@@ -375,7 +375,7 @@ where
             parent_block_number,
         );
 
-        let db = StateProviderDatabase::new(&state_provider);
+        let db = &state_provider;
         let block_executor = self.evm_config.batch_executor(db);
 
         let execution_result = block_executor.execute(&(*block).clone())?;

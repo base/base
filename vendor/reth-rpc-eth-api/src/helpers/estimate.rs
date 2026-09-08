@@ -6,8 +6,7 @@ use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_evm::{
-    Database, Evm, EvmEnvFor, EvmFor, StateProviderDatabase, TransactionEnvMut, TxEnvFor,
-    env::BlockEnvironment,
+    Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor, env::BlockEnvironment,
 };
 use futures::Future;
 use reth_rpc_eth_types::{
@@ -76,7 +75,7 @@ pub trait EstimateCall: Call {
         let tx_request_gas_price = request.as_ref().gas_price();
 
         // Configure the evm env
-        let mut db = State::builder().with_database(StateProviderDatabase::new(state)).build();
+        let mut db = State::builder().with_database_ref(state).build();
 
         // Apply any block overrides before deriving block-derived limits and the tx env so
         // overrides for `gasLimit`, `baseFee` and `blobBaseFee` are visible to estimation.
@@ -119,10 +118,8 @@ pub trait EstimateCall: Call {
         let is_basic_transfer = if tx_env.input().is_empty()
             && let TxKind::Call(to) = tx_env.kind()
         {
-            match db.database.basic_account(&to) {
-                Ok(Some(account)) => {
-                    account.bytecode_hash.is_none() || account.bytecode_hash == Some(KECCAK_EMPTY)
-                }
+            match db.database.basic(to) {
+                Ok(Some(account)) => account.code_hash == KECCAK_EMPTY,
                 _ => true,
             }
         } else {

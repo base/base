@@ -2,7 +2,7 @@
 //!
 //! This benchmark seeds a `RocksDB` proofs-history store with deterministic
 //! account and storage data, then repeatedly performs the DB-bound reads that
-//! `debug_executionWitness` drives through `StateProviderDatabase` and
+//! `debug_executionWitness` drives through the shared database interface and
 //! `revm::database::State` while EVM execution records touched state.
 
 use std::{hint::black_box, sync::Arc};
@@ -10,7 +10,7 @@ use std::{hint::black_box, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_execution_evm::{ExecutionWitnessRecord, StateProviderDatabase};
+use base_execution_evm::ExecutionWitnessRecord;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
     provider::BaseProofsStateProviderRef,
@@ -159,19 +159,16 @@ fn read_accounts_and_storage_with_provider<Storage>(
 where
     Storage: BaseProofsStore + Clone,
 {
-    let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(provider))
-        .with_bundle_update()
-        .build();
+    let mut state = State::builder().with_database(provider).with_bundle_update().build();
     read_accounts_and_storage_with_state(&mut state, fixture)
 }
 
 fn read_accounts_and_storage_with_state<DB>(
-    state: &mut State<StateProviderDatabase<DB>>,
+    state: &mut State<DB>,
     fixture: &WitnessReadFixture,
 ) -> usize
 where
-    State<StateProviderDatabase<DB>>: revm::Database,
+    State<DB>: revm::Database,
 {
     let mut reads = 0;
 
@@ -210,10 +207,7 @@ fn read_accounts_storage_and_witness(fixture: &WitnessReadFixture) -> usize {
     let block_provider = NoopProvider::default();
     let provider =
         BaseProofsStateProviderRef::new(Box::new(block_provider.clone()), &fixture.storage, 0);
-    let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(&provider))
-        .with_bundle_update()
-        .build();
+    let mut state = State::builder().with_database(&provider).with_bundle_update().build();
     let reads = read_accounts_and_storage_with_state(&mut state, fixture);
     let ExecutionWitness { state, headers, codes, keys } = ExecutionWitnessRecord::new(&state)
         .into_execution_witness(&provider, &block_provider, 0, ExecutionWitnessMode::default())

@@ -12,7 +12,7 @@ use alloy_primitives::Bytes;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatus};
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{BaseEvmConfig, BlockBuilder, BlockBuilderOutcome, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, BlockBuilder, BlockBuilderOutcome};
 use base_execution_payload_types::BaseBuiltPayload;
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
@@ -261,7 +261,7 @@ where
     let has_bal = reorg_target.header().block_access_list_hash().is_some();
     let state_provider = provider.state_by_block_hash(reorg_target.header().parent_hash())?;
     let mut state = State::builder()
-        .with_database_ref(StateProviderDatabase::new(&state_provider))
+        .with_database_ref(&state_provider)
         .with_bundle_update()
         .with_bal_builder_if(has_bal)
         .build();

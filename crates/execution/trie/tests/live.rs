@@ -11,7 +11,7 @@ use base_common_consensus::{
     BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
@@ -162,7 +162,7 @@ where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     let provider = provider_factory.provider()?;
-    let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
+    let db = LatestStateProviderRef::new(&provider);
     let evm_config =
         BaseEvmConfig::new(std::sync::Arc::new((Arc::clone(chain_spec)).as_ref().clone().into()));
     let block_executor = evm_config.batch_executor(db);

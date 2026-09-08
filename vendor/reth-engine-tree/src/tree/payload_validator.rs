@@ -154,7 +154,7 @@ use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, wa
 pub use crate::tree::types::ValidationOutcome;
 use crate::tree::{
     CacheWaitDurations, CachedStateProvider, EngineApiMetrics, EngineApiTreeState, ExecutionEnv,
-    PayloadHandle, StateProviderBuilder, StateProviderDatabase, TreeConfig, WaitForCaches,
+    PayloadHandle, StateProviderBuilder, TreeConfig, WaitForCaches,
     error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
     instrumented_state::{InstrumentedStateProvider, StateProviderMetrics, StateProviderStats},
     payload_processor::{
@@ -968,7 +968,7 @@ where
         let has_bal = env.decoded_bal.is_some();
         let mut db = debug_span!(target: "engine::tree", "build_state_db").in_scope(|| {
             State::builder()
-                .with_database(StateProviderDatabase::new(state_provider))
+                .with_database_ref(state_provider)
                 .with_bundle_update()
                 .with_bal_builder_if(has_bal)
                 .build()
@@ -1108,7 +1108,7 @@ where
         let make_db = |fill_on_miss| {
             let provider = make_state_provider(fill_on_miss)
                 .map_err(crate::tree::payload_processor::bal::BalExecutionError::Provider)?;
-            Ok(StateProviderDatabase::new(provider))
+            Ok(provider)
         };
         let execution_start = Instant::now();
         let ctx =

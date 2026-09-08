@@ -21,9 +21,7 @@ use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
 use base_common_consensus::BaseReceipt;
-use base_execution_evm::{
-    BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor, StateProviderDatabase,
-};
+use base_execution_evm::{BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor};
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
 use reth_metrics::Metrics;
@@ -555,7 +553,7 @@ pub struct PrewarmContext<P> {
 
 /// Per-thread EVM state initialised by [`PrewarmContext::evm_for_ctx`] and stored in
 /// [`WorkerPool`] workers via [`Worker::get_or_init`](reth_tasks::pool::Worker::get_or_init).
-type PrewarmEvmState = Option<EvmFor<StateProviderDatabase<reth_provider::StateProviderBox>>>;
+type PrewarmEvmState = Option<EvmFor<reth_provider::StateProviderBox>>;
 
 impl<P> PrewarmContext<P>
 where
@@ -590,8 +588,6 @@ where
                     .with_txpool_snapshot(self.env.txpool_snapshot.clone()),
             );
         }
-
-        let state_provider = StateProviderDatabase::new(state_provider);
 
         let mut evm_env = self.env.evm_env.clone();
 

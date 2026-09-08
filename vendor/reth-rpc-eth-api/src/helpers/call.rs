@@ -1,7 +1,6 @@
 //! Loads a pending block from database. Helper trait for `eth_` transaction, call and trace RPC
 //! methods.
 
-use core::fmt;
 use std::collections::BTreeMap;
 
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
@@ -19,8 +18,7 @@ use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BlockBuilder, CancelOnDrop, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor,
-    StateProviderDatabase, TransactionEnvMut, TxEnvFor, block::BlockExecutor,
-    env::BlockEnvironment,
+    TransactionEnvMut, TxEnvFor, block::BlockExecutor, env::BlockEnvironment,
 };
 use futures::Future;
 use reth_primitives_traits::Recovered;
@@ -97,9 +95,9 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             let max_simulate_blocks = self.max_simulate_blocks();
 
             self.spawn_with_state_at_block(block, move |this, db| {
-                let state_provider = db.database.0 .0;
+                let state_provider = db.database.0;
                 let mut db = State::builder()
-                    .with_database(StateProviderDatabase::new(&state_provider))
+                    .with_database(state_provider.as_ref())
                     .with_bundle_update()
                     .build();
                 let mut parent = parent;
@@ -525,7 +523,7 @@ pub trait Call: LoadState + SpawnBlocking {
         tx_env: TxEnvFor,
     ) -> Result<ResultAndState<HaltReasonFor>, BaseEthApiError>
     where
-        DB: Database<Error = EvmDatabaseError<ProviderError>> + fmt::Debug,
+        DB: Database<Error = EvmDatabaseError<ProviderError>>,
     {
         let mut evm = self.evm_config().evm_with_env(db, evm_env);
         let res = evm.transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
@@ -543,7 +541,7 @@ pub trait Call: LoadState + SpawnBlocking {
         inspector: I,
     ) -> Result<ResultAndState<HaltReasonFor>, BaseEthApiError>
     where
-        DB: Database<Error = EvmDatabaseError<ProviderError>> + fmt::Debug,
+        DB: Database<Error = EvmDatabaseError<ProviderError>>,
         I: InspectorFor<DB>,
     {
         let mut evm = self.evm_config().evm_with_env_and_inspector(db, evm_env, inspector);
@@ -599,9 +597,7 @@ pub trait Call: LoadState + SpawnBlocking {
         let at = at.into();
         self.spawn_blocking_io_fut(async move |this| {
             let state = this.state_at_block_id(at).await?;
-            let db = State::builder()
-                .with_database(StateProviderDatabase::new(StateProviderTraitObjWrapper(state)))
-                .build();
+            let db = State::builder().with_database(StateProviderTraitObjWrapper(state)).build();
             f(this, db)
         })
     }
@@ -730,7 +726,7 @@ pub trait Call: LoadState + SpawnBlocking {
         target_tx_index: usize,
     ) -> Result<(), BaseEthApiError>
     where
-        DB: Database<Error = EvmDatabaseError<ProviderError>> + DatabaseCommit + core::fmt::Debug,
+        DB: Database<Error = EvmDatabaseError<ProviderError>> + DatabaseCommit,
         I: InspectorFor<DB>,
         Txs: IntoIterator<Item = Recovered<&'a ProviderTx<Self::Provider>>>,
     {

@@ -3,14 +3,13 @@
 //! `reth_rpc_eth_api::helpers::Call`.
 
 use alloy_primitives::{Address, B256, U256};
-use base_execution_evm::StateProviderDatabase;
 use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProviderBox};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{HashedStorage, MultiProofTargets};
 use revm::database::{BundleState, State};
 
 /// Helper alias type for the state's [`State`]
-pub type StateCacheDb = State<StateProviderDatabase<StateProviderTraitObjWrapper>>;
+pub type StateCacheDb = State<StateProviderTraitObjWrapper>;
 
 /// Hack to get around 'higher-ranked lifetime error', see
 /// <https://github.com/rust-lang/rust/issues/100013>

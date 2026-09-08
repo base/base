@@ -180,12 +180,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // Discard any phase statuses a previous transaction may have leaked into
         // the thread-local slot (e.g. via a panic caught between its `set` and the
@@ -406,12 +401,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // Clone the envelope + optional acting-actor hint before taking a mutable
         // borrow of `ctx` (same pattern as `execute`).
@@ -655,12 +645,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
         let calls = Self::execute_calls(evm, signed, outcome, pool)?;
@@ -692,12 +677,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
         // can satisfy them; if `ceiling_spent` itself succeeds it is the answer.
@@ -766,13 +746,8 @@ impl Eip8130Executor {
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug,
-            >,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
@@ -928,13 +903,8 @@ impl Eip8130Executor {
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug,
-            >,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
@@ -1195,12 +1165,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         let mut remaining = pool;
         // Signed transaction-level refund counter: refunds are accounted across
@@ -1303,12 +1268,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         if !evm.inspect {
             return None;
@@ -1345,12 +1305,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         let Some(inputs) = inputs else { return };
         let mut gas = Gas::new(gas_limit);
@@ -1387,12 +1342,7 @@ impl Eip8130Executor {
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
         BaseContext<DB>: BaseContextTr
-            + ContextTr<
-                Db = DB,
-                Tx = BaseTransaction<TxEnv>,
-                Block = BlockEnv,
-                Journal: core::fmt::Debug + JournalExt,
-            >,
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // Resolve the bytecode at `to`, following an EIP-7702 delegation
         // designator to its target (mirrors `create_init_frame`).

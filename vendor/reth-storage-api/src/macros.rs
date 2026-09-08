@@ -127,3 +127,66 @@ macro_rules! impl_read_only_database {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, U256};
+    use mockall::predicate::eq;
+    use reth_primitives_traits::{Account, Bytecode};
+    use reth_storage_errors::provider::{ProviderError, ProviderResult};
+    use revm::Database;
+
+    use crate::{AccountReader, BlockHashReader, BytecodeReader, StateReadProvider};
+
+    mockall::mock! {
+        pub Reads {}
+        impl AccountReader for Reads {
+            fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>>;
+        }
+        impl BytecodeReader for Reads {
+            fn bytecode_by_hash(&self, hash: &B256) -> ProviderResult<Option<Bytecode>>;
+        }
+        impl BlockHashReader for Reads {
+            fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>>;
+            fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>>;
+        }
+        impl StateReadProvider for Reads {
+            fn storage(&self, address: Address, key: B256) -> ProviderResult<Option<U256>>;
+        }
+    }
+
+    crate::impl_state_database!([] MockReads where []);
+
+    #[test]
+    fn execution_reads_do_not_require_proof_capabilities() {
+        let address = Address::repeat_byte(1);
+        let hash = B256::repeat_byte(2);
+        let slot = U256::from(257);
+        let account = Account { nonce: 7, balance: U256::from(100), bytecode_hash: Some(hash) };
+        let mut reads = MockReads::new();
+        reads.expect_basic_account().with(eq(address)).once().returning(move |_| Ok(Some(account)));
+        reads.expect_bytecode_by_hash().with(eq(hash)).once().returning(|_| Ok(None));
+        reads
+            .expect_storage()
+            .with(eq(address), eq(B256::from(slot)))
+            .once()
+            .returning(|_, _| Ok(None));
+        reads.expect_block_hash().with(eq(10)).once().returning(|_| Ok(None));
+        let mut db = reads;
+        assert_eq!(db.basic(address).unwrap(), Some(account.into()));
+        assert_eq!(db.code_by_hash(hash).unwrap(), revm::bytecode::Bytecode::default());
+        assert_eq!(Database::storage(&mut db, address, slot).unwrap(), U256::ZERO);
+        assert_eq!(Database::block_hash(&mut db, 10).unwrap(), B256::ZERO);
+    }
+
+    #[test]
+    fn execution_reads_preserve_provider_errors() {
+        let mut reads = MockReads::new();
+        reads.expect_storage().once().returning(|_, _| Err(ProviderError::UnsupportedProvider));
+        let mut db = reads;
+        assert!(matches!(
+            Database::storage(&mut db, Address::ZERO, U256::ZERO),
+            Err(ProviderError::UnsupportedProvider)
+        ));
+    }
+}

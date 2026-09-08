@@ -1,7 +1,7 @@
 //! EVM traits.
 
 use alloc::boxed::Box;
-use core::{error::Error, fmt, fmt::Debug};
+use core::{error::Error, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256};
 use revm::{
@@ -254,7 +254,7 @@ where
 ///
 /// This trait provides an abstraction over journal operations without exposing
 /// associated types, making it object-safe and suitable for dynamic dispatch.
-trait EvmInternalsTr: Database<Error = ErasedError> + Debug {
+trait EvmInternalsTr: Database<Error = ErasedError> {
     fn load_account(&mut self, address: Address) -> Result<StateLoad<&Account>, EvmInternalsError>;
 
     fn load_account_mut_skip_cold_load<'a>(
@@ -412,7 +412,7 @@ where
 
 impl<T> EvmInternalsTr for EvmInternalsImpl<'_, T>
 where
-    T: JournalTr<Database: Database> + Debug,
+    T: JournalTr<Database: Database>,
 {
     fn load_account(&mut self, address: Address) -> Result<StateLoad<&Account>, EvmInternalsError> {
         self.0.load_account(address).map_err(EvmInternalsError::database)
@@ -486,7 +486,7 @@ impl<'a> EvmInternals<'a> {
         tx_env: &'a dyn TransactionTr,
     ) -> Self
     where
-        T: JournalTr<Database: Database> + Debug,
+        T: JournalTr<Database: Database>,
     {
         Self {
             internals: Box::new(EvmInternalsImpl(journal)),
@@ -500,7 +500,7 @@ impl<'a> EvmInternals<'a> {
     /// Creates a new [`EvmInternals`] instance from a [`ContextTr`].
     pub fn from_context<CTX>(ctx: &'a mut CTX) -> Self
     where
-        CTX: ContextTr<Block: BlockEnvironment, Journal: JournalTr<Database: Database> + Debug>,
+        CTX: ContextTr<Block: BlockEnvironment, Journal: JournalTr<Database: Database>>,
     {
         let (block, tx, cfg, journaled_state, ..) = ctx.all_mut();
         Self::new(journaled_state, block, cfg, tx)
@@ -709,8 +709,8 @@ impl<'a> EvmInternals<'a> {
 impl<'a> fmt::Debug for EvmInternals<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EvmInternals")
-            .field("internals", &self.internals)
-            .field("block_env", &"{{}}")
+            .field("chain_id", &self.chain_id)
+            .field("tx_origin", &self.tx_origin)
             .finish_non_exhaustive()
     }
 }

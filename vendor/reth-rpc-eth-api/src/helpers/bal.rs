@@ -3,7 +3,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::BlockId;
-use base_execution_evm::{Evm, StateProviderDatabase, block::BlockExecutor};
+use base_execution_evm::{Evm, block::BlockExecutor};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, cache::db::StateProviderTraitObjWrapper, error::FromEthApiError,
 };
@@ -44,7 +44,7 @@ pub trait GetBlockAccessList: Trace + Call + LoadBlock + RpcNodeCoreExt {
                     .map_err(BaseEthApiError::from_eth_err)?;
 
                 let mut db = State::builder()
-                    .with_database(StateProviderDatabase::new(StateProviderTraitObjWrapper(state)))
+                    .with_database(StateProviderTraitObjWrapper(state))
                     .with_bal_builder()
                     .build();
 

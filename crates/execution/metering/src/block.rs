@@ -6,9 +6,7 @@ use alloy_consensus::{BlockHeader, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{
-    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, StateProviderDatabase,
-};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
@@ -53,7 +51,7 @@ where
     let state_provider = provider.state_by_block_hash(parent_hash)?;
 
     // Create state database from parent state
-    let state_db = StateProviderDatabase::new(&state_provider);
+    let state_db = state_provider.as_ref();
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Set up block attributes from the actual block header

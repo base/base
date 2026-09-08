@@ -27,7 +27,7 @@ use base_execution_trie::{
 };
 use reth_primitives_traits::Account;
 use reth_provider::{
-    AccountReader, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
+    AccountReader, StateProofProvider, StateReadProvider, StateRootProvider, StorageRootProvider,
     noop::NoopProvider,
 };
 use reth_trie_common::{

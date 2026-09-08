@@ -20,7 +20,7 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
     BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,
-    Database, ExecutionWitnessRecord, StateProviderDatabase,
+    Database, ExecutionWitnessRecord,
 };
 use base_execution_payload_types::{
     BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadBuilderError,
@@ -211,7 +211,7 @@ where
                 Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
             ));
         }
-        let state = StateProviderDatabase::new(state_provider.as_ref());
+        let state = state_provider.as_ref();
 
         if ctx.attributes().no_tx_pool {
             builder.build(state, state_provider.as_ref(), state_root_handle, ctx)
@@ -449,10 +449,8 @@ impl<Txs> Builder<'_, Txs> {
     where
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>,
     {
-        let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&state_provider))
-            .with_bundle_update()
-            .build();
+        let mut db =
+            State::builder().with_database_ref(&state_provider).with_bundle_update().build();
         let mut builder = ctx.block_builder(&mut db)?;
         let block_number =
             builder.evm().block().number().try_into().expect("block_number must be < u64::MAX");
@@ -469,7 +467,7 @@ impl<Txs> Builder<'_, Txs> {
 
         let mode = ExecutionWitnessMode::default();
         let witness = ExecutionWitnessRecord::new(&db).into_execution_witness(
-            &db.database.0,
+            &state_provider,
             &header_provider,
             block_number,
             mode,
@@ -1250,9 +1248,7 @@ mod tests {
     use base_common_consensus::{BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_execution_evm::{
-        BaseEvmConfig, CancelOnDrop, StateProviderDatabase, test_utils::StateProviderTest,
-    };
+    use base_execution_evm::{BaseEvmConfig, CancelOnDrop, test_utils::StateProviderTest};
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
@@ -1331,7 +1327,7 @@ mod tests {
         let provider = NoopProvider::default();
         let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
         let outcome = builder
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle), ctx)
+            .build(&provider, &provider, Some(state_root_handle), ctx)
             .expect("empty payload must build");
         let BuildOutcomeKind::Freeze(payload) = outcome else {
             panic!("no-tx-pool payload must freeze")
@@ -1435,7 +1431,7 @@ mod tests {
             );
         }
         Builder::new(|_| transactions)
-            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .build(&provider, &provider, Some(state_root_handle()), ctx)
             .expect("payload must build")
     }
 
