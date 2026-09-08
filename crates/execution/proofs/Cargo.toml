@@ -13,8 +13,8 @@ workspace = true
 
 [dependencies]
 reth-tasks = { workspace = true }
-reth-node-api = { workspace = true }
 base-node-runner = { workspace = true }
+base-node-context = { workspace = true }
 base-execution-trie = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }

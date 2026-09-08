@@ -7,13 +7,12 @@ use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiO
 use base_execution_trie::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
 };
+use base_node_context::FullNodeComponents;
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
 use reth_db_api::database_metrics::DatabaseMetrics;
-use reth_node_builder::{
-    FullNodeComponents, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
-};
+use reth_node_builder::{NodeBuilder, NodeBuilderWithComponents, WithLaunchContext};
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::info;

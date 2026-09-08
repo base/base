@@ -8,10 +8,10 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_rpc::BaseEthApi;
+use base_node_context::FullNodeComponents;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
-use reth_node_api::FullNodeComponents;
 use reth_node_builder::{FullNode, rpc::RethRpcAddOns};
 use reth_primitives_traits::Block;
 use reth_provider::{

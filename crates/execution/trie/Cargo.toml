@@ -46,9 +46,9 @@ base-execution-evm = { workspace = true, features = ["default", "witness"] }
 mockall = { workspace = true }
 test-case = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-node-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-node-context = { workspace = true }
 reth-storage-errors = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 base-execution-chainspec = { workspace = true }

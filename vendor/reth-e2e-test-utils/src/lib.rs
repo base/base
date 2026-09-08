@@ -5,9 +5,10 @@ use std::sync::Arc;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_node_context::BaseNodeContext;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_node_builder::{ComponentBuilder, NodeAdapter, rpc::RethRpcAddOns};
+use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 
@@ -67,7 +68,7 @@ pub async fn setup_engine<AO>(
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
-    tree_config: reth_node_api::TreeConfig,
+    tree_config: reth_engine_primitives::TreeConfig,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
     + Send
     + Sync
@@ -95,7 +96,7 @@ pub async fn setup_engine_with_connection<AO>(
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
-    tree_config: reth_node_api::TreeConfig,
+    tree_config: reth_engine_primitives::TreeConfig,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
     + Send
     + Sync
@@ -127,7 +128,7 @@ pub type TestProvider = BlockchainProvider<TmpDB>;
 pub type TmpNodeAdapter = TmpDB;
 
 /// Adapter for a concrete set of test components.
-pub type Adapter = NodeAdapter<TmpNodeAdapter>;
+pub type Adapter = BaseNodeContext<TmpNodeAdapter>;
 
 /// Context for a test node with explicit components and add-ons.
 pub type NodeHelperType<AO> = NodeTestContext<Adapter, AO>;

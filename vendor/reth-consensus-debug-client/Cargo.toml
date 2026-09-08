@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-node-api = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-transport = { workspace = true }
@@ -34,3 +33,9 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reqwest = { workspace = true, features = ["rustls", "stream", "query"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
+
+[dependencies.reth-engine-primitives]
+workspace = true
+
+[dependencies.base-execution-payload-types]
+workspace = true

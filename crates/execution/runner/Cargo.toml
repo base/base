@@ -49,6 +49,9 @@ alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["default"] }
+
+[dependencies.base-node-context]
+workspace = true
 [dev-dependencies]
 serde_json = { workspace = true }
 base-protocol = { workspace = true }

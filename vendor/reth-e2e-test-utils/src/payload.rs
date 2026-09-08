@@ -1,8 +1,9 @@
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::{PayloadBuilderHandle, PayloadId};
-use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes, Events};
+use base_execution_payload_types::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadAttributes, PayloadKind,
+};
 use futures_util::StreamExt;
-use reth_node_api::{PayloadAttributes, PayloadKind};
 use tokio_stream::wrappers::BroadcastStream;
 
 /// Helper for payload operations

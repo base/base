@@ -38,6 +38,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::TransactionPool;
+use base_node_context::{BaseNodeContext, FullNodeComponents};
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
@@ -53,7 +54,6 @@ use reth_engine_local::MiningMode;
 use reth_exex::ExExManagerHandle;
 use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
-use reth_node_api::FullNodeComponents;
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -97,8 +97,7 @@ use tokio::sync::{
 };
 
 use crate::{
-    BuilderContext, ExExLauncher, NodeAdapter, components::ComponentBuilder,
-    hooks::OnComponentInitializedHook,
+    BuilderContext, ExExLauncher, components::ComponentBuilder, hooks::OnComponentInitializedHook,
 };
 
 /// Reusable setup for launching a node.
@@ -859,11 +858,11 @@ where
         &self.right().blockchain_db
     }
 
-    /// Creates a `NodeAdapter` and attaches it to the launch context.
+    /// Creates a `BaseNodeContext` and attaches it to the launch context.
     pub async fn with_components(
         self,
         components_builder: ComponentBuilder<DB>,
-        on_component_initialized: Box<dyn OnComponentInitializedHook<NodeAdapter<DB>>>,
+        on_component_initialized: Box<dyn OnComponentInitializedHook<BaseNodeContext<DB>>>,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<DB>>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
@@ -932,13 +931,13 @@ where
         self.right().head
     }
 
-    /// Returns the configured `NodeAdapter`.
-    pub const fn node_adapter(&self) -> &NodeAdapter<DB> {
+    /// Returns the configured `BaseNodeContext`.
+    pub const fn node_adapter(&self) -> &BaseNodeContext<DB> {
         &self.right().node_adapter
     }
 
-    /// Returns mutable reference to the configured `NodeAdapter`.
-    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<DB> {
+    /// Returns mutable reference to the configured `BaseNodeContext`.
+    pub const fn node_adapter_mut(&mut self) -> &mut BaseNodeContext<DB> {
         &mut self.right_mut().node_adapter
     }
 
@@ -1045,7 +1044,7 @@ where
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<DB>>>)>,
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<BaseNodeContext<DB>>>)>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1064,8 +1063,8 @@ where
     #[expect(clippy::type_complexity)]
     pub fn exex_launcher(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<DB>>>)>,
-    ) -> ExExLauncher<NodeAdapter<DB>> {
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<BaseNodeContext<DB>>>)>,
+    ) -> ExExLauncher<BaseNodeContext<DB>> {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),
@@ -1234,14 +1233,14 @@ where
     blockchain_db: BlockchainProvider<DB>,
 }
 
-/// Helper container to bundle the metered providers container and [`NodeAdapter`].
+/// Helper container to bundle the metered providers container and [`BaseNodeContext`].
 #[expect(missing_debug_implementations)]
 pub struct WithComponents<DB>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     db_provider_container: WithMeteredProvider<DB>,
-    node_adapter: NodeAdapter<DB>,
+    node_adapter: BaseNodeContext<DB>,
     head: Head,
 }
 

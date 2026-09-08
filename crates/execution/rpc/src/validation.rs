@@ -23,6 +23,7 @@ use base_evm_handler::BlockExecutionError;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};
 use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_payload_types::NewPayloadError;
 use base_state_api::CachedReads;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
@@ -32,7 +33,6 @@ use reth_metrics::{
     Metrics, metrics,
     metrics::{Gauge, gauge},
 };
-use reth_node_api::NewPayloadError;
 use reth_primitives_traits::{BlockBody, GotExpected, RecoveredBlock, SealedBlock};
 use reth_rpc_api::BlockSubmissionValidationApiServer;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};

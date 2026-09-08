@@ -19,10 +19,10 @@ use base_execution_trie::{
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
 };
+use base_node_context::FullNodeComponents;
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
-use reth_node_api::FullNodeComponents;
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;

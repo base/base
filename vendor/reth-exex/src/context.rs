@@ -3,8 +3,8 @@ use std::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
+use base_node_context::FullNodeComponents;
 use reth_exex_types::ExExHead;
-use reth_node_api::FullNodeComponents;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::BlockReader;
 use reth_tasks::TaskExecutor;
@@ -75,7 +75,7 @@ where
     Node: FullNodeComponents,
 {
     /// Returns the transaction pool of the node.
-    pub fn pool(&self) -> &reth_node_api::BaseNodePool<Node::Provider> {
+    pub fn pool(&self) -> &base_node_context::BaseNodePool<Node::Provider> {
         self.components.pool()
     }
 
@@ -138,8 +138,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use base_node_context::FullNodeComponents;
     use reth_exex_types::ExExHead;
-    use reth_node_api::FullNodeComponents;
     use reth_provider::BlockReader;
 
     use crate::ExExContext;

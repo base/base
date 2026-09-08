@@ -5,15 +5,13 @@
 //! The node builder process is essentially a state machine that transitions through various states
 //! before the node can be launched.
 
-use std::{fmt::Debug, future::Future};
+use std::future::Future;
 
-use base_execution_evm::BaseEvmConfig;
+use base_node_context::{BaseNodeContext, NodeAddOns};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
-use reth_node_api::{FullNodeComponents, NodeAddOns};
 use reth_node_core::node_config::NodeConfig;
-use reth_provider::providers::{BlockchainProvider, RocksDBProvider};
-use reth_tasks::TaskExecutor;
+use reth_provider::providers::RocksDBProvider;
 
 use crate::{
     FullNode,
@@ -23,67 +21,13 @@ use crate::{
     rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
 };
 
-/// Container for the node's types and the components and other internals that can be used by
-/// addons of the node.
-#[derive(Debug, Clone)]
-pub struct NodeAdapter<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
-    /// The node transaction pool.
-    pub transaction_pool: reth_node_api::BaseNodePool<BlockchainProvider<DB>>,
-    /// The Base EVM configuration.
-    pub evm_config: BaseEvmConfig,
-    /// The Base consensus validator.
-    pub consensus: std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
-    /// The network handle.
-    pub network: reth_network::NetworkHandle,
-    /// The payload service handle.
-    pub payload_builder_handle: base_execution_payload_builder::PayloadBuilderHandle,
-    /// The task executor for the node.
-    pub task_executor: TaskExecutor,
-    /// The provider of the node.
-    pub provider: BlockchainProvider<DB>,
-}
-
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullNodeComponents
-    for NodeAdapter<DB>
-{
-    type DB = DB;
-    type Provider = BlockchainProvider<DB>;
-    fn pool(&self) -> &reth_node_api::BaseNodePool<Self::Provider> {
-        &self.transaction_pool
-    }
-
-    fn evm_config(&self) -> &BaseEvmConfig {
-        &self.evm_config
-    }
-
-    fn consensus(&self) -> &std::sync::Arc<base_execution_consensus::BaseBeaconConsensus> {
-        &self.consensus
-    }
-
-    fn network(&self) -> &reth_network::NetworkHandle {
-        &self.network
-    }
-
-    fn payload_builder_handle(&self) -> &base_execution_payload_builder::PayloadBuilderHandle {
-        &self.payload_builder_handle
-    }
-
-    fn provider(&self) -> &Self::Provider {
-        &self.provider
-    }
-
-    fn task_executor(&self) -> &TaskExecutor {
-        &self.task_executor
-    }
-}
-
 /// A fully type configured node builder.
 ///
 /// Supports adding additional addons to the node.
 pub struct NodeBuilderWithComponents<DB, AO>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: NodeAddOns<NodeAdapter<DB>>,
+    AO: NodeAddOns<BaseNodeContext<DB>>,
 {
     /// All settings for how the node should be configured.
     pub config: NodeConfig,
@@ -96,9 +40,9 @@ where
     /// Additional node extensions.
     pub add_ons: AO,
     /// Hooks invoked as the node starts.
-    pub hooks: NodeHooks<NodeAdapter<DB>, AO>,
+    pub hooks: NodeHooks<BaseNodeContext<DB>, AO>,
     /// Execution extensions installed on this node.
-    pub exexs: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<DB>>>)>,
+    pub exexs: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<BaseNodeContext<DB>>>)>,
 }
 
 impl<DB> NodeBuilderWithComponents<DB, ()>
@@ -109,7 +53,7 @@ where
     /// [`NodeAddOns`] types are configured.
     pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<DB, AO>
     where
-        AO: NodeAddOns<NodeAdapter<DB>>,
+        AO: NodeAddOns<BaseNodeContext<DB>>,
     {
         let Self { config, database, rocksdb_provider, components_builder, .. } = self;
 
@@ -128,12 +72,12 @@ where
 impl<DB, AO> NodeBuilderWithComponents<DB, AO>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: NodeAddOns<NodeAdapter<DB>>,
+    AO: NodeAddOns<BaseNodeContext<DB>>,
 {
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(NodeAdapter<DB>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(BaseNodeContext<DB>) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_on_component_initialized(hook);
         self
@@ -142,7 +86,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<NodeAdapter<DB>, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<BaseNodeContext<DB>, AO>) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_on_node_started(hook);
         self
@@ -155,7 +99,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<DB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<BaseNodeContext<DB>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -212,7 +156,7 @@ where
 impl<DB, AO> NodeBuilderWithComponents<DB, AO>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<NodeAdapter<DB>>,
+    AO: RethRpcAddOns<BaseNodeContext<DB>>,
 {
     /// Launches the node with the given launcher.
     pub fn launch_with<L>(self, launcher: L) -> L::Future
@@ -226,7 +170,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, NodeAdapter<DB>, AO::EthApi>,
+                RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -241,7 +185,9 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, NodeAdapter<DB>, AO::EthApi>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>) -> eyre::Result<()>
+            + Send
+            + 'static,
     {
         self.map_add_ons(|mut add_ons| {
             add_ons.hooks_mut().set_extend_rpc_modules(hook);

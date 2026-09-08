@@ -56,7 +56,7 @@ pub mod exex;
 
 use aquamarine as _;
 // re-export API types for convenience
-pub use reth_node_api::*;
+use base_node_context::NodeAddOns;
 /// Re-export the core configuration traits.
 pub use reth_node_core::cli::config::{
     PayloadBuilderConfig, RethNetworkConfig, RethTransactionPoolConfig,

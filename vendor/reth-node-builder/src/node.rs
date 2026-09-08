@@ -7,7 +7,7 @@ use std::{
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
-use reth_node_api::FullNodeComponents;
+use base_node_context::FullNodeComponents;
 // re-export the node api types
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
@@ -28,7 +28,7 @@ pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
-    pub pool: reth_node_api::BaseNodePool<Node::Provider>,
+    pub pool: base_node_context::BaseNodePool<Node::Provider>,
     /// Handle to the node's network.
     pub network: reth_network::NetworkHandle,
     /// Provider to interact with the node's database

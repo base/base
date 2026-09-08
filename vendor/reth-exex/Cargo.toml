@@ -26,13 +26,13 @@ reth-config = { workspace = true }
 reth-network = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
-reth-node-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
+base-node-context = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

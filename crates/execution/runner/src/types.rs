@@ -1,15 +1,15 @@
 //! Type aliases for the Base node builder.
 
-use reth_provider::providers::BlockchainProvider;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, NodeHandle, WithLaunchContext};
+use reth_provider::providers::BlockchainProvider;
 
 use crate::{BaseAddOns, BaseNodeAdapter};
 
 /// Alias for the Base node type adapter used by the runner.
 pub type BaseNodeTypes = DatabaseEnv;
 /// Concrete components produced by the Base node runner.
-pub type BaseNodeComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
+pub type BaseNodeComponents = base_node_context::BaseNodeContext<BaseNodeTypes>;
 /// Concrete RPC and engine add-ons for the Base runner.
 pub type BaseNodeAddOns = BaseAddOns<BaseNodeAdapter>;
 

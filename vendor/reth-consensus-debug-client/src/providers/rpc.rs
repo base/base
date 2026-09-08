@@ -8,8 +8,8 @@ use alloy_provider::{
 };
 use alloy_rpc_types_engine::PayloadExtras;
 use alloy_transport::TransportResult;
+use base_execution_payload_types::ExecutionPayload;
 use futures::{Stream, StreamExt};
-use reth_node_api::ExecutionPayload;
 use reth_tracing::tracing::{debug, warn};
 use tokio::sync::mpsc::Sender;
 

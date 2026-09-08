@@ -17,8 +17,8 @@ mod pubsub;
 use std::{fmt, sync::Arc};
 
 use alloy_primitives::U256;
+use base_node_context::FullNodeComponents;
 use eyre::WrapErr;
-use reth_node_api::FullNodeComponents;
 mod context;
 pub use context::EthApiCtx;
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};

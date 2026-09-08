@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::{Response, ResponsePayload};
+use base_execution_payload_types::ExecutionPayload;
 use reqwest::Client;
-use reth_node_api::ExecutionPayload;
 use reth_tracing::tracing::{debug, warn};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::{sync::mpsc, time::interval};

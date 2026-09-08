@@ -11,7 +11,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_node_builder::BuilderContext;
 
-use crate::{BaseNodePool, BasePayloadBuilder};
+use crate::BasePayloadBuilder;
 
 /// Scheduling used for Base payload construction.
 #[derive(Debug, Clone, Copy)]
@@ -79,12 +79,14 @@ impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
     pub async fn spawn_payload_builder_service<DB>(
         self,
         ctx: &BuilderContext<DB>,
-        pool: BaseNodePool<DB>,
+        pool: base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider<DB>>,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        Txs: BasePayloadTransactions<BaseNodePool<DB>>,
+        Txs: BasePayloadTransactions<
+            base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider<DB>>,
+        >,
     {
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(

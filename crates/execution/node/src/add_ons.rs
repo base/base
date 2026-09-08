@@ -4,7 +4,7 @@ use base_execution_rpc::{
     BaseMinerExtApi, BaseNodeEthApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
 };
 use base_execution_txpool::{BasePooledTx, TransactionPool};
-use reth_node_api::{FullNodeComponents, NodeAddOns};
+use base_node_context::{FullNodeComponents, NodeAddOns};
 use reth_node_builder::rpc::{
     Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
     RpcHandle,
@@ -111,7 +111,7 @@ where
 
     async fn launch_add_ons(
         self,
-        ctx: reth_node_api::AddOnsContext<'_, N>,
+        ctx: base_node_context::AddOnsContext<'_, N>,
     ) -> eyre::Result<Self::Handle> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         let eth_config =
@@ -167,7 +167,7 @@ where
 impl<N, RpcMiddleware> RethRpcAddOns<N> for BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
-    <reth_node_api::BaseNodePool<N::Provider> as TransactionPool>::Transaction: BasePooledTx,
+    <base_node_context::BaseNodePool<N::Provider> as TransactionPool>::Transaction: BasePooledTx,
     RpcMiddleware: RethRpcMiddleware,
 {
     type EthApi = BaseNodeEthApi<N>;

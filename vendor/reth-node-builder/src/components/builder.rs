@@ -16,7 +16,8 @@ pub struct ComponentBuilder<DB: Database + DatabaseMetrics + Clone + Unpin + 'st
     pub build: Box<
         dyn for<'a> FnOnce(
                 &'a BuilderContext<DB>,
-            ) -> BoxFuture<'a, eyre::Result<crate::NodeAdapter<DB>>>
+            )
+                -> BoxFuture<'a, eyre::Result<base_node_context::BaseNodeContext<DB>>>
             + Send,
     >,
 }

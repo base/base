@@ -1,6 +1,7 @@
 //! Inputs used to construct the Base eth API.
 
-use reth_node_api::{ConsensusEngineHandle, FullNodeComponents};
+use base_node_context::FullNodeComponents;
+use reth_engine_primitives::ConsensusEngineHandle;
 use reth_rpc_eth_types::{EthConfig, EthStateCache};
 
 /// Node components and RPC settings used to construct the Base eth API.

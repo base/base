@@ -22,7 +22,7 @@ use reth_e2e_test_utils::testsuite::{
     },
     setup::{NetworkSetup, Setup},
 };
-use reth_node_api::TreeConfig;
+use reth_engine_primitives::TreeConfig;
 
 /// Creates the standard setup for engine tree e2e tests.
 fn default_engine_tree_setup() -> Setup {

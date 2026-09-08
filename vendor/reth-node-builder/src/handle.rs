@@ -1,6 +1,6 @@
 use std::fmt;
 
-use reth_node_api::FullNodeComponents;
+use base_node_context::FullNodeComponents;
 use reth_node_core::exit::NodeExitFuture;
 
 use crate::{node::FullNode, rpc::RethRpcAddOns};

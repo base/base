@@ -3,13 +3,13 @@
 use std::{fmt, fmt::Debug};
 
 use alloy_eips::{BlockNumHash, eip2124::Head};
+use base_node_context::FullNodeComponents;
 use futures::future;
 use reth_chain_state::ForkChoiceSubscriptions;
 use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
-use reth_node_api::FullNodeComponents;
 use reth_provider::CanonStateSubscriptions;
 use reth_tracing::tracing::{debug, info};
 use tracing::Instrument;

@@ -13,14 +13,15 @@ use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::{
     AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, EthApiTypes,
 };
+use base_node_context::{AddOnsContext, FullNodeComponents, NodeAddOns};
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
 use parking_lot::Mutex;
 use reth_chain_state::CanonStateSubscriptions;
+use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle, TreeConfig};
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
-use reth_node_api::{AddOnsContext, FullNodeComponents, NodeAddOns, TreeConfig};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
 pub use reth_rpc_builder::{
     Identity, Stack,
@@ -38,10 +39,7 @@ use reth_tracing::tracing::{debug, info};
 use reth_trie_common::KeccakKeyHasher;
 use tokio::sync::oneshot;
 
-use crate::{
-    BaseEngineApiBuilder, ConsensusEngineEvent, ConsensusEngineHandle, InvalidBlockHookBuilder,
-    txpool_prewarm,
-};
+use crate::{BaseEngineApiBuilder, InvalidBlockHookBuilder, txpool_prewarm};
 
 /// Contains the handles to the spawned RPC servers.
 ///
@@ -201,7 +199,7 @@ where
 pub struct RpcRegistry<Node: FullNodeComponents, EthApi: EthApiTypes> {
     pub(crate) registry: RpcRegistryInner<
         Node::Provider,
-        reth_node_api::BaseNodePool<Node::Provider>,
+        base_node_context::BaseNodePool<Node::Provider>,
         reth_network::NetworkHandle,
         EthApi,
     >,
@@ -214,7 +212,7 @@ where
 {
     type Target = RpcRegistryInner<
         Node::Provider,
-        reth_node_api::BaseNodePool<Node::Provider>,
+        base_node_context::BaseNodePool<Node::Provider>,
         reth_network::NetworkHandle,
         EthApi,
     >;
@@ -293,7 +291,7 @@ where
     }
 
     /// Returns the transaction pool instance.
-    pub fn pool(&self) -> &reth_node_api::BaseNodePool<Node::Provider> {
+    pub fn pool(&self) -> &base_node_context::BaseNodePool<Node::Provider> {
         self.node.pool()
     }
 
@@ -389,7 +387,8 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
     /// Returns an instance of the [`AdminApi`] for the rpc server.
     pub fn admin_api(
         &self,
-    ) -> AdminApi<reth_network::NetworkHandle, reth_node_api::BaseNodePool<Node::Provider>> {
+    ) -> AdminApi<reth_network::NetworkHandle, base_node_context::BaseNodePool<Node::Provider>>
+    {
         self.rpc_registry.registry.admin_api()
     }
 }

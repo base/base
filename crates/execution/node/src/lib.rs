@@ -28,7 +28,7 @@ mod payload_service;
 pub use payload_service::{BasePayloadServiceBuilder, BasePayloadServiceMode};
 
 mod components;
-pub use components::{BaseComponentsBuilder, BaseNodeComponents, BaseNodePool};
+pub use components::BaseComponentsBuilder;
 
 #[cfg(test)]
 mod storage;

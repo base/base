@@ -17,8 +17,8 @@ reth-exex = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-provider = { workspace = true }
-reth-node-api = { workspace = true }
 alloy-consensus = { workspace = true }
+base-node-context = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }

@@ -19,19 +19,20 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes,
     config::{BaseDAConfig, GasLimitConfig},
 };
+use base_execution_payload_types::PayloadAttributesBuilder;
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BaseTransactionPool, BaseTransactionValidator,
     DiskFileBlobStore, GuardLimits, TransactionValidationTaskExecutor,
     maintain_state_diff_invalidation,
 };
+use base_node_context::BaseNodeContext;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_network_peers::NodeRecord;
-use reth_node_api::PayloadAttributesBuilder;
 use reth_node_builder::{
-    BuilderContext, DebugNodeConfig, NodeAdapter,
+    BuilderContext, DebugNodeConfig,
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
@@ -254,7 +255,7 @@ impl BaseNode {
 }
 
 /// Concrete add-ons for the core Base node and its provider adapter.
-pub type BaseNodeAddOns<N> = BaseAddOns<NodeAdapter<N>>;
+pub type BaseNodeAddOns<N> = BaseAddOns<BaseNodeContext<N>>;
 
 // Compatibility with Reth's generic node test harness.
 #[cfg(feature = "test-utils")]
@@ -728,7 +729,7 @@ impl BaseNetworkBuilder {
     pub async fn build_network<DB>(
         self,
         ctx: &BuilderContext<DB>,
-        pool: crate::BaseNodePool<DB>,
+        pool: base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider<DB>>,
     ) -> eyre::Result<NetworkHandle>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,

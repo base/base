@@ -27,7 +27,6 @@ alloy-signer = { workspace = true }
 reth-metrics = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
-reth-node-api = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
@@ -43,6 +42,7 @@ reth-network-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-storage-errors = {workspace = true}
+base-node-context = { workspace = true }
 opentelemetry-http = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-network-types = { workspace = true }

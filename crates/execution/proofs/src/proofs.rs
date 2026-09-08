@@ -5,10 +5,10 @@ use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiO
 use base_execution_trie::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
 };
+use base_node_context::FullNodeComponents;
 use base_node_core::args::{ProofsHistoryDbBackend, RollupArgs};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
-use reth_node_api::FullNodeComponents;
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::{error, info};

@@ -5,11 +5,12 @@
 
 use std::fmt;
 
+use base_node_context::BaseNodeContext;
 use eyre::Result;
 use futures::future::BoxFuture;
 use reth_exex::ExExContext;
 use reth_node_builder::{
-    NodeAdapter, NodeBuilderWithComponents, WithLaunchContext,
+    NodeBuilderWithComponents, WithLaunchContext,
     node::FullNode,
     rpc::{RethRpcAddOns, RpcContext},
 };
@@ -17,13 +18,13 @@ use reth_node_builder::{
 use crate::types::{BaseNodeAddOns, BaseNodeTypes};
 
 /// Alias for the default Base components type.
-pub type BaseComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
+pub type BaseComponents = base_node_context::BaseNodeContext<BaseNodeTypes>;
 
 /// Convenience alias for the Base node adapter type used by the reth builder.
 ///
 /// Because `Components` depends only on pool, network, executor, and consensus builders (not the
 /// payload service builder), this type is identical regardless of which payload service is used.
-pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes>;
+pub type BaseNodeAdapter = BaseNodeContext<BaseNodeTypes>;
 
 /// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
 type BaseEthApi = <BaseNodeAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;

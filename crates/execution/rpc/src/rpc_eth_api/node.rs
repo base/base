@@ -4,9 +4,9 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{PoolTransaction, TransactionPool};
+use base_node_context::FullNodeComponents;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
-use reth_node_api::FullNodeComponents;
 use reth_rpc_eth_types::EthStateCache;
 use reth_storage_api::{
     BalProvider, BlockReader, BlockReaderIdExt, PruneCheckpointReader, StageCheckpointReader,
@@ -60,7 +60,7 @@ where
     T: FullNodeComponents<Provider: ChainSpecProvider>,
 {
     type Provider = T::Provider;
-    type Pool = reth_node_api::BaseNodePool<T::Provider>;
+    type Pool = base_node_context::BaseNodePool<T::Provider>;
 
     type Network = reth_network::NetworkHandle;
 

@@ -36,4 +36,6 @@ reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
-reth-node-builder = { workspace = true, features = ["default", "test-utils"] }
+
+[dependencies.base-node-context]
+workspace = true

@@ -21,7 +21,7 @@ use reth_e2e_test_utils::{
         setup::{NetworkSetup, Setup},
     },
 };
-use reth_node_api::TreeConfig;
+use reth_engine_primitives::TreeConfig;
 
 #[tokio::test]
 async fn test_testsuite_produce_blocks() -> Result<()> {

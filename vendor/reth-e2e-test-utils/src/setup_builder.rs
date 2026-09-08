@@ -21,8 +21,9 @@ use tracing::{Instrument, Level, span};
 use crate::{NodeHelperType, node::NodeTestContext, wallet::Wallet};
 
 /// Type alias for tree config modifier closure
-type TreeConfigModifier =
-    Box<dyn Fn(reth_node_api::TreeConfig) -> reth_node_api::TreeConfig + Send + Sync>;
+type TreeConfigModifier = Box<
+    dyn Fn(reth_engine_primitives::TreeConfig) -> reth_engine_primitives::TreeConfig + Send + Sync,
+>;
 
 /// Type alias for node config modifier closure
 type NodeConfigModifier = Box<dyn Fn(NodeConfig) -> NodeConfig + Send + Sync>;
@@ -71,7 +72,10 @@ where
     /// The closure receives the base tree config and returns a modified version.
     pub fn with_tree_config_modifier<G>(mut self, modifier: G) -> Self
     where
-        G: Fn(reth_node_api::TreeConfig) -> reth_node_api::TreeConfig + Send + Sync + 'static,
+        G: Fn(reth_engine_primitives::TreeConfig) -> reth_engine_primitives::TreeConfig
+            + Send
+            + Sync
+            + 'static,
     {
         self.tree_config_modifier = Some(Box::new(modifier));
         self
@@ -110,7 +114,7 @@ where
 
         // Apply tree config modifier if present, with test-appropriate defaults
         let base_tree_config =
-            reth_node_api::TreeConfig::default().with_cross_block_cache_size(1024 * 1024);
+            reth_engine_primitives::TreeConfig::default().with_cross_block_cache_size(1024 * 1024);
         let tree_config = if let Some(modifier) = self.tree_config_modifier {
             modifier(base_tree_config)
         } else {

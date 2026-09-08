@@ -1,6 +1,6 @@
 use std::fmt;
 
-use reth_node_api::{FullNodeComponents, NodeAddOns};
+use base_node_context::{FullNodeComponents, NodeAddOns};
 
 use crate::node::FullNode;
 

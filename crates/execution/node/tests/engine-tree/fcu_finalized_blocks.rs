@@ -13,7 +13,7 @@ use reth_e2e_test_utils::testsuite::{
     },
     setup::{NetworkSetup, Setup},
 };
-use reth_node_api::TreeConfig;
+use reth_engine_primitives::TreeConfig;
 
 use crate::fixtures::BaseTestPayload;
 

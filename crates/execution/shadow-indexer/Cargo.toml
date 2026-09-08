@@ -17,9 +17,9 @@ alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-reth-node-api = { workspace = true }
 base-node-runner = { workspace = true }
 reth-network-api = { workspace = true }
+base-node-context = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-shadow-indexer-db = { workspace = true }

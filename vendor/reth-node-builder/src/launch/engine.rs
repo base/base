@@ -3,8 +3,11 @@
 use std::{future::Future, pin::Pin};
 
 use alloy_consensus::BlockHeader;
+use base_execution_payload_types::BuiltPayload;
+use base_node_context::{AddOnsContext, BaseNodeContext, FullNodeComponents};
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
 use reth_db::{Database, database_metrics::DatabaseMetrics};
+use reth_engine_primitives::ConsensusEngineHandle;
 use reth_engine_tree::{
     chain::{ChainEvent, FromOrchestrator},
     engine::{EngineApiKind, EngineApiRequest, EngineRequestHandler},
@@ -15,7 +18,6 @@ use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
-use reth_node_api::{BuiltPayload, ConsensusEngineHandle, FullNodeComponents};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -32,8 +34,7 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    AddOnsContext, FullNode, LaunchContext, LaunchNode, NodeAdapter, NodeBuilderWithComponents,
-    NodeHandle,
+    FullNode, LaunchContext, LaunchNode, NodeBuilderWithComponents, NodeHandle,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
     rpc::{BasicEngineValidatorBuilder, EngineShutdown, RethRpcAddOns, RpcHandle},
@@ -64,10 +65,10 @@ impl EngineNodeLauncher {
     async fn launch_node<DB, AO>(
         self,
         target: NodeBuilderWithComponents<DB, AO>,
-    ) -> eyre::Result<NodeHandle<NodeAdapter<DB>, AO>>
+    ) -> eyre::Result<NodeHandle<BaseNodeContext<DB>, AO>>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        AO: RethRpcAddOns<NodeAdapter<DB>>,
+        AO: RethRpcAddOns<BaseNodeContext<DB>>,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
@@ -422,9 +423,9 @@ impl EngineNodeLauncher {
 impl<DB, AO> LaunchNode<NodeBuilderWithComponents<DB, AO>> for EngineNodeLauncher
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<NodeAdapter<DB>> + 'static,
+    AO: RethRpcAddOns<BaseNodeContext<DB>> + 'static,
 {
-    type Node = NodeHandle<NodeAdapter<DB>, AO>;
+    type Node = NodeHandle<BaseNodeContext<DB>, AO>;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
 
     fn launch_node(self, target: NodeBuilderWithComponents<DB, AO>) -> Self::Future {

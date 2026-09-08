@@ -1,10 +1,10 @@
 //! Mirrored version of [`ExExContext`](`crate::ExExContext`)
-//! without generic abstraction over [Node](`reth_node_api::FullNodeComponents`)
+//! without generic abstraction over [Node](`base_node_context::FullNodeComponents`)
 
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
-use reth_node_api::FullNodeComponents;
+use base_node_context::FullNodeComponents;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::BlockReader;
 use tokio::sync::mpsc;

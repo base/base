@@ -9,6 +9,7 @@ use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{PoolConfig, PoolTransaction, TransactionPool};
+use base_node_context::{BaseNodeContext, NodeAddOns};
 use futures::Future;
 use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
@@ -19,7 +20,6 @@ use reth_network::{
         config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
     },
 };
-use reth_node_api::NodeAddOns;
 use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
     dirs::{ChainPath, DataDirPath},
@@ -112,7 +112,7 @@ pub use states::*;
 /// ## Internals
 ///
 /// The builder carries the database and provider backends through its construction phases.
-/// [`FullNodeComponents`](reth_node_api::FullNodeComponents) exposes the initialized services.
+/// [`FullNodeComponents`](base_node_context::FullNodeComponents) exposes the initialized services.
 /// After [`WithLaunchContext::launch`], the [`NodeHandle`] contains the running [`FullNode`].
 ///
 /// ### Limitations
@@ -331,7 +331,7 @@ where
         add_ons: AO,
     ) -> WithLaunchContext<NodeBuilderWithComponents<DB, AO>>
     where
-        AO: NodeAddOns<NodeAdapter<DB>>,
+        AO: NodeAddOns<BaseNodeContext<DB>>,
     {
         WithLaunchContext {
             builder: self.builder.with_add_ons(add_ons),
@@ -343,7 +343,7 @@ where
 impl<DB, AO> WithLaunchContext<NodeBuilderWithComponents<DB, AO>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<NodeAdapter<DB>>,
+    AO: RethRpcAddOns<BaseNodeContext<DB>>,
 {
     /// Returns a reference to the node builder's config.
     pub const fn config(&self) -> &NodeConfig {
@@ -400,7 +400,7 @@ where
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(self, hook: F) -> Self
     where
-        F: FnOnce(NodeAdapter<DB>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(BaseNodeContext<DB>) -> eyre::Result<()> + Send + 'static,
     {
         Self {
             builder: self.builder.on_component_initialized(hook),
@@ -411,7 +411,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<NodeAdapter<DB>, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<BaseNodeContext<DB>, AO>) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
     }
@@ -449,7 +449,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, NodeAdapter<DB>, AO::EthApi>,
+                RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -496,7 +496,9 @@ where
     /// ```
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, NodeAdapter<DB>, AO::EthApi>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>) -> eyre::Result<()>
+            + Send
+            + 'static,
     {
         Self { builder: self.builder.extend_rpc_modules(hook), task_executor: self.task_executor }
     }
@@ -508,7 +510,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<DB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<BaseNodeContext<DB>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -525,7 +527,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex_if<F, R, E>(self, cond: bool, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<DB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<BaseNodeContext<DB>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {

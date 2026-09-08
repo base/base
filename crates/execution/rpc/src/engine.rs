@@ -15,7 +15,7 @@ use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
-use reth_node_api::EngineApiValidator;
+use reth_engine_primitives::EngineApiValidator;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
 use tracing::{debug, instrument, trace};

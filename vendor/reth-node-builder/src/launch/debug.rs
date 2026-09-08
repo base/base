@@ -8,13 +8,15 @@ use alloy_consensus::transaction::Either;
 use alloy_provider::network::AnyNetwork;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_payload_types::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributesBuilder,
+};
+use base_node_context::FullNodeComponents;
 use jsonrpsee::core::{DeserializeOwned, Serialize};
 use reth_consensus_debug_client::{
     DebugConsensusClient, EtherscanBlockProvider, PayloadProvider, RpcBlockProvider,
 };
 use reth_engine_local::{LocalMiner, MiningMode};
-use reth_node_api::{FullNodeComponents, PayloadAttributesBuilder};
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
 
@@ -111,7 +113,7 @@ where
         >,
     >,
     debug_block_provider: Option<B>,
-    mining_mode: Option<MiningMode<reth_node_api::BaseNodePool<N::Provider>>>,
+    mining_mode: Option<MiningMode<base_node_context::BaseNodePool<N::Provider>>>,
 }
 
 impl<L, Target, N, AddOns, R, B> DebugNodeLauncherFuture<L, Target, N, R, B>
@@ -168,7 +170,7 @@ where
     /// (instant or interval). This can be used to provide a custom trigger-based mining mode.
     pub fn with_mining_mode(
         mut self,
-        mode: MiningMode<reth_node_api::BaseNodePool<N::Provider>>,
+        mode: MiningMode<base_node_context::BaseNodePool<N::Provider>>,
     ) -> Self {
         self.mining_mode = Some(mode);
         self

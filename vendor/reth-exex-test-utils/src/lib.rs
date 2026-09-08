@@ -20,6 +20,7 @@ use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::NoopPayloadBuilderService;
 use base_execution_txpool::Pool;
+use base_node_context::BaseNodeContext;
 use futures_util::FutureExt;
 use reth_db::{
     DatabaseEnv,
@@ -31,7 +32,6 @@ use reth_db_common::init::init_genesis;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
-use reth_node_builder::NodeAdapter;
 use reth_node_core::node_config::NodeConfig;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
@@ -45,11 +45,11 @@ use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 
 /// A shared [`TempDatabase`] used for testing
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
-/// The [`NodeAdapter`] for the [`TestExExContext`]. Contains type necessary to
+/// The [`BaseNodeContext`] for the [`TestExExContext`]. Contains type necessary to
 /// boot the testing environment
 pub type TestFullNodeTypes = TmpDB;
 /// Components needed by an execution extension, without a node launcher or RPC addons.
-pub type Adapter = NodeAdapter<TestFullNodeTypes>;
+pub type Adapter = BaseNodeContext<TestFullNodeTypes>;
 /// An [`ExExContext`] using the [`Adapter`] type.
 pub type TestExExContext = ExExContext<Adapter>;
 
@@ -178,7 +178,7 @@ pub async fn test_exex_context_with_chain_spec(
 
     let (_, payload_builder_handle) = NoopPayloadBuilderService::new();
 
-    let components = NodeAdapter::<_> {
+    let components = BaseNodeContext::<_> {
         transaction_pool,
         evm_config,
         consensus,

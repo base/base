@@ -5,18 +5,12 @@ use std::{marker::PhantomData, sync::Arc};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
-use base_execution_txpool::{BaseTransactionPool, DiskFileBlobStore};
+use base_node_context::BaseNodeContext;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_node_builder::{BuilderContext, ComponentBuilder, NodeAdapter};
+use reth_node_builder::{BuilderContext, ComponentBuilder};
 use reth_provider::providers::BlockchainProvider;
 
 use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder};
-
-/// The concrete transaction pool used by Base nodes.
-pub type BaseNodePool<Node> = BaseTransactionPool<BlockchainProvider<Node>, DiskFileBlobStore>;
-
-/// Base runtime components, including the provider and task executor.
-pub type BaseNodeComponents<Node> = NodeAdapter<Node>;
 
 /// Constructs Base components while allowing the payload service to vary.
 #[derive(Debug)]
@@ -58,7 +52,7 @@ impl<Node, Payload> BaseComponentsBuilder<Node, Payload> {
 impl<DB, Txs> BaseComponentsBuilder<DB, BasePayloadBuilder<Txs>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Txs: BasePayloadTransactions<BaseNodePool<DB>>,
+    Txs: BasePayloadTransactions<base_node_context::BaseNodePool<BlockchainProvider<DB>>>,
 {
     /// Converts Base component construction into a single launch callback.
     pub fn into_builder(self) -> ComponentBuilder<DB> {
@@ -69,7 +63,7 @@ where
     pub async fn build_components(
         self,
         ctx: &BuilderContext<DB>,
-    ) -> eyre::Result<BaseNodeComponents<DB>> {
+    ) -> eyre::Result<BaseNodeContext<DB>> {
         let evm_config = BaseEvmConfig::new(ctx.chain_spec());
         let pool = self.pool_builder.build_pool(ctx, evm_config.clone()).await?;
         let network = self.network_builder.build_network(ctx, pool.clone()).await?;
@@ -78,7 +72,7 @@ where
             .spawn_payload_builder_service(ctx, pool.clone(), evm_config.clone())
             .await?;
         let consensus = Arc::new(BaseBeaconConsensus::new(ctx.chain_spec()));
-        Ok(NodeAdapter {
+        Ok(BaseNodeContext {
             provider: ctx.provider().clone(),
             task_executor: ctx.task_executor().clone(),
             transaction_pool: pool,

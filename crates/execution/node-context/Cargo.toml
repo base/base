@@ -1,5 +1,5 @@
 [package]
-name = "reth-node-api"
+name = "base-node-context"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,7 @@ exclude.workspace = true
 authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
+description = "Shared Base node components and launch context."
 
 [lints]
 workspace = true
@@ -28,4 +29,3 @@ alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
-base-execution-payload-types = { workspace = true, features = ["default"] }

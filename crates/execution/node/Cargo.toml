@@ -21,12 +21,12 @@ reth-db-api = { workspace = true }
 reth-network = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-provider = { workspace = true }
-reth-node-api = { workspace = true }
 reth-node-core = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
+base-node-context = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
@@ -56,6 +56,10 @@ base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
+
+[dependencies.base-execution-payload-types]
+workspace = true
+
 [dev-dependencies]
 reth-trie = { workspace = true }
 reth-trie-db = { workspace = true }
@@ -75,6 +79,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-consensus = {workspace = true, features = ["serde", "std"]}
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-codecs = { workspace = true, features = ["alloy", "test-utils"] }
+reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-execution-evm = { workspace = true, features = ["default", "std"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }

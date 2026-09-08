@@ -1,5 +1,6 @@
 use alloy_eips::BlockNumHash;
 use base_common_consensus::BaseReceipt;
+use base_node_context::FullNodeComponents;
 use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
@@ -7,7 +8,6 @@ use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_network_api::NetworkInfo;
-use reth_node_api::FullNodeComponents;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};

@@ -32,7 +32,7 @@
 //! use alloy_consensus::BlockHeader;
 //! use futures::StreamExt;
 //! use reth_exex::ExExContext;
-//! use reth_node_api::FullNodeComponents;
+//! use base_node_context::FullNodeComponents;
 //! use reth_provider::CanonStateNotification;
 //!
 //! async fn my_indexer<N: FullNodeComponents>(
