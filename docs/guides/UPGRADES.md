@@ -124,61 +124,48 @@ Also update `UpgradeConfig::iter()` to include the new entry, and re-export any 
 
 **File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
 
-Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
+Add an entry to the `rollup_fork_methods!` invocation, after the previous upgrade's entry. The
+macro generates both `is_X_active(timestamp)` and `is_first_X_block(timestamp, parent_timestamp)`.
+
+Do not hand-write these predicates. In particular, do not derive the parent timestamp as
+`timestamp - block_time`: `block_time` is the legacy 2s cadence and keeps the value `2` once Cobalt
+drops L2 blocks to 200ms, so on a post-Cobalt chain that expression lands ten blocks earlier and
+`is_first_X_block` fires for every block in between. The generated method takes the real parent
+timestamp as an argument for exactly this reason.
 
 There are two patterns depending on whether the new upgrade is **standalone** or **cascading**:
 
-**Standalone** (e.g. `pectra_blob_schedule`, `Azul`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
+**Standalone** (e.g. `pectra_blob_schedule`, `Azul`) — activated independently, never implied by a
+later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior
+and is not a prerequisite for the next upgrade. Omit the `implies` clause:
 
 ```rust
-/// Returns true if Base Azul is active at the given timestamp.
-pub fn is_base_azul_active(&self, timestamp: u64) -> bool {
-    self.upgrades.base.as_ref().and_then(|b| b.azul).is_some_and(|t| timestamp >= t)
-}
-
-/// Returns true if the timestamp marks the first Base Azul block.
-pub fn is_first_base_azul_block(&self, timestamp: u64) -> bool {
-    self.is_base_azul_active(timestamp)
-        && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
-}
+is_base_azul_active,
+is_first_base_azul_block,
+[upgrade_activation_timestamp(BaseUpgrade::Azul)],
+"Base Azul";
 ```
 
-The previous terminal upgrade's `is_X_active` method is left unchanged (no cascade added).
+The previous terminal upgrade's entry is left unchanged (no cascade added).
 
-**Cascading** (e.g. `Canyon`, `Ecotone`, `Isthmus`) — the previous upgrade is considered active whenever the new one is. Update the previous terminal upgrade's method and add the new one:
+**Cascading** (e.g. `Canyon`, `Ecotone`, `Isthmus`) — the previous upgrade is considered active
+whenever the new one is. Add `implies` to the previous terminal upgrade's entry and add the new one:
 
 ```rust
-/// Returns true if Jovian is active at the given timestamp.
-pub fn is_jovian_active(&self, timestamp: u64) -> bool {
-    self.upgrades.jovian_time.is_some_and(|t| timestamp >= t)
-        || self.is_next_active(timestamp)  // <-- cascade to next fork
-}
+is_isthmus_active,
+is_first_isthmus_block,
+[upgrade_activation_timestamp(BaseUpgrade::Isthmus)],
+"Isthmus",
+implies is_jovian_active;   // <-- cascade to the next fork
 
-/// Returns true if Next is active at the given timestamp.
-pub fn is_next_active(&self, timestamp: u64) -> bool {
-    self.upgrades.next_time.is_some_and(|t| timestamp >= t)
-}
+is_jovian_active,
+is_first_jovian_block,
+[upgrade_activation_timestamp(BaseUpgrade::Jovian)],
+"Jovian";
 ```
 
-Also update `upgrade_activation` in `impl BaseUpgrades for RollupConfig` to add the new arm. For **standalone** upgrades, the previous arm keeps `unwrap_or(ForkCondition::Never)`:
-
-```rust
-BaseUpgrade::Jovian => self
-    .upgrades
-    .jovian_time
-    .map(ForkCondition::Timestamp)
-    .unwrap_or(ForkCondition::Never),  // standalone: no cascade
-BaseUpgrade::Azul => self
-    .upgrades
-    .base
-    .as_ref()
-    .and_then(|b| b.azul)
-    .map(ForkCondition::Timestamp)
-    .unwrap_or(ForkCondition::Never),
-_ => ForkCondition::Never,  // required: BaseUpgrade is #[non_exhaustive]
-```
-
-For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition::Never)` with `.unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Next))`.
+Activation timestamps themselves are resolved through `upgrade_activation`, which reads the
+`BaseUpgrade` ladder, so no separate `ForkCondition` arm is needed per upgrade.
 
 ---
 
