@@ -13,7 +13,6 @@ use clap::{
     Arg, Args, Command,
     builder::{PossibleValue, RangedU64ValueParser, Resettable, TypedValueParser},
 };
-use rand::Rng;
 use reth_cli_util::{parse_duration_from_secs_or_ms, parse_ether_value};
 use reth_rpc_eth_types::builder::config::PendingBlockKind;
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
@@ -61,9 +60,6 @@ pub struct DefaultRpcServerArgs {
     ws_port: u16,
     ws_allowed_origins: Option<String>,
     ws_api: Option<RpcModuleSelection>,
-    ipcdisable: bool,
-    ipcpath: String,
-    ipc_socket_permissions: Option<String>,
 
     rpc_jwtsecret: Option<JwtSecret>,
     rpc_disable_metrics: bool,
@@ -165,24 +161,6 @@ impl DefaultRpcServerArgs {
     /// Set the default WS API modules
     pub fn with_ws_api(mut self, v: Option<RpcModuleSelection>) -> Self {
         self.ws_api = v;
-        self
-    }
-
-    /// Set whether to disable IPC by default
-    pub const fn with_ipcdisable(mut self, v: bool) -> Self {
-        self.ipcdisable = v;
-        self
-    }
-
-    /// Set the default IPC path
-    pub fn with_ipcpath(mut self, v: String) -> Self {
-        self.ipcpath = v;
-        self
-    }
-
-    /// Set the default IPC socket permissions
-    pub fn with_ipc_socket_permissions(mut self, v: Option<String>) -> Self {
-        self.ipc_socket_permissions = v;
         self
     }
 
@@ -345,9 +323,6 @@ impl Default for DefaultRpcServerArgs {
             ws_port: constants::DEFAULT_WS_RPC_PORT,
             ws_allowed_origins: None,
             ws_api: None,
-            ipcdisable: false,
-            ipcpath: constants::DEFAULT_IPC_ENDPOINT.to_string(),
-            ipc_socket_permissions: None,
 
             rpc_jwtsecret: None,
             rpc_disable_metrics: false,
@@ -425,20 +400,6 @@ pub struct RpcServerArgs {
     /// Rpc Modules to be configured for the WS server
     #[arg(long = "ws.api", value_parser = RpcModuleSelectionValueParser::default(), default_value = Resettable::from(DefaultRpcServerArgs::get_global().ws_api.as_ref().map(|v| v.to_string().into())))]
     pub ws_api: Option<RpcModuleSelection>,
-
-    /// Disable the IPC-RPC server
-    #[arg(long, default_value_t = DefaultRpcServerArgs::get_global().ipcdisable)]
-    pub ipcdisable: bool,
-
-    /// Filename for IPC socket/pipe within the datadir
-    #[arg(long, default_value_t = DefaultRpcServerArgs::get_global().ipcpath.clone())]
-    pub ipcpath: String,
-
-    /// Set the permissions for the IPC socket file, in octal format.
-    ///
-    /// If not specified, the permissions will be set by the system's umask.
-    #[arg(long = "ipc.permissions", default_value = Resettable::from(DefaultRpcServerArgs::get_global().ipc_socket_permissions.as_ref().map(|v| v.to_string().into())))]
-    pub ipc_socket_permissions: Option<String>,
 
     /// Hex encoded JWT secret to authenticate the regular RPC server(s), see `--http.api` and
     /// `--ws.api`.
@@ -633,7 +594,6 @@ impl RpcServerArgs {
 
     /// * The `http_port` is scaled by a factor of `-instance`
     /// * The `ws_port` is scaled by a factor of `instance * 2`
-    /// * The `ipcpath` is appended with the instance number: `/tmp/reth.ipc-<instance>`
     ///
     /// # Panics
     /// Warning: if `instance` is zero in debug mode, this will panic.
@@ -650,8 +610,6 @@ impl RpcServerArgs {
             self.http_port -= instance - 1;
             // ws port is scaled by a factor of instance * 2
             self.ws_port += instance * 2 - 2;
-            // append instance file to ipc path
-            self.ipcpath = format!("{}-{}", self.ipcpath, instance);
         }
     }
 
@@ -669,21 +627,10 @@ impl RpcServerArgs {
         self
     }
 
-    /// Append a random string to the ipc path, to prevent possible collisions when multiple nodes
-    /// are being run on the same machine.
-    pub fn with_ipc_random_path(mut self) -> Self {
-        let random_string: String =
-            rand::rng().sample_iter(rand::distr::Alphanumeric).take(8).map(char::from).collect();
-        self.ipcpath = format!("{}-{}", self.ipcpath, random_string);
-        self
-    }
-
-    /// Configure all ports to be set to a random unused port when bound, and set the IPC path to a
-    /// random path.
+    /// Let the OS assign a free port to each enabled transport.
     pub fn with_unused_ports(mut self) -> Self {
         self = self.with_http_unused_port();
         self = self.with_ws_unused_port();
-        self = self.with_ipc_random_path();
         self
     }
 
@@ -703,14 +650,23 @@ impl RpcServerArgs {
 
     /// Returns `true` if the given RPC namespace is enabled on any transport.
     pub fn is_namespace_enabled(&self, ns: RethRpcModule) -> bool {
-        if self.http && self.http_api.as_ref().is_some_and(|api| api.contains(&ns)) {
+        if self.http
+            && self.http_api.as_ref().map_or_else(
+                || RpcModuleSelection::standard_modules().contains(&ns),
+                |api| api.contains(&ns),
+            )
+        {
             return true;
         }
-        if self.ws && self.ws_api.as_ref().is_some_and(|api| api.contains(&ns)) {
+        if self.ws
+            && self.ws_api.as_ref().map_or_else(
+                || RpcModuleSelection::standard_modules().contains(&ns),
+                |api| api.contains(&ns),
+            )
+        {
             return true;
         }
-        // IPC exposes all modules when enabled
-        !self.ipcdisable
+        false
     }
 
     /// Enables forced blob sidecar upcasting from EIP-4844 to EIP-7594 format.
@@ -734,9 +690,6 @@ impl Default for RpcServerArgs {
             ws_port,
             ws_allowed_origins,
             ws_api,
-            ipcdisable,
-            ipcpath,
-            ipc_socket_permissions,
 
             rpc_jwtsecret,
             rpc_disable_metrics,
@@ -775,9 +728,6 @@ impl Default for RpcServerArgs {
             ws_port,
             ws_allowed_origins,
             ws_api,
-            ipcdisable,
-            ipcpath,
-            ipc_socket_permissions,
 
             rpc_jwtsecret,
             rpc_disable_metrics,
@@ -942,9 +892,6 @@ mod tests {
             ws_port: 8546,
             ws_allowed_origins: Some("*".to_string()),
             ws_api: Some(RpcModuleSelection::try_from_selection(["eth", "admin"]).unwrap()),
-            ipcdisable: false,
-            ipcpath: "reth.ipc".to_string(),
-            ipc_socket_permissions: Some("0o666".to_string()),
 
             rpc_jwtsecret: Some(
                 JwtSecret::from_hex(
@@ -1011,10 +958,6 @@ mod tests {
             "*",
             "--ws.api",
             "eth,admin",
-            "--ipcpath",
-            "reth.ipc",
-            "--ipc.permissions",
-            "0o666",
             "--rpc.jwtsecret",
             "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             "--rpc.max-request-size",

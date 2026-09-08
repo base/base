@@ -6,22 +6,15 @@ use reth_node_core::args::RpcServerArgs;
 use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig, GasPriceOracleConfig};
 use reth_rpc_layer::JwtSecret;
 use reth_rpc_server_types::RpcModuleSelection;
-use tower::layer::util::Identity;
 use tracing::warn;
 
-use crate::{IpcServerBuilder, RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
+use crate::{RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
 
 /// A trait that provides a configured RPC server.
 ///
 /// This provides all basic config values for the RPC server and is implemented by the
 /// [`RpcServerArgs`] type.
 pub trait RethRpcServerConfig {
-    /// Returns whether ipc is enabled.
-    fn is_ipc_enabled(&self) -> bool;
-
-    /// Returns the path to the target ipc socket if enabled.
-    fn ipc_path(&self) -> &str;
-
     /// The configured ethereum RPC settings.
     fn eth_config(&self) -> EthConfig;
 
@@ -49,9 +42,6 @@ pub trait RethRpcServerConfig {
     /// Returns the default server config for http/ws
     fn http_ws_server_builder(&self) -> ServerConfigBuilder;
 
-    /// Returns the default ipc server builder
-    fn ipc_server_builder(&self) -> IpcServerBuilder<Identity, Identity>;
-
     /// Creates the [`RpcServerConfig`] from cli args.
     fn rpc_server_config(&self) -> RpcServerConfig;
 
@@ -65,15 +55,6 @@ pub trait RethRpcServerConfig {
 }
 
 impl RethRpcServerConfig for RpcServerArgs {
-    fn is_ipc_enabled(&self) -> bool {
-        // By default IPC is enabled therefore it is enabled if the `ipcdisable` is false.
-        !self.ipcdisable
-    }
-
-    fn ipc_path(&self) -> &str {
-        self.ipcpath.as_str()
-    }
-
     fn eth_config(&self) -> EthConfig {
         EthConfig::default()
             .max_tracing_requests(self.rpc_max_tracing_requests)
@@ -144,10 +125,6 @@ impl RethRpcServerConfig for RpcServerArgs {
             );
         }
 
-        if self.is_ipc_enabled() {
-            config = config.with_ipc(RpcModuleSelection::default_ipc_modules());
-        }
-
         config
     }
 
@@ -157,15 +134,6 @@ impl RethRpcServerConfig for RpcServerArgs {
             .max_request_body_size(self.rpc_max_request_size_bytes())
             .max_response_body_size(self.rpc_max_response_size_bytes())
             .max_subscriptions_per_connection(self.rpc_max_subscriptions_per_connection.get())
-    }
-
-    fn ipc_server_builder(&self) -> IpcServerBuilder<Identity, Identity> {
-        IpcServerBuilder::default()
-            .max_subscriptions_per_connection(self.rpc_max_subscriptions_per_connection.get())
-            .max_request_body_size(self.rpc_max_request_size_bytes())
-            .max_response_body_size(self.rpc_max_response_size_bytes())
-            .max_connections(self.rpc_max_connections.get())
-            .set_ipc_socket_permissions(self.ipc_socket_permissions.clone())
     }
 
     fn rpc_server_config(&self) -> RpcServerConfig {
@@ -203,11 +171,6 @@ impl RethRpcServerConfig for RpcServerArgs {
                 .with_ws_address(socket_address)
                 .with_ws(self.http_ws_server_builder())
                 .with_ws_cors(self.ws_allowed_origins.clone());
-        }
-
-        if self.is_ipc_enabled() {
-            config =
-                config.with_ipc(self.ipc_server_builder()).with_ipc_endpoint(self.ipcpath.clone());
         }
 
         config
@@ -338,7 +301,7 @@ mod tests {
             config.ws_address().unwrap(),
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8888))
         );
-        assert_eq!(config.ipc_endpoint().unwrap(), constants::DEFAULT_IPC_ENDPOINT);
+
         assert!(config.rpc_metrics_enabled());
     }
 

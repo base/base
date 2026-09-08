@@ -25,8 +25,6 @@ mod client;
 pub use client::{ClientRef, NoParams, RpcClient, RpcClientInner, WeakClient};
 
 mod poller;
-#[cfg(all(feature = "ipc", not(target_family = "wasm")))]
-pub use alloy_transport_ipc::IpcConnect;
 #[cfg(all(feature = "ws-base", not(target_family = "wasm")))]
 pub use alloy_transport_ws::WebSocketConfig;
 #[cfg(feature = "ws-base")]

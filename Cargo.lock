@@ -433,7 +433,6 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
- "alloy-transport-ipc",
  "alloy-transport-ws",
  "async-stream",
  "async-trait",
@@ -517,7 +516,6 @@ dependencies = [
  "alloy-pubsub",
  "alloy-transport",
  "alloy-transport-http",
- "alloy-transport-ipc",
  "alloy-transport-ws",
  "ci_info",
  "futures",
@@ -859,26 +857,6 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry 0.32.1",
  "url",
-]
-
-[[package]]
-name = "alloy-transport-ipc"
-version = "0.0.0"
-dependencies = [
- "alloy-json-rpc",
- "alloy-pubsub",
- "alloy-transport",
- "bytes",
- "futures",
- "interprocess",
- "pin-project",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-test",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -7923,12 +7901,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "doctest-file"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
-
-[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10401,21 +10373,6 @@ dependencies = [
  "ssh-encoding",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "interprocess"
-version = "2.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "069323743400cb7ab06a8fe5c1ed911d36b6919ec531661d034c89083629595b"
-dependencies = [
- "doctest-file",
- "futures-core",
- "libc",
- "recvmsg",
- "tokio",
- "widestring",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -14078,12 +14035,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "recvmsg"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
-
-[[package]]
 name = "redb"
 version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15138,28 +15089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-ipc"
-version = "0.0.0"
-dependencies = [
- "bytes",
- "futures",
- "futures-util",
- "interprocess",
- "jsonrpsee",
- "pin-project",
- "rand 0.9.5",
- "reth-tracing",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower",
- "tracing",
-]
-
-[[package]]
 name = "reth-libmdbx"
 version = "0.0.0"
 dependencies = [
@@ -15405,7 +15334,6 @@ dependencies = [
  "humantime",
  "ipnet",
  "proptest",
- "rand 0.9.5",
  "reth-cli-util",
  "reth-config",
  "reth-db",
@@ -15708,7 +15636,6 @@ dependencies = [
  "reqwest",
  "reth-chain-state",
  "reth-engine-primitives",
- "reth-ipc",
  "reth-metrics",
  "reth-network-api",
  "reth-network-peers",
@@ -18819,17 +18746,6 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

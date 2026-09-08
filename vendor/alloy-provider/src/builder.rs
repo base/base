@@ -570,22 +570,6 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
         Ok(self.connect_client(client))
     }
 
-    /// Build this provider with an IPC connection.
-    #[cfg(feature = "ipc")]
-    pub async fn connect_ipc<T>(
-        self,
-        connect: alloy_transport_ipc::IpcConnect<T>,
-    ) -> Result<F::Provider, TransportError>
-    where
-        alloy_transport_ipc::IpcConnect<T>: alloy_pubsub::PubSubConnect,
-        L: ProviderLayer<RootProvider<N>, N>,
-        F: TxFiller<N> + ProviderLayer<L::Provider, N>,
-        N: Network,
-    {
-        let client = ClientBuilder::default().ipc(connect).await?;
-        Ok(self.connect_client(client))
-    }
-
     /// Build this provider with an Reqwest HTTP transport.
     #[cfg(any(test, all(feature = "reqwest", not(all(target_os = "wasi", target_env = "p1")))))]
     pub fn connect_http(self, url: reqwest::Url) -> F::Provider

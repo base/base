@@ -4,8 +4,6 @@ use std::{
     net::SocketAddr,
 };
 
-use reth_ipc::server::IpcServerStartError;
-
 use crate::{RethRpcModule, cors::CorsDomainError};
 
 /// Rpc server kind.
@@ -69,9 +67,6 @@ pub enum RpcError {
     /// Http and WS server configured on the same port but with conflicting settings.
     #[error(transparent)]
     WsHttpSamePortError(#[from] WsHttpSamePortError),
-    /// Thrown when IPC server fails to start.
-    #[error(transparent)]
-    IpcServerError(#[from] IpcServerStartError),
     /// Custom error.
     #[error("{0}")]
     Custom(String),

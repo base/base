@@ -41,7 +41,6 @@ base-execution-consensus = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 strum = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
-rand = { workspace = true, features = ["default"] }
 ipnet = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }

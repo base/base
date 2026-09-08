@@ -1,7 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
 use alloy_json_rpc::RpcError;
-#[cfg(any(feature = "ws-base", feature = "ipc"))]
+#[cfg(feature = "ws-base")]
 use alloy_pubsub::PubSubConnect;
 use alloy_transport::{BoxTransport, TransportConnect, TransportError, TransportErrorKind};
 
@@ -15,9 +15,6 @@ pub enum BuiltInConnectionString {
     /// WebSocket transport.
     #[cfg(feature = "ws-base")]
     Ws(url::Url, Option<alloy_transport::Authorization>),
-    /// IPC transport.
-    #[cfg(feature = "ipc")]
-    Ipc(std::path::PathBuf),
 }
 
 impl TransportConnect for BuiltInConnectionString {
@@ -27,14 +24,7 @@ impl TransportConnect for BuiltInConnectionString {
             Self::Http(url) => alloy_transport::utils::guess_local_url(url),
             #[cfg(feature = "ws-base")]
             Self::Ws(url, _) => alloy_transport::utils::guess_local_url(url),
-            #[cfg(feature = "ipc")]
-            Self::Ipc(_) => true,
-            #[cfg(not(any(
-                feature = "reqwest",
-                feature = "hyper",
-                feature = "ws-base",
-                feature = "ipc"
-            )))]
+            #[cfg(not(any(feature = "reqwest", feature = "hyper", feature = "ws-base")))]
             _ => false,
         }
     }
@@ -182,20 +172,9 @@ impl BuiltInConnectionString {
                 ws_connect.into_service().await.map(alloy_transport::Transport::boxed)
             }
 
-            #[cfg(feature = "ipc")]
-            Self::Ipc(path) => alloy_transport_ipc::IpcConnect::new(path.to_owned())
-                .into_service()
-                .await
-                .map(alloy_transport::Transport::boxed),
-
-            #[cfg(not(any(
-                feature = "reqwest",
-                feature = "hyper",
-                feature = "ws-base",
-                feature = "ipc"
-            )))]
+            #[cfg(not(any(feature = "reqwest", feature = "hyper", feature = "ws-base")))]
             _ => Err(TransportErrorKind::custom_str(
-                "No transports enabled. Enable one of: reqwest, hyper, ws, ipc",
+                "No transports enabled. Enable one of: reqwest, hyper, ws",
             )),
         }
     }
@@ -241,27 +220,6 @@ impl BuiltInConnectionString {
 
         Ok(Self::Ws(url, auth))
     }
-
-    /// Tries to parse the given string as an IPC path, returning an error if
-    /// the path does not exist.
-    #[cfg(feature = "ipc")]
-    pub fn try_as_ipc(s: &str) -> Result<Self, TransportError> {
-        let original = s;
-        let s = s.strip_prefix("file://").or_else(|| s.strip_prefix("ipc://")).unwrap_or(s);
-
-        // Check if it exists.
-        let path = std::path::Path::new(s);
-        let _meta = path.metadata().map_err(|e| {
-            let msg = if original == s {
-                format!("failed to read IPC path '{}': {e}", path.display())
-            } else {
-                format!("failed to read IPC path '{}' from '{original}': {e}", path.display())
-            };
-            TransportErrorKind::custom_str(&msg)
-        })?;
-
-        Ok(Self::Ipc(path.to_path_buf()))
-    }
 }
 
 impl FromStr for BuiltInConnectionString {
@@ -270,14 +228,12 @@ impl FromStr for BuiltInConnectionString {
     #[allow(clippy::let_and_return)]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let res = Err(TransportErrorKind::custom_str(&format!(
-            "No transports enabled. Enable one of: reqwest, hyper, ws, ipc. Connection info: '{s}'"
+            "No transports enabled. Enable one of: reqwest, hyper, ws. Connection info: '{s}'"
         )));
         #[cfg(any(feature = "reqwest", feature = "hyper"))]
         let res = res.or_else(|_| Self::try_as_http(s));
         #[cfg(feature = "ws-base")]
         let res = res.or_else(|_| Self::try_as_ws(s));
-        #[cfg(feature = "ipc")]
-        let res = res.or_else(|_| Self::try_as_ipc(s));
         res
     }
 }
@@ -406,47 +362,6 @@ mod test {
                 "ws://alice:pass@127.0.0.1:8545".parse::<Url>().unwrap(),
                 Some(Authorization::basic("alice", "pass"))
             )
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "ipc")]
-    #[cfg_attr(windows, ignore = "TODO: windows IPC")]
-    fn empty_ipc_path_error_includes_path() {
-        let err = BuiltInConnectionString::try_as_ipc("ipc://").unwrap_err().to_string();
-
-        assert!(
-            err.contains("failed to read IPC path '' from 'ipc://'"),
-            "unexpected IPC path error: {err}"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "ipc")]
-    #[cfg_attr(windows, ignore = "TODO: windows IPC")]
-    fn test_parsing_ipc() {
-        use alloy_node_bindings::Anvil;
-
-        // Spawn an Anvil instance to create an IPC socket, as it's different from a normal file.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let ipc_path = temp_dir.path().join("anvil.ipc");
-        let ipc_arg = format!("--ipc={}", ipc_path.display());
-        let _anvil = Anvil::new().arg(ipc_arg).spawn();
-        let path_str = ipc_path.to_str().unwrap();
-
-        assert_eq!(
-            BuiltInConnectionString::from_str(&format!("ipc://{path_str}")).unwrap(),
-            BuiltInConnectionString::Ipc(ipc_path.clone())
-        );
-
-        assert_eq!(
-            BuiltInConnectionString::from_str(&format!("file://{path_str}")).unwrap(),
-            BuiltInConnectionString::Ipc(ipc_path.clone())
-        );
-
-        assert_eq!(
-            BuiltInConnectionString::from_str(ipc_path.to_str().unwrap()).unwrap(),
-            BuiltInConnectionString::Ipc(ipc_path.clone())
         );
     }
 

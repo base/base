@@ -116,21 +116,6 @@ impl<L> ClientBuilder<L> {
         self.pubsub(ws_connect).await
     }
 
-    /// Connect an IPC transport, producing an [`RpcClient`] with the provided
-    /// connection.
-    #[cfg(feature = "ipc")]
-    pub async fn ipc<T>(
-        self,
-        ipc_connect: alloy_transport_ipc::IpcConnect<T>,
-    ) -> TransportResult<RpcClient>
-    where
-        alloy_transport_ipc::IpcConnect<T>: alloy_pubsub::PubSubConnect,
-        L: Layer<alloy_pubsub::PubSubFrontend>,
-        L::Service: IntoBoxTransport,
-    {
-        self.pubsub(ipc_connect).await
-    }
-
     /// Connect a transport specified by the given string, producing an [`RpcClient`].
     ///
     /// See [`BuiltInConnectionString`] for more information.

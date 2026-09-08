@@ -449,6 +449,5 @@ mod tests {
         assert_eq!(cmd.network.discovery.port, 0);
 
         // make sure the ipc path is not the default
-        assert_ne!(cmd.rpc.ipcpath, String::from("/tmp/reth.ipc"));
     }
 }

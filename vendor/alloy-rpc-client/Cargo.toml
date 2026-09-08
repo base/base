@@ -57,14 +57,12 @@ alloy-node-bindings = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 futures-util = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default"] }
-alloy-transport-ipc = { workspace = true, features = ["mock"] }
 alloy-transport-ws = { workspace = true, features = ["aws-lc-rs"] }
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasmtimer = { workspace = true, features = ["default"] }
 [target.'cfg(not(all(target_os = "wasi", target_env = "p1")))'.dependencies]
 reqwest = { workspace = true, optional = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-alloy-transport-ipc = { workspace = true, optional = true }
 [lints]
 workspace = true
 
@@ -73,10 +71,6 @@ default = ["reqwest"]
 hyper = [
     "dep:url",
     "alloy-transport-http/hyper",
-]
-ipc = [
-    "pubsub",
-    "dep:alloy-transport-ipc",
 ]
 pubsub = ["dep:alloy-pubsub"]
 reqwest = [

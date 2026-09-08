@@ -1,14 +1,14 @@
 //! Configure reth RPC.
 //!
 //! This crate contains several builder and config types that allow to configure the selection of
-//! [`RethRpcModule`] specific to transports (ws, http, ipc).
+//! [`RethRpcModule`] specific to transports (ws, http).
 //!
 //! The [`RpcModuleBuilder`] is the main entrypoint for configuring all reth modules. It takes
 //! instances of components required to start the servers, such as provider impls, network and
 //! transaction pool. [`RpcModuleBuilder::build`] returns a [`TransportRpcModules`] which contains
 //! the transport specific config (what APIs are available via this transport).
 //!
-//! The [`RpcServerConfig`] is used to assemble and start the http server, ws server, ipc servers,
+//! The [`RpcServerConfig`] is used to assemble and start the http and ws servers,
 //! it requires the [`TransportRpcModules`] so it can start the servers with the configured modules.
 
 #![doc(
@@ -53,9 +53,6 @@ use jsonrpsee::{
     },
 };
 use reth_engine_primitives::ConsensusEngineEvent;
-pub use reth_ipc::server::{
-    Builder as IpcServerBuilder, RpcServiceBuilder as IpcRpcServiceBuilder,
-};
 use reth_network_api::{NetworkInfo, Peers, noop::NoopNetwork};
 use reth_rpc_api::servers::*;
 use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider};
@@ -705,12 +702,11 @@ where
         let mut modules = TransportRpcModules::default();
         let http = self.maybe_module(config.http.as_ref());
         let ws = self.maybe_module(config.ws.as_ref());
-        let ipc = self.maybe_module(config.ipc.as_ref());
 
         modules.config = config;
         modules.http = http;
         modules.ws = ws;
-        modules.ipc = ipc;
+
         modules
     }
 
@@ -860,7 +856,6 @@ where
 /// Supported server transports are:
 ///    - http
 ///    - ws
-///    - ipc
 ///
 /// Http and WS share the same settings: [`ServerBuilder`].
 ///
@@ -882,10 +877,7 @@ pub struct RpcServerConfig<RpcMiddleware = Identity> {
     ws_cors_domains: Option<String>,
     /// Address where to bind the ws server to
     ws_addr: Option<SocketAddr>,
-    /// Configs for JSON-RPC IPC server
-    ipc_server_config: Option<IpcServerBuilder<Identity, Identity>>,
-    /// The Endpoint where to launch the ipc server
-    ipc_endpoint: Option<String>,
+
     /// JWT secret for authentication
     jwt_secret: Option<JwtSecret>,
     /// Whether RPC request metrics are enabled.
@@ -907,8 +899,7 @@ impl Default for RpcServerConfig<Identity> {
             ws_server_config: None,
             ws_cors_domains: None,
             ws_addr: None,
-            ipc_server_config: None,
-            ipc_endpoint: None,
+
             jwt_secret: None,
             rpc_metrics_enabled: true,
             rpc_middleware: Default::default(),
@@ -925,11 +916,6 @@ impl RpcServerConfig {
     /// Creates a new config with only ws set
     pub fn ws(config: ServerConfigBuilder) -> Self {
         Self::default().with_ws(config)
-    }
-
-    /// Creates a new config with only ipc set
-    pub fn ipc(config: IpcServerBuilder<Identity, Identity>) -> Self {
-        Self::default().with_ipc(config)
     }
 
     /// Configures the http server
@@ -950,15 +936,6 @@ impl RpcServerConfig {
         self.ws_server_config = Some(config.set_id_provider(EthSubscriptionIdProvider::default()));
         self
     }
-
-    /// Configures the ipc server
-    ///
-    /// Note: this always configures an [`EthSubscriptionIdProvider`] [`IdProvider`] for
-    /// convenience. To set a custom [`IdProvider`], please use [`Self::with_id_provider`].
-    pub fn with_ipc(mut self, config: IpcServerBuilder<Identity, Identity>) -> Self {
-        self.ipc_server_config = Some(config.set_id_provider(EthSubscriptionIdProvider::default()));
-        self
-    }
 }
 
 impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
@@ -972,8 +949,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
             ws_server_config: self.ws_server_config,
             ws_cors_domains: self.ws_cors_domains,
             ws_addr: self.ws_addr,
-            ipc_server_config: self.ipc_server_config,
-            ipc_endpoint: self.ipc_endpoint,
+
             jwt_secret: self.jwt_secret,
             rpc_metrics_enabled: self.rpc_metrics_enabled,
             rpc_middleware,
@@ -1040,18 +1016,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
         if let Some(config) = self.ws_server_config {
             self.ws_server_config = Some(config.set_id_provider(id_provider.clone()));
         }
-        if let Some(ipc) = self.ipc_server_config {
-            self.ipc_server_config = Some(ipc.set_id_provider(id_provider));
-        }
 
-        self
-    }
-
-    /// Configures the endpoint of the ipc server
-    ///
-    /// Default is [`reth_rpc_server_types::constants::DEFAULT_IPC_ENDPOINT`]
-    pub fn with_ipc_endpoint(mut self, path: impl Into<String>) -> Self {
-        self.ipc_endpoint = Some(path.into());
         self
     }
 
@@ -1072,9 +1037,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
             self.ws_server_config =
                 Some(ws_server_config.custom_tokio_runtime(tokio_runtime.clone()));
         }
-        if let Some(ipc_server_config) = self.ipc_server_config {
-            self.ipc_server_config = Some(ipc_server_config.custom_tokio_runtime(tokio_runtime));
-        }
+
         self
     }
 
@@ -1082,9 +1045,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
     ///
     /// If no server is configured, no server will be launched on [`RpcServerConfig::start`].
     pub const fn has_server(&self) -> bool {
-        self.http_server_config.is_some()
-            || self.ws_server_config.is_some()
-            || self.ipc_server_config.is_some()
+        self.http_server_config.is_some() || self.ws_server_config.is_some()
     }
 
     /// Returns the [`SocketAddr`] of the http server
@@ -1095,11 +1056,6 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
     /// Returns the [`SocketAddr`] of the ws server
     pub const fn ws_address(&self) -> Option<SocketAddr> {
         self.ws_addr
-    }
-
-    /// Returns the endpoint of the ipc server
-    pub fn ipc_endpoint(&self) -> Option<String> {
-        self.ipc_endpoint.clone()
     }
 
     /// Returns whether the built-in RPC request metrics layer is enabled.
@@ -1123,7 +1079,6 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
         if disable_compression { None } else { Some(CompressionLayer::new()) }
     }
 
-    /// Builds and starts the configured server(s): http, ws, ipc.
     ///
     /// If both http and ws are on the same port, they are combined into one server.
     ///
@@ -1134,7 +1089,6 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
     {
         let mut http_handle = None;
         let mut ws_handle = None;
-        let mut ipc_handle = None;
 
         let http_socket_addr = self.http_addr.unwrap_or(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::LOCALHOST,
@@ -1147,21 +1101,6 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
         )));
 
         let rpc_metrics_enabled = self.rpc_metrics_enabled;
-        let ipc_path =
-            self.ipc_endpoint.clone().unwrap_or_else(|| constants::DEFAULT_IPC_ENDPOINT.into());
-
-        if let Some(builder) = self.ipc_server_config {
-            let ipc = builder
-                .set_rpc_middleware(
-                    IpcRpcServiceBuilder::new().option_layer(
-                        rpc_metrics_enabled
-                            .then(|| modules.ipc.as_ref().map(RpcRequestMetrics::ipc))
-                            .flatten(),
-                    ),
-                )
-                .build(ipc_path);
-            ipc_handle = Some(ipc.start(modules.ipc.clone().expect("ipc server error")).await?);
-        }
 
         // If both are configured on the same port, we combine them into one server.
         if self.http_addr == self.ws_addr
@@ -1230,8 +1169,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
                     ws_local_addr: Some(addr),
                     http: http_handle,
                     ws: ws_handle,
-                    ipc_endpoint: self.ipc_endpoint.clone(),
-                    ipc: ipc_handle,
+
                     jwt_secret: self.jwt_secret,
                 });
             }
@@ -1308,8 +1246,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
             ws_local_addr,
             http: http_handle,
             ws: ws_handle,
-            ipc_endpoint: self.ipc_endpoint.clone(),
-            ipc: ipc_handle,
+
             jwt_secret: self.jwt_secret,
         })
     }
@@ -1332,8 +1269,7 @@ pub struct TransportRpcModuleConfig {
     http: Option<RpcModuleSelection>,
     /// ws module configuration
     ws: Option<RpcModuleSelection>,
-    /// ipc module configuration
-    ipc: Option<RpcModuleSelection>,
+
     /// Config for the modules
     config: Option<RpcModuleConfig>,
 }
@@ -1351,11 +1287,6 @@ impl TransportRpcModuleConfig {
         Self::default().with_ws(ws)
     }
 
-    /// Creates a new config with only ipc set
-    pub fn set_ipc(ipc: impl Into<RpcModuleSelection>) -> Self {
-        Self::default().with_ipc(ipc)
-    }
-
     /// Sets the [`RpcModuleSelection`] for the http transport.
     pub fn with_http(mut self, http: impl Into<RpcModuleSelection>) -> Self {
         self.http = Some(http.into());
@@ -1365,12 +1296,6 @@ impl TransportRpcModuleConfig {
     /// Sets the [`RpcModuleSelection`] for the ws transport.
     pub fn with_ws(mut self, ws: impl Into<RpcModuleSelection>) -> Self {
         self.ws = Some(ws.into());
-        self
-    }
-
-    /// Sets the [`RpcModuleSelection`] for the ipc transport.
-    pub fn with_ipc(mut self, ipc: impl Into<RpcModuleSelection>) -> Self {
-        self.ipc = Some(ipc.into());
         self
     }
 
@@ -1390,11 +1315,6 @@ impl TransportRpcModuleConfig {
         &mut self.ws
     }
 
-    /// Get a mutable reference to the ipc module configuration.
-    pub const fn ipc_mut(&mut self) -> &mut Option<RpcModuleSelection> {
-        &mut self.ipc
-    }
-
     /// Get a mutable reference to the rpc module configuration.
     pub const fn config_mut(&mut self) -> &mut Option<RpcModuleConfig> {
         &mut self.config
@@ -1402,7 +1322,7 @@ impl TransportRpcModuleConfig {
 
     /// Returns true if no transports are configured
     pub const fn is_empty(&self) -> bool {
-        self.http.is_none() && self.ws.is_none() && self.ipc.is_none()
+        self.http.is_none() && self.ws.is_none()
     }
 
     /// Returns the [`RpcModuleSelection`] for the http transport
@@ -1415,11 +1335,6 @@ impl TransportRpcModuleConfig {
         self.ws.as_ref()
     }
 
-    /// Returns the [`RpcModuleSelection`] for the ipc transport
-    pub const fn ipc(&self) -> Option<&RpcModuleSelection> {
-        self.ipc.as_ref()
-    }
-
     /// Returns the [`RpcModuleConfig`] for the configured modules
     pub const fn config(&self) -> Option<&RpcModuleConfig> {
         self.config.as_ref()
@@ -1427,7 +1342,7 @@ impl TransportRpcModuleConfig {
 
     /// Returns true if the given module is configured for any transport.
     pub fn contains_any(&self, module: &RethRpcModule) -> bool {
-        self.contains_http(module) || self.contains_ws(module) || self.contains_ipc(module)
+        self.contains_http(module) || self.contains_ws(module)
     }
 
     /// Returns true if the given module is configured for the http transport.
@@ -1438,11 +1353,6 @@ impl TransportRpcModuleConfig {
     /// Returns true if the given module is configured for the ws transport.
     pub fn contains_ws(&self, module: &RethRpcModule) -> bool {
         self.ws.as_ref().is_some_and(|ws| ws.contains(module))
-    }
-
-    /// Returns true if the given module is configured for the ipc transport.
-    pub fn contains_ipc(&self, module: &RethRpcModule) -> bool {
-        self.ipc.as_ref().is_some_and(|ipc| ipc.contains(module))
     }
 
     /// Ensures that both http and ws are configured and that they are configured to use the same
@@ -1478,8 +1388,6 @@ pub struct TransportRpcModules<Context = ()> {
     http: Option<RpcModule<Context>>,
     /// rpcs module for ws
     ws: Option<RpcModule<Context>>,
-    /// rpcs module for ipc
-    ipc: Option<RpcModule<Context>>,
 }
 
 // === impl TransportRpcModules ===
@@ -1506,13 +1414,6 @@ impl TransportRpcModules {
         self
     }
 
-    /// Sets the [`RpcModule`] for the ipc transport.
-    /// This will overwrite current module, if any.
-    pub fn with_ipc(mut self, ipc: RpcModule<()>) -> Self {
-        self.ipc = Some(ipc);
-        self
-    }
-
     /// Returns the [`TransportRpcModuleConfig`] used to configure this instance.
     pub const fn module_config(&self) -> &TransportRpcModuleConfig {
         &self.config
@@ -1533,9 +1434,6 @@ impl TransportRpcModules {
         }
         if self.module_config().contains_ws(&module) {
             self.merge_ws(other.clone())?;
-        }
-        if self.module_config().contains_ipc(&module) {
-            self.merge_ipc(other)?;
         }
 
         Ok(())
@@ -1586,18 +1484,6 @@ impl TransportRpcModules {
         Ok(false)
     }
 
-    /// Merge the given [Methods] in the configured ipc methods.
-    ///
-    /// Fails if any of the methods in other is present already.
-    ///
-    /// Returns [Ok(false)] if no ipc transport is configured.
-    pub fn merge_ipc(&mut self, other: impl Into<Methods>) -> Result<bool, RegisterMethodError> {
-        if let Some(ref mut ipc) = self.ipc {
-            return ipc.merge(other.into()).map(|_| true);
-        }
-        Ok(false)
-    }
-
     /// Merge the given [`Methods`] in all configured methods.
     ///
     /// Fails if any of the methods in other is present already.
@@ -1608,7 +1494,7 @@ impl TransportRpcModules {
         let other = other.into();
         self.merge_http(other.clone())?;
         self.merge_ws(other.clone())?;
-        self.merge_ipc(other)?;
+
         Ok(())
     }
 
@@ -1638,9 +1524,7 @@ impl TransportRpcModules {
         if let Some(m) = self.ws_methods(|name| f(name, &methods)) {
             let _ = methods.merge(m);
         }
-        if let Some(m) = self.ipc_methods(|name| f(name, &methods)) {
-            let _ = methods.merge(m);
-        }
+
         methods
     }
 
@@ -1662,16 +1546,6 @@ impl TransportRpcModules {
         F: FnMut(&str) -> bool,
     {
         self.ws.as_ref().map(|module| methods_by(module, filter))
-    }
-
-    /// Returns all [`Methods`] installed for the ipc server based in the given closure.
-    ///
-    /// Returns `None` if no ipc support is configured.
-    pub fn ipc_methods<F>(&self, filter: F) -> Option<Methods>
-    where
-        F: FnMut(&str) -> bool,
-    {
-        self.ipc.as_ref().map(|module| methods_by(module, filter))
     }
 
     /// Removes the method with the given name from the configured http methods.
@@ -1718,37 +1592,14 @@ impl TransportRpcModules {
         }
     }
 
-    /// Removes the method with the given name from the configured ipc methods.
-    ///
-    /// Returns `true` if the method was found and removed, `false` otherwise.
-    ///
-    /// Be aware that a subscription consist of two methods, `subscribe` and `unsubscribe` and
-    /// it's the caller responsibility to remove both `subscribe` and `unsubscribe` methods for
-    /// subscriptions.
-    pub fn remove_ipc_method(&mut self, method_name: &'static str) -> bool {
-        if let Some(ipc_module) = &mut self.ipc {
-            ipc_module.remove_method(method_name).is_some()
-        } else {
-            false
-        }
-    }
-
-    /// Removes the given methods from the configured ipc methods.
-    pub fn remove_ipc_methods(&mut self, methods: impl IntoIterator<Item = &'static str>) {
-        for name in methods {
-            self.remove_ipc_method(name);
-        }
-    }
-
     /// Removes the method with the given name from all configured transports.
     ///
     /// Returns `true` if the method was found and removed, `false` otherwise.
     pub fn remove_method_from_configured(&mut self, method_name: &'static str) -> bool {
         let http_removed = self.remove_http_method(method_name);
         let ws_removed = self.remove_ws_method(method_name);
-        let ipc_removed = self.remove_ipc_method(method_name);
 
-        http_removed || ws_removed || ipc_removed
+        http_removed || ws_removed
     }
 
     /// Renames a method in all configured transports by:
@@ -1778,18 +1629,6 @@ impl TransportRpcModules {
         self.merge_http(other)
     }
 
-    /// Replace the given [Methods] in the configured ipc methods.
-    ///
-    /// Fails if any of the methods in other is present already or if the method being removed is
-    /// not present
-    ///
-    /// Returns [Ok(false)] if no ipc transport is configured.
-    pub fn replace_ipc(&mut self, other: impl Into<Methods>) -> Result<bool, RegisterMethodError> {
-        let other = other.into();
-        self.remove_ipc_methods(other.method_names());
-        self.merge_ipc(other)
-    }
-
     /// Replace the given [Methods] in the configured ws methods.
     ///
     /// Fails if any of the methods in other is present already or if the method being removed is
@@ -1812,7 +1651,6 @@ impl TransportRpcModules {
         let other = other.into();
         self.replace_http(other.clone())?;
         self.replace_ws(other.clone())?;
-        self.replace_ipc(other)?;
         Ok(true)
     }
 
@@ -1840,18 +1678,6 @@ impl TransportRpcModules {
         self.merge_ws(other)
     }
 
-    /// Adds or replaces given [`Methods`] in ipc module.
-    ///
-    /// Returns `true` if the methods were replaced or added, `false` otherwise.
-    pub fn add_or_replace_ipc(
-        &mut self,
-        other: impl Into<Methods>,
-    ) -> Result<bool, RegisterMethodError> {
-        let other = other.into();
-        self.remove_ipc_methods(other.method_names());
-        self.merge_ipc(other)
-    }
-
     /// Adds or replaces given [`Methods`] in all configured network modules.
     pub fn add_or_replace_configured(
         &mut self,
@@ -1860,7 +1686,7 @@ impl TransportRpcModules {
         let other = other.into();
         self.add_or_replace_http(other.clone())?;
         self.add_or_replace_ws(other.clone())?;
-        self.add_or_replace_ipc(other)?;
+
         Ok(())
     }
     /// Adds or replaces the given [`Methods`] in the transport modules where the specified
@@ -1877,9 +1703,7 @@ impl TransportRpcModules {
         if self.module_config().contains_ws(&module) {
             self.add_or_replace_ws(other.clone())?;
         }
-        if self.module_config().contains_ipc(&module) {
-            self.add_or_replace_ipc(other)?;
-        }
+
         Ok(())
     }
 }
@@ -1913,8 +1737,7 @@ pub struct RpcServerHandle {
     ws_local_addr: Option<SocketAddr>,
     http: Option<ServerHandle>,
     ws: Option<ServerHandle>,
-    ipc_endpoint: Option<String>,
-    ipc: Option<jsonrpsee::server::ServerHandle>,
+
     jwt_secret: Option<JwtSecret>,
 }
 
@@ -1957,16 +1780,7 @@ impl RpcServerHandle {
             handle.stop()?
         }
 
-        if let Some(handle) = self.ipc {
-            handle.stop()?
-        }
-
         Ok(())
-    }
-
-    /// Returns the endpoint of the launched IPC server, if any
-    pub fn ipc_endpoint(&self) -> Option<String> {
-        self.ipc_endpoint.clone()
     }
 
     /// Returns the url to the http server
@@ -2084,32 +1898,6 @@ impl RpcServerHandle {
             .connect(&rpc_url)
             .await
             .expect("failed to create ws client");
-        Some(provider)
-    }
-
-    /// Returns a new [`base_common_network::Ethereum`] ipc provider with its recommended fillers.
-    pub async fn eth_ipc_provider(
-        &self,
-    ) -> Option<impl Provider<base_common_network::Ethereum> + Clone + Unpin + 'static> {
-        self.new_ipc_provider_for().await
-    }
-
-    /// Returns an ipc provider from the rpc server handle for the
-    /// specified [`base_common_network::Network`].
-    ///
-    /// This installs the recommended fillers: [`RecommendedFillers`]
-    pub async fn new_ipc_provider_for<N>(
-        &self,
-    ) -> Option<impl Provider<N> + Clone + Unpin + 'static>
-    where
-        N: RecommendedFillers<RecommendedFillers: Unpin>,
-    {
-        let rpc_url = self.ipc_endpoint()?;
-        let provider = ProviderBuilder::default()
-            .with_recommended_fillers()
-            .connect(&rpc_url)
-            .await
-            .expect("failed to create ipc client");
         Some(provider)
     }
 }
@@ -2233,7 +2021,7 @@ mod tests {
                     [RethRpcModule::Eth, RethRpcModule::Admin].into()
                 )),
                 ws: None,
-                ipc: None,
+
                 config: None,
             }
         )
@@ -2247,7 +2035,7 @@ mod tests {
             TransportRpcModuleConfig {
                 http: Some(RpcModuleSelection::Selection(Default::default())),
                 ws: None,
-                ipc: None,
+
                 config: None,
             }
         )
@@ -2289,26 +2077,11 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_ipc_method() {
-        let mut modules =
-            TransportRpcModules { ipc: Some(create_test_module()), ..Default::default() };
-
-        // Remove a method that exists
-        assert!(modules.remove_ipc_method("anything"));
-
-        // Remove a method that does not exist
-        assert!(!modules.remove_ipc_method("non_existent_method"));
-
-        // Verify that the method was removed
-        assert!(modules.ipc.as_ref().unwrap().method("anything").is_none());
-    }
-
-    #[test]
     fn test_remove_method_from_configured() {
         let mut modules = TransportRpcModules {
             http: Some(create_test_module()),
             ws: Some(create_test_module()),
-            ipc: Some(create_test_module()),
+
             ..Default::default()
         };
 
@@ -2324,7 +2097,6 @@ mod tests {
         // Verify that the method was removed from all transports
         assert!(modules.http.as_ref().unwrap().method("anything").is_none());
         assert!(modules.ws.as_ref().unwrap().method("anything").is_none());
-        assert!(modules.ipc.as_ref().unwrap().method("anything").is_none());
     }
 
     #[test]
@@ -2332,19 +2104,17 @@ mod tests {
         let mut modules = TransportRpcModules {
             http: Some(create_test_module()),
             ws: Some(create_test_module()),
-            ipc: Some(create_test_module()),
+
             ..Default::default()
         };
 
         // Verify that the old we want to rename exists at the start
         assert!(modules.http.as_ref().unwrap().method("anything").is_some());
         assert!(modules.ws.as_ref().unwrap().method("anything").is_some());
-        assert!(modules.ipc.as_ref().unwrap().method("anything").is_some());
 
         // Verify that the new method does not exist at the start
         assert!(modules.http.as_ref().unwrap().method("something").is_none());
         assert!(modules.ws.as_ref().unwrap().method("something").is_none());
-        assert!(modules.ipc.as_ref().unwrap().method("something").is_none());
 
         // Create another module
         let mut other_module = RpcModule::new(());
@@ -2356,12 +2126,10 @@ mod tests {
         // Verify that the old method was removed from all transports
         assert!(modules.http.as_ref().unwrap().method("anything").is_none());
         assert!(modules.ws.as_ref().unwrap().method("anything").is_none());
-        assert!(modules.ipc.as_ref().unwrap().method("anything").is_none());
 
         // Verify that the new method was added to all transports
         assert!(modules.http.as_ref().unwrap().method("something").is_some());
         assert!(modules.ws.as_ref().unwrap().method("something").is_some());
-        assert!(modules.ipc.as_ref().unwrap().method("something").is_some());
     }
 
     #[test]
@@ -2381,23 +2149,7 @@ mod tests {
 
         assert!(modules.http.as_ref().unwrap().method("anything").is_some());
     }
-    #[test]
-    fn test_replace_ipc_method() {
-        let mut modules =
-            TransportRpcModules { ipc: Some(create_test_module()), ..Default::default() };
 
-        let mut other_module = RpcModule::new(());
-        other_module.register_method("something", |_, _, _| "fails").unwrap();
-
-        assert!(modules.replace_ipc(other_module.clone()).unwrap());
-
-        assert!(modules.ipc.as_ref().unwrap().method("something").is_some());
-
-        other_module.register_method("anything", |_, _, _| "fails").unwrap();
-        assert!(modules.replace_ipc(other_module.clone()).unwrap());
-
-        assert!(modules.ipc.as_ref().unwrap().method("anything").is_some());
-    }
     #[test]
     fn test_replace_ws_method() {
         let mut modules =
@@ -2421,7 +2173,7 @@ mod tests {
         let mut modules = TransportRpcModules {
             http: Some(create_test_module()),
             ws: Some(create_test_module()),
-            ipc: Some(create_test_module()),
+
             ..Default::default()
         };
         let mut other_module = RpcModule::new(());
@@ -2431,11 +2183,11 @@ mod tests {
 
         // Verify that the other_method was added
         assert!(modules.http.as_ref().unwrap().method("something").is_some());
-        assert!(modules.ipc.as_ref().unwrap().method("something").is_some());
+
         assert!(modules.ws.as_ref().unwrap().method("something").is_some());
 
         assert!(modules.http.as_ref().unwrap().method("anything").is_some());
-        assert!(modules.ipc.as_ref().unwrap().method("anything").is_some());
+
         assert!(modules.ws.as_ref().unwrap().method("anything").is_some());
     }
 
@@ -2455,15 +2207,10 @@ mod tests {
         ws_module.register_method("eth_existing", |_, _, _| "original").unwrap();
 
         // Create IPC module (empty, to ensure no changes)
-        let ipc_module = RpcModule::new(());
 
         // Set up TransportRpcModules with the config and modules
-        let mut modules = TransportRpcModules {
-            config,
-            http: Some(http_module),
-            ws: Some(ws_module),
-            ipc: Some(ipc_module),
-        };
+        let mut modules =
+            TransportRpcModules { config, http: Some(http_module), ws: Some(ws_module) };
 
         // Create new methods: one to replace an existing method, one to add a new one
         let mut new_module = RpcModule::new(());
@@ -2486,9 +2233,6 @@ mod tests {
         assert!(ws.method("eth_new").is_some());
 
         // Verify IPC: no changes (Eth not configured for IPC)
-        let ipc = modules.ipc.as_ref().unwrap();
-        assert!(ipc.method("eth_existing").is_none());
-        assert!(ipc.method("eth_new").is_none());
     }
 
     #[test]
@@ -2496,8 +2240,7 @@ mod tests {
         // Create a config that enables RethRpcModule::Eth for HTTP only
         let config = TransportRpcModuleConfig::default().with_http([RethRpcModule::Eth]);
 
-        let mut modules =
-            TransportRpcModules { config, http: Some(RpcModule::new(())), ws: None, ipc: None };
+        let mut modules = TransportRpcModules { config, http: Some(RpcModule::new(())), ws: None };
 
         // Track whether closure was called
         let mut closure_called = false;

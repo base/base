@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 metrics = { workspace = true }
-reth-ipc = { workspace = true }
 thiserror = { workspace = true }
 dyn-clone = { workspace = true }
 pin-project = { workspace = true }
@@ -49,7 +48,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
-alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws", "ipc"] }
+alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
 reth-network-peers = { workspace = true }

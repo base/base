@@ -57,7 +57,6 @@ lru_0_18_2 = { workspace = true, features = ["default"] }
 alloy-transport-ws = { workspace = true, optional = true }
 alloy-node-bindings = { workspace = true, optional = true }
 alloy-rpc-types-mev = { workspace = true, optional = true }
-alloy-transport-ipc = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-anvil = { workspace = true, optional = true }
@@ -124,7 +123,6 @@ engine-api = ["dep:alloy-rpc-types-engine"]
 erc4337-api = []
 hyper = ["dep:alloy-transport-http", "dep:url", "alloy-rpc-client/hyper"]
 hyper-tls = ["hyper", "alloy-transport-http/hyper-tls"]
-ipc = ["pubsub", "alloy-rpc-client/ipc", "alloy-transport-ipc"]
 mev-api = ["dep:alloy-rpc-types-mev", "dep:http"]
 more-tuple-impls = ["alloy-sol-types/more-tuple-impls"]
 net-api = []

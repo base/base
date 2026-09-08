@@ -236,8 +236,7 @@ pub struct RpcModuleContainer<'a, Node: FullNodeComponents, EthApi: EthApiTypes>
 ///
 /// This can be used to access installed modules, or create commonly used handlers like
 /// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
-/// transport modules [`TransportRpcModules`] as well as configured authenticated methods
-/// their lifecycle hooks.
+/// transport modules [`TransportRpcModules`].
 #[expect(missing_debug_implementations)]
 pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// The node components.
@@ -252,8 +251,7 @@ pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     pub registry: &'a mut RpcRegistry<Node, EthApi>,
     /// Holds installed modules per transport type.
     ///
-    /// This can be used to merge additional modules into the configured transports (http, ipc,
-    /// ws). See [`TransportRpcModules::merge_configured`]
+    /// This can be used to merge additional modules into the configured HTTP and WebSocket transports. See [`TransportRpcModules::merge_configured`]
     pub modules: &'a mut TransportRpcModules,
 }
 
@@ -372,7 +370,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> fmt::Debug
 /// Node add-ons containing RPC server configuration, with customizable eth API handler.
 ///
 /// This struct can be used to provide the RPC server functionality. It is responsible for launching
-/// the regular RPC and the authenticated RPC server (engine API). It is intended to be used and
+/// the public HTTP and WebSocket RPC servers. It is intended to be used and
 /// modified as part of the [`NodeAddOns`] see for example `OpRpcAddons`, `EthereumAddOns`.
 ///
 /// It can be modified to register RPC API handlers, see [`RpcAddOns::launch_add_ons_with`] which
@@ -638,9 +636,6 @@ where
     {
         let handle = server_config.start(modules).await?;
 
-        if let Some(path) = handle.ipc_endpoint() {
-            info!(target: "reth::cli", %path, "RPC IPC server started");
-        }
         if let Some(addr) = handle.http_local_addr() {
             info!(target: "reth::cli", url=%addr, "RPC HTTP server started");
         }

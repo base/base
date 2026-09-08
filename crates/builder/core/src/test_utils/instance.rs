@@ -406,8 +406,7 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig {
     std::fs::create_dir_all(&pprof_dumps_path)
         .expect("Failed to create temporary pprof dumps directory");
 
-    let mut rpc = RpcServerArgs::default().with_unused_ports().with_http();
-    rpc.ipcdisable = true;
+    let rpc = RpcServerArgs::default().with_unused_ports().with_http();
 
     let mut network = NetworkArgs::default().with_unused_ports();
     network.discovery.disable_discovery = true;

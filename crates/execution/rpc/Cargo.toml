@@ -52,9 +52,9 @@ alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
+metrics = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
-metrics = { workspace = true, optional = false }
 base-observability-events = { workspace = true }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -119,6 +119,7 @@ base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 default = ["metrics"]
 client = ["jsonrpsee/async-client", "jsonrpsee/client"]
 metrics = [
+    "dep:metrics",
     "base-execution-payload-builder/metrics",
     "base-execution-trie/metrics",
     "base-metrics/metrics",

@@ -62,11 +62,6 @@ impl RpcRequestMetrics {
     pub(crate) fn ws(module: &RpcModule<()>) -> Self {
         Self::new(module, RpcTransport::WebSocket)
     }
-
-    /// Creates a new instance of the metrics layer for Ipc.
-    pub(crate) fn ipc(module: &RpcModule<()>) -> Self {
-        Self::new(module, RpcTransport::Ipc)
-    }
 }
 
 impl<S> Layer<S> for RpcRequestMetrics {
@@ -249,7 +244,6 @@ where
 pub(crate) enum RpcTransport {
     Http,
     WebSocket,
-    Ipc,
 }
 
 impl RpcTransport {
@@ -258,7 +252,6 @@ impl RpcTransport {
         match self {
             Self::Http => "http",
             Self::WebSocket => "ws",
-            Self::Ipc => "ipc",
         }
     }
 

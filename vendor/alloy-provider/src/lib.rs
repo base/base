@@ -33,8 +33,6 @@ pub use provider::*;
 pub mod utils;
 
 pub use alloy_rpc_client::ConnectionConfig;
-#[cfg(feature = "ipc")]
-pub use alloy_rpc_client::IpcConnect;
 #[cfg(all(feature = "ws-base", not(target_family = "wasm")))]
 pub use alloy_rpc_client::WebSocketConfig;
 #[cfg(feature = "ws-base")]

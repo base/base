@@ -314,7 +314,6 @@ alloy-rpc-types-eth = { path = "vendor/alloy-rpc-types-eth", default-features = 
 alloy-consensus-any = { path = "vendor/alloy-consensus-any", default-features = false }
 alloy-rpc-types-any = { path = "vendor/alloy-rpc-types-any", default-features = false }
 alloy-rpc-types-mev = { path = "vendor/alloy-rpc-types-mev", default-features = false }
-alloy-transport-ipc = { path = "vendor/alloy-transport-ipc", default-features = false }
 alloy-transport-http = { path = "vendor/alloy-transport-http", default-features = false }
 alloy-rpc-types-debug = { version = "=2.4.1", default-features = false }
 alloy-rpc-types-admin = { path = "vendor/alloy-rpc-types-admin", default-features = false }
@@ -331,7 +330,6 @@ alloy-hardforks-legacy = { path = "vendor/alloy-hardforks-legacy", default-featu
 
 # reth
 reth-db = { path = "vendor/reth-db", default-features = false }
-reth-ipc = { path = "vendor/reth-ipc", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }

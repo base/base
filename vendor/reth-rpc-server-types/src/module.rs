@@ -41,13 +41,6 @@ impl RpcModuleSelection {
         HashSet::from(Self::STANDARD_MODULES)
     }
 
-    /// All modules that are available by default on IPC.
-    ///
-    /// By default all modules are available on IPC.
-    pub fn default_ipc_modules() -> HashSet<RethRpcModule> {
-        Self::all_modules()
-    }
-
     /// Creates a new _unique_ [`RpcModuleSelection::Selection`] from the given items.
     ///
     /// # Note
@@ -546,12 +539,6 @@ mod test {
         let expected_modules: HashSet<RethRpcModule> =
             HashSet::from([RethRpcModule::Eth, RethRpcModule::Net, RethRpcModule::Web3]);
         assert_eq!(standard_modules, expected_modules);
-    }
-
-    #[test]
-    fn test_default_ipc_modules() {
-        let default_ipc_modules = RpcModuleSelection::default_ipc_modules();
-        assert_eq!(default_ipc_modules, RpcModuleSelection::all_modules());
     }
 
     #[test]

@@ -43,9 +43,6 @@ pub fn default_max_tracing_requests() -> usize {
 /// The default number of getproof calls we are allowing to run concurrently.
 pub const DEFAULT_PROOF_PERMITS: usize = 25;
 
-/// The default IPC endpoint
-pub const DEFAULT_IPC_ENDPOINT: &str = "/tmp/reth.ipc";
-
 /// The default limit for blocks count in `eth_simulateV1`.
 pub const DEFAULT_MAX_SIMULATE_BLOCKS: u64 = 256;
 
