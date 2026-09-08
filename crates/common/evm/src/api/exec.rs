@@ -1,32 +1,7 @@
-//! Base-specific [`BaseContextTr`] trait alias and [`BaseError`] type alias.
-use base_evm_context::{Cfg, ContextTr, Database, EVMError, JournalTr};
-use revm::state::EvmState;
+//! Base execution error type.
+use base_evm_context::{Database, EVMError};
 
-use crate::{BaseSpecId, BaseTransactionError, L1BlockInfo, transaction::BaseTxTr};
-
-/// Trait alias for the context type required by [`BaseEvm`][crate::BaseEvm].
-///
-/// Satisfied by [`crate::BaseContext`] for any database, binding the transaction type to
-/// [`BaseTxTr`], the spec to [`BaseSpecId`], and the chain extension to [`L1BlockInfo`].
-pub trait BaseContextTr:
-    ContextTr<
-        Journal: JournalTr<State = EvmState>,
-        Tx: BaseTxTr,
-        Cfg: Cfg<Spec = BaseSpecId>,
-        Chain = L1BlockInfo,
-    >
-{
-}
-
-impl<T> BaseContextTr for T where
-    T: ContextTr<
-            Journal: JournalTr<State = EvmState>,
-            Tx: BaseTxTr,
-            Cfg: Cfg<Spec = BaseSpecId>,
-            Chain = L1BlockInfo,
-        >
-{
-}
+use crate::BaseTransactionError;
 
 /// Error type for [`BaseEvm`][crate::BaseEvm] execution, parameterized over the database
 /// error type [`DB`].

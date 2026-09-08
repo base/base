@@ -4,73 +4,71 @@ use alloc::{boxed::Box, vec::Vec};
 use base_common_consensus::Predeploys;
 use base_common_genesis::BaseUpgrade;
 use base_evm_context::{
-    Block, Cfg, ContextTr, EVMError, ExecutionResult, FromStringError, InitialAndFloorGas,
+    Block, Cfg, ContextTr, Database, EVMError, ExecutionResult, InitialAndFloorGas,
     InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr, LocalContextTr,
     ResultGas, Transaction, take_error,
 };
 use revm::{
     handler::{
-        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler,
-        evm::FrameTr,
-        handle_reservoir_remaining_gas,
-        handler::EvmTrError,
+        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, handle_reservoir_remaining_gas,
         post_execution,
         post_execution::reimburse_caller,
         pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
     },
-    inspector::{Inspector, InspectorEvmTr, InspectorHandler},
-    interpreter::{GasTracker, interpreter::EthInterpreter, interpreter_action::FrameInit},
+    inspector::{Inspector, InspectorHandler},
+    interpreter::{GasTracker, interpreter::EthInterpreter},
     primitives::U256,
 };
 
 use crate::{
-    BaseContextTr, BaseHaltReason, L1BlockInfo,
+    BaseContext, BaseEvm, BaseHaltReason, L1BlockInfo,
     transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
 /// Base handler extends the [`Handler`] with Base-specific logic.
-#[derive(Debug, Clone)]
-pub struct BaseHandler<EVM, ERROR, FRAME> {
-    /// Mainnet handler allows us to use functions from the mainnet handler inside the Base handler.
-    /// So we dont duplicate the logic
-    pub mainnet: MainnetHandler<EVM, ERROR, FRAME>,
+pub struct BaseHandler<DB: Database, I, P> {
+    /// Shared Ethereum execution rules used by Base.
+    pub mainnet: MainnetHandler<
+        BaseEvm<DB, I, P>,
+        EVMError<DB::Error, BaseTransactionError>,
+        EthFrame<EthInterpreter>,
+    >,
 }
 
-impl<EVM, ERROR, FRAME> BaseHandler<EVM, ERROR, FRAME> {
-    /// Create a new Base handler.
+impl<DB: Database, I, P> core::fmt::Debug for BaseHandler<DB, I, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("BaseHandler")
+    }
+}
+
+impl<DB: Database, I, P> Clone for BaseHandler<DB, I, P> {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
+impl<DB: Database, I, P> BaseHandler<DB, I, P> {
+    /// Creates the Base execution handler.
     pub fn new() -> Self {
         Self { mainnet: MainnetHandler::default() }
     }
 }
 
-impl<EVM, ERROR, FRAME> Default for BaseHandler<EVM, ERROR, FRAME> {
+impl<DB: Database, I, P> Default for BaseHandler<DB, I, P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Trait to check if the error is a transaction error.
-///
-/// Used in `cache_error` handler to catch deposit transaction that was halted.
-pub trait IsTxError {
-    /// Check if the error is a transaction error.
-    fn is_tx_error(&self) -> bool;
-}
-
-impl<DB, TX> IsTxError for EVMError<DB, TX> {
-    fn is_tx_error(&self) -> bool {
-        matches!(self, Self::Transaction(_))
-    }
-}
-
-impl<EVM, ERROR, FRAME> Handler for BaseHandler<EVM, ERROR, FRAME>
+impl<DB: Database, I, P> Handler for BaseHandler<DB, I, P>
 where
-    EVM: EvmTr<Context: BaseContextTr, Frame = FRAME>,
-    ERROR: EvmTrError<EVM> + From<BaseTransactionError> + FromStringError + IsTxError,
-    FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
+    P: revm::handler::PrecompileProvider<
+            BaseContext<DB>,
+            Output = revm::interpreter::InterpreterResult,
+        >,
 {
-    type Evm = EVM;
-    type Error = ERROR;
+    type Evm = BaseEvm<DB, I, P>;
+    type Error = EVMError<DB::Error, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
 
     fn validate_env(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
@@ -81,7 +79,7 @@ where
         if tx_type == DEPOSIT_TRANSACTION_TYPE {
             // Do not allow for a system transaction to be processed if Regolith is enabled.
             if tx.is_system_transaction()
-                && evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith)
+                && evm.ctx().cfg().spec.is_enabled_in(BaseUpgrade::Regolith)
             {
                 return Err(BaseTransactionError::DepositSystemTxPostRegolith.into());
             }
@@ -102,7 +100,7 @@ where
         _initial_and_floor_gas: &mut InitialAndFloorGas,
     ) -> Result<(), Self::Error> {
         let (block, tx, cfg, journal, chain, _) = evm.ctx().all_mut();
-        let spec = cfg.spec();
+        let spec = cfg.spec;
 
         if tx.tx_type() == DEPOSIT_TRANSACTION_TYPE {
             let basefee = block.basefee() as u128;
@@ -153,7 +151,7 @@ where
 
         if !cfg.is_fee_charge_disabled() {
             let Some(additional_cost) = chain.tx_cost_with_tx(tx, spec) else {
-                return Err(ERROR::from_string(
+                return Err(Self::Error::Custom(
                     "[OPTIMISM] Failed to load enveloped transaction.".into(),
                 ));
             };
@@ -181,7 +179,7 @@ where
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
-        frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        frame_result: &mut FrameResult,
         parent_gas: &mut GasTracker,
     ) -> Result<(), Self::Error> {
         // Base: this used to be customized for pre-Regolith deposits, but since
@@ -224,14 +222,14 @@ where
     fn reimburse_caller(
         &self,
         evm: &mut Self::Evm,
-        frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        frame_result: &mut FrameResult,
     ) -> Result<(), Self::Error> {
         let mut additional_refund = U256::ZERO;
 
         if evm.ctx().tx().tx_type() != DEPOSIT_TRANSACTION_TYPE
             && !evm.ctx().cfg().is_fee_charge_disabled()
         {
-            let spec = evm.ctx().cfg().spec();
+            let spec = evm.ctx().cfg().spec;
             additional_refund = evm.ctx().chain().operator_fee_refund(frame_result.gas(), spec);
         }
 
@@ -241,7 +239,7 @@ where
     fn refund(
         &self,
         evm: &mut Self::Evm,
-        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        exec_result: &mut FrameResult,
         eip7702_refund: i64,
     ) -> Result<(), Self::Error> {
         // Base: this used to be customized for pre-Regolith deposits, but since
@@ -256,7 +254,7 @@ where
     fn reward_beneficiary(
         &self,
         evm: &mut Self::Evm,
-        frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        frame_result: &mut FrameResult,
     ) -> Result<(), Self::Error> {
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
 
@@ -270,11 +268,11 @@ where
 
         let ctx = evm.ctx();
         let enveloped = ctx.tx().enveloped_tx().cloned();
-        let spec = ctx.cfg().spec();
+        let spec = ctx.cfg().spec;
         let l1_block_info = ctx.chain_mut();
 
         let Some(enveloped_tx) = &enveloped else {
-            return Err(ERROR::from_string(
+            return Err(Self::Error::Custom(
                 "[OPTIMISM] Failed to load enveloped transaction.".into(),
             ));
         };
@@ -306,7 +304,7 @@ where
     fn execution_result(
         &mut self,
         evm: &mut Self::Evm,
-        result: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        result: FrameResult,
         result_gas: ResultGas,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         take_error::<Self::Error, _>(evm.ctx().error())?;
@@ -315,7 +313,7 @@ where
             .map_haltreason(BaseHaltReason::Base);
 
         if exec_result.is_halt() && evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE {
-            return Err(ERROR::from(BaseTransactionError::HaltedDepositPostRegolith));
+            return Err(Self::Error::from(BaseTransactionError::HaltedDepositPostRegolith));
         }
 
         // commit transaction
@@ -333,7 +331,7 @@ where
         error: Self::Error,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
-        let is_tx_error = error.is_tx_error();
+        let is_tx_error = matches!(error, EVMError::Transaction(_));
         let mut output = Err(error);
 
         // Deposit transaction can't fail so we manually handle it here.
@@ -377,14 +375,13 @@ where
     }
 }
 
-impl<EVM, ERROR> InspectorHandler for BaseHandler<EVM, ERROR, EthFrame<EthInterpreter>>
+impl<DB: Database, I, P> InspectorHandler for BaseHandler<DB, I, P>
 where
-    EVM: InspectorEvmTr<
-            Context: BaseContextTr,
-            Frame = EthFrame<EthInterpreter>,
-            Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
+    I: Inspector<BaseContext<DB>, EthInterpreter>,
+    P: revm::handler::PrecompileProvider<
+            BaseContext<DB>,
+            Output = revm::interpreter::InterpreterResult,
         >,
-    ERROR: EvmTrError<EVM> + From<BaseTransactionError> + FromStringError + IsTxError,
 {
     type IT = EthInterpreter;
 }
@@ -400,7 +397,7 @@ mod tests {
         bytecode::Bytecode,
         database::InMemoryDB,
         database_interface::EmptyDB,
-        handler::{EthFrame, Handler},
+        handler::Handler,
         inspector::NoOpInspector,
         interpreter::{CallOutcome, Gas, InstructionResult, InterpreterResult},
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
@@ -423,8 +420,7 @@ mod tests {
             0..0,
         ));
 
-        let mut handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut handler = BaseHandler::<_, _, _>::new();
 
         let tx_gas_limit = evm.ctx().tx().gas_limit();
         let mut parent_gas = GasTracker::new(tx_gas_limit, tx_gas_limit, 0);
@@ -603,8 +599,7 @@ mod tests {
 
         let mut evm = ctx.build_base();
 
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
         handler
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
@@ -647,8 +642,7 @@ mod tests {
 
         let mut evm = ctx.build_base();
 
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
         handler
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
@@ -704,8 +698,7 @@ mod tests {
 
         assert_ne!(evm.ctx().chain().l2_block, Some(BLOCK_NUM));
 
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
         handler
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
@@ -740,8 +733,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_err(), "gas_limit above cap should be rejected");
     }
@@ -757,8 +749,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "gas_limit at cap should be accepted");
     }
@@ -774,8 +765,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)));
         let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "Jovian should not enforce gas limit cap");
     }
@@ -791,8 +781,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let handler = BaseHandler::<_, _, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "deposit txs should skip gas limit cap");
     }
@@ -836,8 +825,7 @@ mod tests {
             });
         let mut evm = ctx.build_base();
 
-        let mut handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut handler = BaseHandler::<_, _, _>::new();
         handler.run(&mut evm).unwrap()
     }
 

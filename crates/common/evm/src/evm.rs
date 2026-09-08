@@ -13,7 +13,7 @@ use revm::{
         EthFrame, EvmTr, FrameInitOrResult, Handler, ItemOrResult, PrecompileProvider,
         SystemCallTx, evm::FrameTr, instructions::EthInstructions,
     },
-    inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
+    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
     state::EvmState,
 };
@@ -166,7 +166,6 @@ where
 impl<DB, I, P> InspectorEvmTr for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase,
-    BaseContext<DB>: ContextTr<Journal: JournalExt> + ContextSetters,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
@@ -202,9 +201,6 @@ where
 impl<DB, I, P> ExecuteEvm for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase,
-    BaseContext<DB>: crate::BaseContextTr
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Tx = BaseTransaction<TxEnv>;
@@ -228,7 +224,7 @@ where
             )));
         }
         self.inner.ctx.set_tx(tx);
-        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<DB, I, P>::new();
         h.run(self)
     }
 
@@ -239,7 +235,7 @@ where
     fn replay(
         &mut self,
     ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
-        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<DB, I, P>::new();
         h.run(self).map(|result| {
             let state = self.finalize();
             ExecResultAndState::new(result, state)
@@ -250,9 +246,6 @@ where
 impl<DB, I, P> ExecuteCommitEvm for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase + DatabaseCommit,
-    BaseContext<DB>: crate::BaseContextTr
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn commit(&mut self, state: Self::State) {
@@ -263,9 +256,6 @@ where
 impl<DB, I, P> InspectEvm for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase,
-    BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
@@ -284,7 +274,7 @@ where
             )));
         }
         self.inner.ctx.set_tx(tx);
-        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<DB, I, P>::new();
         h.inspect_run(self)
     }
 }
@@ -292,9 +282,6 @@ where
 impl<DB, I, P> InspectCommitEvm for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase + DatabaseCommit,
-    BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
@@ -303,9 +290,6 @@ where
 impl<DB, I, P> SystemCallEvm for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase,
-    BaseContext<DB>: crate::BaseContextTr<Tx: SystemCallTx>
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn system_call_one_with_caller(
@@ -319,7 +303,7 @@ where
             system_contract_address,
             data,
         ));
-        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<DB, I, P>::new();
 
         // load caller account into the journal (necessary for Geth proofs compatibility)
         // remove once https://github.com/bluealloy/revm/issues/3484 is fixed
@@ -332,9 +316,6 @@ where
 impl<DB, I, P> InspectSystemCallEvm for BaseEvm<DB, I, P>
 where
     DB: RevmDatabase,
-    BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt, Tx: SystemCallTx>
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
@@ -349,7 +330,7 @@ where
             system_contract_address,
             data,
         ));
-        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<DB, I, P>::new();
 
         // load caller account into the journal (necessary for Geth proofs compatibility)
         // remove once https://github.com/bluealloy/revm/issues/3484 is fixed
@@ -364,9 +345,6 @@ where
     DB: AlloyDatabase,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-    BaseContext<DB>: crate::BaseContextTr
-        + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
 {
     type DB = DB;
     type Tx = BaseTransaction<TxEnv>;

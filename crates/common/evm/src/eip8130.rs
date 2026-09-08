@@ -52,8 +52,8 @@ use base_common_consensus::{
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_evm_context::{
-    Block, BlockEnv, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
-    LocalContextTr, Output, ResultGas, SuccessReason, TxEnv, take_error,
+    Block, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
+    LocalContextTr, Output, ResultGas, SuccessReason, take_error,
 };
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
@@ -63,20 +63,19 @@ use base_execution_eip8130::{
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
     Inspector,
-    handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
-    inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
+    handler::{EvmTr, FrameResult, Handler, PrecompileProvider},
+    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
-        InstructionResult, InterpreterResult, SharedMemory, interpreter::EthInterpreter,
-        interpreter_action::FrameInit,
+        InstructionResult, InterpreterResult, SharedMemory, interpreter_action::FrameInit,
     },
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Bytecode,
 };
 
 use crate::{
-    BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction,
-    BaseTransactionError, BaseTxTr, Eip8130PhaseStatuses, L1BlockInfo, handler::BaseHandler,
+    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, BaseTxTr,
+    Eip8130PhaseStatuses, L1BlockInfo, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -177,8 +176,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // Discard any phase statuses a previous transaction may have leaked into
         // the thread-local slot (e.g. via a panic caught between its `set` and the
@@ -220,7 +217,7 @@ impl Eip8130Executor {
             return Err(BaseTransactionError::eip8130("chain id mismatch").into());
         }
 
-        let spec = ctx.cfg().spec();
+        let spec = ctx.cfg().spec;
         // Consensus-critical: a clamped timestamp would silently shift the expiry
         // validation in the authorizer and nonce validator, so reject rather than
         // saturate. Block timestamps never approach `u64::MAX` in practice.
@@ -398,8 +395,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // Clone the envelope + optional acting-actor hint before taking a mutable
         // borrow of `ctx` (same pattern as `execute`).
@@ -642,8 +637,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
         let calls = Self::execute_calls(evm, signed, outcome, pool)?;
@@ -674,8 +667,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
         // can satisfy them; if `ceiling_spent` itself succeeds it is the answer.
@@ -744,8 +735,6 @@ impl Eip8130Executor {
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>:
-            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
@@ -901,8 +890,6 @@ impl Eip8130Executor {
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>:
-            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
@@ -1105,8 +1092,6 @@ impl Eip8130Executor {
     ) -> Result<U256, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>:
-            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         ctx.tx.base.caller = outcome.sender;
 
@@ -1162,8 +1147,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         let mut remaining = pool;
         // Signed transaction-level refund counter: refunds are accounted across
@@ -1265,8 +1248,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         if !evm.inspect {
             return None;
@@ -1302,8 +1283,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         let Some(inputs) = inputs else { return };
         let mut gas = Gas::new(gas_limit);
@@ -1339,8 +1318,6 @@ impl Eip8130Executor {
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
     {
         // Resolve the bytecode at `to`, following an EIP-7702 delegation
         // designator to its target (mirrors `create_init_frame`).
@@ -1402,11 +1379,7 @@ impl Eip8130Executor {
         memory.set_memory_limit(ctx.cfg().memory_limit());
         let frame_init = FrameInit { depth: 0, memory, frame_input };
 
-        let mut handler = BaseHandler::<
-            BaseEvm<DB, I, P>,
-            EVMError<DB::Error, BaseTransactionError>,
-            EthFrame<EthInterpreter>,
-        >::new();
+        let mut handler = BaseHandler::<DB, I, P>::new();
         let frame = if evm.inspect {
             handler.inspect_run_exec_loop(evm, frame_init)?
         } else {
@@ -1439,12 +1412,10 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>:
-            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let (ctx, precompiles) = evm.ctx_precompiles();
 
-        let gen_spec = ctx.cfg().spec();
+        let gen_spec = ctx.cfg().spec;
         let eth_spec: SpecId = gen_spec.into();
         ctx.journal_mut().set_spec_id(eth_spec);
 
@@ -1475,8 +1446,6 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>:
-            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let ctx = evm.ctx_mut();
         ctx.journal_mut().discard_tx();
@@ -1501,8 +1470,6 @@ impl Eip8130Executor {
     ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>:
-            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
         // authentication. Shared with the estimate path so they cannot diverge.

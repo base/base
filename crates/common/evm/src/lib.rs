@@ -27,7 +27,7 @@ pub use transaction::{
 };
 
 mod handler;
-pub use handler::{BaseHandler, IsTxError};
+pub use handler::BaseHandler;
 
 mod precompiles;
 pub use precompiles::BasePrecompiles;
@@ -36,7 +36,7 @@ mod beryl_metrics;
 pub use beryl_metrics::BerylPrecompileMetricsObserver;
 
 mod api;
-pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
+pub use api::{BaseContext, BaseError, Builder, DefaultBase};
 
 mod evm;
 pub use evm::BaseEvm;
