@@ -309,7 +309,7 @@ alloy-hardforks = { path = "vendor/alloy-hardforks", default-features = false }
 alloy-sol-macro = { path = "vendor/alloy-sol-macro", default-features = false }
 alloy-consensus = { path = "vendor/alloy-consensus", default-features = false }
 alloy-sol-types = { path = "vendor/alloy-sol-types", default-features = false }
-alloy-tx-macros = { path = "vendor/alloy-tx-macros", default-features = false }
+alloy-tx-macros = { version = "=2.4.1", default-features = false }
 alloy-rpc-client = { path = "vendor/alloy-rpc-client", default-features = false }
 alloy-primitives = { path = "vendor/alloy-primitives", default-features = false }
 alloy-signer-local = { path = "vendor/alloy-signer-local", default-features = false }

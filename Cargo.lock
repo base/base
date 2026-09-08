@@ -1033,7 +1033,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-tx-macros"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d0626c4f3b2028f7e8db32f53c22d9ecd5939f772317b7c4b6fe5219cb0589a"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
