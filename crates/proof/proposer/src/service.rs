@@ -36,7 +36,7 @@ use crate::{
     output_proposer::{OutputProposer, ProposalSubmitter},
     pipeline::ProvingPipeline,
     proof_collector::ProofCollector,
-    proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
+    proof_dispatcher::ProofDispatcher,
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::ProofSubmitter,
     proposal_intervals::IntervalResolver,
@@ -222,7 +222,7 @@ impl ProposerService {
             Arc::<L2Client>::clone(&l2_client),
             Arc::<RollupClient>::clone(&rollup_client),
             Arc::clone(&intervals),
-            ProofDispatcherConfig::from(&driver_config),
+            driver_config.proposer_address,
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,

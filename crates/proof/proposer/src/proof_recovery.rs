@@ -546,22 +546,15 @@ mod tests {
             };
             let target_block = starting_block + intervals.block_interval;
             let root_claim = B256::repeat_byte((index + 1) as u8);
-            let intermediate_roots = intervals
-                .intermediate_block_numbers(starting_block)
-                .unwrap()
-                .into_iter()
-                .map(|block| {
+            let intermediate_blocks = intervals.intermediate_block_numbers(starting_block).unwrap();
+            let intermediate_roots = intermediate_blocks
+                .iter()
+                .map(|&block| {
                     if block == target_block { root_claim } else { B256::repeat_byte(block as u8) }
                 })
                 .collect::<Vec<_>>();
-            for (block, root) in intervals
-                .intermediate_block_numbers(starting_block)
-                .unwrap()
-                .into_iter()
-                .zip(intermediate_roots.iter().copied())
-            {
-                output_roots.insert(block, root);
-            }
+            output_roots
+                .extend(intermediate_blocks.into_iter().zip(intermediate_roots.iter().copied()));
 
             let key = game_lookup_key(
                 starting_block,

@@ -33,7 +33,7 @@ mod proof_collector;
 pub use proof_collector::ProofCollector;
 
 mod proof_dispatcher;
-pub use proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig};
+pub use proof_dispatcher::ProofDispatcher;
 
 mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, SubmitAction};

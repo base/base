@@ -12,25 +12,12 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::{
     Metrics,
-    driver::{DriverConfig, RecoveredState},
+    driver::RecoveredState,
     error::ProposerError,
     proof_adapter::ProposerProofAdapter,
     proof_target::ProofTarget,
     proposal_intervals::{IntervalResolver, Intervals},
 };
-
-/// Static parameters needed to build and dispatch proposer proof requests.
-#[derive(Debug, Clone, Copy)]
-pub struct ProofDispatcherConfig {
-    /// Address of the proposer that will submit the proof onchain.
-    pub proposer_address: Address,
-}
-
-impl From<&DriverConfig> for ProofDispatcherConfig {
-    fn from(config: &DriverConfig) -> Self {
-        Self { proposer_address: config.proposer_address }
-    }
-}
 
 /// Builds and dispatches proposer TEE proof requests.
 pub struct ProofDispatcher {
@@ -39,12 +26,14 @@ pub struct ProofDispatcher {
     l2_client: Arc<dyn L2Provider>,
     rollup_client: Arc<dyn RollupProvider>,
     intervals: Arc<IntervalResolver>,
-    config: ProofDispatcherConfig,
+    proposer_address: Address,
 }
 
 impl std::fmt::Debug for ProofDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofDispatcher").field("config", &self.config).finish_non_exhaustive()
+        f.debug_struct("ProofDispatcher")
+            .field("proposer_address", &self.proposer_address)
+            .finish_non_exhaustive()
     }
 }
 
@@ -56,9 +45,9 @@ impl ProofDispatcher {
         l2_client: Arc<dyn L2Provider>,
         rollup_client: Arc<dyn RollupProvider>,
         intervals: Arc<IntervalResolver>,
-        config: ProofDispatcherConfig,
+        proposer_address: Address,
     ) -> Self {
-        Self { proof_requester, l1_client, l2_client, rollup_client, intervals, config }
+        Self { proof_requester, l1_client, l2_client, rollup_client, intervals, proposer_address }
     }
 
     /// Builds a proof request for `target_block` using `recovered` as the agreed parent.
@@ -101,7 +90,7 @@ impl ProofDispatcher {
             agreed_l2_output_root: recovered.output_root,
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
-            proposer: self.config.proposer_address,
+            proposer: self.proposer_address,
             intermediate_block_interval: intervals.intermediate_block_interval,
             l1_head_number: l1_header.number,
             schedule_l2_block_number: None,
@@ -262,7 +251,7 @@ mod tests {
                 max_safe_block: None,
             }),
             test_fixed_interval_resolver(100, 100),
-            ProofDispatcherConfig::from(&DriverConfig::default()),
+            Address::ZERO,
         )
     }
 
@@ -320,7 +309,7 @@ mod tests {
                 max_safe_block: None,
             }),
             test_fixed_interval_resolver(100, 100),
-            ProofDispatcherConfig { proposer_address: Address::repeat_byte(0x04) },
+            Address::repeat_byte(0x04),
         );
         let recovered = RecoveredState {
             parent_address: Address::ZERO,
