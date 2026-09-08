@@ -27,6 +27,9 @@ pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError};
 mod conf_depth;
 pub use conf_depth::{ConfDepthProvider, L1HeadNumber};
 
+mod local_l2;
+pub use local_l2::{LocalL2Error, LocalL2Provider};
+
 mod l2_chain_provider;
 pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 

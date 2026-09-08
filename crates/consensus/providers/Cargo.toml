@@ -15,12 +15,16 @@ workspace = true
 [dependencies]
 c-kzg = { workspace = true }
 tower = { workspace = true }
+reth-db = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
+reth-provider = { workspace = true }
 base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-transport = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-trie-common = { workspace = true }
 base-common-genesis = { workspace = true }
 base-consensus-derive = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
