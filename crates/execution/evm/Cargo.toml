@@ -48,9 +48,8 @@ alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
-alloy-consensus = { workspace = true }
 base-common-genesis = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
+alloy-consensus = { workspace = true, features = ["serde"]}
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 

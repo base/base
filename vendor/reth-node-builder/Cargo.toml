@@ -85,8 +85,8 @@ alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
 [dev-dependencies]
-reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
+alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
@@ -94,10 +94,7 @@ reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = []
-js-tracer = [
-    "reth-rpc/js-tracer",
-    "reth-rpc-eth-types/js-tracer",
-]
+js-tracer = ["reth-rpc/js-tracer", "reth-rpc-eth-types/js-tracer"]
 test-utils = [
     "reth-db/test-utils",
     "reth-chain-state/test-utils",
@@ -115,8 +112,4 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-tasks/test-utils",
 ]
-trie-debug = [
-    "reth-engine-tree/trie-debug",
-    "reth-engine-primitives/trie-debug",
-    "reth-node-core/trie-debug",
-]
+trie-debug = ["reth-engine-tree/trie-debug", "reth-engine-primitives/trie-debug", "reth-node-core/trie-debug"]

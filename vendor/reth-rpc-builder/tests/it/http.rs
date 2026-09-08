@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use alloy_consensus::{EthereumReceipt as Receipt, EthereumTxEnvelope, TxEip4844};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U64, U256, hex_literal::hex};
 use alloy_rpc_types_eth::{
@@ -19,7 +20,6 @@ use jsonrpsee::{
     rpc_params,
     types::error::ErrorCode,
 };
-use reth_ethereum_primitives::{Receipt, TransactionSigned};
 use reth_network_peers::NodeRecord;
 use reth_rpc_api::{
     DebugApiClient, EthCallBundleApiClient, EthFilterApiClient, NetApiClient, OtterscanClient,
@@ -200,199 +200,354 @@ where
     .unwrap();
 
     // Implemented
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::protocol_version(
-        client,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::protocol_version(client)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::chain_id(client)
-        .await
-        .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::accounts(client)
-        .await
-        .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::get_account(
-        client,
-        address,
-        block_number.into(),
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::chain_id(client)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_number(client)
-        .await
-        .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::get_code(
-        client, address, None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::accounts(client)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::send_raw_transaction(
-        client, tx,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::get_account(client, address, block_number.into())
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::fee_history(
-        client,
-        U64::from(0),
-        block_number,
-        None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_number(client)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::balance(
-        client, address, None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::get_code(client, address, None)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::transaction_count(
-        client, address, None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::send_raw_transaction(client, tx)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::storage_at(
-        client,
-        address,
-        U256::default().into(),
-        None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::fee_history(client, U64::from(0), block_number, None)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_by_hash(
-        client, hash, false,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::balance(client, address, None)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_by_number(
-        client,
-        block_number,
-        false,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::transaction_count(client, address, None)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_transaction_count_by_number(
-        client,
-        block_number,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::storage_at(client, address, U256::default().into(), None)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_transaction_count_by_hash(
-        client, hash,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_by_hash(client, hash, false)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_uncles_count_by_hash(client, hash)
-        .await
-        .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::block_uncles_count_by_number(
-        client,
-        block_number,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_by_number(client, block_number, false)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::uncle_by_block_hash_and_index(
-        client, hash, index,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_transaction_count_by_number(client, block_number)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::uncle_by_block_number_and_index(
-        client,
-        block_number,
-        index,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_transaction_count_by_hash(client, hash)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::sign(
-        client,
-        address,
-        bytes.clone(),
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_uncles_count_by_hash(client, hash)
+    .await
+    .unwrap();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::block_uncles_count_by_number(client, block_number)
+    .await
+    .unwrap();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::uncle_by_block_hash_and_index(client, hash, index)
+    .await
+    .unwrap();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::uncle_by_block_number_and_index(client, block_number, index)
+    .await
+    .unwrap();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::sign(client, address, bytes.clone())
     .await
     .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::sign_typed_data(
-        client, address, typed_data,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::sign_typed_data(client, address, typed_data)
     .await
     .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::transaction_by_hash(
-        client, tx_hash,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::transaction_by_hash(client, tx_hash)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::transaction_by_block_hash_and_index(
-        client, hash, index,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::transaction_by_block_hash_and_index(client, hash, index)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::transaction_by_block_number_and_index(
-        client,
-        block_number,
-        index,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::transaction_by_block_number_and_index(client, block_number, index)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::create_access_list(
-        client,
-        call_request.clone(),
-        Some(block_number.into()),
-        None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::create_access_list(client, call_request.clone(), Some(block_number.into()), None)
     .await
     .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::estimate_gas(
-        client,
-        call_request.clone(),
-        Some(block_number.into()),
-        None,
-        None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::estimate_gas(client, call_request.clone(), Some(block_number.into()), None, None)
     .await
     .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::call(
-        client,
-        call_request.clone(),
-        Some(block_number.into()),
-        None,
-        None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::call(client, call_request.clone(), Some(block_number.into()), None, None)
     .await
     .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::syncing(client)
-        .await
-        .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::send_transaction(
-        client,
-        transaction_request.clone(),
-    )
-    .await
-    .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::sign_transaction(
-        client,
-        transaction_request,
-    )
-    .await
-    .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::hashrate(client)
-        .await
-        .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::submit_hashrate(
-        client,
-        U256::default(),
-        B256::default(),
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::syncing(client)
     .await
     .unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::gas_price(client)
-        .await
-        .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::max_priority_fee_per_gas(client)
-        .await
-        .unwrap_err();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::get_proof(
-        client,
-        address,
-        vec![],
-        None,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::send_transaction(client, transaction_request.clone())
+    .await
+    .unwrap_err();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::sign_transaction(client, transaction_request)
+    .await
+    .unwrap_err();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::hashrate(client)
+    .await
+    .unwrap();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::submit_hashrate(client, U256::default(), B256::default())
+    .await
+    .unwrap();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::gas_price(client)
+    .await
+    .unwrap_err();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::max_priority_fee_per_gas(client)
+    .await
+    .unwrap_err();
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::get_proof(client, address, vec![], None)
     .await
     .unwrap();
     let proofs = EthApiClient::<
@@ -401,7 +556,7 @@ where
         Block,
         Receipt,
         Header,
-        TransactionSigned,
+        EthereumTxEnvelope<TxEip4844>,
     >::get_multi_proof(client, vec![(address, vec![B256::ZERO])], None)
     .await
     .unwrap();
@@ -409,66 +564,58 @@ where
     assert_eq!(proofs[0].address, address);
 
     // Unimplemented
-    assert!(
-        is_unimplemented(
-            EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                TransactionSigned,
-            >::author(client)
-            .await
-            .err()
-            .unwrap()
-        )
-    );
-    assert!(
-        is_unimplemented(
-            EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                TransactionSigned,
-            >::is_mining(client)
-            .await
-            .err()
-            .unwrap()
-        )
-    );
-    assert!(
-        is_unimplemented(
-            EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                TransactionSigned,
-            >::get_work(client)
-            .await
-            .err()
-            .unwrap()
-        )
-    );
-    assert!(
-        is_unimplemented(
-            EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                TransactionSigned,
-            >::submit_work(client, B64::default(), B256::default(), B256::default())
-            .await
-            .err()
-            .unwrap()
-        )
-    );
+    assert!(is_unimplemented(
+        EthApiClient::<
+            TransactionRequest,
+            Transaction,
+            Block,
+            Receipt,
+            Header,
+            EthereumTxEnvelope::<TxEip4844>,
+        >::author(client)
+        .await
+        .err()
+        .unwrap()
+    ));
+    assert!(is_unimplemented(
+        EthApiClient::<
+            TransactionRequest,
+            Transaction,
+            Block,
+            Receipt,
+            Header,
+            EthereumTxEnvelope::<TxEip4844>,
+        >::is_mining(client)
+        .await
+        .err()
+        .unwrap()
+    ));
+    assert!(is_unimplemented(
+        EthApiClient::<
+            TransactionRequest,
+            Transaction,
+            Block,
+            Receipt,
+            Header,
+            EthereumTxEnvelope::<TxEip4844>,
+        >::get_work(client)
+        .await
+        .err()
+        .unwrap()
+    ));
+    assert!(is_unimplemented(
+        EthApiClient::<
+            TransactionRequest,
+            Transaction,
+            Block,
+            Receipt,
+            Header,
+            EthereumTxEnvelope::<TxEip4844>,
+        >::submit_work(client, B64::default(), B256::default(), B256::default())
+        .await
+        .err()
+        .unwrap()
+    ));
     EthCallBundleApiClient::call_bundle(client, Default::default()).await.unwrap_err();
 }
 

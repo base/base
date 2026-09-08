@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, time::Duration};
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadAttributes, PayloadStatusEnum, payload::ExecutionPayloadEnvelopeV3,
@@ -10,7 +11,6 @@ use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionReques
 use base_common_consensus::BaseTxEnvelope;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_ethereum_primitives::TransactionSigned;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::clients::{EngineApiClient, EthApiClient};
 use tokio::time::sleep;
@@ -66,7 +66,7 @@ impl Action for AssertMineBlock {
                 Block,
                 Receipt,
                 Header,
-                TransactionSigned,
+                EthereumTxEnvelope<TxEip4844>,
             >::block_by_number(
                 rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
             )
@@ -363,7 +363,7 @@ impl Action for BroadcastLatestForkchoice {
                     Block,
                     Receipt,
                     Header,
-                    TransactionSigned,
+                    EthereumTxEnvelope<TxEip4844>,
                 >::block_by_number(
                     rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
                 )
@@ -437,7 +437,7 @@ impl Action for UpdateBlockInfo {
                 Block,
                 Receipt,
                 Header,
-                TransactionSigned,
+                EthereumTxEnvelope<TxEip4844>,
             >::block_by_number(
                 rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
             )
@@ -540,7 +540,7 @@ impl Action for CheckPayloadAccepted {
                     Block,
                     Receipt,
                     Header,
-                    TransactionSigned,
+                    EthereumTxEnvelope<TxEip4844>,
                 >::header_by_number(
                     rpc_client, alloy_eips::BlockNumberOrTag::Latest
                 )

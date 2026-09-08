@@ -18,12 +18,11 @@ workspace = true
 [dependencies]
 alloy-eips = { workspace = true }
 alloy-genesis = { workspace = true }
-alloy-consensus = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
-reth-ethereum-primitives = { workspace = true, features = ["arbitrary", "std"] }
+alloy-consensus = { workspace = true, features = ["arbitrary", "serde", "std"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "arbitrary"] }
 [dev-dependencies]

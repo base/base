@@ -1,10 +1,10 @@
 //! Fork creation actions for the e2e testing framework.
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_ethereum_primitives::TransactionSigned;
 use reth_rpc_api::clients::EthApiClient;
 use tracing::debug;
 
@@ -121,7 +121,7 @@ impl Action for SetForkBase {
                 Block,
                 Receipt,
                 Header,
-                TransactionSigned,
+                EthereumTxEnvelope<TxEip4844>,
             >::block_by_number(
                 rpc_client,
                 alloy_eips::BlockNumberOrTag::Number(self.fork_base_block),
@@ -234,7 +234,7 @@ impl Action for ValidateFork {
                     Block,
                     Receipt,
                     Header,
-                    TransactionSigned,
+                    EthereumTxEnvelope<TxEip4844>,
                 >::block_by_hash(rpc_client, current_hash, false)
                 .await?
                 .ok_or_else(|| {

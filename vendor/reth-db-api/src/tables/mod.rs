@@ -12,15 +12,15 @@
 //! TODO(onbjerg): Find appropriate format for this...
 
 pub mod codecs;
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 pub use codecs::IntegerListInput;
 
 mod raw;
 use std::fmt;
 
-use alloy_consensus::Header;
+use alloy_consensus::{EthereumReceipt as Receipt, Header};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
-use reth_ethereum_primitives::{Receipt, TransactionSigned};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::StageCheckpoint;
@@ -367,7 +367,7 @@ tables! {
     }
 
     /// Canonical only Stores the transaction body for canonical transactions.
-    table Transactions<T = TransactionSigned> {
+    table Transactions<T = EthereumTxEnvelope::<TxEip4844>> {
         type Key = TxNumber;
         type Value = T;
     }

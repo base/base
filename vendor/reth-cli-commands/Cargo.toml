@@ -43,7 +43,6 @@ reth-consensus = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-cli-runner = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-storage-api = { workspace = true }
@@ -75,11 +74,11 @@ reth-network = { workspace = true, features = ["serde"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
 comfy-table = { workspace = true, features = ["default"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 reth-net-nat = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-ethereum-primitives = { workspace = true, optional = true }
 reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["clap"] }
@@ -121,5 +120,4 @@ arbitrary = [
     "reth-trie-common?/arbitrary",
     "alloy-consensus/arbitrary",
     "reth-primitives-traits/arbitrary",
-    "reth-ethereum-primitives/arbitrary",
 ]

@@ -6,6 +6,12 @@ use std::{
     sync::{Arc, atomic::Ordering::SeqCst},
 };
 
+#[cfg(test)]
+use alloy_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use alloy_consensus::EthereumTypedTransaction;
+#[cfg(test)]
+use alloy_consensus::TxEip4844;
 use alloy_consensus::{BlockHeader, Header, Transaction, TxReceipt};
 use alloy_eips::eip7840::BlobParams;
 use alloy_rpc_types_eth::TxGasAndReward;
@@ -403,9 +409,8 @@ impl FeeHistoryEntry {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{TxEip1559, TxType};
+    use alloy_consensus::{EthereumReceipt as Receipt, TxEip1559, TxType};
     use alloy_primitives::Signature;
-    use reth_ethereum_primitives::{Receipt, Transaction as EthTransaction, TransactionSigned};
 
     use super::*;
 
@@ -428,9 +433,9 @@ mod tests {
         assert_eq!(rewards, vec![low_tip]);
     }
 
-    fn eip1559_transaction(tip: u128, base_fee: u64) -> TransactionSigned {
-        TransactionSigned::new_unhashed(
-            EthTransaction::Eip1559(TxEip1559 {
+    fn eip1559_transaction(tip: u128, base_fee: u64) -> EthereumTxEnvelope<TxEip4844> {
+        EthereumTxEnvelope::<TxEip4844>::new_unhashed(
+            EthereumTypedTransaction::<TxEip4844>::Eip1559(TxEip1559 {
                 max_priority_fee_per_gas: tip,
                 max_fee_per_gas: tip + base_fee as u128,
                 ..Default::default()

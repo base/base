@@ -38,7 +38,6 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 paste = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 serde_json = { workspace = true, features = ["alloc"] }
@@ -46,12 +45,12 @@ schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 serde = { workspace = true, features = ["derive", "rc"] }
-alloy-consensus = { workspace = true, features = ["kzg"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["kzg", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
@@ -88,7 +87,6 @@ serde = [
     "rand?/serde",
     "smallvec/serde",
     "reth-primitives-traits/serde",
-    "reth-ethereum-primitives/serde",
     "reth-chain-state/serde",
     "reth-storage-api/serde",
     "revm/serde",
@@ -101,7 +99,6 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-provider/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-ethereum-primitives/test-utils",
     "alloy-primitives/rand",
     "base-execution-evm/test-utils",
     "reth-tasks/test-utils",
@@ -118,7 +115,6 @@ arbitrary = [
     "bitflags/arbitrary",
     "reth-primitives-traits/arbitrary",
     "smallvec/arbitrary",
-    "reth-ethereum-primitives/arbitrary",
     "revm/arbitrary",
     "imbl/arbitrary",
     "reth-transaction-pool/arbitrary",

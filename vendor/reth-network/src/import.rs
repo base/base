@@ -5,6 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use reth_eth_wire::NewBlock;
 use reth_eth_wire_types::broadcast::NewBlockHashes;
 use reth_network_peers::PeerId;
@@ -39,7 +40,7 @@ pub enum NewBlockEvent<B = NewBlock> {
 
 /// Represents different types of block import events
 #[derive(Debug)]
-pub enum BlockImportEvent<B = reth_ethereum_primitives::Block> {
+pub enum BlockImportEvent<B = alloy_consensus::Block<EthereumTxEnvelope<TxEip4844>>> {
     /// General block announcement and validation status
     Announcement(BlockValidation<B>),
     /// Result of a peer-specific block import
@@ -48,7 +49,7 @@ pub enum BlockImportEvent<B = reth_ethereum_primitives::Block> {
 
 /// Outcome of the [`BlockImport`]'s block handling.
 #[derive(Debug)]
-pub struct BlockImportOutcome<B = reth_ethereum_primitives::Block> {
+pub struct BlockImportOutcome<B = alloy_consensus::Block<EthereumTxEnvelope<TxEip4844>>> {
     /// Sender of the block announcement message.
     pub peer: PeerId,
     /// The result after validating the block

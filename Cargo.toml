@@ -430,7 +430,6 @@ reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-featu
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
 reth-static-file-types = { path = "vendor/reth-static-file-types", default-features = false }
 reth-payload-primitives = { path = "vendor/reth-payload-primitives", default-features = false }
-reth-ethereum-primitives = { path = "vendor/reth-ethereum-primitives", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
 reth-basic-payload-builder = { path = "vendor/reth-basic-payload-builder", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }

@@ -12,15 +12,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-reth-db-api = { workspace = true }
 reth-exex = { workspace = true }
+reth-db-api = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-api = { workspace = true }
 reth-rpc-eth-api = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-transaction-pool = { workspace = true }
-reth-primitives-traits = { workspace = true }
 tower = { workspace = true, optional = true }
 reth-payload-primitives = { workspace = true }
 reth-ipc = { workspace = true, optional = true }
@@ -37,6 +36,7 @@ base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 reth-tracing = { workspace = true, features = ["default"] }
 base-common-network = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
@@ -67,31 +67,32 @@ harness = false
 
 [features]
 test-utils = [
-	"base-node-core/test-utils",
-	"dep:alloy-eips",
-	"dep:alloy-genesis",
-	"dep:alloy-primitives",
-	"dep:alloy-provider",
-	"dep:alloy-rpc-client",
-	"dep:alloy-rpc-types",
-	"dep:alloy-rpc-types-engine",
-	"dep:base-common-network",
-	"dep:base-common-rpc-types",
-	"dep:base-common-rpc-types-engine",
-	"dep:base-test-utils",
-	"dep:chrono",
-	"dep:jsonrpsee",
-	"dep:reth-ipc",
-	"dep:reth-node-core",
-	"dep:reth-rpc-layer",
-	"dep:reth-tasks",
-	"dep:tower",
-	"dep:tracing-subscriber",
-	"dep:url",
-	"reth-db/test-utils",
-	"reth-node-builder/test-utils",
-	"reth-primitives-traits/test-utils",
-	"reth-provider/test-utils",
-	"reth-tasks?/test-utils",
-	"reth-transaction-pool/test-utils",
+    "base-node-core/test-utils",
+    "dep:alloy-eips",
+    "dep:alloy-genesis",
+    "dep:alloy-primitives",
+    "dep:alloy-provider",
+    "dep:alloy-rpc-client",
+    "dep:alloy-rpc-types",
+    "dep:alloy-rpc-types-engine",
+    "dep:base-common-network",
+    "dep:base-common-rpc-types",
+    "dep:base-common-rpc-types-engine",
+    "dep:base-test-utils",
+    "dep:chrono",
+    "dep:jsonrpsee",
+    "dep:reth-ipc",
+    "dep:reth-node-core",
+    "dep:reth-rpc-layer",
+    "dep:reth-tasks",
+    "dep:tower",
+    "dep:tracing-subscriber",
+    "dep:url",
+    "reth-db/test-utils",
+    "reth-node-builder/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-provider/test-utils",
+    "reth-tasks?/test-utils",
+    "reth-transaction-pool/test-utils",
+    "dep:reth-primitives-traits",
 ]

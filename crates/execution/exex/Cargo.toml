@@ -31,9 +31,9 @@ tempfile = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
+alloy-consensus = {workspace = true, features = ["serde", "std"]}
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
-reth-ethereum-primitives = { workspace = true, features = ["default"] }
 [package.metadata.cargo-udeps.ignore]
 development = [
     "reth-node-builder",
@@ -44,12 +44,11 @@ development = [
 
 [features]
 test-utils = [
-	"base-node-core/test-utils",
-	"reth-db/test-utils",
-	"reth-ethereum-primitives/test-utils",
-	"reth-node-builder/test-utils",
-	"reth-primitives-traits/test-utils",
-	"reth-provider/test-utils",
-	"reth-trie/test-utils",
+    "base-node-core/test-utils",
+    "reth-db/test-utils",
+    "reth-node-builder/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-provider/test-utils",
+    "reth-trie/test-utils",
 ]
-metrics = [ "base-execution-trie/metrics", "reth-trie/metrics" ]
+metrics = ["base-execution-trie/metrics", "reth-trie/metrics"]

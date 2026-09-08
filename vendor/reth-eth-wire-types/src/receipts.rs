@@ -2,12 +2,14 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt};
+use alloy_consensus::{
+    EthereumReceipt as Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
+    TxReceipt,
+};
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
 use derive_more::{Deref, IntoIterator};
 use reth_codecs_derive::add_arbitrary_tests;
-use reth_ethereum_primitives::Receipt;
 
 /// A request for transaction receipts from the given block hashes.
 #[derive(

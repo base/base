@@ -45,10 +45,9 @@ reth-payload-primitives = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-testing-utils = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }

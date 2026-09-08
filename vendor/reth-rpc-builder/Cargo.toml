@@ -55,15 +55,14 @@ tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws", "ipc"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-network-peers = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 reth-rpc = { workspace = true, features = ["test-utils"] }
 reth-rpc-api = { workspace = true, features = ["client"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 reth-tracing = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive"] }

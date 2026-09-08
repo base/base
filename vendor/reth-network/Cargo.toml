@@ -34,7 +34,6 @@ reth-fs-util = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-eth-wire = { workspace = true }
 reth-consensus = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-net-banlist = { workspace = true }
@@ -45,7 +44,6 @@ reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
@@ -56,6 +54,7 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, features = ["common"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["net"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
@@ -111,7 +110,6 @@ serde = [
     "reth-primitives-traits/serde",
     "reth-network/serde",
     "reth-transaction-pool/serde",
-    "reth-ethereum-primitives/serde",
     "reth-network-api/serde",
     "rand_08/serde",
     "reth-storage-api/serde",
@@ -129,7 +127,6 @@ test-utils = [
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "reth-ethereum-primitives/test-utils",
     "reth-tasks/test-utils",
     "reth-stages-types/test-utils",
     "reth-trie/test-utils",

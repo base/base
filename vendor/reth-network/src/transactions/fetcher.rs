@@ -31,6 +31,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+use alloy_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use alloy_consensus::TxEip4844;
 use alloy_consensus::transaction::PooledTransaction;
 use alloy_primitives::{
     TxHash,
@@ -1316,7 +1320,6 @@ mod test {
     use alloy_rlp::Decodable;
     use derive_more::IntoIterator;
     use reth_eth_wire_types::EthVersion;
-    use reth_ethereum_primitives::TransactionSigned;
 
     use super::*;
     use crate::test_utils::transactions::{buffer_hash_to_tx_fetcher, new_mock_session};
@@ -1569,12 +1572,12 @@ mod test {
             "02f871018302a90f808504890aef60826b6c94ddf4c5025d1a5742cf12f74eec246d4432c295e487e09c3bbcc12b2b80c080a0f21a4eacd0bf8fea9c5105c543be5a1d8c796516875710fafafdf16d16d8ee23a001280915021bb446d1973501a67f93d2b38894a514b976e7b46dc2fe54598daa"
         );
         let signed_tx_1: PooledTransaction =
-            TransactionSigned::decode(&mut &input[..]).unwrap().try_into().unwrap();
+            EthereumTxEnvelope::<TxEip4844>::decode(&mut &input[..]).unwrap().try_into().unwrap();
         let input = hex!(
             "02f871018302a90f808504890aef60826b6c94ddf4c5025d1a5742cf12f74eec246d4432c295e487e09c3bbcc12b2b80c080a0f21a4eacd0bf8fea9c5105c543be5a1d8c796516875710fafafdf16d16d8ee23a001280915021bb446d1973501a67f93d2b38894a514b976e7b46dc2fe54598d76"
         );
         let signed_tx_2: PooledTransaction =
-            TransactionSigned::decode(&mut &input[..]).unwrap().try_into().unwrap();
+            EthereumTxEnvelope::<TxEip4844>::decode(&mut &input[..]).unwrap().try_into().unwrap();
 
         // only tx 1 is requested
         let request_hashes = [

@@ -33,7 +33,6 @@ alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
@@ -56,6 +55,7 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 tokio-stream = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }
@@ -64,7 +64,6 @@ reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-reth-ethereum-primitives = { workspace = true, features = ["rpc"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 alloy-evm = { workspace = true, features = ["overrides", "call-util"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }

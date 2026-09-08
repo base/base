@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Formatter};
 
+use alloy_consensus::EthereumReceipt as Receipt;
 use alloy_primitives::B256;
 use futures::FutureExt;
-use reth_ethereum_primitives::Receipt;
 use reth_network_peers::PeerId;
 use tokio::sync::oneshot;
 

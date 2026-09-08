@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::{BlockHeader, ReceiptWithBloom};
+use alloy_consensus::{BlockHeader, EthereumTxEnvelope, ReceiptWithBloom, TxEip4844};
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use futures::FutureExt;
@@ -31,7 +31,7 @@ use crate::types::{BlockAccessLists, Receipts69, Receipts70};
 
 /// Internal form of a `NewBlock` message
 #[derive(Debug, Clone)]
-pub struct NewBlockMessage<P = NewBlock<reth_ethereum_primitives::Block>> {
+pub struct NewBlockMessage<P = NewBlock<alloy_consensus::Block<EthereumTxEnvelope<TxEip4844>>>> {
     /// Hash of the block
     pub hash: B256,
     /// Raw received message

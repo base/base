@@ -7,6 +7,10 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(test)]
+use alloy_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use alloy_consensus::TxEip4844WithSidecar;
 use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, Decodable2718, Encodable2718};
 use alloy_hardforks::EthereumHardforks;
@@ -853,7 +857,6 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{U256, hex};
     use base_execution_evm::BaseEvmConfig;
-    use reth_ethereum_primitives::PooledTransactionVariant;
     use reth_fs_util as fs;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
@@ -882,7 +885,10 @@ mod tests {
         let tx_bytes = hex!(
             "02f87201830655c2808505ef61f08482565f94388c818ca8b9251b393131c08a736a67ccb192978801049e39c4b5b1f580c001a01764ace353514e8abdfb92446de356b260e3c1225b73fc4c8876a6258d12a129a04f02294aa61ca7676061cd99f29275491218b4754b46a0248e5e42bc5091f507"
         );
-        let tx = PooledTransactionVariant::decode_2718(&mut &tx_bytes[..]).unwrap();
+        let tx = EthereumTxEnvelope::<
+            TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
+        >::decode_2718(&mut &tx_bytes[..])
+        .unwrap();
         let provider = MockEthProvider::default().with_genesis_block();
         let transaction: EthPooledTransaction =
             EthPooledTransaction::from_pooled(tx.try_into_recovered().unwrap());
@@ -890,8 +896,13 @@ mod tests {
         let sender = hex!("1f9090aaE28b8a3dCeaDf281B0F12828e676c326").into();
         provider.add_account(sender, ExtendedAccount::new(42, U256::MAX));
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .build(blob_store.clone());
+        let mut chain_spec = (**BaseEvmConfig::default().chain_spec()).clone();
+        chain_spec.config.chain_id = 1;
+        let validator = EthTransactionValidatorBuilder::new(
+            provider.with_chain_spec(chain_spec.clone()),
+            BaseEvmConfig::new(Arc::new(chain_spec)),
+        )
+        .build(blob_store.clone());
 
         let txpool = Pool::new(
             validator,

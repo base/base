@@ -1,5 +1,6 @@
 //! Pools using real Base transaction representations and the shared mock validator.
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use base_common_consensus::BaseTxEnvelope;
 use reth_transaction_pool::{
     CoinbaseTipOrdering, Pool, PoolTransaction, blobstore::InMemoryBlobStore,
@@ -29,9 +30,7 @@ impl NetworkTestData {
     }
 
     /// Converts a supported mock transaction into its Base pool representation.
-    pub fn transaction<
-        P: PoolTransaction<Consensus = reth_ethereum_primitives::TransactionSigned>,
-    >(
+    pub fn transaction<P: PoolTransaction<Consensus = EthereumTxEnvelope<TxEip4844>>>(
         transaction: P,
     ) -> BaseTestTransaction {
         let transaction = transaction.into_consensus().map(|tx| {

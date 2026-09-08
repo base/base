@@ -47,7 +47,7 @@ impl ChangedAccount {
 /// blocks, capturing the resulting state, receipts, and requests following the execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ExecutionOutcome<T = reth_ethereum_primitives::Receipt> {
+pub struct ExecutionOutcome<T = alloy_consensus::EthereumReceipt> {
     /// Bundle state with reverts.
     pub bundle: BundleState,
     /// The collection of receipts.
@@ -412,7 +412,7 @@ impl ExecutionOutcome {
     pub fn ethereum_receipts_root(&self, block_number: BlockNumber) -> Option<B256> {
         self.generic_receipts_root_slow(
             block_number,
-            reth_ethereum_primitives::calculate_receipt_root_no_memo,
+            reth_primitives_traits::EthereumReceiptRoot::calculate,
         )
     }
 }
@@ -532,8 +532,8 @@ pub(super) mod serde_bincode_compat {
 
     #[cfg(test)]
     mod tests {
+        use alloy_consensus::EthereumReceipt as Receipt;
         use rand::Rng;
-        use reth_ethereum_primitives::Receipt;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
@@ -583,12 +583,13 @@ mod tests {
         );
 
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            success: true,
-        })]];
+        let receipts =
+            vec![vec![Some(alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
+                tx_type: TxType::Legacy,
+                cumulative_gas_used: 46913,
+                logs: vec![],
+                success: true,
+            })]];
 
         // Create a Requests object with a vector of requests
         let requests = vec![Requests::new(vec![bytes!("dead"), bytes!("beef"), bytes!("beebee")])];
@@ -642,12 +643,13 @@ mod tests {
     #[test]
     fn test_block_number_to_index() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
-            cumulative_gas_used: 46913,
-            logs: vec![],
-            success: true,
-        })]];
+        let receipts =
+            vec![vec![Some(alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
+                tx_type: TxType::Legacy,
+                cumulative_gas_used: 46913,
+                logs: vec![],
+                success: true,
+            })]];
 
         // Define the first block number
         let first_block = 123;
@@ -674,7 +676,7 @@ mod tests {
     #[test]
     fn test_get_logs() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![reth_ethereum_primitives::Receipt {
+        let receipts = vec![vec![alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
             tx_type: TxType::Legacy,
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
@@ -703,12 +705,13 @@ mod tests {
     #[test]
     fn test_receipts_by_block() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
-            cumulative_gas_used: 46913,
-            logs: vec![Log::<LogData>::default()],
-            success: true,
-        })]];
+        let receipts =
+            vec![vec![Some(alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
+                tx_type: TxType::Legacy,
+                cumulative_gas_used: 46913,
+                logs: vec![Log::<LogData>::default()],
+                success: true,
+            })]];
 
         // Define the first block number
         let first_block = 123;
@@ -728,7 +731,7 @@ mod tests {
         // Assert that the receipts for block number 123 match the expected receipts
         assert_eq!(
             receipts_by_block,
-            vec![&Some(reth_ethereum_primitives::Receipt {
+            vec![&Some(alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
                 tx_type: TxType::Legacy,
                 cumulative_gas_used: 46913,
                 logs: vec![Log::<LogData>::default()],
@@ -740,12 +743,13 @@ mod tests {
     #[test]
     fn test_receipts_len() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
-            cumulative_gas_used: 46913,
-            logs: vec![Log::<LogData>::default()],
-            success: true,
-        })]];
+        let receipts =
+            vec![vec![Some(alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
+                tx_type: TxType::Legacy,
+                cumulative_gas_used: 46913,
+                logs: vec![Log::<LogData>::default()],
+                success: true,
+            })]];
 
         // Create an empty Receipts object
         let receipts_empty = vec![];
@@ -786,7 +790,7 @@ mod tests {
     #[test]
     fn test_revert_to() {
         // Create a random receipt object
-        let receipt = reth_ethereum_primitives::Receipt {
+        let receipt = alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
             tx_type: TxType::Legacy,
             cumulative_gas_used: 46913,
             logs: vec![],
@@ -832,7 +836,7 @@ mod tests {
     #[test]
     fn test_extend_execution_outcome() {
         // Create a Receipt object with specific attributes.
-        let receipt = reth_ethereum_primitives::Receipt {
+        let receipt = alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
             tx_type: TxType::Legacy,
             cumulative_gas_used: 46913,
             logs: vec![],
@@ -873,7 +877,7 @@ mod tests {
     #[test]
     fn test_split_at_execution_outcome() {
         // Create a random receipt object
-        let receipt = reth_ethereum_primitives::Receipt {
+        let receipt = alloy_consensus::EthereumReceipt::<alloy_consensus::TxType> {
             tx_type: TxType::Legacy,
             cumulative_gas_used: 46913,
             logs: vec![],

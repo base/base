@@ -2,16 +2,15 @@
 //!
 //! Transaction wrapper that labels transaction with its origin.
 
-use alloy_consensus::transaction::TxHashRef;
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::BaseTxEnvelope;
-use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{Recovered, SignedTransaction};
 
 /// Represents from where a transaction was fetched.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum TransactionSource<T = TransactionSigned> {
+pub enum TransactionSource<T = EthereumTxEnvelope<TxEip4844>> {
     /// Transaction exists in the pool (Pending)
     Pool(Recovered<T>),
     /// Transaction already included in a block

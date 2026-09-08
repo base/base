@@ -1,5 +1,11 @@
 use alloc::sync::Arc;
 
+#[cfg(test)]
+use alloy_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use alloy_consensus::EthereumTypedTransaction;
+#[cfg(test)]
+use alloy_consensus::TxEip4844;
 use alloy_primitives::{Address, B256, map::FbBuildHasher};
 use reth_primitives_traits::{SignedTransaction, transaction::signed::RecoveryError};
 
@@ -59,14 +65,13 @@ impl fixed_cache::CacheConfig for SenderRecoveryCacheConfig {
 mod tests {
     use alloy_consensus::TxLegacy;
     use alloy_primitives::{Signature, U256};
-    use reth_ethereum_primitives::{Transaction, TransactionSigned};
 
     use super::*;
 
     #[test]
     fn recover_populates_cache() {
-        let transaction = TransactionSigned::new_unhashed(
-            Transaction::Legacy(TxLegacy::default()),
+        let transaction = EthereumTxEnvelope::<TxEip4844>::new_unhashed(
+            EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy::default()),
             Signature::test_signature(),
         );
         let cache = SenderRecoveryCache::new(4);
@@ -80,8 +85,8 @@ mod tests {
 
     #[test]
     fn failed_recovery_is_not_cached() {
-        let transaction = TransactionSigned::new_unhashed(
-            Transaction::Legacy(TxLegacy::default()),
+        let transaction = EthereumTxEnvelope::<TxEip4844>::new_unhashed(
+            EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy::default()),
             Signature::new(U256::ZERO, U256::ZERO, false),
         );
         let cache = SenderRecoveryCache::new(4);

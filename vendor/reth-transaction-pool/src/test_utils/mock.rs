@@ -3,8 +3,8 @@
 use std::{ops::Range, sync::Arc, time::Instant, vec::IntoIter};
 
 use alloy_consensus::{
-    EthereumTxEnvelope, Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
-    TxLegacy, TxType, Typed2718,
+    EthereumTxEnvelope, EthereumTypedTransaction, Signed, TxEip1559, TxEip2930, TxEip4844,
+    TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType, Typed2718,
     constants::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         LEGACY_TX_TYPE_ID,
@@ -27,7 +27,6 @@ use rand::{
     distr::{Uniform, weighted::WeightedIndex},
     prelude::Distribution,
 };
-use reth_ethereum_primitives::{PooledTransactionVariant, Transaction, TransactionSigned};
 use reth_primitives_traits::{
     InMemorySize, Recovered, SignedTransaction,
     transaction::error::TryFromRecoveredTransactionError,
@@ -713,9 +712,11 @@ impl MockTransaction {
 impl PoolTransaction for MockTransaction {
     type TryFromConsensusError = ValueError<EthereumTxEnvelope<TxEip4844>>;
 
-    type Consensus = TransactionSigned;
+    type Consensus = EthereumTxEnvelope<TxEip4844>;
 
-    type Pooled = PooledTransactionVariant;
+    type Pooled = EthereumTxEnvelope<
+        TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
+    >;
 
     fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
         unimplemented!("mock transaction does not wrap a consensus transaction")
@@ -962,17 +963,17 @@ impl EthPoolTransaction for MockTransaction {
     }
 }
 
-impl TryFrom<Recovered<TransactionSigned>> for MockTransaction {
+impl TryFrom<Recovered<EthereumTxEnvelope<TxEip4844>>> for MockTransaction {
     type Error = TryFromRecoveredTransactionError;
 
-    fn try_from(tx: Recovered<TransactionSigned>) -> Result<Self, Self::Error> {
+    fn try_from(tx: Recovered<EthereumTxEnvelope<TxEip4844>>) -> Result<Self, Self::Error> {
         let sender = tx.signer();
         let transaction = tx.into_inner();
         let hash = *transaction.tx_hash();
         let size = transaction.size();
 
         match transaction.into_typed_transaction() {
-            Transaction::Legacy(TxLegacy {
+            EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy {
                 chain_id,
                 nonce,
                 gas_price,
@@ -993,7 +994,7 @@ impl TryFrom<Recovered<TransactionSigned>> for MockTransaction {
                 size,
                 cost: U256::from(gas_limit) * U256::from(gas_price) + value,
             }),
-            Transaction::Eip2930(TxEip2930 {
+            EthereumTypedTransaction::<TxEip4844>::Eip2930(TxEip2930 {
                 chain_id,
                 nonce,
                 gas_price,
@@ -1016,7 +1017,7 @@ impl TryFrom<Recovered<TransactionSigned>> for MockTransaction {
                 size,
                 cost: U256::from(gas_limit) * U256::from(gas_price) + value,
             }),
-            Transaction::Eip1559(TxEip1559 {
+            EthereumTypedTransaction::<TxEip4844>::Eip1559(TxEip1559 {
                 chain_id,
                 nonce,
                 gas_limit,
@@ -1041,7 +1042,7 @@ impl TryFrom<Recovered<TransactionSigned>> for MockTransaction {
                 size,
                 cost: U256::from(gas_limit) * U256::from(max_fee_per_gas) + value,
             }),
-            Transaction::Eip4844(TxEip4844 {
+            EthereumTypedTransaction::<TxEip4844>::Eip4844(TxEip4844 {
                 chain_id,
                 nonce,
                 gas_limit,
@@ -1071,7 +1072,7 @@ impl TryFrom<Recovered<TransactionSigned>> for MockTransaction {
                 size,
                 cost: U256::from(gas_limit) * U256::from(max_fee_per_gas) + value,
             }),
-            Transaction::Eip7702(TxEip7702 {
+            EthereumTypedTransaction::<TxEip4844>::Eip7702(TxEip7702 {
                 chain_id,
                 nonce,
                 gas_limit,
@@ -1213,27 +1214,43 @@ impl TryFrom<Recovered<EthereumTxEnvelope<TxEip4844Variant<BlobTransactionSideca
     }
 }
 
-impl From<Recovered<PooledTransactionVariant>> for MockTransaction {
-    fn from(tx: Recovered<PooledTransactionVariant>) -> Self {
+impl
+    From<
+        Recovered<
+            EthereumTxEnvelope<
+                TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
+            >,
+        >,
+    > for MockTransaction
+{
+    fn from(
+        tx: Recovered<
+            EthereumTxEnvelope<
+                TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
+            >,
+        >,
+    ) -> Self {
         let (tx, signer) = tx.into_parts();
-        Recovered::<TransactionSigned>::new_unchecked(tx.into(), signer).try_into().expect(
-            "Failed to convert from PooledTransactionsElementEcRecovered to MockTransaction",
-        )
+        Recovered::<EthereumTxEnvelope<TxEip4844>>::new_unchecked(tx.into(), signer)
+            .try_into()
+            .expect(
+                "Failed to convert from PooledTransactionsElementEcRecovered to MockTransaction",
+            )
     }
 }
 
-impl From<MockTransaction> for Recovered<TransactionSigned> {
+impl From<MockTransaction> for Recovered<EthereumTxEnvelope<TxEip4844>> {
     fn from(tx: MockTransaction) -> Self {
         let hash = *tx.hash();
         let sender = tx.sender();
-        let tx = Transaction::from(tx);
-        let tx: TransactionSigned =
+        let tx = EthereumTypedTransaction::<TxEip4844>::from(tx);
+        let tx: EthereumTxEnvelope<TxEip4844> =
             Signed::new_unchecked(tx, Signature::test_signature(), hash).into();
         Self::new_unchecked(tx, sender)
     }
 }
 
-impl From<MockTransaction> for Transaction {
+impl From<MockTransaction> for EthereumTypedTransaction<TxEip4844> {
     fn from(mock: MockTransaction) -> Self {
         match mock {
             MockTransaction::Legacy {
@@ -1349,7 +1366,7 @@ impl proptest::arbitrary::Arbitrary for MockTransaction {
         use proptest::prelude::Strategy;
         use proptest_arbitrary_interop::arb;
 
-        arb::<(TransactionSigned, Address)>()
+        arb::<(EthereumTxEnvelope<TxEip4844>, Address)>()
             .prop_map(|(signed_transaction, signer)| {
                 Recovered::new_unchecked(signed_transaction, signer)
                     .try_into()

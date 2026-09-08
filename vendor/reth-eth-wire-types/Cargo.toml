@@ -20,15 +20,14 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-codecs-derive = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 alloy-chains = { workspace = true, features = ["rlp"] }
 derive_more = { workspace = true, features = ["full"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 base-common-consensus = { workspace = true, features = ["reth"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
@@ -46,10 +45,10 @@ proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-eips = { workspace = true, features = ["arbitrary"] }
 alloy-chains = { workspace = true, features = ["arbitrary"] }
-alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-eip7928 = { workspace = true, features = ["rlp", "arbitrary"] }
-reth-ethereum-primitives = { workspace = true, features = ["arbitrary"] }
+alloy-consensus = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", "rand"] }
+
 [features]
 default = ["std"]
 std = [
@@ -63,7 +62,6 @@ std = [
     "alloy-rlp/std",
     "bytes/std",
     "derive_more/std",
-    "reth-ethereum-primitives/std",
     "reth-primitives-traits/std",
     "serde?/std",
     "thiserror/std",
@@ -71,7 +69,6 @@ std = [
 ]
 arbitrary = [
     "base-common-consensus/arbitrary",
-    "reth-ethereum-primitives/arbitrary",
     "alloy-chains/arbitrary",
     "dep:alloy-eip7928",
     "alloy-eip7928/arbitrary",
@@ -94,7 +91,6 @@ serde = [
     "bytes/serde",
     "rand/serde",
     "reth-primitives-traits/serde",
-    "reth-ethereum-primitives/serde",
     "alloy-hardforks/serde",
     "alloy-eip7928?/serde",
     "alloy-trie/serde",

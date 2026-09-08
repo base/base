@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_ethereum_primitives::TransactionSigned;
 use reth_rpc_api::clients::EthApiClient;
 use tokio::time::{sleep, timeout};
 use tracing::debug;
@@ -76,7 +76,7 @@ impl Action for CompareNodeChainTips {
                 Block,
                 Receipt,
                 Header,
-                TransactionSigned,
+                EthereumTxEnvelope<TxEip4844>,
             >::block_by_number(
                 &node_a_client.rpc, alloy_eips::BlockNumberOrTag::Latest, false
             )
@@ -89,7 +89,7 @@ impl Action for CompareNodeChainTips {
                 Block,
                 Receipt,
                 Header,
-                TransactionSigned,
+                EthereumTxEnvelope<TxEip4844>,
             >::block_by_number(
                 &node_b_client.rpc, alloy_eips::BlockNumberOrTag::Latest, false
             )
@@ -280,7 +280,7 @@ impl Action for WaitForSync {
                         Block,
                         Receipt,
                         Header,
-                        TransactionSigned,
+                        EthereumTxEnvelope<TxEip4844>,
                     >::block_by_number(
                         &node_a_client.rpc,
                         alloy_eips::BlockNumberOrTag::Latest,
@@ -297,7 +297,7 @@ impl Action for WaitForSync {
                         Block,
                         Receipt,
                         Header,
-                        TransactionSigned,
+                        EthereumTxEnvelope<TxEip4844>,
                     >::block_by_number(
                         &node_b_client.rpc,
                         alloy_eips::BlockNumberOrTag::Latest,

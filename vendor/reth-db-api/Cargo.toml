@@ -21,12 +21,12 @@ bytes = { workspace = true }
 metrics = { workspace = true }
 arrayvec = { workspace = true }
 reth-codecs = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-trie-common = { workspace = true }
 modular-bitfield = { workspace = true }
 reth-storage-errors = { workspace = true }
 roaring = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
+alloy-consensus = { workspace = true, features = ["serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -34,7 +34,6 @@ reth-db-models = { workspace = true, features = ["serde", "reth-codec"] }
 reth-prune-types = { workspace = true, features = ["serde", "reth-codec"] }
 reth-stages-types = { workspace = true, features = ["serde", "reth-codec"] }
 reth-primitives-traits = { workspace = true, features = ["serde", "reth-codec"] }
-reth-ethereum-primitives = { workspace = true, features = ["serde", "reth-codec"] }
 [dev-dependencies]
 test-fuzz = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
@@ -44,6 +43,7 @@ arbitrary = { workspace = true, features = ["derive"] }
 reth-codecs = { workspace = true, features = ["test-utils"] }
 reth-db-models = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+
 [features]
 test-utils = [
     "arbitrary",
@@ -53,7 +53,6 @@ test-utils = [
     "reth-trie-common/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
-    "reth-ethereum-primitives/test-utils",
 ]
 arbitrary = [
     "reth-db-models/arbitrary",
@@ -66,5 +65,4 @@ arbitrary = [
     "reth-prune-types/arbitrary",
     "reth-stages-types/arbitrary",
     "alloy-consensus/arbitrary",
-    "reth-ethereum-primitives/arbitrary",
 ]

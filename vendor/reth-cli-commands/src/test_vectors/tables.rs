@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use alloy_consensus::Header;
+use alloy_consensus::{EthereumTxEnvelope, Header, TxEip4844};
 use alloy_primitives::{B256, hex};
 use arbitrary::Arbitrary;
 use eyre::Result;
@@ -14,7 +14,6 @@ use reth_db_api::{
     table::{DupSort, Table, TableRow},
     tables,
 };
-use reth_ethereum_primitives::TransactionSigned;
 use reth_fs_util as fs;
 use tracing::error;
 
@@ -75,7 +74,7 @@ pub fn generate_vectors(mut tables: Vec<String>) -> Result<()> {
         (BlockBodyIndices, PER_TABLE, TABLE),
         (BlockOmmers<Header>, 100, TABLE),
         (TransactionHashNumbers, PER_TABLE, TABLE),
-        (Transactions<TransactionSigned>, 100, TABLE),
+        (Transactions<EthereumTxEnvelope::<TxEip4844>>, 100, TABLE),
         (PlainStorageState, PER_TABLE, DUPSORT),
         (PlainAccountState, PER_TABLE, TABLE)
     ]);

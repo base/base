@@ -46,7 +46,6 @@ reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-payload-builder-primitives = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
@@ -55,13 +54,13 @@ tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
-alloy-consensus = { workspace = true, features = ["kzg"] }
 reth-rpc-api = { workspace = true, features = ["client"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy-consensus = { workspace = true, features = ["kzg", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }

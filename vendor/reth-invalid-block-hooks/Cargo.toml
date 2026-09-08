@@ -37,7 +37,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
 reth-testing-utils = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
+alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }

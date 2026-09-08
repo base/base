@@ -13,12 +13,12 @@
 //! 1. **Consensus Format** ([`PoolTransaction::Consensus`])
 //!    - The canonical format stored in blocks
 //!    - Minimal size for efficient storage
-//!    - Example: EIP-4844 transactions store only blob hashes: ([`TransactionSigned::Eip4844`])
+//!    - Example: EIP-4844 transactions store only blob hashes: ([`EthereumTxEnvelope::<TxEip4844>::Eip4844`])
 //!
 //! 2. **Pooled Format** ([`PoolTransaction::Pooled`])
 //!    - Extended format for network propagation
 //!    - Includes additional validation data
-//!    - Example: EIP-4844 transactions include full blob sidecars: ([`PooledTransactionVariant`])
+//!    - Example: EIP-4844 transactions include full blob sidecars: ([`EthereumTxEnvelope::<TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,>`])
 //!
 //! ### Type Relationships
 //!
@@ -59,7 +59,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{BlockHeader, Signed, Typed2718, error::ValueError, transaction::TxHashRef};
+use alloy_consensus::{
+    BlockHeader, EthereumTxEnvelope, Signed, TxEip4844, TxEip4844WithSidecar, Typed2718,
+    error::ValueError, transaction::TxHashRef,
+};
 use alloy_eips::{
     eip2718::{Decodable2718, Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -76,7 +79,6 @@ use alloy_primitives::{
 };
 use futures_util::{Stream, ready};
 use reth_eth_wire_types::HandleMempoolData;
-use reth_ethereum_primitives::{PooledTransactionVariant, TransactionSigned};
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::{Block, InMemorySize, Recovered, SealedBlock, SignedTransaction};
 use serde::{Deserialize, Serialize};
@@ -345,7 +347,7 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
         max: usize,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>>;
 
-    /// Returns converted [`PooledTransactionVariant`] for the given transaction hashes that are
+    /// Returns converted [`EthereumTxEnvelope::<TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,>`] for the given transaction hashes that are
     /// allowed to be propagated.
     ///
     /// This adheres to the expected behavior of
@@ -1528,7 +1530,7 @@ pub trait EthPoolTransaction: PoolTransaction {
 ///
 /// This avoids recalculating these values repeatedly during pool operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EthPooledTransaction<T = TransactionSigned> {
+pub struct EthPooledTransaction<T = EthereumTxEnvelope<TxEip4844>> {
     /// `EcRecovered` transaction, the consensus format.
     pub transaction: Recovered<T>,
 
@@ -1595,11 +1597,13 @@ impl<T: SignedTransaction> EthPooledTransaction<T> {
 }
 
 impl PoolTransaction for EthPooledTransaction {
-    type TryFromConsensusError = ValueError<TransactionSigned>;
+    type TryFromConsensusError = ValueError<EthereumTxEnvelope<TxEip4844>>;
 
-    type Consensus = TransactionSigned;
+    type Consensus = EthereumTxEnvelope<TxEip4844>;
 
-    type Pooled = PooledTransactionVariant;
+    type Pooled = EthereumTxEnvelope<
+        TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
+    >;
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
         self.transaction().clone()
@@ -1617,12 +1621,14 @@ impl PoolTransaction for EthPooledTransaction {
         let encoded_length = tx.encode_2718_len();
         let (tx, signer) = tx.into_parts();
         match tx {
-            PooledTransactionVariant::Eip4844(tx) => {
+            EthereumTxEnvelope::<
+                TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
+            >::Eip4844(tx) => {
                 // include the blob sidecar
                 let (tx, sig, hash) = tx.into_parts();
                 let (tx, blob) = tx.into_parts();
                 let tx = Signed::new_unchecked(tx, sig, hash);
-                let tx = TransactionSigned::from(tx);
+                let tx = EthereumTxEnvelope::<TxEip4844>::from(tx);
                 let tx = Recovered::new_unchecked(tx, signer);
                 let mut pooled = Self::new(tx, encoded_length);
                 if let Some(availability) = pooled.blob_cell_availability.clone() {

@@ -227,3 +227,6 @@ pub mod dashmap {
     pub type DashMap<K, V, S = alloy_primitives::map::DefaultHashBuilder> =
         ::dashmap::DashMap<K, V, S>;
 }
+
+mod ethereum_receipt;
+pub use ethereum_receipt::EthereumReceiptRoot;

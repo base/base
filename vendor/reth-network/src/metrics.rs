@@ -1,6 +1,6 @@
+use alloy_consensus::TxType;
 use metrics::Histogram;
 use reth_eth_wire::DisconnectReason;
-use reth_ethereum_primitives::TxType;
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Gauge},

@@ -8,7 +8,10 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-use alloy_consensus::{Header, SignableTransaction, Transaction as _, TxLegacy};
+use alloy_consensus::{
+    EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
+    SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
+};
 use alloy_eips::{
     NumHash,
     eip1898::BlockWithParent,
@@ -17,7 +20,6 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bytes, TxKind, U256};
 pub use rand::Rng;
 use rand::{SeedableRng, distr::uniform::SampleRange, rngs::StdRng};
-use reth_ethereum_primitives::{Receipt, Transaction, TransactionSigned};
 use reth_primitives_traits::{
     Account, Block as _, Log, SealedBlock, SealedHeader, StorageEntry,
     crypto::secp256k1::sign_message, proofs,
@@ -137,8 +139,8 @@ pub fn random_header<R: Rng>(rng: &mut R, number: u64, parent: Option<B256>) -> 
 ///
 /// - The chain ID, which is always 1
 /// - The input, which is always nothing
-pub fn random_tx<R: Rng>(rng: &mut R) -> Transaction {
-    Transaction::Legacy(TxLegacy {
+pub fn random_tx<R: Rng>(rng: &mut R) -> EthereumTypedTransaction<TxEip4844> {
+    EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy {
         chain_id: Some(1),
         nonce: rng.random::<u16>().into(),
         gas_price: rng.random::<u16>().into(),
@@ -154,13 +156,16 @@ pub fn random_tx<R: Rng>(rng: &mut R) -> Transaction {
 /// On top of the considerations of [`random_tx`], these apply as well:
 ///
 /// - There is no guarantee that the nonce is not used twice for the same account
-pub fn random_signed_tx<R: Rng>(rng: &mut R) -> TransactionSigned {
+pub fn random_signed_tx<R: Rng>(rng: &mut R) -> EthereumTxEnvelope<TxEip4844> {
     let tx = random_tx(rng);
     sign_tx_with_random_key_pair(rng, tx)
 }
 
 /// Signs the [Transaction] with a random key pair.
-pub fn sign_tx_with_random_key_pair<R: Rng>(_rng: &mut R, tx: Transaction) -> TransactionSigned {
+pub fn sign_tx_with_random_key_pair<R: Rng>(
+    _rng: &mut R,
+    tx: EthereumTypedTransaction<TxEip4844>,
+) -> EthereumTxEnvelope<TxEip4844> {
     let secp = Secp256k1::new();
     // TODO: rand08
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -168,7 +173,10 @@ pub fn sign_tx_with_random_key_pair<R: Rng>(_rng: &mut R, tx: Transaction) -> Tr
 }
 
 /// Signs the [Transaction] with the given key pair.
-pub fn sign_tx_with_key_pair(key_pair: Keypair, tx: Transaction) -> TransactionSigned {
+pub fn sign_tx_with_key_pair(
+    key_pair: Keypair,
+    tx: EthereumTypedTransaction<TxEip4844>,
+) -> EthereumTxEnvelope<TxEip4844> {
     let signature =
         sign_message(B256::from_slice(&key_pair.secret_bytes()[..]), tx.signature_hash()).unwrap();
 
@@ -451,7 +459,7 @@ pub fn random_contract_account_range<R: Rng>(
 /// Generate random receipt for transaction
 pub fn random_receipt<R: Rng>(
     rng: &mut R,
-    transaction: &TransactionSigned,
+    transaction: &EthereumTxEnvelope<TxEip4844>,
     logs_count: Option<u8>,
     topics_count: Option<u8>,
 ) -> Receipt {
@@ -500,7 +508,7 @@ mod tests {
     fn test_sign_message() {
         let secp = Secp256k1::new();
 
-        let tx = Transaction::Eip1559(TxEip1559 {
+        let tx = EthereumTypedTransaction::<TxEip4844>::Eip1559(TxEip1559 {
             chain_id: 1,
             nonce: 0x42,
             gas_limit: 44386,
@@ -520,7 +528,7 @@ mod tests {
                 sign_message(B256::from_slice(&key_pair.secret_bytes()[..]), signature_hash)
                     .unwrap();
 
-            let signed: TransactionSigned = tx.clone().into_signed(signature).into();
+            let signed: EthereumTxEnvelope<TxEip4844> = tx.clone().into_signed(signature).into();
             let recovered = signed.recover_signer().unwrap();
 
             let expected = public_key_to_address(key_pair.public_key());
@@ -540,7 +548,7 @@ mod tests {
             value: U256::from(10_u128.pow(18)),
             input: Bytes::default(),
         };
-        let transaction = Transaction::Legacy(tx.clone());
+        let transaction = EthereumTypedTransaction::<TxEip4844>::Legacy(tx.clone());
 
         let expected = hex!(
             "ec098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a764000080018080"

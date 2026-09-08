@@ -24,6 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_consensus::TxType;
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{
     B256, TxHash,
@@ -47,7 +48,6 @@ use reth_eth_wire::{
     NewPooledTransactionHashes66, NewPooledTransactionHashes68, NewPooledTransactionHashes72,
     PooledTransactions, RequestTxHashes, Transactions, ValidAnnouncementData,
 };
-use reth_ethereum_primitives::TxType;
 use reth_metrics::common::mpsc::MemoryBoundedReceiver;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerKind, PeerRequest, PeerRequestSender, Peers,

@@ -9,8 +9,6 @@
 
 // Used only for feature propagation (serde-bincode-compat workaround).
 #[cfg(feature = "serde-bincode-compat")]
-use reth_ethereum_primitives as _;
-
 pub mod api;
 pub use api::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStore,

@@ -40,7 +40,6 @@ reth-execution-errors = { workspace = true, features = ["default"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default", "serde"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
-reth-ethereum-primitives = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
 mockall = { workspace = true }
 test-case = { workspace = true }
@@ -48,7 +47,6 @@ alloy-genesis = { workspace = true }
 reth-node-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-storage-errors = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 base-execution-chainspec = { workspace = true }
@@ -60,10 +58,10 @@ reth-trie = { workspace = true, features = ["test-utils"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
+alloy-consensus = { workspace = true, features = ["serde", "std"]}
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-codecs = { workspace = true, features = ["alloy", "test-utils"] }
-reth-ethereum-primitives = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["default", "rand", "std"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 tokio = { workspace = true, features = ["default", "test-util", "rt-multi-thread", "macros"] }
@@ -79,8 +77,6 @@ harness = false
 serde-bincode-compat = [
     "alloy-consensus/serde-bincode-compat",
     "alloy-eips/serde-bincode-compat",
-    "dep:reth-ethereum-primitives",
-    "reth-ethereum-primitives?/serde",
     "reth-trie-common/serde-bincode-compat",
     "reth-trie/serde-bincode-compat",
 ]

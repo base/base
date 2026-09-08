@@ -48,16 +48,17 @@ async-compression = { workspace = true, features = ["gzip", "tokio"], optional =
 itertools = { workspace = true }
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+alloy-consensus = {workspace = true, features = ["serde"]}
 reth-tracing = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-consensus = { workspace = true, features = ["test-utils"] }
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+
 [features]
 default = []
 file-client = ["dep:async-compression", "dep:alloy-rlp", "dep:itertools"]

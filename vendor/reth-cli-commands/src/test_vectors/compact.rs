@@ -1,5 +1,8 @@
 use std::{fs::File, io::BufReader};
 
+use alloy_consensus::{
+    EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, TxEip4844, TxType,
+};
 use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{B256, Signature, TxKind, hex};
 use arbitrary::Arbitrary;
@@ -25,7 +28,6 @@ use reth_db::{
         StoredBlockWithdrawals,
     },
 };
-use reth_ethereum_primitives::{Receipt, Transaction, TransactionSigned, TxType};
 use reth_fs_util as fs;
 use reth_primitives_traits::{Account, Log, LogData, StorageEntry};
 use reth_prune_types::{PruneCheckpoint, PruneMode};
@@ -114,7 +116,7 @@ compact_types!(
         StoredBlockWithdrawals,
         StaticFileBlockWithdrawals,
         // Manual implementations
-        TransactionSigned,
+        EthereumTxEnvelope::<TxEip4844>,
         // Bytecode, // todo bytecode arbitrary
         StorageEntry,
         // MerkleCheckpoint, // todo storedsubnode -> branchnodecompact arbitrary
@@ -129,7 +131,7 @@ compact_types!(
     // These types require an extra identifier which is usually stored elsewhere (eg. parent type).
     identifier: [
         Signature,
-        Transaction,
+        EthereumTypedTransaction::<TxEip4844>,
         TxType,
         TxKind
     ]
@@ -285,10 +287,10 @@ pub fn type_name<T>() -> String {
     let name = std::any::type_name::<T>();
     match name {
         "alloy_consensus::transaction::envelope::EthereumTypedTransaction<alloy_consensus::transaction::eip4844::TxEip4844>" => {
-            "Transaction".to_string()
+            "EthereumTypedTransaction::<TxEip4844>".to_string()
         }
         "alloy_consensus::transaction::envelope::EthereumTxEnvelope<alloy_consensus::transaction::eip4844::TxEip4844>" => {
-            "TransactionSigned".to_string()
+            "EthereumTxEnvelope::<TxEip4844>".to_string()
         }
         name => name.split("::").last().unwrap_or(std::any::type_name::<T>()).to_string(),
     }

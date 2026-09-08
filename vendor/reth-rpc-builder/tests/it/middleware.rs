@@ -6,13 +6,13 @@ use std::{
     },
 };
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use jsonrpsee::{
     core::middleware::{Batch, Notification},
     server::middleware::rpc::RpcServiceT,
     types::Request,
 };
-use reth_ethereum_primitives::TransactionSigned;
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
 use reth_rpc_eth_api::EthApiClient;
 use reth_rpc_server_types::RpcModuleSelection;
@@ -92,9 +92,14 @@ async fn test_rpc_middleware() {
         .unwrap();
 
     let client = handle.http_client().unwrap();
-    EthApiClient::<TransactionRequest, Transaction, Block, Receipt, Header, TransactionSigned>::protocol_version(
-        &client,
-    )
+    EthApiClient::<
+        TransactionRequest,
+        Transaction,
+        Block,
+        Receipt,
+        Header,
+        EthereumTxEnvelope<TxEip4844>,
+    >::protocol_version(&client)
     .await
     .unwrap();
     let count = mylayer.count.load(Ordering::Relaxed);

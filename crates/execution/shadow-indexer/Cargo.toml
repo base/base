@@ -35,15 +35,14 @@ reth-execution-types = { workspace = true, features = ["default"] }
 [dev-dependencies]
 mockall = { workspace = true }
 reth-db-common = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+alloy-consensus = { workspace = true, features = ["serde", "std"]}
 base-execution-evm = { workspace = true, features = ["test-utils"] }
-reth-ethereum-primitives = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 
 [features]
-default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+default = ["metrics"]
+metrics = ["base-metrics/metrics", "dep:metrics"]

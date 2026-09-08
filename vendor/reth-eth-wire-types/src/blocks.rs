@@ -3,6 +3,7 @@
 
 use alloc::vec::Vec;
 
+use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
@@ -109,12 +110,12 @@ impl From<Vec<B256>> for GetBlockBodies {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-pub struct BlockBodies<B = reth_ethereum_primitives::BlockBody>(
+pub struct BlockBodies<B = alloy_consensus::BlockBody<EthereumTxEnvelope<TxEip4844>>>(
     /// The requested block bodies, each of which should correspond to a hash in the request.
     pub Vec<B>,
 );
 
-generate_tests!(#[rlp, 16] BlockBodies<reth_ethereum_primitives::BlockBody>, EthBlockBodiesTests);
+generate_tests!(#[rlp, 16] BlockBodies<alloy_consensus::BlockBody::<alloy_consensus::EthereumTxEnvelope::<alloy_consensus::TxEip4844>>>, EthBlockBodiesTests);
 
 impl<B> From<Vec<B>> for BlockBodies<B> {
     fn from(bodies: Vec<B>) -> Self {
@@ -126,11 +127,12 @@ impl<B> From<Vec<B>> for BlockBodies<B> {
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::{Header, TxLegacy};
+    use alloy_consensus::{
+        EthereumTxEnvelope, EthereumTypedTransaction, Header, TxEip4844, TxLegacy,
+    };
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::{Signature, TxKind, U256, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use reth_ethereum_primitives::{BlockBody, Transaction, TransactionSigned};
 
     use crate::{
         BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HeadersDirection,
@@ -393,9 +395,9 @@ mod tests {
         let request = RequestPair {
             request_id: 1111,
             message: BlockBodies(vec![
-                BlockBody {
+                alloy_consensus::BlockBody::<EthereumTxEnvelope::<TxEip4844>> {
                     transactions: vec![
-                        TransactionSigned::new_unhashed(Transaction::Legacy(TxLegacy {
+                        EthereumTxEnvelope::<TxEip4844>::new_unhashed(EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy {
                             chain_id: Some(1),
                             nonce: 0x8u64,
                             gas_price: 0x4a817c808,
@@ -409,7 +411,7 @@ mod tests {
                                 false,
                             ),
                         ),
-                        TransactionSigned::new_unhashed(Transaction::Legacy(TxLegacy {
+                        EthereumTxEnvelope::<TxEip4844>::new_unhashed(EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy {
                             chain_id: Some(1),
                             nonce: 0x9u64,
                             gas_price: 0x4a817c809,
@@ -468,9 +470,9 @@ mod tests {
         let expected = RequestPair {
             request_id: 1111,
             message: BlockBodies(vec![
-                BlockBody {
+                alloy_consensus::BlockBody::<EthereumTxEnvelope::<TxEip4844>> {
                     transactions: vec![
-                        TransactionSigned::new_unhashed(Transaction::Legacy(
+                        EthereumTxEnvelope::<TxEip4844>::new_unhashed(EthereumTypedTransaction::<TxEip4844>::Legacy(
                             TxLegacy {
                                 chain_id: Some(1),
                                 nonce: 0x8u64,
@@ -486,8 +488,8 @@ mod tests {
                                 false,
                             ),
                         ),
-                        TransactionSigned::new_unhashed(
-                            Transaction::Legacy(TxLegacy {
+                        EthereumTxEnvelope::<TxEip4844>::new_unhashed(
+                            EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy {
                                 chain_id: Some(1),
                                 nonce: 0x9u64,
                                 gas_price: 0x4a817c809,
@@ -543,7 +545,11 @@ mod tests {
         let body = BlockBodies::default();
         let mut buf = Vec::new();
         body.encode(&mut buf);
-        let decoded = BlockBodies::<BlockBody>::decode(&mut buf.as_slice()).unwrap();
+        let decoded =
+            BlockBodies::<alloy_consensus::BlockBody<EthereumTxEnvelope<TxEip4844>>>::decode(
+                &mut buf.as_slice(),
+            )
+            .unwrap();
         assert_eq!(body, decoded);
     }
 }

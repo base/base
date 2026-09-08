@@ -488,7 +488,7 @@ impl IntoIterator for ChainBlocks<'_> {
 
 /// Used to hold receipts and their attachment.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct BlockReceipts<T = reth_ethereum_primitives::Receipt> {
+pub struct BlockReceipts<T = alloy_consensus::EthereumReceipt> {
     /// Block identifier
     pub block: BlockNumHash,
     /// Transaction identifier and receipt.

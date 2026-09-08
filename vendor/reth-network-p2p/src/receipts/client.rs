@@ -8,7 +8,7 @@ use reth_eth_wire_types::Receipts70;
 use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
 
 /// The receipts future type
-pub type ReceiptsFut<R = reth_ethereum_primitives::Receipt> =
+pub type ReceiptsFut<R = alloy_consensus::EthereumReceipt> =
     Pin<Box<dyn Future<Output = PeerRequestResult<ReceiptsResponse<R>>> + Send + Sync>>;
 
 /// Response from a receipts request.
