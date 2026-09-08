@@ -11,8 +11,8 @@ use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
+use base_common_signer::PrivateKeySigner;
 use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager, TxCandidate, TxManagerConfig};
 
 pub const TEST_RECIPIENT: Address = Address::with_last_byte(0x42);

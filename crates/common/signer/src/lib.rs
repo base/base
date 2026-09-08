@@ -15,3 +15,18 @@ pub use signer::RemoteSigner;
 
 mod traits;
 pub use traits::EthSignerApiClient;
+
+mod local;
+pub use local::PrivateKeySigner;
+
+mod local_error;
+pub use local_error::LocalSignerError;
+
+mod private_key;
+
+#[cfg(feature = "mnemonic")]
+mod mnemonic;
+#[cfg(feature = "mnemonic")]
+pub use coins_bip39;
+#[cfg(feature = "mnemonic")]
+pub use mnemonic::{MnemonicBuilder, MnemonicBuilderError, MnemonicKey, MnemonicSignerIter};

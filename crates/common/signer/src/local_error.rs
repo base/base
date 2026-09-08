@@ -2,7 +2,7 @@ use alloy_primitives::hex;
 use k256::ecdsa;
 use thiserror::Error;
 
-/// Error thrown by [`LocalSigner`](crate::LocalSigner).
+/// Error thrown by [`PrivateKeySigner`](crate::PrivateKeySigner).
 #[derive(Debug, Error)]
 pub enum LocalSignerError {
     /// [`ecdsa`] error.
@@ -14,16 +14,6 @@ pub enum LocalSignerError {
     /// [`std::io`] error.
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-
-    /// [`yubihsm`] client error.
-    #[cfg(feature = "yubihsm")]
-    #[error(transparent)]
-    YubiHsmError(#[from] yubihsm::client::Error),
-
-    /// [`secp256k1`] error.
-    #[error(transparent)]
-    #[cfg(feature = "secp256k1")]
-    Secp256k1Error(#[from] secp256k1::Error),
 
     /// [`coins_bip32`] error.
     #[error(transparent)]
@@ -37,9 +27,4 @@ pub enum LocalSignerError {
     #[error(transparent)]
     #[cfg(feature = "mnemonic")]
     MnemonicBuilderError(#[from] super::mnemonic::MnemonicBuilderError),
-
-    /// [`eth_keystore`] error.
-    #[cfg(feature = "keystore")]
-    #[error(transparent)]
-    EthKeystoreError(#[from] eth_keystore::KeystoreError),
 }

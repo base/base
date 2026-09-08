@@ -2163,13 +2163,13 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
-    use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTransactionSigned, BaseTxEnvelope, ChangeType,
         CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
         SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
+    use base_common_signer::PrivateKeySigner;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;

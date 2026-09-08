@@ -53,7 +53,7 @@ reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+base-common-signer = { workspace = true, features = ["mnemonic"] }
 alloy-consensus = { workspace = true, features = ["kzg", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }

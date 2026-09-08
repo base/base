@@ -27,7 +27,7 @@ alloy-transport = { workspace = true }
 base-test-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 base-consensus-node = { workspace = true }
 base-common-network = { workspace = true }

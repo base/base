@@ -287,7 +287,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     /// ```no_run
     /// # use alloy_primitives::Address;
     /// # use alloy_provider::{Provider, ProviderBuilder};
-    /// # use alloy_signer_local::PrivateKeySigner;
+    /// # use base_common_signer::PrivateKeySigner;
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -784,8 +784,8 @@ mod tests {
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
     use alloy_provider::{Provider, ProviderBuilder, WalletProvider};
     use alloy_rpc_types_eth::{AccessListItem, Authorization};
-    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::sol;
+    use base_common_signer::PrivateKeySigner;
     use futures::Future;
 
     use super::*;

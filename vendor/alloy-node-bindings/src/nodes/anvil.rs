@@ -14,7 +14,7 @@ use alloy_hardforks_legacy::EthereumHardfork;
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, ChainId, hex};
 use alloy_signer::Signer;
-use alloy_signer_local::LocalSigner;
+use base_common_signer::PrivateKeySigner;
 use k256::{SecretKey as K256SecretKey, ecdsa::SigningKey};
 use url::Url;
 
@@ -510,7 +510,7 @@ impl Anvil {
 
             if !private_keys.is_empty() {
                 let mut private_keys = private_keys.iter().map(|key| {
-                    let mut signer = LocalSigner::from(key.clone());
+                    let mut signer = PrivateKeySigner::from(key.clone());
                     signer.set_chain_id(chain_id);
                     signer
                 });

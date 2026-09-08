@@ -1837,8 +1837,8 @@ mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
-    use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
+    use base_common_signer::PrivateKeySigner;
     use base_runtime::{
         Clock,
         deterministic::{Config, Runner},

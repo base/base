@@ -22,7 +22,7 @@ pub use remote::{
 #[derive(Debug, Clone, From)]
 pub enum BlockSigner {
     /// A local block signer that is used to sign blocks with a locally available private key.
-    Local(#[from] alloy_signer_local::PrivateKeySigner),
+    Local(#[from] base_common_signer::PrivateKeySigner),
     /// A remote block signer that is used to sign blocks with a remote private key.
     Remote(#[from] RemoteSigner),
 }
@@ -31,7 +31,7 @@ pub enum BlockSigner {
 #[derive(Debug)]
 pub enum BlockSignerHandler {
     /// A local block signer that is used to sign blocks with a locally available private key.
-    Local(alloy_signer_local::PrivateKeySigner),
+    Local(base_common_signer::PrivateKeySigner),
     /// A remote block signer that is used to sign blocks with a remote private key.
     Remote(RemoteSignerHandler),
 }

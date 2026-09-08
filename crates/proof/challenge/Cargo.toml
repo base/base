@@ -24,7 +24,7 @@ base-proof-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-primitives = { workspace = true }
@@ -53,13 +53,14 @@ rstest = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
 base-challenger = { workspace = true, features = ["test-utils"] }
+
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
 test-utils = [
-	"alloy-consensus",
-	"alloy-rpc-types-eth",
-	"async-trait",
-	"base-protocol/test-utils",
-	"base-runtime/test-utils",
-	"serde_json",
+    "alloy-consensus",
+    "alloy-rpc-types-eth",
+    "async-trait",
+    "base-protocol/test-utils",
+    "base-runtime/test-utils",
+    "serde_json",
 ]

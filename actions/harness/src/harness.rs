@@ -2,9 +2,9 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
-use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
+use base_common_signer::PrivateKeySigner;
 use base_consensus_derive::{
     DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
 };

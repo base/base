@@ -8,7 +8,6 @@ mod common;
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{
@@ -16,6 +15,7 @@ use base_common_precompiles::{
     IB20Stablecoin,
 };
 use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_signer::PrivateKeySigner;
 use base_system_tests::{
     ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient, SystemTestStack,
     SystemTestStackBuilder,

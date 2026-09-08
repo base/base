@@ -129,11 +129,11 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, U256};
     use alloy_signer::SignerSync;
-    use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
+    use base_common_signer::PrivateKeySigner;
     use base_execution_txpool::{TransactionId, TransactionOrigin};
 
     use super::*;

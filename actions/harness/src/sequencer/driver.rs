@@ -5,9 +5,9 @@ use std::{
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256};
-use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
+use base_common_signer::PrivateKeySigner;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,

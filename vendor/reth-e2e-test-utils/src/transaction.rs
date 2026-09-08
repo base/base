@@ -9,7 +9,7 @@ use alloy_network::{
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Authorization, TransactionInput, TransactionRequest};
 use alloy_signer::SignerSync;
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use eyre::Ok;
 
 /// Helper for transaction operations

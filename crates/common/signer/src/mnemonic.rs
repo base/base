@@ -8,13 +8,12 @@ use std::{marker::PhantomData, path::PathBuf};
 use alloy_signer::utils::secret_key_to_address;
 use coins_bip32::{path::DerivationPath, prelude::Parent, xkeys::XPriv};
 use coins_bip39::{English, Mnemonic, Wordlist};
-use k256::ecdsa::SigningKey;
 use rand_08::Rng;
 use thiserror::Error;
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::{LocalSigner, LocalSignerError, PrivateKeySigner};
+use crate::{LocalSignerError, PrivateKeySigner};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 const DEFAULT_DERIVATION_PATH: &str = "m/44'/60'/0'/0/0";
@@ -388,7 +387,7 @@ fn xpriv_to_signer(xpriv: &XPriv) -> PrivateKeySigner {
     let credential: &coins_bip32::prelude::SigningKey = xpriv.as_ref();
     let credential = credential.clone();
     let address = secret_key_to_address(&credential);
-    LocalSigner::<SigningKey> { credential, address, chain_id: None }
+    PrivateKeySigner { credential, address, chain_id: None }
 }
 
 #[cfg(test)]

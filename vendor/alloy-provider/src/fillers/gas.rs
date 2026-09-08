@@ -59,7 +59,7 @@ pub enum GasFillable {
 /// # use alloy_network::{Ethereum};
 /// # use alloy_rpc_types_eth::TransactionRequest;
 /// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
-/// # use alloy_signer_local::PrivateKeySigner;
+/// # use base_common_signer::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
 /// let provider = ProviderBuilder::<_, _, Ethereum>::default()

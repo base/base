@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
-use alloy_signer_local::LocalSignerError;
 use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
+use base_common_signer::LocalSignerError;
 use base_proof_contracts::ContractError;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};

@@ -15,15 +15,16 @@ workspace = true
 base-common-flz = { workspace = true }
 alloy-consensus = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "derive"] }
-alloy-signer-local = { workspace = true, optional = true }
+base-common-signer = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["default", "v4", "serde"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 base-common-rpc-types = { workspace = true, features = ["default", "std"], optional = true }
 [dev-dependencies]
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, features = ["default", "std"] }
+
 [features]
-test-utils = [ "dep:alloy-signer-local", "dep:base-common-rpc-types" ]
+test-utils = [ "dep:base-common-signer", "dep:base-common-rpc-types" ]

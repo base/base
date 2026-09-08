@@ -36,7 +36,6 @@ thiserror = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-network = { workspace = true }
-alloy-signer-local = { workspace = true }
 alloy-hardforks-legacy = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 url = { workspace = true, features = ["default"] }
@@ -52,6 +51,7 @@ alloy-primitives = { workspace = true, features = [
     "k256",
     "serde",
 ] }
+base-common-signer = { workspace = true }
 [dev-dependencies]
 ci_info = { workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

@@ -1784,12 +1784,12 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
-    use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, TxEip8130,
     };
+    use base_common_signer::PrivateKeySigner;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{

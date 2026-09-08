@@ -5,9 +5,9 @@
 //! [`InProcessConsensus`](super::InProcessConsensus).
 
 use alloy_primitives::B256;
-use alloy_signer_local::PrivateKeySigner;
 use base_batcher_encoder::DaType;
 use base_batcher_service::{BatcherConfig, BatcherService};
+use base_common_signer::PrivateKeySigner;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use eyre::Result;

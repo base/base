@@ -2,10 +2,10 @@
 use std::sync::LazyLock;
 
 use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
-use alloy_signer_local::PrivateKeySigner;
 use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
+use base_common_signer::PrivateKeySigner;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;
 use base_proof_preimage::PreimageKey;

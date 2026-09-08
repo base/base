@@ -28,7 +28,7 @@ libp2p-stream = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 base-consensus-disc = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-network = { workspace = true }
@@ -92,18 +92,19 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
 base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
+
 [features]
 default = []
 metrics = [
-	"base-consensus-derive/metrics",
-	"base-consensus-disc/metrics",
-	"base-consensus-engine/metrics",
-	"base-consensus-gossip/metrics",
-	"base-consensus-providers/metrics",
-	"base-consensus-rpc/metrics",
-	"base-metrics/metrics",
-	"base-upgrade-signal/metrics",
-	"dep:metrics",
-	"libp2p/metrics",
-	"tower-http/metrics",
+    "base-consensus-derive/metrics",
+    "base-consensus-disc/metrics",
+    "base-consensus-engine/metrics",
+    "base-consensus-gossip/metrics",
+    "base-consensus-providers/metrics",
+    "base-consensus-rpc/metrics",
+    "base-metrics/metrics",
+    "base-upgrade-signal/metrics",
+    "dep:metrics",
+    "libp2p/metrics",
+    "tower-http/metrics",
 ]

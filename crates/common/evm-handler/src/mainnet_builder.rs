@@ -79,7 +79,7 @@ impl MainContext for Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<EmptyDB>,
 #[cfg(test)]
 mod test {
     use alloy_signer::{Either, SignerSync};
-    use alloy_signer_local::PrivateKeySigner;
+    use base_common_signer::PrivateKeySigner;
     use base_evm_context::{Authorization, Context, TxEnv};
     use revm_bytecode::{
         Bytecode,

@@ -299,13 +299,13 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_signer::SignerSync;
-    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolCall;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
         Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
     };
+    use base_common_signer::PrivateKeySigner;
     use base_execution_txpool::{
         CoinbaseTipOrdering, PoolTransaction, TransactionOrdering, test_utils::TransactionBuilder,
     };

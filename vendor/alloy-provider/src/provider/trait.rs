@@ -1890,7 +1890,6 @@ mod tests {
     use alloy_rlp::Decodable;
     use alloy_rpc_client::{BuiltInConnectionString, RpcClient};
     use alloy_rpc_types_eth::{Block, request::TransactionRequest};
-    use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::layers::{RetryBackoffLayer, RetryPolicy};
     #[cfg(feature = "hyper")]
     use alloy_transport_http::{
@@ -1901,6 +1900,7 @@ mod tests {
             rt::TokioExecutor,
         },
     };
+    use base_common_signer::PrivateKeySigner;
     #[cfg(feature = "hyper")]
     use http_body_util::Full;
     #[cfg(feature = "hyper")]

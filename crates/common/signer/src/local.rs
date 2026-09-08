@@ -1,11 +1,3 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/alloy.jpg",
-    html_favicon_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/favicon.ico"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 use std::fmt;
 
 use alloy_consensus::SignableTransaction;
@@ -13,88 +5,22 @@ use alloy_network::{TxSigner, TxSignerSync, impl_into_wallet};
 use alloy_primitives::{Address, B256, ChainId, Signature};
 use alloy_signer::{Result, Signer, SignerSync, sign_transaction_with_chain_id};
 use async_trait::async_trait;
-use k256::ecdsa::{self, RecoveryId, signature::hazmat::PrehashSigner};
+use k256::ecdsa::SigningKey;
 
-mod error;
-pub use error::LocalSignerError;
-
-#[cfg(feature = "mnemonic")]
-mod mnemonic;
-#[cfg(feature = "mnemonic")]
-pub use mnemonic::{MnemonicBuilder, MnemonicBuilderError, MnemonicKey, MnemonicSignerIter};
-
-mod private_key;
-
-#[cfg(feature = "secp256k1")]
-mod secp256k1;
-
-#[cfg(feature = "yubihsm")]
-mod yubi;
-
-#[cfg(feature = "mnemonic")]
-pub use coins_bip39;
-#[cfg(feature = "yubihsm")]
-pub use yubihsm;
-
-#[cfg(feature = "secp256k1")]
-pub use self::secp256k1::Secp256k1Credential;
-
-/// A signer instantiated with a locally stored private key.
-pub type PrivateKeySigner = LocalSigner<k256::ecdsa::SigningKey>;
-
-/// A signer instantiated with a locally stored private key, using the `secp256k1` crate.
-#[cfg(feature = "secp256k1")]
-pub type Secp256k1Signer = LocalSigner<Secp256k1Credential>;
-/// A signer instantiated with a YubiHSM.
-#[cfg(feature = "yubihsm")]
-pub type YubiSigner = LocalSigner<yubihsm::ecdsa::Signer<k256::Secp256k1>>;
-
-/// An Ethereum signer backed by a synchronous [`PrehashSigner`] credential.
-///
-/// [`PrivateKeySigner`] and `Secp256k1Signer` keep private-key material in process memory, while
-/// credentials such as `YubiSigner` can delegate signing to external hardware. The asynchronous
-/// [`Signer`] implementation calls the credential synchronously and does not move blocking work to
-/// another thread; custom or hardware credentials may therefore block an async executor.
-///
-/// # Examples
-///
-/// ## Signing and Verifying a message
-///
-/// The signer can be used to produce ECDSA [`Signature`] objects, which can be
-/// then verified. Note that this uses
-/// [`eip191_hash_message`](alloy_primitives::eip191_hash_message) under the hood which will
-/// prefix the message being hashed with the `Ethereum Signed Message` domain separator.
-///
-/// ```
-/// use alloy_signer::{Signer, SignerSync};
-/// use alloy_signer_local::PrivateKeySigner;
-///
-/// let signer = PrivateKeySigner::random();
-///
-/// // The signer can be used to sign messages
-/// let message = b"hello";
-/// let signature = signer.sign_message_sync(message)?;
-/// assert_eq!(signature.recover_address_from_msg(&message[..]).unwrap(), signer.address());
-///
-/// // LocalSigner is cloneable:
-/// let signer_clone = signer.clone();
-/// let signature2 = signer_clone.sign_message_sync(message)?;
-/// assert_eq!(signature, signature2);
-/// # Ok::<_, Box<dyn std::error::Error>>(())
-/// ```
+/// A transaction signer backed by a local secp256k1 private key.
 #[derive(Clone)]
-pub struct LocalSigner<C> {
+pub struct PrivateKeySigner {
     /// The signer's credential.
-    pub(crate) credential: C,
+    pub credential: SigningKey,
     /// The signer's address.
-    pub(crate) address: Address,
+    pub address: Address,
     /// The signer's chain ID (for EIP-155).
-    pub(crate) chain_id: Option<ChainId>,
+    pub chain_id: Option<ChainId>,
 }
 
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
-impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)> + Send + Sync> Signer for LocalSigner<C> {
+impl Signer for PrivateKeySigner {
     #[inline]
     async fn sign_hash(&self, hash: &B256) -> Result<Signature> {
         self.sign_hash_sync(hash)
@@ -116,10 +42,10 @@ impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)> + Send + Sync> Signer for 
     }
 }
 
-impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> SignerSync for LocalSigner<C> {
+impl SignerSync for PrivateKeySigner {
     #[inline]
     fn sign_hash_sync(&self, hash: &B256) -> Result<Signature> {
-        Ok(self.credential.sign_prehash(hash.as_ref())?.into())
+        Ok(self.credential.sign_prehash_recoverable(hash.as_ref())?.into())
     }
 
     #[inline]
@@ -128,15 +54,15 @@ impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> SignerSync for LocalSigne
     }
 }
 
-impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> LocalSigner<C> {
-    /// Constructs a signer from an external [`PrehashSigner`] credential.
+impl PrivateKeySigner {
+    /// Constructs a signer from a signing key and its address.
     ///
     /// `address` is trusted and is not derived from or checked against `credential`. The caller
     /// must ensure it is the address recovered from signatures produced by the credential.
     /// `chain_id` affects transaction signing only.
     #[inline]
     pub const fn new_with_credential(
-        credential: C,
+        credential: SigningKey,
         address: Address,
         chain_id: Option<ChainId>,
     ) -> Self {
@@ -145,19 +71,19 @@ impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> LocalSigner<C> {
 
     /// Returns this signer's credential.
     ///
-    /// Depending on `C`, the returned value may expose private-key material. Do not log or
+    /// The returned value exposes private-key material. Do not log or
     /// otherwise disclose it.
     #[inline]
-    pub const fn credential(&self) -> &C {
+    pub const fn credential(&self) -> &SigningKey {
         &self.credential
     }
 
     /// Consumes this signer and returns its credential.
     ///
-    /// Depending on `C`, the returned value may expose private-key material. Do not log or
+    /// The returned value exposes private-key material. Do not log or
     /// otherwise disclose it.
     #[inline]
-    pub fn into_credential(self) -> C {
+    pub fn into_credential(self) -> SigningKey {
         self.credential
     }
 
@@ -175,9 +101,9 @@ impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> LocalSigner<C> {
 }
 
 // do not log the signer
-impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> fmt::Debug for LocalSigner<C> {
+impl fmt::Debug for PrivateKeySigner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LocalSigner")
+        f.debug_struct("PrivateKeySigner")
             .field("address", &self.address)
             .field("chain_id", &self.chain_id)
             .finish()
@@ -186,10 +112,7 @@ impl<C: PrehashSigner<(ecdsa::Signature, RecoveryId)>> fmt::Debug for LocalSigne
 
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
-impl<C> TxSigner<Signature> for LocalSigner<C>
-where
-    C: PrehashSigner<(ecdsa::Signature, RecoveryId)> + Send + Sync,
-{
+impl TxSigner<Signature> for PrivateKeySigner {
     fn address(&self) -> Address {
         self.address
     }
@@ -203,10 +126,7 @@ where
     }
 }
 
-impl<C> TxSignerSync<Signature> for LocalSigner<C>
-where
-    C: PrehashSigner<(ecdsa::Signature, RecoveryId)>,
-{
+impl TxSignerSync<Signature> for PrivateKeySigner {
     fn address(&self) -> Address {
         self.address
     }
@@ -220,7 +140,7 @@ where
     }
 }
 
-impl_into_wallet!(@[C: PrehashSigner<(ecdsa::Signature, RecoveryId)> + Send + Sync + 'static] LocalSigner<C>);
+impl_into_wallet!(PrivateKeySigner);
 
 #[cfg(test)]
 mod test {

@@ -74,7 +74,7 @@ base-txpool-tracing = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+base-common-signer = { workspace = true, features = ["mnemonic"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }

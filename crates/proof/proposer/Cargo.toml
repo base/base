@@ -25,7 +25,7 @@ base-cli-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }
@@ -50,5 +50,6 @@ alloy-rpc-types-eth = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
+
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

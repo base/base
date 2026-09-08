@@ -144,7 +144,7 @@ where
 ///
 /// ```
 /// use alloy_provider::ext::sign_flashbots_payload;
-/// use alloy_signer_local::PrivateKeySigner;
+/// use base_common_signer::PrivateKeySigner;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let signer: PrivateKeySigner =
@@ -211,7 +211,7 @@ pub fn verify_flashbots_signature(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
-    use alloy_signer_local::PrivateKeySigner;
+    use base_common_signer::PrivateKeySigner;
 
     use super::*;
 

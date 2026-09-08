@@ -85,7 +85,7 @@ base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 reth-execution-types = { workspace = true, features = ["serde"] }
 alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+base-common-signer = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }

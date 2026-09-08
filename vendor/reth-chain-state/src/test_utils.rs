@@ -8,11 +8,11 @@ use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, INITIAL_BASE_FEE};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, BlockNumber, U256, map::B256HashMap};
 use alloy_signer::SignerSync;
-use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{
     BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction,
 };
+use base_common_signer::PrivateKeySigner;
 use base_execution_chainspec::BaseChainSpec;
 use rand::Rng;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};

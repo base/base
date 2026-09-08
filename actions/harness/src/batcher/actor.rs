@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
@@ -10,6 +9,7 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
+use base_common_signer::PrivateKeySigner;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;

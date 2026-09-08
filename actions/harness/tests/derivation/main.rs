@@ -5,7 +5,6 @@ use std::sync::Arc;
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
-use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -14,6 +13,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::SystemConfigUpdate;
+use base_common_signer::PrivateKeySigner;
 use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,

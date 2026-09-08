@@ -52,7 +52,7 @@ serde_json = { workspace = true, features = [
     "raw_value",
 ] }
 [dev-dependencies]
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 alloy-node-bindings = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-provider = { workspace = true, features = ["anvil-node"] }

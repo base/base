@@ -1,7 +1,7 @@
 //! Anvil default test accounts derived from mnemonic.
 
 use alloy_primitives::{Address, B256, FixedBytes};
-use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
+use base_common_signer::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 
 /// Standard Anvil test mnemonic.
 pub const TEST_MNEMONIC: &str = "test test test test test test test test test test test junk";

@@ -18,14 +18,33 @@ async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-network = { workspace = true }
 alloy-primitives = { workspace = true }
+k256 = { workspace = true, features = ["ecdsa"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
+coins-bip32 = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
+rand_08 = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
+coins-bip39 = { workspace = true, features = ["english"], optional = true }
+zeroize = { workspace = true, features = [
+    "zeroize_derive",
+    "alloc",
+], optional = true }
 [dev-dependencies]
-alloy-signer-local = { workspace = true }
+alloy-network = { workspace = true }
 alloy-node-bindings = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+
+[features]
+mnemonic = ["dep:coins-bip32", "dep:coins-bip39", "zeroize"]
+zeroize = ["dep:zeroize"]

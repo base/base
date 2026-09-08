@@ -170,7 +170,7 @@ mod test {
     use alloy_node_bindings::{Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::TransactionRequest;
-    use alloy_signer_local::PrivateKeySigner;
+    use base_common_signer::PrivateKeySigner;
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

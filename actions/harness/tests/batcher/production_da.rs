@@ -2,12 +2,12 @@
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_primitives::B256;
-use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{
     ActionBlobProvider, ActionL1ChainProvider, ActionL2Source, ActionTestHarness, Batcher,
     BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
+use base_common_signer::PrivateKeySigner;
 use base_consensus_derive::{DataAvailabilityProvider, EthereumDataSource};
 
 fn test_l1_signer() -> PrivateKeySigner {

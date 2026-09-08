@@ -7,7 +7,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use alloy_primitives::{Address, B256};
 use alloy_signer::{Signer, k256::ecdsa};
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use base_consensus_peers::SecretKeyLoader;
 use base_consensus_sources::{BlockSigner, ClientCert, RemoteSigner};
 use clap::Parser;

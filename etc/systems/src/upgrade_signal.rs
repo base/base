@@ -6,8 +6,8 @@
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_signer::PrivateKeySigner;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_test_utils::MockProtocolVersions;
 use base_upgrade_signal::{

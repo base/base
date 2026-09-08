@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_network::EthereumWallet;
 use alloy_primitives::{B256, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager, TxManagerConfig};
 use common::{mine_block, publish_simple_tx, setup_with_config};
 

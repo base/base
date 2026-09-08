@@ -6,8 +6,8 @@ use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
 use alloy_rpc_types_eth::{Log as RpcLog, TransactionReceipt};
 use alloy_signer::SignerSync;
-use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::SystemConfigUpdate;
+use base_common_signer::PrivateKeySigner;
 use base_protocol::{BlockInfo, Deposits};
 use tracing::info;
 
@@ -821,7 +821,7 @@ mod tests {
     use alloy_consensus::{Transaction, transaction::SignerRecoverable};
     use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData};
-    use alloy_signer_local::PrivateKeySigner;
+    use base_common_signer::PrivateKeySigner;
 
     use super::{L1Miner, L1TxBuilder, ReorgError};
     use crate::Action;

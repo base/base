@@ -41,8 +41,7 @@ parking_lot = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+base-common-signer = { workspace = true, features = ["mnemonic"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter"] }
-[dev-dependencies]

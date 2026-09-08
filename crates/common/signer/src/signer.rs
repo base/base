@@ -182,9 +182,9 @@ mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::U256;
     use alloy_signer::SignerSync;
-    use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
+    use crate::PrivateKeySigner;
 
     #[test]
     fn address_returns_configured_address() {

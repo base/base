@@ -7,7 +7,7 @@ use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::TransactionRequest;
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
 use rayon::prelude::*;
 

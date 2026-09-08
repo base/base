@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_signer::SignerSync;
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey, signature::hazmat::PrehashVerifier};
 use rand_08::CryptoRng;

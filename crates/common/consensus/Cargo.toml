@@ -36,7 +36,7 @@ serde_with = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
-alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }

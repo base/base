@@ -274,7 +274,7 @@ skip = [
     "alloy-rpc-types-eth",
     "alloy-serde",
     "alloy-signer",
-    "alloy-signer-local",
+    "base-common-signer",
     "alloy-tx-macros",
     "cpufeatures",
     "num-bigint",

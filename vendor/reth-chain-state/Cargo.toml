@@ -32,8 +32,8 @@ alloy-signer = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
-alloy-signer-local = { workspace = true, optional = true }
 parking_lot = { workspace = true, features = ["default"] }
+base-common-signer = { workspace = true, optional = true }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros"] }
 base-execution-chainspec = { workspace = true, optional = true}
@@ -43,8 +43,8 @@ rand = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "std"] }
 [dev-dependencies]
 alloy-signer = { workspace = true }
-alloy-signer-local = { workspace = true }
 reth-testing-utils = { workspace = true }
+base-common-signer = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 
@@ -66,7 +66,7 @@ test-utils = [
     "dep:alloy-hardforks",
     "alloy-primitives/getrandom",
     "alloy-signer",
-    "alloy-signer-local",
+    "base-common-signer",
     "rand",
     "reth-primitives-traits/test-utils",
     "reth-trie/test-utils",

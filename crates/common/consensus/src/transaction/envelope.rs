@@ -1059,7 +1059,7 @@ mod tests {
     fn eip8130_envelope_recovery_honors_checked_vs_unchecked_contract() {
         use alloy_consensus::transaction::SignerRecoverable;
         use alloy_signer::SignerSync;
-        use alloy_signer_local::PrivateKeySigner;
+        use base_common_signer::PrivateKeySigner;
 
         use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
 

@@ -497,8 +497,8 @@ pub(crate) mod subscription {
 mod tests {
     use alloy_network::EthereumWallet;
     use alloy_primitives::U256;
-    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::sol;
+    use base_common_signer::PrivateKeySigner;
 
     use super::*;
 

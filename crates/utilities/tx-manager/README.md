@@ -144,7 +144,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{bytes, Address, U256};
 use alloy_provider::RootProvider;
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use base_tx_manager::{
     BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManagerConfig,
 };

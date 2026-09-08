@@ -14,7 +14,7 @@ use std::{
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_signer_local::PrivateKeySigner;
+use base_common_signer::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use rand::Rng;
 use tokio::sync::watch;

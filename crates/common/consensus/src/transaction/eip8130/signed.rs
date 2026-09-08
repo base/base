@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn recover_eoa_sender_recovers_eoa_signer() {
         use alloy_signer::SignerSync;
-        use alloy_signer_local::PrivateKeySigner;
+        use base_common_signer::PrivateKeySigner;
 
         let signer = PrivateKeySigner::random();
         let expected = signer.address();
@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn recover_eoa_sender_rejects_noncanonical_v() {
         use alloy_signer::SignerSync;
-        use alloy_signer_local::PrivateKeySigner;
+        use base_common_signer::PrivateKeySigner;
 
         let signer = PrivateKeySigner::random();
         let mut tx = sample_signed(false).into_tx();
@@ -870,7 +870,7 @@ mod tests {
     fn recover_eoa_sender_unchecked_accepts_high_s_signature() {
         use alloy_primitives::U256;
         use alloy_signer::SignerSync;
-        use alloy_signer_local::PrivateKeySigner;
+        use base_common_signer::PrivateKeySigner;
 
         // secp256k1 curve order N.
         const SECP256K1_N: U256 = U256::from_be_slice(&[

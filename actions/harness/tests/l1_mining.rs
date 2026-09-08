@@ -2,8 +2,8 @@
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, L1TxBuilder};
+use base_common_signer::PrivateKeySigner;
 
 fn test_signer() -> PrivateKeySigner {
     PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")

@@ -8,8 +8,8 @@ use alloy_consensus::{
 use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
-use alloy_signer_local::PrivateKeySigner;
 use base_batcher_source::L1HeadEvent;
+use base_common_signer::PrivateKeySigner;
 use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
@@ -456,7 +456,7 @@ impl TxManager for L1MinerTxManager {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
-    use alloy_signer_local::PrivateKeySigner;
+    use base_common_signer::PrivateKeySigner;
     use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 
     use super::L1MinerTxManager;

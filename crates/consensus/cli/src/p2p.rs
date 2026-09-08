@@ -11,9 +11,9 @@ use std::{
 
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
-use alloy_signer_local::PrivateKeySigner;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
+use base_common_signer::PrivateKeySigner;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{

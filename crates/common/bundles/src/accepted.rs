@@ -44,7 +44,7 @@ impl From<AcceptedBundle> for ParsedBundle {
 mod tests {
     use alloy_primitives::U256;
     use alloy_provider::network::eip2718::Encodable2718;
-    use alloy_signer_local::PrivateKeySigner;
+    use base_common_signer::PrivateKeySigner;
 
     use super::*;
     use crate::{

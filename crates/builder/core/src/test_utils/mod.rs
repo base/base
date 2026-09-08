@@ -9,9 +9,9 @@ mod utils;
 
 use alloy_network::TxSignerSync;
 use alloy_primitives::B256;
-use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+use base_common_signer::PrivateKeySigner;
 use base_node_core::NodeConfig;
 pub use driver::*;
 pub use external::*;

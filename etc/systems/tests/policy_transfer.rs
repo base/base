@@ -14,12 +14,12 @@ mod common;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
 use base_common_precompiles::{
     ActivationFeature, B20PolicyType, B20Variant, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };
+use base_common_signer::PrivateKeySigner;
 use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
 use eyre::{Result, WrapErr};
 

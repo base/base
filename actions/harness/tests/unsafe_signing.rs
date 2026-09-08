@@ -1,9 +1,9 @@
 //! Action tests for unsafe block signing and P2P signature validation.
 
 use alloy_primitives::{B256, Signature, U256};
-use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{ActionTestHarness, SharedL1Chain, TestGossipTransport};
 use base_common_rpc_types_engine::{BaseExecutionPayload, NetworkPayloadEnvelope, PayloadHash};
+use base_common_signer::PrivateKeySigner;
 use base_consensus_node::GossipTransport as _;
 
 /// End-to-end: a sequencer with a real signing key produces blocks whose
