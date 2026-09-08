@@ -11,7 +11,6 @@ use std::{num::NonZeroU64, path::PathBuf};
 use alloy_primitives::B256;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_engine::JwtSecret;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::{Ethereum, PrivateKeySigner};
@@ -535,11 +534,11 @@ impl SystemTestStackBuilder {
                 network_name: Some(self.devnet_config.stable.network_name),
                 builder_http_port: Some(ports.l2_builder_http),
                 builder_ws_port: Some(ports.l2_builder_ws),
-                builder_auth_port: Some(ports.l2_builder_auth),
+
                 builder_p2p_port: Some(ports.l2_builder_p2p),
                 client_http_port: Some(ports.l2_client_http),
                 client_ws_port: Some(ports.l2_client_ws),
-                client_auth_port: Some(ports.l2_client_auth),
+
                 client_p2p_port: Some(ports.l2_client_p2p),
                 builder_consensus_rpc_port: None,
                 builder_consensus_p2p_tcp_port: None,
@@ -644,11 +643,11 @@ impl SystemTestStackBuilder {
                 network_name: Some(config.network_name.clone()),
                 builder_http_port: Some(config.ports.l2_builder_http),
                 builder_ws_port: Some(config.ports.l2_builder_ws),
-                builder_auth_port: Some(config.ports.l2_builder_auth),
+
                 builder_p2p_port: Some(config.ports.l2_builder_p2p),
                 client_http_port: Some(config.ports.l2_client_http),
                 client_ws_port: Some(config.ports.l2_client_ws),
-                client_auth_port: Some(config.ports.l2_client_auth),
+
                 client_p2p_port: Some(config.ports.l2_client_p2p),
                 builder_consensus_rpc_port: Some(config.ports.l2_builder_cl_rpc),
                 builder_consensus_p2p_tcp_port: Some(config.ports.l2_builder_cl_p2p),
@@ -692,8 +691,6 @@ impl SystemTestStackBuilder {
             .await
             .wrap_err("L2 deployment task panicked")?
             .wrap_err("Failed to deploy L2 contracts")?;
-
-        let jwt_secret = JwtSecret::random();
 
         let l2_genesis_bytes =
             std::fs::read(l2_deployment.genesis_path()).wrap_err("Failed to read L2 genesis")?;
@@ -766,7 +763,7 @@ impl SystemTestStackBuilder {
             client_datadir: None,
             rollup_config: rollup_config_bytes,
             l1_genesis: l1_genesis_bytes,
-            jwt_secret,
+
             p2p_key: BUILDER.private_key,
             sequencer_key: SEQUENCER.private_key,
             batcher_key: BATCHER.private_key,

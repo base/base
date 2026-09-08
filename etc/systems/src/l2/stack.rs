@@ -12,7 +12,6 @@ use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer::SignerSync;
 use base_common_consensus::SignableTransaction;
 use base_common_genesis::RollupConfig;
@@ -58,8 +57,6 @@ pub struct L2StackConfig {
     pub rollup_config: Vec<u8>,
     /// L1 genesis JSON (for consensus chain spec).
     pub l1_genesis: Vec<u8>,
-    /// JWT secret for Engine API authentication.
-    pub jwt_secret: JwtSecret,
     /// P2P private key for consensus node identity.
     pub p2p_key: B256,
     /// Sequencer private key for block signing.
@@ -211,10 +208,10 @@ impl L2Stack {
         let builder_config = InProcessBuilderConfig {
             chain_spec: builder_chain_spec,
             datadir: config.builder_datadir,
-            jwt_secret: config.jwt_secret,
+
             http_port: container_config.and_then(|c| c.builder_http_port),
             ws_port: container_config.and_then(|c| c.builder_ws_port),
-            auth_port: container_config.and_then(|c| c.builder_auth_port),
+
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             metrics_port: None,
             enable_experimental_validity_transactions: config
@@ -237,10 +234,10 @@ impl L2Stack {
         let builder_consensus_config = InProcessConsensusConfig {
             rollup_config: rollup_config.clone(),
             l1_chain_config: l1_chain_config.clone(),
-            jwt_secret: config.jwt_secret,
+
             l1_rpc_url: l1_rpc_url.clone(),
             l1_beacon_url: l1_beacon_url.clone(),
-            l2_engine_url: builder.engine_url()?,
+            execution: builder.execution.clone(),
             mode: NodeMode::Sequencer,
             sequencer_key: Some(config.sequencer_key),
             p2p_key: Some(config.p2p_key),
@@ -294,12 +291,12 @@ impl L2Stack {
         let client_config = InProcessClientConfig {
             chain_spec: ChainSpecSource::GenesisJson(config.l2_genesis.clone()),
             datadir: config.client_datadir,
-            jwt_secret: config.jwt_secret,
+
             builder_rpc_url: builder.rpc_url()?.to_string(),
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container_config.and_then(|c| c.client_http_port),
             ws_port: container_config.and_then(|c| c.client_ws_port),
-            auth_port: container_config.and_then(|c| c.client_auth_port),
+
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             metrics_port: None,
             persistence_threshold: None,
@@ -319,10 +316,10 @@ impl L2Stack {
                 let client_consensus_config = InProcessConsensusConfig {
                     rollup_config: rollup_config.clone(),
                     l1_chain_config: l1_chain_config.clone(),
-                    jwt_secret: config.jwt_secret,
+
                     l1_rpc_url: l1_rpc_url.clone(),
                     l1_beacon_url: l1_beacon_url.clone(),
-                    l2_engine_url: client.engine_url()?,
+                    execution: client.execution.clone(),
                     mode: NodeMode::Validator,
                     sequencer_key: None,
                     p2p_key: None,
@@ -353,11 +350,11 @@ impl L2Stack {
                 // peer connection before the sequencer starts producing blocks.
                 let client_consensus_config = InProcessFollowConsensusConfig {
                     rollup_config: rollup_config.clone(),
-                    jwt_secret: config.jwt_secret,
+
                     l1_rpc_url: l1_rpc_url.clone(),
-                    local_l2_rpc_url: client.rpc_url()?,
+
                     source_l2_rpc_url: builder.rpc_url()?,
-                    l2_engine_url: client.engine_url()?,
+                    execution: client.execution.clone(),
                     upgrade_signal: config.upgrade_signal.clone(),
                     rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
                     insert_delay: Duration::ZERO,
@@ -473,7 +470,7 @@ impl L2Stack {
                     l2_genesis: config.l2_genesis.clone(),
                     rollup_config: rollup_config.clone(),
                     l1_chain_config: l1_chain_config.clone(),
-                    jwt_secret: config.jwt_secret,
+
                     l1_rpc_url: l1_rpc_url.clone(),
                     l1_beacon_url: l1_beacon_url.clone(),
                     active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),

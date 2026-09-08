@@ -19,7 +19,6 @@ use std::{num::NonZeroU64, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use eyre::{Result, WrapErr};
@@ -47,8 +46,6 @@ pub struct ShadowSequencerConfig {
     pub rollup_config: RollupConfig,
     /// Parsed L1 chain configuration (shared with the active stack).
     pub l1_chain_config: ChainConfig,
-    /// JWT secret for Engine API authentication.
-    pub jwt_secret: JwtSecret,
     /// L1 RPC endpoint URL.
     pub l1_rpc_url: Url,
     /// L1 beacon API endpoint URL.
@@ -85,10 +82,10 @@ impl ShadowSequencer {
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             chain_spec,
             datadir: None,
-            jwt_secret: config.jwt_secret,
+
             http_port: None,
             ws_port: None,
-            auth_port: None,
+
             p2p_port: None,
             metrics_port: None,
             enable_experimental_validity_transactions: false,
@@ -105,10 +102,10 @@ impl ShadowSequencer {
         let consensus = InProcessConsensus::start(InProcessConsensusConfig {
             rollup_config: config.rollup_config,
             l1_chain_config: config.l1_chain_config,
-            jwt_secret: config.jwt_secret,
+
             l1_rpc_url: config.l1_rpc_url,
             l1_beacon_url: config.l1_beacon_url,
-            l2_engine_url: builder.engine_url()?,
+            execution: builder.execution.clone(),
             mode: NodeMode::Sequencer,
             sequencer_key: Some(config.sequencer_key),
             p2p_key: None,

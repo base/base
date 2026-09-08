@@ -2,11 +2,10 @@
 
 use std::sync::Arc;
 
-use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_consensus_node::{EngineConfig, NodeMode, StandalonePrefund, StandaloneSequencerNode};
+use base_consensus_node::{StandalonePrefund, StandaloneSequencerNode};
 use base_protocol::L1BlockInfoTx;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -16,10 +15,8 @@ use url::Url;
 pub struct InProcessStandaloneSequencerConfig {
     /// Canonical rollup configuration for the snapshot chain.
     pub rollup_config: RollupConfig,
-    /// JWT secret for the builder Engine API.
-    pub jwt_secret: JwtSecret,
-    /// Builder Engine API URL.
-    pub l2_engine_url: Url,
+    /// Native execution client for the co-located execution node.
+    pub execution: base_consensus_engine::LocalEngineClient,
     /// L1-info transaction decoded from the snapshot head.
     pub l1_info: L1BlockInfoTx,
     /// Effective system configuration at the snapshot head.
@@ -45,23 +42,13 @@ impl InProcessStandaloneSequencer {
     /// Starts standalone consensus against a snapshot-backed builder.
     pub async fn start(config: InProcessStandaloneSequencerConfig) -> Result<Self> {
         let rollup_config = Arc::new(config.rollup_config);
-        let engine_config = EngineConfig {
-            config: Arc::clone(&rollup_config),
-            l2_url: config.l2_engine_url,
-            l2_jwt_secret: config.jwt_secret,
-            // The engine client constructs this provider lazily. Standalone sequencing never
-            // issues an L1 request.
-            l1_url: Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),
-            mode: NodeMode::Sequencer,
-            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-        };
-        let engine_client = Arc::new(
-            engine_config
-                .build_engine_client()
-                .await
-                .map_err(eyre::Report::from)
-                .wrap_err("failed to build standalone engine client")?,
+        let mut engine_client = config.execution;
+        engine_client.l1 = base_consensus_providers::L1RpcProvider::new_http(
+            Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),
         );
+        engine_client.l2.rollup_config = Arc::clone(&rollup_config);
+
+        let engine_client = Arc::new(engine_client);
         let node = StandaloneSequencerNode::new(
             rollup_config,
             engine_client,

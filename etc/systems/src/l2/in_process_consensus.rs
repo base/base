@@ -13,7 +13,6 @@ use std::{
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_common_network::PrivateKeySigner;
@@ -49,14 +48,12 @@ pub struct InProcessConsensusConfig {
     pub rollup_config: RollupConfig,
     /// Parsed L1 chain configuration.
     pub l1_chain_config: ChainConfig,
-    /// JWT secret for Engine API authentication.
-    pub jwt_secret: JwtSecret,
     /// L1 RPC endpoint URL.
     pub l1_rpc_url: Url,
     /// L1 beacon API endpoint URL.
     pub l1_beacon_url: Url,
-    /// L2 engine API URL (builder or client).
-    pub l2_engine_url: Url,
+    /// Native execution client for the co-located execution node.
+    pub execution: base_consensus_engine::LocalEngineClient,
     /// Node mode (Sequencer or Validator).
     pub mode: NodeMode,
     /// Sequencer signing key (required for Sequencer mode).
@@ -204,14 +201,10 @@ impl InProcessConsensus {
             da_batcher_sender_override: None,
         };
 
-        let engine_config = EngineConfig {
-            config: Arc::new(rollup_config.clone()),
-            l2_url: config.l2_engine_url,
-            l2_jwt_secret: config.jwt_secret,
-            l1_url: config.l1_rpc_url,
-            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: config.mode,
-        };
+        let mut engine_client = config.execution;
+        engine_client.l1 =
+            base_consensus_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
+        engine_client.l2.rollup_config = Arc::new(rollup_config.clone());
 
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
         let rpc_config = RpcBuilder {
@@ -234,8 +227,7 @@ impl InProcessConsensus {
         let mut builder = RollupNodeBuilder::new(
             rollup_config,
             l1_config,
-            true,
-            engine_config,
+            EngineConfig { client: engine_client, mode: config.mode },
             net_config,
             Some(rpc_config),
         )

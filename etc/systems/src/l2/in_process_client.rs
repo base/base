@@ -4,15 +4,13 @@
 
 use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::hex::ToHexExt;
-use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::test_utils::get_available_port;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
-use base_node_core::{Node, NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
+use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
 use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
@@ -24,7 +22,6 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_provider::providers::BlockchainProvider;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
@@ -48,8 +45,6 @@ pub struct InProcessClientConfig {
     pub chain_spec: ChainSpecSource,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
     pub datadir: Option<PathBuf>,
-    /// JWT secret for Engine API authentication.
-    pub jwt_secret: JwtSecret,
     /// Builder HTTP RPC URL for rollup.sequencer.
     pub builder_rpc_url: String,
 
@@ -59,8 +54,6 @@ pub struct InProcessClientConfig {
     pub http_port: Option<u16>,
     /// Optional fixed WebSocket port (uses random if None).
     pub ws_port: Option<u16>,
-    /// Optional fixed Auth RPC port (uses random if None).
-    pub auth_port: Option<u16>,
     /// Optional fixed P2P port (uses random if None).
     pub p2p_port: Option<u16>,
     /// Optional fixed Prometheus metrics port (uses random if None).
@@ -92,7 +85,8 @@ pub struct InProcessClientConfig {
 pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
-    engine_addr: SocketAddr,
+    /// Native execution client shared with the co-located consensus node.
+    pub execution: base_consensus_engine::LocalEngineClient,
     metrics_addr: SocketAddr,
     chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
@@ -107,7 +101,6 @@ impl std::fmt::Debug for InProcessClient {
         f.debug_struct("InProcessClient")
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
-            .field("engine_addr", &self.engine_addr)
             .field("metrics_addr", &self.metrics_addr)
             .finish_non_exhaustive()
     }
@@ -164,35 +157,19 @@ impl InProcessClient {
         }
 
         std::fs::create_dir_all(&data_dir).wrap_err("Failed to create client datadir")?;
-        let jwt_path = data_dir.join("jwt.hex");
-        std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
-            .wrap_err("Failed to write JWT secret")?;
 
-        let unique_ipc_path = format!(
-            "/tmp/reth_client_api_{}_{}_{:?}.ipc",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-            std::process::id(),
-            std::thread::current().id()
-        );
+        let mut rpc_args = if config.http_port.is_some() || config.ws_port.is_some() {
+            RpcServerArgs::default().with_http().with_ws()
+        } else {
+            RpcServerArgs::default().with_unused_ports().with_http().with_ws()
+        };
 
-        let mut rpc_args =
-            if config.http_port.is_some() || config.ws_port.is_some() || config.auth_port.is_some()
-            {
-                RpcServerArgs::default().with_http().with_auth_ipc().with_ws()
-            } else {
-                RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws()
-            };
-        rpc_args.auth_ipc_path = unique_ipc_path;
-        rpc_args.auth_jwtsecret = Some(jwt_path);
         rpc_args.rpc_eth_proof_window = 1_209_600;
         if let Some(port) = config.http_port {
             rpc_args.http_port = port;
         }
         if let Some(port) = config.ws_port {
             rpc_args.ws_port = port;
-        }
-        if let Some(port) = config.auth_port {
-            rpc_args.auth_port = port;
         }
 
         // Configure rollup args with sequencer URL
@@ -209,11 +186,7 @@ impl InProcessClient {
             config.metrics_port.unwrap_or_else(get_available_port),
         );
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
-        if config.http_port.is_none()
-            && config.ws_port.is_none()
-            && config.auth_port.is_none()
-            && config.p2p_port.is_none()
-        {
+        if config.http_port.is_none() && config.ws_port.is_none() && config.p2p_port.is_none() {
             node_config = node_config.with_unused_ports();
         }
         if let Some(persistence_threshold) = config.persistence_threshold {
@@ -235,9 +208,8 @@ impl InProcessClient {
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
-            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
-            .with_components(base_node.components())
-            .with_add_ons(base_node.add_ons())
+            .with_components(base_node.components().into_builder())
+            .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));
 
         let mut extensions = Self::build_extensions(&config)?;
@@ -260,12 +232,23 @@ impl InProcessClient {
             .ws_local_addr()
             .ok_or_else(|| eyre!("Failed to get websocket api address"))?;
 
-        let engine_addr = node_handle.auth_server_handle().local_addr();
+        let execution = base_consensus_engine::LocalEngineClient {
+            l1: base_consensus_providers::L1RpcProvider::new_http(Url::parse(
+                "http://127.0.0.1:1",
+            )?),
+            l2: base_consensus_providers::LocalL2Provider {
+                provider: node_handle.provider().clone(),
+                rollup_config: Arc::new(node_handle.config.chain.config.rollup_config()),
+            },
+            execution: node_handle.execution.clone(),
+            network: node_handle.network.clone(),
+            proofs_progress: node_handle.proofs_progress.get().cloned(),
+        };
 
         Ok(Self {
             http_api_addr,
             ws_api_addr,
-            engine_addr,
+            execution,
             metrics_addr,
             chain_spec,
             _node_exit_future: node_exit_future,
@@ -311,12 +294,6 @@ impl InProcessClient {
         Ok(url)
     }
 
-    /// Returns the Engine API URL (localhost).
-    pub fn engine_url(&self) -> Result<Url> {
-        Url::parse(&format!("http://{}", self.engine_addr))
-            .map_err(|e| eyre!("Failed to build Engine URL: {}", e))
-    }
-
     /// Returns the Prometheus metrics URL.
     pub fn metrics_url(&self) -> Result<Url> {
         Url::parse(&format!("http://{}/metrics", self.metrics_addr))
@@ -347,16 +324,6 @@ impl InProcessClient {
             .await
             .wrap_err("failed to release client runtime")?;
         Ok(())
-    }
-
-    /// Returns the Engine API URL for Docker containers using testcontainers host port exposure.
-    pub fn host_engine_url(&self) -> String {
-        format!("http://{}:{}", crate::host::host_address(), self.engine_addr.port())
-    }
-
-    /// Returns the engine port for host port exposure.
-    pub const fn engine_port(&self) -> u16 {
-        self.engine_addr.port()
     }
 
     /// Creates a test database with a 100 MB map size.

@@ -7,14 +7,10 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::hex::ToHexExt;
-use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BlockServiceBuilder, BuilderConfig, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{
-    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
-};
-use base_node_core::{BasePoolBuilder, NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
+use base_execution_txpool::{BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES};
+use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_txpool_rpc::SendRawTransactionValidityExtension;
 use eyre::{Result, WrapErr, eyre};
@@ -41,14 +37,10 @@ pub struct InProcessBuilderConfig {
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
     pub datadir: Option<PathBuf>,
-    /// JWT secret hex for Engine API authentication.
-    pub jwt_secret: JwtSecret,
     /// Optional fixed HTTP RPC port (uses random if None).
     pub http_port: Option<u16>,
     /// Optional fixed WebSocket port (uses random if None).
     pub ws_port: Option<u16>,
-    /// Optional fixed Auth RPC port (uses random if None).
-    pub auth_port: Option<u16>,
     /// Optional fixed P2P port (uses random if None).
     pub p2p_port: Option<u16>,
 
@@ -93,7 +85,8 @@ impl InProcessBuilderConfig {
 pub struct InProcessBuilder {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
-    engine_addr: SocketAddr,
+    /// Native execution client shared with the co-located consensus node.
+    pub execution: base_consensus_engine::LocalEngineClient,
     metrics_addr: SocketAddr,
 
     p2p_port: u16,
@@ -109,7 +102,6 @@ impl std::fmt::Debug for InProcessBuilder {
         f.debug_struct("InProcessBuilder")
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
-            .field("engine_addr", &self.engine_addr)
             .field("metrics_addr", &self.metrics_addr)
             .field("p2p_port", &self.p2p_port)
             .finish_non_exhaustive()
@@ -122,11 +114,8 @@ impl InProcessBuilder {
         clear_otel_env_vars();
 
         let (data_path, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
-        let jwt_path = data_path.join("jwt.hex");
 
         std::fs::create_dir_all(&data_path).wrap_err("Failed to create data directory")?;
-        std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
-            .wrap_err("Failed to write JWT secret")?;
 
         let runtime = RuntimeBuilder::new(
             RuntimeConfig::default()
@@ -152,18 +141,10 @@ impl InProcessBuilder {
         let rollup_args = RollupArgs::default();
         let base_node = BaseNode::new(rollup_args.clone());
 
-        let addons: base_node_runner::BaseAddOns<
-            _,
-            base_execution_rpc::BaseEthApiBuilder,
-            base_node_core::BasePayloadValidatorBuilder,
-        > = base_node
-            .add_ons_builder()
-            .with_sequencer(rollup_args.sequencer.clone())
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
+        let base_node = base_node.with_da_config(da_config).with_gas_limit_config(gas_limit_config);
+        let addons = base_node.add_ons_builder().build();
 
-        let mut node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
+        let mut node_config = create_node_config(chain_spec, &data_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
         let db_path = node_config.datadir().db();
         let db = if config.datadir.is_some() {
@@ -199,8 +180,7 @@ impl InProcessBuilder {
 
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(runtime.clone())
-            .with_types::<BaseNode>();
+            .with_launch_context(runtime.clone());
 
         let launched = extra_extensions
             .into_iter()
@@ -210,8 +190,8 @@ impl InProcessBuilder {
                     .with_components(
                         base_node
                             .components()
-                            .pool(pool_component(&rollup_args))
-                            .payload(BlockServiceBuilder::new(builder_config)),
+                            .payload(BlockServiceBuilder::build(builder_config))
+                            .into_builder(),
                     )
                     .with_add_ons(addons)
                     .on_component_initialized(move |_ctx| Ok(())),
@@ -232,12 +212,23 @@ impl InProcessBuilder {
             .ws_local_addr()
             .ok_or_else(|| eyre!("WebSocket RPC server failed to bind to address"))?;
 
-        let engine_addr = node_handle.auth_server_handle().local_addr();
+        let execution = base_consensus_engine::LocalEngineClient {
+            l1: base_consensus_providers::L1RpcProvider::new_http(Url::parse(
+                "http://127.0.0.1:1",
+            )?),
+            l2: base_consensus_providers::LocalL2Provider {
+                provider: node_handle.provider().clone(),
+                rollup_config: Arc::new(node_handle.config.chain.config.rollup_config()),
+            },
+            execution: node_handle.execution.clone(),
+            network: node_handle.network.clone(),
+            proofs_progress: node_handle.proofs_progress.get().cloned(),
+        };
 
         Ok(Self {
             http_api_addr,
             ws_api_addr,
-            engine_addr,
+            execution,
             metrics_addr,
             p2p_port,
             data_dir: data_path,
@@ -266,11 +257,6 @@ impl InProcessBuilder {
     /// Returns the HTTP RPC URL (`localhost:actual_port`).
     pub fn rpc_url(&self) -> Result<Url> {
         Url::parse(&format!("http://{}", self.http_api_addr)).wrap_err("Failed to parse RPC URL")
-    }
-
-    /// Returns the Engine API URL.
-    pub fn engine_url(&self) -> Result<Url> {
-        Url::parse(&format!("http://{}", self.engine_addr)).wrap_err("Failed to parse Engine URL")
     }
 
     /// Returns the WebSocket URL.
@@ -315,16 +301,6 @@ impl InProcessBuilder {
         Ok(())
     }
 
-    /// Returns the Engine URL for Docker containers using testcontainers host port exposure.
-    pub fn host_engine_url(&self) -> String {
-        format!("http://{}:{}", crate::host::host_address(), self.engine_addr.port())
-    }
-
-    /// Returns the engine port for host port exposure.
-    pub const fn engine_port(&self) -> u16 {
-        self.engine_addr.port()
-    }
-
     /// Returns the HTTP RPC URL for Docker containers using testcontainers host port exposure.
     pub fn host_rpc_url(&self) -> String {
         format!("http://{}:{}", crate::host::host_address(), self.http_api_addr.port())
@@ -359,19 +335,17 @@ fn clear_otel_env_vars() {
 fn create_node_config(
     chain_spec: Arc<BaseChainSpec>,
     data_path: &std::path::Path,
-    jwt_path: &std::path::Path,
     config: &InProcessBuilderConfig,
-) -> Result<NodeConfig<BaseChainSpec>> {
-    let mut rpc =
-        if config.http_port.is_some() || config.ws_port.is_some() || config.auth_port.is_some() {
-            RpcServerArgs::default().with_http().with_ws()
-        } else {
-            RpcServerArgs::default().with_unused_ports().with_http().with_ws()
-        };
+) -> Result<NodeConfig> {
+    let mut rpc = if config.http_port.is_some() || config.ws_port.is_some() {
+        RpcServerArgs::default().with_http().with_ws()
+    } else {
+        RpcServerArgs::default().with_unused_ports().with_http().with_ws()
+    };
 
     rpc.http_addr = Ipv4Addr::LOCALHOST.into();
     rpc.ws_addr = Ipv4Addr::LOCALHOST.into();
-    rpc.auth_jwtsecret = Some(jwt_path.to_path_buf());
+
     // Match docker-compose `--rpc.eth-proof-window=1209600` (reth default is 0).
     rpc.rpc_eth_proof_window = 1_209_600;
 
@@ -380,9 +354,6 @@ fn create_node_config(
     }
     if let Some(port) = config.ws_port {
         rpc.ws_port = port;
-    }
-    if let Some(port) = config.auth_port {
-        rpc.auth_port = port;
     }
 
     rpc.http_api = Some(
@@ -414,10 +385,8 @@ fn create_node_config(
         pprof_dumps_path: None,
     };
 
-    let mut node_config = NodeConfig::<BaseChainSpec>::new(chain_spec)
-        .with_datadir_args(datadir)
-        .with_rpc(rpc)
-        .with_network(network);
+    let mut node_config =
+        NodeConfig::new(chain_spec).with_datadir_args(datadir).with_rpc(rpc).with_network(network);
 
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
@@ -436,11 +405,7 @@ fn create_node_config(
         node_config.txpool.max_account_slots = max_account_slots;
     }
 
-    if config.http_port.is_none()
-        && config.ws_port.is_none()
-        && config.auth_port.is_none()
-        && config.p2p_port.is_none()
-    {
+    if config.http_port.is_none() && config.ws_port.is_none() && config.p2p_port.is_none() {
         node_config = node_config.with_unused_ports();
     }
 
@@ -460,10 +425,6 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
     .wrap_err("Failed to initialize database")?;
 
     Ok(db)
-}
-
-fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
-    BasePoolBuilder::<BasePooledTransaction>::default()
 }
 
 #[cfg(test)]

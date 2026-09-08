@@ -12,8 +12,6 @@ pub struct L2ContainerConfig {
     pub builder_http_port: Option<u16>,
     /// L2 Builder WebSocket port
     pub builder_ws_port: Option<u16>,
-    /// L2 Builder Auth RPC port
-    pub builder_auth_port: Option<u16>,
     /// L2 Builder P2P port
     pub builder_p2p_port: Option<u16>,
 
@@ -21,8 +19,6 @@ pub struct L2ContainerConfig {
     pub client_http_port: Option<u16>,
     /// L2 Client WebSocket port
     pub client_ws_port: Option<u16>,
-    /// L2 Client Auth RPC port
-    pub client_auth_port: Option<u16>,
     /// L2 Client P2P port
     pub client_p2p_port: Option<u16>,
 

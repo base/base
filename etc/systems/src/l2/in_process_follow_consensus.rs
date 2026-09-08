@@ -7,12 +7,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_provider::RootProvider;
-use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
-use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, RemoteL2Client};
+use base_consensus_node::{FollowNode, FollowNodeConfig, RemoteL2Client};
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::{
@@ -34,16 +31,12 @@ use super::in_process_consensus::wait_for_rpc;
 pub struct InProcessFollowConsensusConfig {
     /// Parsed rollup configuration.
     pub rollup_config: RollupConfig,
-    /// JWT secret for Engine API authentication.
-    pub jwt_secret: JwtSecret,
     /// L1 RPC endpoint URL.
     pub l1_rpc_url: Url,
-    /// Local L2 execution RPC endpoint URL.
-    pub local_l2_rpc_url: Url,
     /// Source L2 execution RPC endpoint URL to follow.
     pub source_l2_rpc_url: Url,
-    /// Local L2 engine API URL.
-    pub l2_engine_url: Url,
+    /// Native execution client for the co-located execution node.
+    pub execution: base_consensus_engine::LocalEngineClient,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is applied to the follow node's rollup
@@ -105,23 +98,14 @@ impl InProcessFollowConsensus {
         let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
 
-        let engine_config = EngineConfig {
-            config: Arc::clone(&rollup_config),
-            l2_url: config.l2_engine_url,
-            l2_jwt_secret: config.jwt_secret,
-            l1_url: l1_rpc_url.clone(),
-            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: NodeMode::Validator,
-        };
-        let engine_client = Arc::new(
-            engine_config
-                .build_engine_client()
-                .await
-                .map_err(eyre::Report::from)
-                .wrap_err("failed to build follow engine client")?,
-        );
+        let mut engine_client = config.execution;
+        engine_client.l1 =
+            base_consensus_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
+        engine_client.l2.rollup_config = Arc::clone(&rollup_config);
+
+        let engine_client = Arc::new(engine_client);
         let l1_provider = L1RpcProvider::new_http(config.l1_rpc_url);
-        let local_l2_provider = RootProvider::<Base>::new_http(config.local_l2_rpc_url);
+        let local_l2_provider = engine_client.l2.clone();
         let l2_source = RemoteL2Client::new(config.source_l2_rpc_url);
         let rpc_builder = RpcBuilder {
             no_restart: true,
@@ -136,6 +120,7 @@ impl InProcessFollowConsensus {
 
         let node = FollowNode::new(FollowNodeConfig {
             rollup_config: Arc::clone(&rollup_config),
+            proofs_progress: engine_client.proofs_progress.clone(),
             engine_client,
             l1_provider,
             local_l2_provider,

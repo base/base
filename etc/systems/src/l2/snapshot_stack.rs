@@ -7,7 +7,6 @@ use std::{
 
 use alloy_hardforks::ForkCondition;
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_rpc_types::Base;
@@ -67,15 +66,14 @@ impl SnapshotL2Stack {
         let canonical_rollup_config = Arc::new(ChainConfig::mainnet().rollup_config());
         let first_block_timestamp = Self::schedule_anchor(SystemTime::now())?;
         let chain_spec = Arc::new(Self::chain_spec(first_block_timestamp, block_interval));
-        let jwt_secret = JwtSecret::random();
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             chain_spec: Arc::clone(&chain_spec),
             datadir: Some(config.snapshot.builder_datadir),
-            jwt_secret,
+
             http_port: container.and_then(|value| value.builder_http_port),
             ws_port: container.and_then(|value| value.builder_ws_port),
-            auth_port: container.and_then(|value| value.builder_auth_port),
+
             p2p_port: container.and_then(|value| value.builder_p2p_port),
             metrics_port: None,
             block_time: block_interval.duration(),
@@ -110,13 +108,13 @@ impl SnapshotL2Stack {
         let client = InProcessClient::start(InProcessClientConfig {
             chain_spec: ChainSpecSource::Parsed(chain_spec),
             datadir: Some(config.snapshot.client_datadir),
-            jwt_secret,
+
             builder_rpc_url: builder.rpc_url()?.to_string(),
             // Snapshot validation replays canonical payloads only after sequencing finishes.
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container.and_then(|value| value.client_http_port),
             ws_port: container.and_then(|value| value.client_ws_port),
-            auth_port: container.and_then(|value| value.client_auth_port),
+
             p2p_port: container.and_then(|value| value.client_p2p_port),
             metrics_port: None,
             persistence_threshold: Some(0),
@@ -131,11 +129,11 @@ impl SnapshotL2Stack {
         let unused_l1_url = Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL");
         let follow_config = InProcessFollowConsensusConfig {
             rollup_config: rollup_config.as_ref().clone(),
-            jwt_secret,
+
             l1_rpc_url: unused_l1_url,
-            local_l2_rpc_url: client.rpc_url()?,
+
             source_l2_rpc_url: builder.rpc_url()?,
-            l2_engine_url: client.engine_url()?,
+            execution: client.execution.clone(),
             rpc_port: container.and_then(|value| value.client_consensus_rpc_port),
             // Keep catch-up observable by the per-block Prometheus scraper. This does not alter
             // measured execution latency; it only prevents multiple canonical inserts between
@@ -146,8 +144,8 @@ impl SnapshotL2Stack {
         let mut standalone_consensus =
             InProcessStandaloneSequencer::start(InProcessStandaloneSequencerConfig {
                 rollup_config: rollup_config.as_ref().clone(),
-                jwt_secret,
-                l2_engine_url: builder.engine_url()?,
+
+                execution: builder.execution.clone(),
                 l1_info: boundary.l1_info,
                 system_config: boundary.system_config,
                 prefund,
