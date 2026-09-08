@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    io::Read,
+    io::{Read, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
@@ -28,6 +28,7 @@ use bollard::{
 };
 use futures::StreamExt;
 use serial_test::serial;
+use tokio::time::{Duration, sleep, timeout};
 
 mod common;
 use common::TestHarness;
@@ -578,7 +579,7 @@ const DIFF_TEST_COMPONENTS: &[&str] = &[
 
 /// Verifies the synchronous tar/zstd producer can send an archive straight to a multipart S3
 /// object. The test intentionally has no local archive path: the only copy of the compressed
-/// bytes is the bounded in-memory multipart buffer before MinIO acknowledges each part.
+/// bytes is the bounded in-memory multipart buffer before `MinIO` acknowledges each part.
 #[tokio::test]
 #[serial]
 async fn streams_tar_zstd_archive_to_minio_multipart_upload() -> Result<()> {
@@ -632,6 +633,59 @@ async fn streams_tar_zstd_archive_to_minio_multipart_upload() -> Result<()> {
     entry.read_to_end(&mut actual_contents)?;
     assert_eq!(actual_contents, expected_contents);
     assert!(entries.next().is_none(), "archive should contain exactly one input file");
+
+    Ok(())
+}
+
+/// An unfinished archive must never be published. Dropping the writer closes the producer
+/// channel, which makes the async consumer abort its S3 multipart upload.
+#[tokio::test]
+#[serial]
+async fn unfinished_stream_aborts_multipart_upload() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "streaming-abort".to_string(),
+        None,
+    );
+    let key = "streaming-abort/unpublished.tar.zst";
+    let mut stream = uploader.start_streaming_multipart_upload(key).await?;
+    stream.write_all(b"incomplete zstd frame")?;
+
+    let error = stream.complete().await.expect_err("unfinalized stream must fail");
+    assert!(error.to_string().contains("was not finalized"));
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let response = harness
+                .storage_client
+                .list_multipart_uploads()
+                .bucket(&harness.bucket_name)
+                .prefix(key)
+                .send()
+                .await
+                .expect("list multipart uploads should succeed");
+            if response.uploads().is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("unfinalized multipart upload should be aborted");
+
+    assert!(
+        harness
+            .storage_client
+            .head_object()
+            .bucket(&harness.bucket_name)
+            .key(key)
+            .send()
+            .await
+            .is_err(),
+        "unfinalized stream must not publish an object"
+    );
 
     Ok(())
 }

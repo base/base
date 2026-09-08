@@ -6205,12 +6205,14 @@ dependencies = [
  "futures",
  "serde_json",
  "serial_test",
+ "tar",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
  "tracing",
  "url",
+ "zstd",
 ]
 
 [[package]]

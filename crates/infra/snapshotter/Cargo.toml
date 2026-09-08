@@ -26,6 +26,8 @@ clap = { workspace = true, features = ["derive", "env"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
+tar = { workspace = true }
+zstd = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

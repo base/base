@@ -283,7 +283,7 @@ impl io::Write for StreamingMultipartUpload {
 
 impl SnapshotUploader {
     /// Creates a new uploader.
-    pub const fn new(
+    pub fn new(
         client: S3Client,
         bucket: String,
         prefix: String,
@@ -294,7 +294,7 @@ impl SnapshotUploader {
             bucket,
             prefix,
             public_base_url,
-            multipart_part_permits: Arc::new(Semaphore::const_new(MAX_CONCURRENT_MULTIPART_PARTS)),
+            multipart_part_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_MULTIPART_PARTS)),
         }
     }
 
