@@ -5,7 +5,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
@@ -13,6 +12,7 @@ use base_health::HealthServer;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    resolve_intervals,
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
@@ -93,21 +93,6 @@ impl ChallengerService {
         );
 
         let verifier_client = AggregateVerifierContractClient::new(read_provider.clone());
-        let impl_address = factory_client.game_impls(config.game_type).await?;
-        if impl_address == Address::ZERO {
-            return Err(eyre::eyre!(
-                "no AggregateVerifier implementation registered for game type {}",
-                config.game_type
-            ));
-        }
-        // The intervals are not read here: they change at the Cobalt activation block, so
-        // every consumer resolves them from the starting block of the game it is handling.
-        info!(
-            impl_address = %impl_address,
-            game_type = config.game_type,
-            "Resolved AggregateVerifier implementation"
-        );
-
         let anchor_registry_client = AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
             read_provider,
@@ -115,6 +100,15 @@ impl ChallengerService {
         info!(
             address = %config.anchor_state_registry_addr,
             "AnchorStateRegistry client initialized"
+        );
+        let anchor_block =
+            anchor_registry_client.anchor_snapshot().await?.anchor_root.l2_block_number;
+        let (block_interval, intermediate_block_interval) =
+            resolve_intervals(&factory_client, &verifier_client, config.game_type, anchor_block)
+                .await?;
+        info!(
+            anchor_block,
+            block_interval, intermediate_block_interval, "Validated proposal interval resolver"
         );
 
         let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);

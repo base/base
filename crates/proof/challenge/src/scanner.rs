@@ -37,7 +37,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
-    GameInfo, GameStatus, resolve_intervals,
+    GameInfo, GameStatus,
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
@@ -386,16 +386,12 @@ impl GameScanner {
             self.verifier_client.l1_head(factory.proxy),
         )?;
 
-        // Resolved from this game's own starting block: the verifier switches to a
-        // shorter cadence at the Cobalt activation block, so one interval per
-        // implementation is wrong once a single implementation serves both sides of it.
-        let (_, intermediate_block_interval) = resolve_intervals(
-            self.factory_client.as_ref(),
-            self.verifier_client.as_ref(),
-            factory.game_type,
-            starting_block_number,
-        )
-        .await?;
+        // Read through the game proxy so implementation upgrades cannot change
+        // how an already-created game's checkpoints are interpreted.
+        let (_, intermediate_block_interval) = self
+            .verifier_client
+            .read_intervals_for_starting_block(factory.proxy, starting_block_number)
+            .await?;
 
         Ok(Some(CandidateGame {
             index,
@@ -610,11 +606,11 @@ mod tests {
         assert_eq!(candidates[3].index, 4);
         assert_eq!(candidates[3].factory.game_type, 1);
         assert_eq!(candidates[3].info.l2_block_number, 400);
-        // One interval read per candidate: the pair depends on the game's own starting
-        // block, so it cannot be resolved once per implementation.
+        // Existing games resolve through their own proxies, not the factory's current
+        // implementation.
         assert_eq!(
             verifier.intermediate_block_interval_reads.lock().unwrap().as_slice(),
-            &[Address::repeat_byte(0x11); 4],
+            &[addr(0), addr(1), addr(3), addr(4)],
         );
     }
 
