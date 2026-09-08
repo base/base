@@ -6,7 +6,6 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatusEnum};
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_rpc_api::clients::EngineApiClient;
 use tracing::debug;
 
 use crate::testsuite::Environment;
@@ -138,11 +137,9 @@ impl Action for MakeCanonical {
                 };
 
                 let active_idx = env.active_node_idx;
-                let engine = env.node_clients[active_idx].engine.http_client();
+                let engine = env.node_clients[active_idx].engine.clone();
 
-                let fcu_response =
-                    EngineApiClient::fork_choice_updated_v3(&engine, fork_choice_state, None)
-                        .await?;
+                let fcu_response = engine.update_forkchoice(fork_choice_state, None).await?;
 
                 debug!(
                     "Active node {}: Forkchoice update status: {:?}",

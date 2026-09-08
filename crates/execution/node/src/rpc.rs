@@ -3,7 +3,6 @@
 use std::{
     fmt,
     fmt::Debug,
-    future::Future,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -19,25 +18,20 @@ pub use jsonrpsee::{
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
 use reth_chain_state::CanonStateSubscriptions;
-use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle, TreeConfig};
+use reth_engine_primitives::TreeConfig;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
-pub use reth_rpc_builder::{
-    Identity, Stack,
-    middleware::{RethAuthHttpMiddleware, RethRpcMiddleware},
-};
+pub use reth_rpc_builder::{Identity, Stack, middleware::RethRpcMiddleware};
 use reth_rpc_builder::{
     RpcModuleBuilder, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
-    auth::{AuthRpcModule, AuthServerHandle},
     config::RethRpcServerConfig,
 };
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use reth_storage_overlay::OverlayManager;
-use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, info};
 use reth_trie_common::KeccakKeyHasher;
 
-use crate::{BaseEngineApiBuilder, InvalidBlockHookBuilder, TxpoolPrewarmSource};
+use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
 /// Contains the handles to the spawned RPC servers.
 ///
@@ -46,8 +40,6 @@ use crate::{BaseEngineApiBuilder, InvalidBlockHookBuilder, TxpoolPrewarmSource};
 pub struct RethRpcServerHandles {
     /// The regular RPC server handle to all configured transports.
     pub rpc: RpcServerHandle,
-    /// The handle to the auth server (engine API)
-    pub auth: AuthServerHandle,
 }
 
 /// Contains hooks that are called during the rpc setup.
@@ -235,19 +227,17 @@ where
 pub struct RpcModuleContainer<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// Holds installed modules per transport type.
     pub modules: &'a mut TransportRpcModules,
-    /// Holds jwt authenticated rpc module.
-    pub auth_module: &'a mut AuthRpcModule,
     /// A Helper type the holds instances of the configured modules.
     pub registry: &'a mut RpcRegistry<Node, EthApi>,
 }
 
-/// Helper container to encapsulate [`RpcRegistryInner`], [`TransportRpcModules`] and
-/// [`AuthRpcModule`].
+/// Helper container for [`RpcRegistryInner`], [`TransportRpcModules`] and
+/// their lifecycle hooks.
 ///
 /// This can be used to access installed modules, or create commonly used handlers like
 /// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`] as well as configured authenticated methods
-/// [`AuthRpcModule`].
+/// their lifecycle hooks.
 #[expect(missing_debug_implementations)]
 pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// The node components.
@@ -265,10 +255,6 @@ pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// This can be used to merge additional modules into the configured transports (http, ipc,
     /// ws). See [`TransportRpcModules::merge_configured`]
     pub modules: &'a mut TransportRpcModules,
-    /// Holds jwt authenticated rpc module.
-    ///
-    /// This can be used to merge additional modules into the configured authenticated methods
-    pub auth_module: &'a mut AuthRpcModule,
 }
 
 impl<Node, EthApi> RpcContext<'_, Node, EthApi>
@@ -366,84 +352,21 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
     }
 }
 
-/// Handle returned when only the regular RPC server (HTTP/WS/IPC) is launched.
-///
-/// This handle provides access to the RPC server endpoints and registry, but does not
-/// include an authenticated Engine API server. Use this when you only need regular
-/// RPC functionality.
-#[derive(Debug, Clone)]
-pub struct RpcServerOnlyHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
-    /// Handle to the RPC server
-    pub rpc_server_handle: RpcServerHandle,
-    /// Configured RPC modules.
-    pub rpc_registry: RpcRegistry<Node, EthApi>,
-    /// Notification channel for engine API events
-    pub engine_events: EventSender<ConsensusEngineEvent>,
-    /// Handle to the consensus engine.
-    pub engine_handle: ConsensusEngineHandle,
+/// Prepared public RPC modules and lifecycle hooks.
+pub struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
+    pub node: Node,
+    pub config: &'a NodeConfig,
+    pub modules: TransportRpcModules,
+    pub registry: RpcRegistry<Node, EthApi>,
+    pub on_rpc_started: Box<dyn OnRpcStarted<Node, EthApi>>,
 }
 
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcServerOnlyHandle<Node, EthApi> {
-    /// Returns the RPC server handle.
-    pub const fn rpc_server_handle(&self) -> &RpcServerHandle {
-        &self.rpc_server_handle
+impl<Node: FullNodeComponents, EthApi: EthApiTypes> fmt::Debug
+    for RpcSetupContext<'_, Node, EthApi>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RpcSetupContext").field("modules", &self.modules).finish_non_exhaustive()
     }
-
-    /// Returns the consensus engine handle.
-    ///
-    /// This handle can be used to interact with the engine service directly.
-    pub const fn consensus_engine_handle(&self) -> &ConsensusEngineHandle {
-        &self.engine_handle
-    }
-
-    /// Returns the consensus engine events sender.
-    pub const fn consensus_engine_events(&self) -> &EventSender<ConsensusEngineEvent> {
-        &self.engine_events
-    }
-}
-
-/// Handle returned when only the authenticated Engine API server is launched.
-///
-/// This handle provides access to the Engine API server and registry, but does not
-/// include the regular RPC servers (HTTP/WS/IPC). Use this for specialized setups
-/// that only need Engine API functionality.
-#[derive(Debug, Clone)]
-pub struct AuthServerOnlyHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
-    /// Handle to the auth server (engine API)
-    pub auth_server_handle: AuthServerHandle,
-    /// Configured RPC modules.
-    pub rpc_registry: RpcRegistry<Node, EthApi>,
-    /// Notification channel for engine API events
-    pub engine_events: EventSender<ConsensusEngineEvent>,
-    /// Handle to the consensus engine.
-    pub engine_handle: ConsensusEngineHandle,
-}
-
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> AuthServerOnlyHandle<Node, EthApi> {
-    /// Returns the consensus engine handle.
-    ///
-    /// This handle can be used to interact with the engine service directly.
-    pub const fn consensus_engine_handle(&self) -> &ConsensusEngineHandle {
-        &self.engine_handle
-    }
-
-    /// Returns the consensus engine events sender.
-    pub const fn consensus_engine_events(&self) -> &EventSender<ConsensusEngineEvent> {
-        &self.engine_events
-    }
-}
-
-/// Internal context struct for RPC setup shared between different launch methods
-struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
-    node: Node,
-    config: &'a NodeConfig,
-    modules: TransportRpcModules,
-    auth_module: AuthRpcModule,
-    auth_config: reth_rpc_builder::auth::AuthServerConfig,
-    registry: RpcRegistry<Node, EthApi>,
-    on_rpc_started: Box<dyn OnRpcStarted<Node, EthApi>>,
-    engine_events: EventSender<ConsensusEngineEvent>,
-    engine_handle: ConsensusEngineHandle,
 }
 
 /// Node add-ons containing RPC server configuration, with customizable eth API handler.
@@ -456,11 +379,7 @@ struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
 /// takes a closure that provides access to all the configured modules (namespaces), and is invoked
 /// just before the servers are launched. This can be used to extend the node with custom RPC
 /// methods or even replace existing method handlers, see also [`TransportRpcModules`].
-pub struct RpcAddOns<
-    Node: FullNodeComponents,
-    RpcMiddleware = Identity,
-    AuthHttpMiddleware = Identity,
-> {
+pub struct RpcAddOns<Node: FullNodeComponents, RpcMiddleware = Identity> {
     /// Additional RPC add-ons.
     pub hooks: RpcHooks<Node, BaseNodeEthApi<Node>>,
     /// Builder for `EthApi`
@@ -471,17 +390,11 @@ pub struct RpcAddOns<
     /// This middleware is applied to all RPC requests across all transports (HTTP, WS, IPC).
     /// See [`RpcAddOns::with_rpc_middleware`] for more details.
     rpc_middleware: RpcMiddleware,
-    /// Configurable HTTP transport middleware for the auth server.
-    ///
-    /// This middleware is applied after JWT authentication and before JSON-RPC parsing on the
-    /// auth / Engine API server, giving access to the raw HTTP request.
-    auth_http_middleware: AuthHttpMiddleware,
     /// Optional custom tokio runtime for the RPC server.
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
 
-impl<Node, RpcMiddleware, AuthHttpMiddleware> Debug
-    for RpcAddOns<Node, RpcMiddleware, AuthHttpMiddleware>
+impl<Node, RpcMiddleware> Debug for RpcAddOns<Node, RpcMiddleware>
 where
     Node: FullNodeComponents,
 {
@@ -494,25 +407,13 @@ where
     }
 }
 
-impl<Node, RpcMiddleware, AuthHttpMiddleware> RpcAddOns<Node, RpcMiddleware, AuthHttpMiddleware>
+impl<Node, RpcMiddleware> RpcAddOns<Node, RpcMiddleware>
 where
     Node: FullNodeComponents,
 {
     /// Creates a new instance of the RPC add-ons.
-    pub fn new(
-        eth_api_builder: BaseEthApiBuilder,
-
-        rpc_middleware: RpcMiddleware,
-        auth_http_middleware: AuthHttpMiddleware,
-    ) -> Self {
-        Self {
-            hooks: RpcHooks::default(),
-            eth_api_builder,
-
-            rpc_middleware,
-            auth_http_middleware,
-            tokio_runtime: None,
-        }
+    pub fn new(eth_api_builder: BaseEthApiBuilder, rpc_middleware: RpcMiddleware) -> Self {
+        Self { hooks: RpcHooks::default(), eth_api_builder, rpc_middleware, tokio_runtime: None }
     }
 
     /// Sets the RPC middleware stack for processing RPC requests.
@@ -553,64 +454,24 @@ where
     /// - Middleware is applied to the RPC service layer, not the HTTP transport layer
     /// - The default middleware is `Identity` (no-op), which passes through requests unchanged
     /// - Middleware layers are applied in the order they are added via `.layer()`
-    pub fn with_rpc_middleware<T>(
-        self,
-        rpc_middleware: T,
-    ) -> RpcAddOns<Node, T, AuthHttpMiddleware> {
-        let Self { hooks, eth_api_builder, auth_http_middleware, tokio_runtime, .. } = self;
-        RpcAddOns { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime }
-    }
-
-    /// Configures the HTTP transport middleware for the auth / Engine API server.
-    ///
-    /// This middleware is applied after JWT authentication and before JSON-RPC parsing,
-    /// giving access to the raw HTTP request (headers, body, etc.).
-    pub fn with_auth_http_middleware<T>(
-        self,
-        auth_http_middleware: T,
-    ) -> RpcAddOns<Node, RpcMiddleware, T> {
-        let Self { hooks, eth_api_builder, rpc_middleware, tokio_runtime, .. } = self;
-        RpcAddOns { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime }
-    }
-
-    /// Stacks an additional HTTP transport middleware layer for the auth / Engine API server.
-    pub fn layer_auth_http_middleware<T>(
-        self,
-        layer: T,
-    ) -> RpcAddOns<Node, RpcMiddleware, Stack<AuthHttpMiddleware, T>> {
-        let Self { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime } =
-            self;
-        let auth_http_middleware = Stack::new(auth_http_middleware, layer);
-        RpcAddOns { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime }
-    }
-
-    /// Conditionally stacks an HTTP transport middleware layer for the auth / Engine API server.
-    #[expect(clippy::type_complexity)]
-    pub fn option_layer_auth_http_middleware<T>(
-        self,
-        layer: Option<T>,
-    ) -> RpcAddOns<Node, RpcMiddleware, Stack<AuthHttpMiddleware, Either<T, Identity>>> {
-        let layer = layer.map(Either::Left).unwrap_or(Either::Right(Identity::new()));
-        self.layer_auth_http_middleware(layer)
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> RpcAddOns<Node, T> {
+        let Self { hooks, eth_api_builder, tokio_runtime, .. } = self;
+        RpcAddOns { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
     }
 
     /// Sets the tokio runtime for the RPC servers.
     ///
     /// Caution: This runtime must not be created from within asynchronous context.
     pub fn with_tokio_runtime(self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
-        let Self { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, .. } = self;
-        Self { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime }
+        let Self { hooks, eth_api_builder, rpc_middleware, .. } = self;
+        Self { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
     }
 
     /// Add a new layer `T` to the configured [`RpcServiceBuilder`].
-    pub fn layer_rpc_middleware<T>(
-        self,
-        layer: T,
-    ) -> RpcAddOns<Node, Stack<RpcMiddleware, T>, AuthHttpMiddleware> {
-        let Self { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime } =
-            self;
+    pub fn layer_rpc_middleware<T>(self, layer: T) -> RpcAddOns<Node, Stack<RpcMiddleware, T>> {
+        let Self { hooks, eth_api_builder, rpc_middleware, tokio_runtime } = self;
         let rpc_middleware = Stack::new(rpc_middleware, layer);
-        RpcAddOns { hooks, eth_api_builder, rpc_middleware, auth_http_middleware, tokio_runtime }
+        RpcAddOns { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
     }
 
     /// Optionally adds a new layer `T` to the configured [`RpcServiceBuilder`].
@@ -618,7 +479,7 @@ where
     pub fn option_layer_rpc_middleware<T>(
         self,
         layer: Option<T>,
-    ) -> RpcAddOns<Node, Stack<RpcMiddleware, Either<T, Identity>>, AuthHttpMiddleware> {
+    ) -> RpcAddOns<Node, Stack<RpcMiddleware, Either<T, Identity>>> {
         let layer = layer.map(Either::Left).unwrap_or(Either::Right(Identity::new()));
         self.layer_rpc_middleware(layer)
     }
@@ -647,79 +508,22 @@ where
     }
 }
 
-impl<Node> Default for RpcAddOns<Node, Identity, Identity>
+impl<Node> Default for RpcAddOns<Node, Identity>
 where
     Node: FullNodeComponents,
 {
     fn default() -> Self {
-        Self::new(BaseEthApiBuilder::default(), Default::default(), Identity::new())
+        Self::new(BaseEthApiBuilder::default(), Default::default())
     }
 }
 
-impl<N, RpcMiddleware, AuthHttpMiddleware> RpcAddOns<N, RpcMiddleware, AuthHttpMiddleware>
+impl<N, RpcMiddleware> RpcAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
     N::Provider: ChainSpecProvider,
     RpcMiddleware: RethRpcMiddleware,
-    AuthHttpMiddleware: RethAuthHttpMiddleware<Identity>,
 {
-    /// Launches only the regular RPC server (HTTP/WS/IPC), without the authenticated Engine API
-    /// server.
-    ///
-    /// This is useful when you only need the regular RPC functionality and want to avoid
-    /// starting the auth server.
-    pub async fn launch_rpc_server<F>(
-        self,
-        ctx: AddOnsContext<'_, N>,
-        ext: F,
-    ) -> eyre::Result<RpcServerOnlyHandle<N, BaseNodeEthApi<N>>>
-    where
-        F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
-    {
-        let rpc_middleware = self.rpc_middleware.clone();
-        let tokio_runtime = self.tokio_runtime.clone();
-        let setup_ctx = self.setup_rpc_components(ctx, ext).await?;
-        let RpcSetupContext {
-            node,
-            config,
-            mut modules,
-            mut auth_module,
-            auth_config: _,
-            mut registry,
-            on_rpc_started,
-            engine_events,
-            engine_handle,
-        } = setup_ctx;
-
-        let server_config = config
-            .rpc
-            .rpc_server_config()
-            .set_rpc_middleware(rpc_middleware)
-            .with_tokio_runtime(tokio_runtime);
-        let rpc_server_handle = Self::launch_rpc_server_internal(server_config, &modules).await?;
-
-        let handles =
-            RethRpcServerHandles { rpc: rpc_server_handle.clone(), auth: AuthServerHandle::noop() };
-        Self::finalize_rpc_setup(
-            &mut registry,
-            &mut modules,
-            &mut auth_module,
-            &node,
-            config,
-            on_rpc_started,
-            handles,
-        )?;
-
-        Ok(RpcServerOnlyHandle {
-            rpc_server_handle,
-            rpc_registry: registry,
-            engine_events,
-            engine_handle,
-        })
-    }
-
-    /// Launches the RPC servers with the given context and an additional hook for extending
-    /// modules. Whether the auth server is launched depends on the CLI configuration.
+    /// Launches public RPC and invokes the configured extension and lifecycle hooks.
     pub async fn launch_add_ons_with<F>(
         self,
         ctx: AddOnsContext<'_, N>,
@@ -728,77 +532,27 @@ where
     where
         F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
     {
-        // Check CLI config to determine if auth server should be disabled
-        let disable_auth = ctx.config.rpc.disable_auth_server;
-        self.launch_add_ons_with_opt_engine(ctx, ext, disable_auth).await
-    }
-
-    /// Launches the RPC servers with the given context and an additional hook for extending
-    /// modules. Optionally disables the auth server based on the `disable_auth` parameter.
-    ///
-    /// When `disable_auth` is true, the auth server will not be started and a noop handle
-    /// will be used instead.
-    pub async fn launch_add_ons_with_opt_engine<F>(
-        self,
-        ctx: AddOnsContext<'_, N>,
-        ext: F,
-        disable_auth: bool,
-    ) -> eyre::Result<RpcHandle<N, BaseNodeEthApi<N>>>
-    where
-        F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
-    {
         let rpc_middleware = self.rpc_middleware.clone();
-        let auth_http_middleware = self.auth_http_middleware.clone();
         let tokio_runtime = self.tokio_runtime.clone();
-        let setup_ctx = self.setup_rpc_components(ctx, ext).await?;
-        let RpcSetupContext {
-            node,
-            config,
-            mut modules,
-            mut auth_module,
-            auth_config,
-            mut registry,
-            on_rpc_started,
-            engine_events: _,
-            engine_handle: _,
-        } = setup_ctx;
-
-        let server_config = config
+        let mut setup = self.setup_rpc_components(ctx, ext).await?;
+        let server_config = setup
+            .config
             .rpc
             .rpc_server_config()
             .set_rpc_middleware(rpc_middleware)
             .with_tokio_runtime(tokio_runtime);
-
-        let auth_config = auth_config.with_http_middleware(auth_http_middleware);
-
-        let (rpc, auth) = if disable_auth {
-            // Only launch the RPC server, use a noop auth handle
-            let rpc = Self::launch_rpc_server_internal(server_config, &modules).await?;
-            (rpc, AuthServerHandle::noop())
-        } else {
-            let auth_module_clone = auth_module.clone();
-            // launch servers concurrently
-            let (rpc, auth) = futures::future::try_join(
-                Self::launch_rpc_server_internal(server_config, &modules),
-                Self::launch_auth_server_internal(auth_config.start(auth_module_clone)),
-            )
-            .await?;
-            (rpc, auth)
-        };
-
-        let handles = RethRpcServerHandles { rpc, auth };
-
-        Self::finalize_rpc_setup(
-            &mut registry,
-            &mut modules,
-            &mut auth_module,
-            &node,
-            config,
-            on_rpc_started,
+        let rpc = Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
+        let handles = RethRpcServerHandles { rpc };
+        setup.on_rpc_started.on_rpc_started(
+            RpcContext {
+                node: setup.node,
+                config: setup.config,
+                registry: &mut setup.registry,
+                modules: &mut setup.modules,
+            },
             handles.clone(),
         )?;
-
-        Ok(RpcHandle { rpc_server_handles: handles, rpc_registry: registry })
+        Ok(RpcHandle { rpc_server_handles: handles, rpc_registry: setup.registry })
     }
 
     /// Common setup for RPC server initialization
@@ -812,10 +566,7 @@ where
     {
         let Self { eth_api_builder, hooks, .. } = self;
 
-        let engine_api = BaseEngineApiBuilder::build_engine_api(&ctx);
-        let AddOnsContext { node, config, beacon_engine_handle, jwt_secret, engine_events } = ctx;
-
-        info!(target: "reth::cli", "Engine API handler initialized");
+        let AddOnsContext { node, config, beacon_engine_handle, engine_events } = ctx;
 
         let cache = EthStateCache::spawn_with(
             node.provider().clone(),
@@ -838,24 +589,22 @@ where
         };
         let eth_api = eth_api_builder.build_eth_api(ctx).await?;
 
-        let auth_config = config.rpc.auth_server_config(jwt_secret)?;
         let module_config = config.rpc.transport_rpc_module_config();
         debug!(target: "reth::cli", http=?module_config.http(), ws=?module_config.ws(), "Using RPC module config");
 
-        let (mut modules, mut auth_module, registry) = RpcModuleBuilder::default()
+        let mut registry = RpcModuleBuilder::default()
             .with_provider(node.provider().clone())
             .with_pool(node.pool().clone())
             .with_network(node.network().clone())
             .with_executor(node.task_executor().clone())
             .with_evm_config(node.evm_config().clone())
             .with_consensus(node.consensus().clone())
-            .build_with_auth_server(
-                module_config,
-                engine_api,
+            .into_registry(
+                module_config.config().cloned().unwrap_or_default(),
                 eth_api,
-                engine_events.clone(),
-                beacon_engine_handle.clone(),
+                engine_events,
             );
+        let mut modules = registry.create_transport_rpc_modules(module_config);
 
         // in dev mode we generate 20 random dev-signer accounts
         if config.dev.dev {
@@ -869,29 +618,14 @@ where
             config,
             registry: &mut registry,
             modules: &mut modules,
-            auth_module: &mut auth_module,
         };
 
         let RpcHooks { on_rpc_started, extend_rpc_modules } = hooks;
 
-        ext(RpcModuleContainer {
-            modules: ctx.modules,
-            auth_module: ctx.auth_module,
-            registry: ctx.registry,
-        })?;
+        ext(RpcModuleContainer { modules: ctx.modules, registry: ctx.registry })?;
         extend_rpc_modules.extend_rpc_modules(ctx)?;
 
-        Ok(RpcSetupContext {
-            node,
-            config,
-            modules,
-            auth_module,
-            auth_config,
-            registry,
-            on_rpc_started,
-            engine_events,
-            engine_handle: beacon_engine_handle,
-        })
+        Ok(RpcSetupContext { node, config, modules, registry, on_rpc_started })
     }
 
     /// Helper to launch the RPC server
@@ -916,47 +650,12 @@ where
 
         Ok(handle)
     }
-
-    /// Helper to launch the auth server
-    async fn launch_auth_server_internal(
-        start_fut: impl Future<Output = Result<AuthServerHandle, reth_rpc_builder::error::RpcError>>,
-    ) -> eyre::Result<AuthServerHandle> {
-        start_fut
-            .await
-            .map_err(Into::into)
-            .inspect(|handle| {
-                let addr = handle.local_addr();
-                if let Some(ipc_endpoint) = handle.ipc_endpoint() {
-                    info!(target: "reth::cli", url=%addr, ipc_endpoint=%ipc_endpoint, "RPC auth server started");
-                } else {
-                    info!(target: "reth::cli", url=%addr, "RPC auth server started");
-                }
-            })
-    }
-
-    /// Helper to finalize RPC setup by creating context and calling hooks
-    fn finalize_rpc_setup(
-        registry: &mut RpcRegistry<N, BaseNodeEthApi<N>>,
-        modules: &mut TransportRpcModules,
-        auth_module: &mut AuthRpcModule,
-        node: &N,
-        config: &NodeConfig,
-        on_rpc_started: Box<dyn OnRpcStarted<N, BaseNodeEthApi<N>>>,
-        handles: RethRpcServerHandles,
-    ) -> eyre::Result<()> {
-        let ctx = RpcContext { node: node.clone(), config, registry, modules, auth_module };
-
-        on_rpc_started.on_rpc_started(ctx, handles)?;
-        Ok(())
-    }
 }
 
-impl<N, RpcMiddleware, AuthHttpMiddleware> NodeAddOns<N>
-    for RpcAddOns<N, RpcMiddleware, AuthHttpMiddleware>
+impl<N, RpcMiddleware> NodeAddOns<N> for RpcAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
     RpcMiddleware: RethRpcMiddleware,
-    AuthHttpMiddleware: RethAuthHttpMiddleware<Identity>,
 {
     type Handle = RpcHandle<N, BaseNodeEthApi<N>>;
 
@@ -974,8 +673,7 @@ pub trait RethRpcAddOns<N: FullNodeComponents>:
     fn hooks_mut(&mut self) -> &mut RpcHooks<N, BaseNodeEthApi<N>>;
 }
 
-impl<N: FullNodeComponents, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
-    for RpcAddOns<N, RpcMiddleware, AuthHttpMiddleware>
+impl<N: FullNodeComponents, RpcMiddleware> RethRpcAddOns<N> for RpcAddOns<N, RpcMiddleware>
 where
     Self: NodeAddOns<N, Handle = RpcHandle<N, BaseNodeEthApi<N>>>,
 {

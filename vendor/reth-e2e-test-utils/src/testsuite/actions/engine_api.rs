@@ -7,7 +7,6 @@ use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_rpc_api::clients::EngineApiClient;
 use tracing::debug;
 
 use crate::testsuite::{Action, Environment};
@@ -119,14 +118,15 @@ impl Action for SendNewPayload {
             );
 
             // Send the payload to the target node
-            let target_engine = env.node_clients[self.node_idx].engine.http_client();
-            let result = EngineApiClient::new_payload_v3(
-                &target_engine,
-                payload,
-                vec![],
-                B256::ZERO, // parent_beacon_block_root
-            )
-            .await?;
+            let target_engine = env.node_clients[self.node_idx].engine.clone();
+            let result = target_engine
+                .driver
+                .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                    payload,
+                    vec![],
+                    B256::ZERO,
+                ))
+                .await?;
 
             debug!(
                 "Node {}: new_payload for block {} response - status: {:?}, latest_valid_hash: {:?}",

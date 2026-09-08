@@ -181,13 +181,11 @@ impl EngineNodeLauncher {
         let beacon_engine_handle = ConsensusEngineHandle::new(consensus_engine_tx.clone());
 
         // extract the jwt secret from the args if possible
-        let jwt_secret = ctx.auth_jwt_secret()?;
 
         let add_ons_ctx = AddOnsContext {
             node: ctx.node_adapter().clone(),
             config: ctx.node_config(),
             beacon_engine_handle: beacon_engine_handle.clone(),
-            jwt_secret,
             engine_events: event_sender.clone(),
         };
 

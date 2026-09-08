@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use base_execution_payload_builder::BaseExecutionHandle;
 use reth_engine_primitives::ConsensusEngineHandle;
-use reth_rpc_builder::auth::AuthServerHandle;
 use url::Url;
 
 use crate::testsuite::setup::Setup;
@@ -30,7 +30,7 @@ pub struct NodeClient {
     /// Regular JSON-RPC client
     pub rpc: HttpClient,
     /// Engine API client
-    pub engine: AuthServerHandle,
+    pub engine: BaseExecutionHandle,
     /// Beacon consensus engine handle for direct interaction with the consensus engine
     pub beacon_engine_handle: Option<ConsensusEngineHandle>,
     /// Alloy provider for interacting with the node
@@ -39,7 +39,7 @@ pub struct NodeClient {
 
 impl NodeClient {
     /// Instantiates a new [`NodeClient`] with the given handles and RPC URL
-    pub fn new(rpc: HttpClient, engine: AuthServerHandle, url: Url) -> Self {
+    pub fn new(rpc: HttpClient, engine: BaseExecutionHandle, url: Url) -> Self {
         let provider =
             Arc::new(ProviderBuilder::new().connect_http(url)) as Arc<dyn Provider + Send + Sync>;
         Self { rpc, engine, beacon_engine_handle: None, provider }
@@ -48,7 +48,7 @@ impl NodeClient {
     /// Instantiates a new [`NodeClient`] with the given handles, RPC URL, and beacon engine handle
     pub fn new_with_beacon_engine(
         rpc: HttpClient,
-        engine: AuthServerHandle,
+        engine: BaseExecutionHandle,
         url: Url,
         beacon_engine_handle: ConsensusEngineHandle,
     ) -> Self {

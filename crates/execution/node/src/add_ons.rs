@@ -5,7 +5,6 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{BasePooledTx, TransactionPool};
 use base_node_context::{FullNodeComponents, NodeAddOns};
-use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 
@@ -133,7 +132,7 @@ where
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
-                let crate::RpcModuleContainer { modules, auth_module, registry } = container;
+                let crate::RpcModuleContainer { modules, .. } = container;
 
                 modules.merge_if_module_configured(RethRpcModule::Eth, eth_config.into_rpc())?;
 
@@ -143,20 +142,8 @@ where
                 // extend the miner namespace if configured in the regular http server
                 modules.add_or_replace_if_module_configured(
                     RethRpcModule::Miner,
-                    miner_ext.clone().into_rpc(),
+                    miner_ext.into_rpc(),
                 )?;
-
-                // install the miner extension in the authenticated if configured
-                if modules.module_config().contains_any(&RethRpcModule::Miner) {
-                    debug!(target: "reth::cli", "Installing miner DA rpc endpoint");
-                    auth_module.merge_auth_methods(miner_ext.into_rpc())?;
-                }
-
-                // install the debug namespace in the authenticated if configured
-                if modules.module_config().contains_any(&RethRpcModule::Debug) {
-                    debug!(target: "reth::cli", "Installing debug rpc endpoint");
-                    auth_module.merge_auth_methods(registry.debug_api().into_rpc())?;
-                }
 
                 Ok(())
             })
@@ -296,7 +283,6 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
                     .with_sequencer_headers(sequencer_headers)
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
                 rpc_middleware,
-                Identity::new(),
             )
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),

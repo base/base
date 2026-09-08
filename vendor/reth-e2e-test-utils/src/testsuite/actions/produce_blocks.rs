@@ -12,7 +12,6 @@ use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_rpc_api::clients::EngineApiClient;
 use tokio::time::sleep;
 use tracing::debug;
 
@@ -57,7 +56,7 @@ impl Action for AssertMineBlock {
 
             let node_client = &env.node_clients[self.node_idx];
             let rpc_client = &node_client.rpc;
-            let engine_client = node_client.engine.http_client();
+            let engine_client = node_client.engine.clone();
 
             // get the latest block to use as parent
             let latest_block = EthApiClient::<
@@ -84,63 +83,15 @@ impl Action for AssertMineBlock {
                 finalized_block_hash: parent_hash,
             };
 
-            // Try v2 first for backwards compatibility, fall back to v3 on error.
-            match EngineApiClient::fork_choice_updated_v2(
-                &engine_client,
-                fork_choice_state,
-                Some(self.payload_attributes.clone()),
-            )
-            .await
-            {
-                Ok(fcu_result) => {
-                    debug!(?fcu_result, "FCU v2 result");
-                    match fcu_result.payload_status.status {
-                        PayloadStatusEnum::Valid => {
-                            if let Some(payload_id) = fcu_result.payload_id {
-                                debug!(id=%payload_id, "Got payload");
-                                let _engine_payload =
-                                    EngineApiClient::get_payload_v2(&engine_client, payload_id)
-                                        .await?;
-                                Ok(())
-                            } else {
-                                Err(eyre::eyre!("No payload ID returned from forkchoiceUpdated"))
-                            }
-                        }
-                        _ => Err(eyre::eyre!(
-                            "Payload status not valid: {:?}",
-                            fcu_result.payload_status
-                        ))?,
-                    }
-                }
-                Err(_) => {
-                    // If v2 fails due to unsupported fork/missing fields, try v3
-                    let fcu_result = EngineApiClient::fork_choice_updated_v3(
-                        &engine_client,
-                        fork_choice_state,
-                        Some(self.payload_attributes.clone()),
-                    )
-                    .await?;
-
-                    debug!(?fcu_result, "FCU v3 result");
-                    match fcu_result.payload_status.status {
-                        PayloadStatusEnum::Valid => {
-                            if let Some(payload_id) = fcu_result.payload_id {
-                                debug!(id=%payload_id, "Got payload");
-                                let _engine_payload =
-                                    EngineApiClient::get_payload_v3(&engine_client, payload_id)
-                                        .await?;
-                                Ok(())
-                            } else {
-                                Err(eyre::eyre!("No payload ID returned from forkchoiceUpdated"))
-                            }
-                        }
-                        _ => Err(eyre::eyre!(
-                            "Payload status not valid: {:?}",
-                            fcu_result.payload_status
-                        )),
-                    }
-                }
+            let result = engine_client
+                .update_forkchoice(fork_choice_state, Some(self.payload_attributes.clone()))
+                .await?;
+            if !result.payload_status.is_valid() {
+                return Err(eyre::eyre!("Payload status not valid: {:?}", result.payload_status));
             }
+            let id = result.payload_id.ok_or_else(|| eyre::eyre!("No payload build started"))?;
+            engine_client.resolve_payload(id).await?;
+            Ok(())
         })
     }
 }
@@ -245,15 +196,17 @@ impl Action for GenerateNextPayload {
             let producer_idx =
                 env.last_producer_idx.ok_or_else(|| eyre::eyre!("No block producer selected"))?;
 
-            let fcu_result = EngineApiClient::fork_choice_updated_v3(
-                &env.node_clients[producer_idx].engine.http_client(),
-                fork_choice_state,
-                Some(env.payload_attributes_converter.map_or_else(
-                    || payload_attributes.clone().into(),
-                    |convert| convert(payload_attributes.clone()),
-                )),
-            )
-            .await?;
+            let fcu_result = env.node_clients[producer_idx]
+                .engine
+                .clone()
+                .update_forkchoice(
+                    fork_choice_state,
+                    Some(env.payload_attributes_converter.map_or_else(
+                        || payload_attributes.clone().into(),
+                        |convert| convert(payload_attributes.clone()),
+                    )),
+                )
+                .await?;
 
             debug!("FCU result: {:?}", fcu_result);
 
@@ -279,15 +232,17 @@ impl Action for GenerateNextPayload {
                     target_gas_limit: None,
                 };
 
-                let fresh_fcu_result = EngineApiClient::fork_choice_updated_v3(
-                    &env.node_clients[producer_idx].engine.http_client(),
-                    fork_choice_state,
-                    Some(env.payload_attributes_converter.map_or_else(
-                        || fresh_payload_attributes.clone().into(),
-                        |convert| convert(fresh_payload_attributes.clone()),
-                    )),
-                )
-                .await?;
+                let fresh_fcu_result = env.node_clients[producer_idx]
+                    .engine
+                    .clone()
+                    .update_forkchoice(
+                        fork_choice_state,
+                        Some(env.payload_attributes_converter.map_or_else(
+                            || fresh_payload_attributes.clone().into(),
+                            |convert| convert(fresh_payload_attributes.clone()),
+                        )),
+                    )
+                    .await?;
 
                 debug!("Fresh FCU result: {:?}", fresh_fcu_result);
 
@@ -311,11 +266,14 @@ impl Action for GenerateNextPayload {
 
             sleep(Duration::from_secs(1)).await;
 
-            let built_payload_envelope = EngineApiClient::get_payload_v3(
-                &env.node_clients[producer_idx].engine.http_client(),
-                payload_id,
-            )
-            .await?;
+            let built_payload_envelope =
+                base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3::from(
+                    env.node_clients[producer_idx]
+                        .engine
+                        .clone()
+                        .resolve_payload(payload_id)
+                        .await?,
+                );
 
             // Store the payload attributes that were used to generate this payload
             let built_payload = payload_attributes.clone();
@@ -388,13 +346,7 @@ impl Action for BroadcastLatestForkchoice {
             );
 
             for (idx, client) in env.node_clients.iter().enumerate() {
-                match EngineApiClient::fork_choice_updated_v3(
-                    &client.engine.http_client(),
-                    fork_choice_state,
-                    None,
-                )
-                .await
-                {
+                match client.engine.clone().update_forkchoice(fork_choice_state, None).await {
                     Ok(resp) => {
                         debug!(
                             "Client {}: Forkchoice update status: {:?}",
@@ -555,8 +507,9 @@ impl Action for CheckPayloadAccepted {
                     .ok_or_else(|| eyre::eyre!("No next built payload found"))?;
 
                 let built_payload =
-                    EngineApiClient::get_payload_v3(&client.engine.http_client(), payload_id)
-                        .await?;
+                    base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3::from(
+                        client.engine.clone().resolve_payload(payload_id).await?,
+                    );
 
                 let execution_payload_envelope: ExecutionPayloadEnvelopeV3 = built_payload.into();
                 let new_payload_block_hash = execution_payload_envelope
@@ -664,15 +617,16 @@ impl Action for BroadcastNextNewPayload {
             if self.active_node_only {
                 // Send only to the active node
                 let active_idx = env.active_node_idx;
-                let engine = env.node_clients[active_idx].engine.http_client();
+                let engine = env.node_clients[active_idx].engine.clone();
 
-                let result = EngineApiClient::new_payload_v3(
-                    &engine,
-                    execution_payload.clone(),
-                    vec![],
-                    parent_beacon_block_root,
-                )
-                .await?;
+                let result = engine
+                    .driver
+                    .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                        execution_payload.clone(),
+                        vec![],
+                        parent_beacon_block_root,
+                    ))
+                    .await?;
 
                 debug!("Active node {}: new_payload status: {:?}", active_idx, result.status);
 
@@ -695,16 +649,17 @@ impl Action for BroadcastNextNewPayload {
                 let mut first_valid_seen = false;
 
                 for (idx, client) in env.node_clients.iter().enumerate() {
-                    let engine = client.engine.http_client();
+                    let engine = client.engine.clone();
 
                     // Broadcast the execution payload
-                    let result = EngineApiClient::new_payload_v3(
-                        &engine,
-                        execution_payload.clone(),
-                        vec![],
-                        parent_beacon_block_root,
-                    )
-                    .await?;
+                    let result = engine
+                        .driver
+                        .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                            execution_payload.clone(),
+                            vec![],
+                            parent_beacon_block_root,
+                        ))
+                        .await?;
 
                     broadcast_results.push((idx, result.status.clone()));
                     debug!("Node {}: new_payload broadcast status: {:?}", idx, result.status);
@@ -809,15 +764,14 @@ impl Action for TestFcuToTag {
                 .copied()
                 .ok_or_else(|| eyre::eyre!("Block tag '{}' not found in registry", self.tag))?;
 
-            let engine_client = env.node_clients[0].engine.http_client();
+            let engine_client = env.node_clients[0].engine.clone();
             let fcu_state = ForkchoiceState {
                 head_block_hash: target_block.hash,
                 safe_block_hash: target_block.hash,
                 finalized_block_hash: target_block.hash,
             };
 
-            let fcu_response =
-                EngineApiClient::fork_choice_updated_v2(&engine_client, fcu_state, None).await?;
+            let fcu_response = engine_client.update_forkchoice(fcu_state, None).await?;
 
             // validate the response matches expected status
             match (&fcu_response.payload_status.status, &self.expected_status) {
@@ -1025,19 +979,20 @@ impl Action for ProduceInvalidBlocks {
                     );
 
                     // send the corrupted payload via newPayload
-                    let engine_client = env.node_clients[0].engine.http_client();
+                    let engine_client = env.node_clients[0].engine.clone();
                     // for simplicity, we'll use empty versioned hashes for invalid block testing
                     let versioned_hashes = Vec::new();
                     // use a random parent beacon block root since this is for invalid block testing
                     let parent_beacon_block_root = B256::random();
 
-                    let new_payload_response = EngineApiClient::new_payload_v3(
-                        &engine_client,
-                        corrupted_payload.clone(),
-                        versioned_hashes,
-                        parent_beacon_block_root,
-                    )
-                    .await?;
+                    let new_payload_response = engine_client
+                        .driver
+                        .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                            corrupted_payload.clone(),
+                            versioned_hashes,
+                            parent_beacon_block_root,
+                        ))
+                        .await?;
 
                     // expect the payload to be rejected as invalid
                     match new_payload_response.status {

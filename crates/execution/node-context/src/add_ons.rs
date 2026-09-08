@@ -2,7 +2,6 @@
 
 use std::future::Future;
 
-use alloy_rpc_types_engine::JwtSecret;
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_node_core::node_config::NodeConfig;
 use reth_tokio_util::EventSender;
@@ -20,8 +19,6 @@ pub struct AddOnsContext<'a, N: FullNodeComponents> {
     pub beacon_engine_handle: ConsensusEngineHandle,
     /// Notification channel for engine API events
     pub engine_events: EventSender<ConsensusEngineEvent>,
-    /// JWT secret for the node.
-    pub jwt_secret: JwtSecret,
 }
 
 /// Starts node services and returns their shared handles.
@@ -48,7 +45,6 @@ pub trait NodeAddOns<N: FullNodeComponents>: Send {
     /// - The fully configured node with all its components
     /// - Node configuration for reading settings
     /// - Engine API handles for consensus layer communication
-    /// - JWT secrets for setting up authenticated endpoints (if any).
     ///
     /// The implementation should:
     /// 1. Use the context to configure the add-on services

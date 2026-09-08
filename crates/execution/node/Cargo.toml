@@ -23,13 +23,11 @@ reth-db-api = { workspace = true }
 reth-config = { workspace = true }
 reth-stages = { workspace = true }
 reth-network = { workspace = true }
-reth-rpc-api = { workspace = true }
 alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-db-common = { workspace = true }
-reth-rpc-layer = { workspace = true }
 base-common-evm = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -91,6 +89,7 @@ workspace = true
 
 [dev-dependencies]
 reth-trie = { workspace = true }
+reth-rpc-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-genesis = { workspace = true  }
 base-common-evm = { workspace = true }

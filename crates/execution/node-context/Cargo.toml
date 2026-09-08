@@ -25,7 +25,6 @@ reth-tokio-util = { workspace = true }
 base-execution-evm = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-engine-primitives = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }

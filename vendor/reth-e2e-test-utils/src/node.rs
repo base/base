@@ -17,7 +17,6 @@ use reth_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
     StageCheckpointReader,
 };
-use reth_rpc_builder::auth::AuthServerHandle;
 use reth_stages_types::StageId;
 use tokio_stream::StreamExt;
 use url::Url;
@@ -322,11 +321,6 @@ where
         self.inner.rpc_server_handle().http_client()
     }
 
-    /// Returns an Engine API client.
-    pub fn auth_server_handle(&self) -> AuthServerHandle {
-        self.inner.auth_server_handle().clone()
-    }
-
     /// Creates a [`crate::testsuite::NodeClient`] from this test context.
     ///
     /// This helper method extracts the necessary handles and creates a client
@@ -336,10 +330,10 @@ where
         let rpc = self
             .rpc_client()
             .ok_or_else(|| eyre::eyre!("Failed to create HTTP RPC client for node"))?;
-        let auth = self.auth_server_handle();
+        let execution = self.inner.execution.clone();
         let url = self.rpc_url();
         let beacon_handle = self.inner.execution.driver.clone();
 
-        Ok(crate::testsuite::NodeClient::new_with_beacon_engine(rpc, auth, url, beacon_handle))
+        Ok(crate::testsuite::NodeClient::new_with_beacon_engine(rpc, execution, url, beacon_handle))
     }
 }

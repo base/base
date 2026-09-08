@@ -4283,7 +4283,6 @@ dependencies = [
 name = "base-node-context"
 version = "0.0.0"
 dependencies = [
- "alloy-rpc-types-engine",
  "base-execution-consensus",
  "base-execution-evm",
  "base-execution-payload-builder",
@@ -4371,7 +4370,6 @@ dependencies = [
  "reth-rpc-api",
  "reth-rpc-builder",
  "reth-rpc-eth-types",
- "reth-rpc-layer",
  "reth-rpc-server-types",
  "reth-stages",
  "reth-stages-types",

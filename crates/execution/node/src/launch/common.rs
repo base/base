@@ -78,8 +78,6 @@ use reth_provider::{
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_prune::{PruneMode, PruneModes, PrunerBuilder};
-use reth_rpc_builder::config::RethRpcServerConfig;
-use reth_rpc_layer::JwtSecret;
 use reth_stages::{
     MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet, sets::DefaultStages,
     stages::MerkleStage,
@@ -429,13 +427,6 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     /// Returns an initialized [`PrunerBuilder`] based on the configured [`PruneConfig`]
     pub fn pruner_builder(&self) -> PrunerBuilder {
         PrunerBuilder::new(self.prune_config())
-    }
-
-    /// Loads the JWT secret for the engine API
-    pub fn auth_jwt_secret(&self) -> eyre::Result<JwtSecret> {
-        let default_jwt_path = self.data_dir().jwt();
-        let secret = self.node_config().rpc.auth_jwt_secret(default_jwt_path)?;
-        Ok(secret)
     }
 
     /// Returns the [`MiningMode`] intended for --dev mode.
