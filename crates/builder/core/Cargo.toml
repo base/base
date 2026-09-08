@@ -79,7 +79,6 @@ alloy-serde = { workspace = true, features = ["std"] }
 testcontainers = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-reth-payload-builder-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["debug"] }
 secp256k1 = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
@@ -111,12 +110,12 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }

@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_node_builder::{ComponentBuilder, NodeAdapter, rpc::RethRpcAddOns};
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 

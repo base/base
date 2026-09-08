@@ -8,13 +8,13 @@ use alloy_consensus::transaction::Either;
 use alloy_provider::network::AnyNetwork;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use jsonrpsee::core::{DeserializeOwned, Serialize};
 use reth_consensus_debug_client::{
     DebugConsensusClient, EtherscanBlockProvider, PayloadProvider, RpcBlockProvider,
 };
 use reth_engine_local::{LocalMiner, MiningMode};
 use reth_node_api::{FullNodeComponents, PayloadAttributesBuilder};
-use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
 

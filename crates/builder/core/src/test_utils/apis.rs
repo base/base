@@ -7,13 +7,13 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
 };
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_rpc::BaseEngineApiClient;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
 };
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
 use tracing::{debug, info};

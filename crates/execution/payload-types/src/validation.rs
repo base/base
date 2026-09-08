@@ -1,43 +1,10 @@
-//! Abstractions for working with execution payloads.
-//!
-//! This crate provides types and traits for execution and building payloads.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::Bytes;
 
-mod base;
-pub use base::{
-    BaseBuiltPayload, BasePayloadAttributes, BasePayloadBuilderAttributes,
-    EthPayloadBuilderAttributes,
+use crate::{
+    EngineObjectValidationError, ExecutionPayload, PayloadAttributes, PayloadOrAttributes,
+    VersionSpecificValidationError,
 };
-
-mod base_compat;
-
-mod error;
-pub use error::{
-    EngineObjectValidationError, InvalidPayloadAttributesError, NewPayloadError,
-    PayloadBuilderError, VersionSpecificValidationError,
-};
-
-mod traits;
-pub use traits::{
-    BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock, PayloadAttributes,
-    PayloadAttributesBuilder, payload_id,
-};
-
-mod payload;
-pub use payload::{ExecutionPayload, PayloadOrAttributes};
 
 /// Validates the timestamp depending on the version called:
 ///

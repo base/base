@@ -29,5 +29,4 @@ reth-engine-primitives = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-reth-payload-builder-primitives = { workspace = true }
-reth-payload-primitives = { workspace = true, features = ["default"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }

@@ -24,11 +24,11 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 rayon = { workspace = true, optional = true }
-reth-payload-primitives = { workspace = true }
 base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-trie = { workspace = true, optional = true }
+base-execution-payload-types = { workspace = true }
 reth-metrics = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -68,7 +68,7 @@ std = [
     "reth-primitives-traits/std",
     "thiserror/std",
     "base-execution-consensus/std",
-    "reth-payload-primitives/std",
+    "base-execution-payload-types/std",
     "dep:rayon",
     "revm/std",
     "alloy-evm/std",

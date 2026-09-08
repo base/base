@@ -2,8 +2,8 @@ use std::{error::Error, fmt};
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, Bytes, U256};
+use base_execution_payload_types::{BuiltPayload, PayloadAttributes};
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedBlock;
 
 use crate::{BuildArguments, BuildOutcome, PayloadBuilder, PayloadBuilderError, PayloadConfig};

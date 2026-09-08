@@ -38,6 +38,7 @@ use base_execution_evm::{BaseEvmConfig, CachedReads, CancelOnDrop};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, NoopPayloadTransactions,
 };
+use base_execution_payload_types::{BuiltPayload, PayloadAttributes};
 use base_execution_txpool::BasePooledTransaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_test_utils::build_test_genesis;
@@ -47,7 +48,6 @@ use reth_basic_payload_builder::{
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;
-use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,

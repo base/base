@@ -47,7 +47,6 @@ alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-reth-payload-builder-primitives = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 derive_more = { workspace = true, features = ["full"] }
 tempfile = { workspace = true, features = ["default"] }
@@ -62,8 +61,8 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-consensus = { workspace = true, features = ["kzg", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default", "test-utils"] }

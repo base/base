@@ -7,12 +7,12 @@ use std::{fmt::Debug, sync::Arc};
 
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use futures_util::future::TryJoinAll;
 use reth_node_builder::{
     ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, rpc::RethRpcAddOns,
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::AlloyBlockHeader;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;

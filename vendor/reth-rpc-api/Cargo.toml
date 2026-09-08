@@ -32,8 +32,8 @@ alloy-rpc-types-admin = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
-reth-payload-primitives = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+base-execution-payload-types = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rpc-types = { workspace = true, features = ["eth"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
@@ -44,6 +44,7 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 jsonrpsee = { workspace = true, features = ["client", "async-client", "http-client"] }
+
 [features]
 client = [
     "jsonrpsee/client",

@@ -13,9 +13,8 @@ use alloy_rpc_types_engine::{
     ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_types::{BasePayloadBuilderAttributes, PayloadBuilderError};
 use futures::{FutureExt, TryFutureExt, future::Either};
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{

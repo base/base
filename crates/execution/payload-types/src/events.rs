@@ -4,13 +4,14 @@ use std::{
 };
 
 use base_common_consensus::BaseTxEnvelope;
-use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use tokio::sync::broadcast;
 use tokio_stream::{
     Stream, StreamExt,
     wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
 };
 use tracing::debug;
+
+use crate::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 
 /// Payload builder events.
 #[derive(Clone, Debug)]

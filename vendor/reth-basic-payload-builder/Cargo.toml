@@ -29,10 +29,9 @@ base-execution-evm = { workspace = true }
 reth-execution-cache = { workspace = true }
 reth-payload-builder = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-payload-builder-primitives = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true, features = ["attributes"] }
 futures-core = { workspace = true, features = ["default"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }

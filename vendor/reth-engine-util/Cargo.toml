@@ -38,5 +38,5 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }

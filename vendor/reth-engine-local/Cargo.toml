@@ -25,7 +25,7 @@ tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 [lints]
 workspace = true

@@ -5,11 +5,11 @@ use std::{collections::HashMap, fmt::Debug};
 use alloy_primitives::B256;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
 use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 
 use crate::testsuite::actions::{Action, ActionBox};
 pub mod actions;

@@ -10,15 +10,14 @@
 
 /// Traits and helper types used to abstract over EVM methods and types.
 pub use base_execution_evm::NextBlockEnvAttributes;
+/// Traits and helper types used to abstract over payload builder types.
+pub use base_execution_payload_types as payload_builder;
+/// Traits and helper types used to abstract over payload types.
+pub use base_execution_payload_types as payload;
+pub use base_execution_payload_types::*;
 /// Traits, validation methods, and helper types used to abstract over engine types.
 pub use reth_engine_primitives as engine;
 pub use reth_engine_primitives::*;
-/// Traits and helper types used to abstract over payload builder types.
-pub use reth_payload_builder_primitives as payload_builder;
-pub use reth_payload_builder_primitives::*;
-/// Traits and helper types used to abstract over payload types.
-pub use reth_payload_primitives as payload;
-pub use reth_payload_primitives::*;
 
 pub mod node;
 pub use node::*;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
-use reth_payload_primitives::{
+use base_execution_payload_types::{
     BasePayloadBuilderAttributes as PayloadAttributes, EngineApiMessageVersion,
     EngineObjectValidationError, NewPayloadError, PayloadOrAttributes, validate_execution_requests,
     validate_version_specific_fields,

@@ -21,6 +21,9 @@ use std::{
 use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
 use base_execution_evm::{CachedReads, CancelOnDrop};
+use base_execution_payload_types::{
+    BuiltPayload, PayloadAttributes, PayloadBuilderError, PayloadKind,
+};
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;
@@ -29,8 +32,6 @@ use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderLease, PayloadId, PayloadJob,
     PayloadJobGenerator,
 };
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadKind};
 use reth_primitives_traits::SealedHeader;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_tasks::Runtime;

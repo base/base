@@ -427,11 +427,9 @@ reth-zstd-compressors = { path = "vendor/reth-zstd-compressors", default-feature
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
 reth-static-file-types = { path = "vendor/reth-static-file-types", default-features = false }
-reth-payload-primitives = { path = "vendor/reth-payload-primitives", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
 reth-basic-payload-builder = { path = "vendor/reth-basic-payload-builder", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
-reth-payload-builder-primitives = { path = "vendor/reth-payload-builder-primitives", default-features = false }
 
 # tokio
 tokio = { version = "1.53.1", default-features = false }
@@ -870,3 +868,4 @@ tokio-tungstenite_0_29_0 = { version = "0.29", package = "tokio-tungstenite", de
 opentelemetry-http_0_31_0 = { version = "0.31.0", package = "opentelemetry-http", default-features = false }
 tracing-opentelemetry_0_33_0 = { version = "0.33", package = "tracing-opentelemetry", default-features = false }
 codspeed-criterion-compat_5_0 = { version = "5.0", package = "codspeed-criterion-compat", default-features = false }
+base-execution-payload-types = {path = "crates/execution/payload-types", default-features = false}

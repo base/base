@@ -22,6 +22,9 @@ use base_execution_evm::{
     BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,
     Database, ExecutionWitnessRecord, StateProviderDatabase,
 };
+use base_execution_payload_types::{
+    BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadBuilderError,
+};
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
@@ -35,8 +38,6 @@ use reth_basic_payload_builder::{
 };
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};

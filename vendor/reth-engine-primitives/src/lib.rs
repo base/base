@@ -10,15 +10,15 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use base_common_consensus::BaseTxEnvelope;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 extern crate alloc;
 
 use alloy_consensus::BlockHeader;
-// Re-export [`ExecutionPayload`] moved to `reth_payload_primitives`
+// Re-export [`ExecutionPayload`] moved to `base_execution_payload_types`
 #[cfg(feature = "std")]
 pub use base_execution_evm::{ConvertTx, ExecutableTxIterator, ExecutableTxTuple};
-pub use reth_payload_primitives::ExecutionPayload;
-use reth_payload_primitives::{
+pub use base_execution_payload_types::ExecutionPayload;
+use base_execution_payload_types::{
     EngineApiMessageVersion, EngineObjectValidationError, InvalidPayloadAttributesError,
     NewPayloadError, PayloadAttributes, PayloadOrAttributes,
 };

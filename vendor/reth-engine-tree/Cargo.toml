@@ -60,9 +60,9 @@ reth-trie-parallel = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
+base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, optional = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }

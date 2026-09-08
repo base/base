@@ -24,14 +24,14 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, BaseExecutionPayloadV4, ExecutionData,
 };
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_types::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, EngineApiMessageVersion, MessageValidationKind,
+    PayloadOrAttributes, validate_payload_timestamp,
+};
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
 use reth_network_api::{CellCustody, NetworkInfo};
 use reth_payload_builder::PayloadStore;
-use reth_payload_primitives::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, EngineApiMessageVersion, MessageValidationKind,
-    PayloadOrAttributes, validate_payload_timestamp,
-};
 use reth_primitives_traits::{Block, BlockBody};
 use reth_rpc_api::{EngineApiServer, IntoEngineApiRpcModule};
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
@@ -959,7 +959,7 @@ where
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
         if self.inner.chain_spec.is_osaka_active_at_timestamp(current_timestamp) {
             return Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::UnsupportedFork,
+                base_execution_payload_types::EngineObjectValidationError::UnsupportedFork,
             ));
         }
 
@@ -1003,7 +1003,7 @@ where
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
         if !self.inner.chain_spec.is_osaka_active_at_timestamp(current_timestamp) {
             return Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::UnsupportedFork,
+                base_execution_payload_types::EngineObjectValidationError::UnsupportedFork,
             ));
         }
 
@@ -1026,7 +1026,7 @@ where
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
         if !self.inner.chain_spec.is_osaka_active_at_timestamp(current_timestamp) {
             return Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::UnsupportedFork,
+                base_execution_payload_types::EngineObjectValidationError::UnsupportedFork,
             ));
         }
 
@@ -1055,7 +1055,7 @@ where
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
         if !self.inner.chain_spec.is_amsterdam_active_at_timestamp(current_timestamp) {
             return Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::UnsupportedFork,
+                base_execution_payload_types::EngineObjectValidationError::UnsupportedFork,
             ));
         }
 
@@ -1247,7 +1247,7 @@ where
         _requests: RequestsOrHash,
     ) -> RpcResult<PayloadStatus> {
         Err(EngineApiError::EngineObjectValidationError(
-            reth_payload_primitives::EngineObjectValidationError::UnsupportedFork,
+            base_execution_payload_types::EngineObjectValidationError::UnsupportedFork,
         )
         .into())
     }
@@ -1864,7 +1864,7 @@ mod tests {
         };
 
         assert_matches!(api.new_payload_v5(execution_data).await, Err(EngineApiError::EngineObjectValidationError(
-            reth_payload_primitives::EngineObjectValidationError::Payload(reth_payload_primitives::VersionSpecificValidationError::HasBlockAccessListPreAmsterdam)
+            base_execution_payload_types::EngineObjectValidationError::Payload(base_execution_payload_types::VersionSpecificValidationError::HasBlockAccessListPreAmsterdam)
         )));
         assert!(matches!(engine_rx.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)));
     }
@@ -1975,7 +1975,7 @@ mod tests {
         assert_matches!(
             res,
             Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::UnsupportedFork
+                base_execution_payload_types::EngineObjectValidationError::UnsupportedFork
             ))
         );
     }
@@ -2126,7 +2126,7 @@ mod tests {
         assert_matches!(
             response,
             Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::PayloadAttributes(_)
+                base_execution_payload_types::EngineObjectValidationError::PayloadAttributes(_)
             ))
         );
     }
@@ -2231,7 +2231,7 @@ mod tests {
         assert_matches!(
             response,
             Err(EngineApiError::EngineObjectValidationError(
-                reth_payload_primitives::EngineObjectValidationError::PayloadAttributes(_)
+                base_execution_payload_types::EngineObjectValidationError::PayloadAttributes(_)
             ))
         );
 

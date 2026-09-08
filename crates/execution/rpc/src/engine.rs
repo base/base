@@ -11,11 +11,11 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, ExecutionData,
 };
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_node_api::EngineApiValidator;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};

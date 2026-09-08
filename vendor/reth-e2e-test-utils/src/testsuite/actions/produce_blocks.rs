@@ -9,9 +9,9 @@ use alloy_rpc_types_engine::{
 };
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::clients::{EngineApiClient, EthApiClient};
 use tokio::time::sleep;
 use tracing::debug;

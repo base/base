@@ -2,10 +2,10 @@
 
 use alloy_consensus::BlockHeader;
 use base_execution_consensus::ConsensusError;
+use base_execution_payload_types::NewPayloadError;
 pub use reth_engine_primitives::{
     InsertBlockErrorKind, InsertBlockFatalError, InsertBlockValidationError,
 };
-use reth_payload_primitives::NewPayloadError;
 use reth_primitives_traits::SealedBlock;
 use reth_storage_errors::provider::ProviderError;
 

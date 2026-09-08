@@ -3,7 +3,9 @@
 use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
 use base_execution_chainspec::BaseChainSpec;
-use reth_payload_primitives::{BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError};
+use base_execution_payload_types::{
+    BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError,
+};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 
 use crate::BaseNextBlockEnvAttributes;

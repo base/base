@@ -14,13 +14,13 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, BlockTimestamp};
 use alloy_rpc_types::engine::PayloadId;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_types::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, Events, PayloadAttributes,
+    PayloadBuilderError, PayloadEvents, PayloadKind,
+};
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
-use reth_payload_builder_primitives::{Events, PayloadBuilderError, PayloadEvents};
-use reth_payload_primitives::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, PayloadAttributes, PayloadKind,
-};
 use reth_primitives_traits::FastInstant as Instant;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::sync::{

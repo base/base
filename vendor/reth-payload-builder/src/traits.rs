@@ -3,9 +3,10 @@
 use std::future::Future;
 
 use alloy_rpc_types::engine::PayloadId;
+use base_execution_payload_types::{
+    BuiltPayload, PayloadAttributes, PayloadBuilderError, PayloadKind,
+};
 use reth_chain_state::CanonStateNotification;
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadKind};
 
 use crate::service::BuildNewPayload;
 

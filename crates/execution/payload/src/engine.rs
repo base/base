@@ -8,14 +8,14 @@ use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
-use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_engine_primitives::{EngineApiValidator, InsertBlockErrorKind, PayloadValidator};
-use reth_payload_primitives::{
+use base_execution_payload_types::{
     BasePayloadBuilderAttributes, EngineApiMessageVersion, EngineObjectValidationError,
     InvalidPayloadAttributesError, MessageValidationKind, NewPayloadError, PayloadAttributes,
     PayloadOrAttributes, VersionSpecificValidationError,
     validate_parent_beacon_block_root_presence, validate_version_specific_fields,
 };
+use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use reth_engine_primitives::{EngineApiValidator, InsertBlockErrorKind, PayloadValidator};
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProvider, StateProviderBox, errors::ProviderResult};
 use reth_trie_common::{HashedPostState, KeyHasher};
@@ -326,7 +326,7 @@ mod tests {
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
-    use reth_payload_primitives::BasePayloadBuilderAttributes;
+    use base_execution_payload_types::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{
         noop::NoopProvider,

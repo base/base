@@ -57,13 +57,13 @@ base-execution-txpool = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-payload-primitives = { workspace = true }
 base-execution-consensus = { workspace = true }
 base-execution-chainspec = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 reth-consensus-debug-client = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 eyre = { workspace = true, features = ["default"] }
+base-execution-payload-types = { workspace = true }
 base-execution-payload-builder = { workspace = true }
 alloy-eips = { workspace = true, features = ["kzg"] }
 futures = { workspace = true, features = ["default"] }

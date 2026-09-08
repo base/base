@@ -13,13 +13,13 @@ use std::{
 use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_types::{
+    BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
+};
 use eyre::OptionExt;
 use futures_util::{Stream, StreamExt, stream::Fuse};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_payload_primitives::{
-    BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
-};
 use reth_storage_api::BlockReader;
 use reth_transaction_pool::TransactionPool;
 use tokio::time::Interval;

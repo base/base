@@ -4,12 +4,13 @@ use alloy_rpc_types_engine::{
     INVALID_PAYLOAD_ATTRIBUTES_ERROR, INVALID_PAYLOAD_ATTRIBUTES_ERROR_MSG, TOO_DEEP_REORG_ERROR,
     TOO_DEEP_REORG_ERROR_MSG,
 };
+use base_execution_payload_types::{
+    EngineObjectValidationError, PayloadBuilderError, VersionSpecificValidationError,
+};
 use jsonrpsee_types::error::{
     INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE, INVALID_PARAMS_MSG, SERVER_ERROR_MSG,
 };
 use reth_engine_primitives::{BeaconForkChoiceUpdateError, BeaconOnNewPayloadError};
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{EngineObjectValidationError, VersionSpecificValidationError};
 use thiserror::Error;
 
 /// The Engine API result type

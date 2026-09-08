@@ -26,10 +26,10 @@ use base_common_rpc_types_engine::{
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_payload_builder::PayloadServiceCommand;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::Block as _;
 use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
 use reth_storage_overlay::OverlayManager;
@@ -57,9 +57,10 @@ impl reth_engine_primitives::PayloadValidator for MockEngineValidator {
     fn convert_payload_to_block(
         &self,
         payload: ExecutionData,
-    ) -> Result<reth_primitives_traits::SealedBlock, reth_payload_primitives::NewPayloadError> {
+    ) -> Result<reth_primitives_traits::SealedBlock, base_execution_payload_types::NewPayloadError>
+    {
         let block = payload.payload.try_into_block_with_sidecar(&payload.sidecar).map_err(|e| {
-            reth_payload_primitives::NewPayloadError::Other(format!("{e:?}").into())
+            base_execution_payload_types::NewPayloadError::Other(format!("{e:?}").into())
         })?;
         Ok(block.seal_slow())
     }
@@ -68,22 +69,22 @@ impl reth_engine_primitives::PayloadValidator for MockEngineValidator {
 impl EngineApiValidator for MockEngineValidator {
     fn validate_version_specific_fields(
         &self,
-        _version: reth_payload_primitives::EngineApiMessageVersion,
-        _payload_or_attrs: reth_payload_primitives::PayloadOrAttributes<
+        _version: base_execution_payload_types::EngineApiMessageVersion,
+        _payload_or_attrs: base_execution_payload_types::PayloadOrAttributes<
             '_,
             ExecutionData,
             BasePayloadBuilderAttributes<BaseTxEnvelope>,
         >,
-    ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
+    ) -> Result<(), base_execution_payload_types::EngineObjectValidationError> {
         // Mock implementation - always valid
         Ok(())
     }
 
     fn ensure_well_formed_attributes(
         &self,
-        _version: reth_payload_primitives::EngineApiMessageVersion,
+        _version: base_execution_payload_types::EngineApiMessageVersion,
         _attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-    ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
+    ) -> Result<(), base_execution_payload_types::EngineObjectValidationError> {
         // Mock implementation - always valid
         Ok(())
     }

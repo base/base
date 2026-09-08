@@ -7,11 +7,11 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::{Result, eyre};
 use reth_node_api::TreeConfig;
 use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_node_core::primitives::RecoveredBlock;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use revm::state::EvmState;
 use tokio::{
     sync::mpsc,

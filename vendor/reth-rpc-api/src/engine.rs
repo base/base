@@ -23,8 +23,8 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
 };
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use jsonrpsee::{RpcModule, core::RpcResult, proc_macros::rpc};
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use serde_json::Value;
 
 /// Helper trait for the engine api server.

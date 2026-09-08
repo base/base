@@ -6,12 +6,12 @@ use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{FullNode, rpc::RethRpcAddOns};
-use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_primitives_traits::Block;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions,

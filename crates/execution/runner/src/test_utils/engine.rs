@@ -12,10 +12,10 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
 };
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_rpc::BaseEngineApiClient;
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
 use url::Url;

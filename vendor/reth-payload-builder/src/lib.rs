@@ -32,7 +32,7 @@
 //! use alloy_primitives::B256;
 //! use reth_payload_builder::PayloadId;
 //! use alloy_primitives::U256;
-//! use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+//! use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 //! use base_common_consensus::BaseTxEnvelope;
 //! use reth_payload_builder::{PayloadBuilderError, KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator, PayloadKind};
 //! use reth_primitives_traits::{RecoveredBlock, SealedBlock};
@@ -127,8 +127,8 @@ pub mod test_utils;
 pub use alloy_rpc_types::engine::PayloadId;
 // re-export the Ethereum engine primitives for convenience
 #[doc(inline)]
-pub use reth_payload_builder_primitives::PayloadBuilderError;
-pub use reth_payload_primitives::PayloadKind;
+pub use base_execution_payload_types::PayloadBuilderError;
+pub use base_execution_payload_types::PayloadKind;
 pub use service::{
     BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease, PayloadBuilderResources,
     PayloadBuilderService, PayloadServiceCommand, PayloadStore,

@@ -120,6 +120,10 @@ use base_execution_evm::{
     BaseEvmConfig, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
     block::BlockExecutor,
 };
+use base_execution_payload_types::{
+    BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
+    NewPayloadError,
+};
 use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
 use reth_engine_primitives::{
     ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
@@ -127,10 +131,6 @@ use reth_engine_primitives::{
 use reth_execution_cache::{CacheFillMode, CacheStats};
 use reth_execution_errors::BlockExecutionError;
 use reth_payload_builder::{PayloadBuilderLease, PayloadBuilderResources};
-use reth_payload_primitives::{
-    BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
-    NewPayloadError,
-};
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
     SealedHeader, SignerRecoverable,

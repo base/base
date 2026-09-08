@@ -7,10 +7,10 @@ use std::{
 
 use alloy_primitives::{B256, map::B256Set};
 use base_common_consensus::BaseBlock;
+use base_execution_payload_types::BuiltPayloadExecutedBlock;
 use crossbeam_channel::Sender;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
-use reth_payload_primitives::BuiltPayloadExecutedBlock;
 use reth_primitives_traits::{Block, SealedBlock};
 use tokio::sync::mpsc::UnboundedReceiver;
 

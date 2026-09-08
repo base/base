@@ -11,9 +11,10 @@ use alloy_consensus::Block;
 use alloy_primitives::U256;
 use alloy_rpc_types::engine::PayloadId;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_types::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
+};
 use reth_chain_state::CanonStateNotification;
-use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadKind};
 use reth_primitives_traits::Block as _;
 
 use crate::{

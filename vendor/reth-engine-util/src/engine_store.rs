@@ -10,10 +10,10 @@ use std::{
 
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_types::BasePayloadBuilderAttributes;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_fs_util as fs;
-use reth_payload_primitives::BasePayloadBuilderAttributes;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
