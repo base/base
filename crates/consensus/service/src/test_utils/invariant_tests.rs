@@ -165,7 +165,7 @@ async fn l4_confirmations_observed_by_derivation() {
     let saw_safe_confirmation = calls[pre_extend_count + 1..].iter().any(|call| {
         matches!(
             call,
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. }
+            EngineClientCall::UpdateForkchoice { fcs, .. }
                 if fcs.safe_block_hash == hash_for(1)
         )
     });
@@ -253,8 +253,8 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
     };
 
     // Send ProcessSafeL2SignalRequest directly instead of via fake_l1.extend().
-    // fake_l1.extend() calls inject_fcu_v3_call() which pops the first scripted response before
-    // the engine actor ever calls fork_choice_updated_v3(), defeating the test.
+    // fake_l1.extend() calls inject_forkchoice_call() which pops the first scripted response before
+    // the engine actor ever calls update_forkchoice(), defeating the test.
     engine_tx
         .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
             L2BlockInfo { block_info: block(1, B256::ZERO, hash_for(1), 1), ..Default::default() },
@@ -268,7 +268,7 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
         .calls()
         .into_iter()
         .filter_map(|call| match call {
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } => Some(fcs.head_block_hash),
+            EngineClientCall::UpdateForkchoice { fcs, .. } => Some(fcs.head_block_hash),
             _ => None,
         })
         .collect();

@@ -82,7 +82,6 @@ pub trait EngineClient: Send + Sync {
     async fn resolve_payload(
         &self,
         id: PayloadId,
-        attributes: &BasePayloadAttributes,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError>;
 
     /// Returns a reference to the inner [`RollupConfig`].

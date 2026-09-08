@@ -1001,7 +1001,7 @@ mod tests {
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
                 .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
                 .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
 
@@ -1065,7 +1065,7 @@ mod tests {
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
                 .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
                 .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
-                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .with_forkchoice_response(syncing_fcu())
                 .build(),
         );
 
@@ -1141,7 +1141,7 @@ mod tests {
         let client = Arc::new(
             test_engine_client_builder()
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
 
@@ -1217,7 +1217,7 @@ mod tests {
         let client = Arc::new(
             test_engine_client_builder()
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
 
@@ -1290,8 +1290,8 @@ mod tests {
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), genesis_block.clone())
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), genesis_block.clone())
                 .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
-                .with_fork_choice_updated_v2_response(build_fcu.clone())
-                .with_fork_choice_updated_v3_response(build_fcu)
+                .with_forkchoice_response(build_fcu.clone())
+                .with_forkchoice_response(build_fcu)
                 .with_l1_block(BlockId::from(0u64), RpcBlock::default())
                 .with_l2_block(BlockId::from(genesis_hash), genesis_block)
                 .build(),
@@ -1378,8 +1378,8 @@ mod tests {
                 .with_l2_block_by_label(BlockNumberOrTag::Number(97), block_97.clone())
                 .with_l2_block(BlockId::from(96u64), block_96)
                 .with_l2_block(BlockId::from(97u64), block_97)
-                .with_fork_choice_updated_v2_response(valid_fcu())
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
         let mut derivation = MockEngineDerivationClient::new();
@@ -1492,7 +1492,7 @@ mod tests {
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
                 .with_block_info_by_tag(BlockNumberOrTag::Safe, reth_safe)
                 .with_block_info_by_tag(BlockNumberOrTag::Finalized, reth_finalized)
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
 
@@ -1657,7 +1657,7 @@ mod tests {
                 // find_starting_forkchoice unsafe-head loop: L1 origin of genesis is B256::ZERO.
                 .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
                 // SynchronizeTask inside engine.reset() sends FCU v3.
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 // Post-FCU: L1 origin block at number 0 and L2 safe block by genesis hash.
                 .with_l1_block(BlockId::from(0u64), RpcBlock::default())
                 .with_l2_block(BlockId::from(genesis_hash), genesis_block.clone())
@@ -1850,11 +1850,11 @@ mod tests {
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), full_latest)
                 .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
                 .with_l1_block(BlockId::from(0u64), RpcBlock::default())
-                .with_new_payload_v2_response(PayloadStatus {
+                .with_payload_response(PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(next_hash),
                 })
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
 
@@ -1953,7 +1953,7 @@ mod tests {
                 .with_l1_block(canonical_parent_origin.number.into(), canonical_parent_l1)
                 .with_l1_block(orphan_origin.number.into(), canonical_l1)
                 .with_l1_block(orphan_origin.hash.into(), orphan_l1)
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
         assert!(
@@ -2006,8 +2006,8 @@ mod tests {
 
         let storage = client.storage();
         let storage = storage.read().await;
-        assert_eq!(storage.fork_choice_updated_v3_requests.len(), 1);
-        let reset_forkchoice = storage.fork_choice_updated_v3_requests[0].0;
+        assert_eq!(storage.forkchoice_requests.len(), 1);
+        let reset_forkchoice = storage.forkchoice_requests[0].0;
         assert_eq!(reset_forkchoice.head_block_hash, finalized_hash);
         assert_eq!(reset_forkchoice.safe_block_hash, finalized_hash);
         assert_eq!(reset_forkchoice.finalized_block_hash, finalized_hash);
@@ -2047,7 +2047,7 @@ mod tests {
         let client = Arc::new(
             test_engine_client_builder()
                 .with_config(cfg.clone())
-                .with_fork_choice_updated_v3_response(invalid_fcu)
+                .with_forkchoice_response(invalid_fcu)
                 .build(),
         );
 

@@ -29,9 +29,6 @@ pub use local_client::LocalEngineClient;
 mod client;
 pub use client::{EngineClient, EngineClientError};
 
-mod versions;
-pub use versions::{EngineForkchoiceVersion, EngineGetPayloadVersion, EngineNewPayloadVersion};
-
 mod state;
 pub use state::{EngineState, EngineSyncState, EngineSyncStateUpdate};
 

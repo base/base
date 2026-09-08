@@ -133,11 +133,11 @@ impl PrunedHistoryStartup {
                 )
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest_block)
                 .with_l1_block(BlockId::Number(0.into()), RpcBlock::default())
-                .with_new_payload_v2_response(PayloadStatus {
+                .with_payload_response(PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(next_unsafe_hash),
                 })
-                .with_fork_choice_updated_v3_response(valid_fcu())
+                .with_forkchoice_response(valid_fcu())
                 .build(),
         );
 

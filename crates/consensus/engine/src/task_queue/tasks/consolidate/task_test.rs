@@ -104,13 +104,6 @@ fn valid_fcu() -> ForkchoiceUpdated {
     }
 }
 
-fn valid_build_fcu() -> ForkchoiceUpdated {
-    ForkchoiceUpdated {
-        payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None },
-        payload_id: Some(PayloadId::new([9u8; 8])),
-    }
-}
-
 /// Verifies that consolidation does NOT fatally error when safe head is behind
 /// the unsafe head and the derived attributes don't match the existing block.
 ///
@@ -161,8 +154,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
     let client = Arc::new(
         test_engine_client_builder()
             .with_l2_block_by_label(BlockNumberOrTag::Number(35), mismatched_block)
-            .with_fork_choice_updated_v2_response(valid_fcu.clone())
-            .with_fork_choice_updated_v3_response(valid_fcu)
+            .with_forkchoice_response(valid_fcu)
             .build(),
     );
 
@@ -219,12 +211,8 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
         .with_is_last_in_span(false)
         .build();
 
-    let client = Arc::new(
-        test_engine_client_builder()
-            .with_fork_choice_updated_v2_response(valid_build_fcu())
-            .with_fork_choice_updated_v3_response(syncing_fcu())
-            .build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
     let mut state = TestEngineStateBuilder::new()
         .with_unsafe_head(pinned_head)
         .with_safe_head(pinned_head)
@@ -246,7 +234,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
 
     // EL sync has now caught up enough to serve the next safe block that derivation is about to
     // confirm.
-    client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+    client.set_forkchoice_response(valid_fcu()).await;
     let safe_child_block = matching_rpc_block(safe_child, &attributes);
     let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
     client
@@ -271,11 +259,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
     let storage = client.storage();
     let requests = storage.read().await;
     assert!(
-        requests
-            .fork_choice_updated_v2_requests
-            .iter()
-            .chain(requests.fork_choice_updated_v3_requests.iter())
-            .all(|(_, has_attrs)| !has_attrs),
+        requests.forkchoice_requests.iter().all(|(_, has_attrs)| !has_attrs),
         "safe reconciliation must not start a stale FCU-with-attributes build"
     );
 }
@@ -308,7 +292,7 @@ async fn consolidate_syncing_yields_until_a_later_drain() {
                 BlockNumberOrTag::Number(safe_child.block_info.number),
                 safe_child_block,
             )
-            .with_fork_choice_updated_v3_response(syncing_fcu())
+            .with_forkchoice_response(syncing_fcu())
             .build(),
     );
     let initial_state = TestEngineStateBuilder::new()
@@ -335,7 +319,7 @@ async fn consolidate_syncing_yields_until_a_later_drain() {
     assert_eq!(*queue_rx.borrow(), 1, "deferred task must remain queued");
     assert_eq!(engine.state().sync_state.unsafe_head(), pinned_head);
 
-    client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+    client.set_forkchoice_response(valid_fcu()).await;
     engine.drain().await.expect("a later drain should retry the pending consolidation");
 
     assert_eq!(*queue_rx.borrow(), 0);
@@ -372,12 +356,8 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
         .with_is_last_in_span(true)
         .build();
 
-    let client = Arc::new(
-        test_engine_client_builder()
-            .with_fork_choice_updated_v2_response(valid_build_fcu())
-            .with_fork_choice_updated_v3_response(syncing_fcu())
-            .build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
     let mut state = TestEngineStateBuilder::new()
         .with_unsafe_head(pinned_head)
         .with_safe_head(pinned_head)
@@ -395,7 +375,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
     .expect("SYNCING unsafe FCU should be non-fatal");
     assert_eq!(state.sync_state.unsafe_head(), pinned_head);
 
-    client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+    client.set_forkchoice_response(valid_fcu()).await;
     let safe_child_block = matching_rpc_block(safe_child, &attributes);
     let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
     client
@@ -420,11 +400,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
     let storage = client.storage();
     let requests = storage.read().await;
     assert!(
-        requests
-            .fork_choice_updated_v2_requests
-            .iter()
-            .chain(requests.fork_choice_updated_v3_requests.iter())
-            .all(|(_, has_attrs)| !has_attrs),
+        requests.forkchoice_requests.iter().all(|(_, has_attrs)| !has_attrs),
         "span-ending safe reconciliation must not start a stale FCU-with-attributes build"
     );
 }

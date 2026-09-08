@@ -1,95 +1,18 @@
 # `base-consensus-engine`
 
-<a href="https://crates.io/crates/base-consensus-engine"><img src="https://img.shields.io/crates/v/base-consensus-engine.svg?label=base-consensus-engine&labelColor=2a2f35" alt="base-consensus-engine"></a>
+Consensus coordination for the co-located Base execution node.
 
-An extensible implementation of the [Base][base-specs] rollup node engine client.
+`Engine` owns the prioritized task queue and publishes execution state updates. Insert,
+consolidate, finalize, build, and synchronize tasks call `LocalEngineClient`, which holds
+the execution driver, payload builder, and local database provider. These calls use Rust
+values and typed responses; no Engine RPC server, authentication, or transport is involved.
 
-## Overview
+Local block reads return native sealed blocks. L1 reads continue to use the configured
+remote provider. Payload envelopes remain boundary formats for gossip and remote sources.
 
-The `base-consensus-engine` crate provides a task-based engine client for interacting with Ethereum execution layers. It implements the Engine API specification and manages the execution layer state through a priority-driven task queue system.
+Build resolution uses the build identifier. Chain rules are validated by the execution
+services, without selecting versioned Engine RPC methods. Forkchoice, validation, and
+persistence retain their serialized execution order.
 
-## Key Components
-
-- **[`Engine`](crate::Engine)** - Main engine state owner that executes engine operations atomically
-- **[`EngineClient`](crate::EngineClient)** - HTTP client for Engine API communication with JWT authentication
-- **[`EngineState`](crate::EngineState)** - Tracks the current state of the execution layer
-- **Task Types** - Specialized tasks for different engine operations:
-  - [`InsertTask`](crate::InsertTask) - Insert new payloads into the execution engine
-  - [`ConsolidateTask`](crate::ConsolidateTask) - Consolidate unsafe payloads to advance the safe chain
-  - [`FinalizeTask`](crate::FinalizeTask) - Finalize safe payloads on L1 confirmation
-  - [`SynchronizeTask`](crate::SynchronizeTask) - Internal task for execution layer forkchoice synchronization
-
-## Architecture
-
-The engine implements a task-driven architecture where operations are queued and executed atomically:
-
-```text
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Engine    │◄───┤  Task Queue  │◄───┤  Engine     │
-│   Client    │    │   (Priority) │    │  Tasks      │
-└─────────────┘    └──────────────┘    └─────────────┘
-       │                   │                   │
-       ▼                   ▼                   ▼
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│ Engine API  │    │ Engine State │    │  Rollup     │
-│ (HTTP/JWT)  │    │   Updates    │    │  Config     │
-└─────────────┘    └──────────────┘    └─────────────┘
-```
-
-- **Automatic Forkchoice Handling**: [`Engine::build`](crate::Engine::build) automatically performs forkchoice updates during block building, eliminating the need for explicit forkchoice management in user code.
-- **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by other tasks rather than directly by users.
-- **Priority-Based Execution**: Tasks are executed in priority order to ensure optimal sequencer performance and block processing efficiency.
-
-## Engine API Compatibility
-
-The crate supports multiple Engine API versions with automatic version selection based on the rollup configuration:
-
-- **Engine Forkchoice Updated**: V2, V3
-- **Engine New Payload**: V2, V3, V4
-- **Engine Get Payload**: V2, V3, V4
-
-Version selection follows Base upgrade activation times (Bedrock, Canyon, Delta, Ecotone, Isthmus).
-
-## Features
-
-- `metrics` - Enable Prometheus metrics collection (optional)
-
-## Module Organization
-
-- **Task Queue** - Core engine task queue and execution logic via [`Engine`](crate::Engine)
-- **Client** - HTTP client for Engine API communication via [`EngineClient`](crate::EngineClient)
-- **State** - Engine state management and synchronization via [`EngineState`](crate::EngineState)
-- **Versions** - Engine API version selection via [`EngineForkchoiceVersion`](crate::EngineForkchoiceVersion),
-  [`EngineNewPayloadVersion`](crate::EngineNewPayloadVersion), [`EngineGetPayloadVersion`](crate::EngineGetPayloadVersion)
-- **Attributes** - Payload attribute validation via [`AttributesMatch`](crate::AttributesMatch)
-- **Kinds** - Engine client type identification via [`EngineKind`](crate::EngineKind)
-- **Query** - Engine query interface via [`EngineQueries`](crate::EngineQueries)
-- **Metrics** - Optional Prometheus metrics collection via [`Metrics`](crate::Metrics)
-
-<!-- Hyper Links -->
-
-[base-specs]: https://specs.base.org
-
-## Usage
-
-Add the dependency to your `Cargo.toml`:
-
-```toml
-[dependencies]
-base-consensus-engine = { workspace = true }
-```
-
-Submit engine tasks via the `Engine`:
-
-```rust,ignore
-use base_consensus_engine::{Engine, EngineClient, InsertTask};
-
-let client = EngineClient::new(engine_url, jwt_secret)?;
-let engine = Engine::new(client, rollup_config);
-
-engine.submit(InsertTask::new(payload)).await?;
-```
-
-## License
-
-Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+The `metrics` feature enables Prometheus metrics. Test utilities provide scriptable native
+command responses and call recording for consensus behavior tests.

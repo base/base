@@ -10,26 +10,19 @@ use std::{
 };
 
 use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898BlockNumberOrTag};
-use alloy_primitives::{Address, B256, BlockHash};
+use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
-use alloy_rpc_types_engine::{
-    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
-    ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
-};
+use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{BaseBlockResponse, Transaction as BaseTransaction};
-use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
-    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
-    BasePayloadAttributes,
-};
+use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::L2BlockInfo;
 
-/// Scripted response for an FCU-v3 call.
+/// Scripted response for an forkchoice call.
 #[derive(Clone, Debug)]
 pub enum ScriptedForkchoiceResponse {
     /// Return a successful FCU response.
@@ -41,19 +34,17 @@ pub enum ScriptedForkchoiceResponse {
 /// Recorded Engine client call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EngineClientCall {
-    /// `fork_choice_updated_v3` invocation.
-    ForkChoiceUpdatedV3 {
+    /// `update_forkchoice` invocation.
+    UpdateForkchoice {
         /// Forkchoice state sent to the EL.
         fcs: ForkchoiceState,
-        /// Optional payload attributes sent with FCU-v3.
+        /// Optional payload attributes sent with forkchoice.
         payload_attributes: Box<Option<BasePayloadAttributes>>,
     },
-    /// `fork_choice_updated_v2` invocation.
-    ForkChoiceUpdatedV2(ForkchoiceState),
-    /// `new_payload_v3` invocation.
-    NewPayloadV3(Box<ExecutionPayloadV3>),
-    /// `get_payload_v3` invocation.
-    GetPayloadV3(PayloadId),
+    /// `submit_payload` invocation.
+    SubmitPayload(Box<BaseExecutionPayloadEnvelope>),
+    /// `resolve_payload` invocation.
+    ResolvePayload(PayloadId),
     /// `l2_block_info_by_label` invocation.
     L2BlockInfoByLabel(BlockNumberOrTag),
     /// `l2_block_by_label` invocation.
@@ -61,14 +52,14 @@ pub enum EngineClientCall {
 }
 
 #[derive(Debug, Default)]
-struct FakeEngineClientState {
+pub struct FakeEngineClientState {
     calls: Vec<EngineClientCall>,
     l2_block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
     l2_blocks_by_label: HashMap<BlockNumberOrTag, BaseBlockResponse<BaseTransaction>>,
-    scripted_fcu_v3: VecDeque<ScriptedForkchoiceResponse>,
-    scripted_new_payload_v3: VecDeque<PayloadStatus>,
-    single_new_payload_v3: Option<PayloadStatus>,
-    single_get_payload_v3: Option<Result<BaseExecutionPayloadEnvelopeV3, String>>,
+    scripted_forkchoice: VecDeque<ScriptedForkchoiceResponse>,
+    scripted_payload: VecDeque<PayloadStatus>,
+    single_payload: Option<PayloadStatus>,
+    built_payload: Option<Result<BaseExecutionPayloadEnvelope, String>>,
 }
 
 /// Handle for inspecting and mutating a [`FakeEngineClient`].
@@ -88,35 +79,35 @@ impl FakeEngineClientHandle {
         self.state.lock().expect("FakeEngineClient state mutex poisoned").calls.clone()
     }
 
-    /// Appends scripted FCU-v3 responses to be consumed in call order.
-    pub fn push_scripted_fcu_v3(
+    /// Appends scripted forkchoice responses to be consumed in call order.
+    pub fn push_scripted_forkchoice(
         &self,
         scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
     ) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
-            .scripted_fcu_v3
+            .scripted_forkchoice
             .extend(scripted);
     }
 
-    /// Appends scripted `new_payload_v3` responses to be consumed in call order.
-    pub fn push_scripted_new_payload_v3(&self, scripted: impl IntoIterator<Item = PayloadStatus>) {
+    /// Appends scripted `submit_payload` responses to be consumed in call order.
+    pub fn push_scripted_payload(&self, scripted: impl IntoIterator<Item = PayloadStatus>) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
-            .scripted_new_payload_v3
+            .scripted_payload
             .extend(scripted);
     }
 
-    /// Records a synthetic FCU-v3 call in the call log and consumes one scripted response.
-    pub fn inject_fcu_v3_call(&self, fork_choice_state: ForkchoiceState) {
+    /// Records a synthetic forkchoice call in the call log and consumes one scripted response.
+    pub fn inject_forkchoice_call(&self, fork_choice_state: ForkchoiceState) {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {
+        state.calls.push(EngineClientCall::UpdateForkchoice {
             fcs: fork_choice_state,
             payload_attributes: Box::new(None),
         });
-        let _ = state.scripted_fcu_v3.pop_front();
+        let _ = state.scripted_forkchoice.pop_front();
     }
 
     /// Sets the `l2_block_info_by_label` response for a specific tag.
@@ -160,19 +151,19 @@ impl FakeEngineClient {
         FakeEngineClientHandle { state: Arc::clone(&self.state) }
     }
 
-    /// Scripts one fallback `new_payload_v3` response.
-    pub fn with_new_payload_v3_response(self, response: PayloadStatus) -> Self {
-        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_new_payload_v3 =
+    /// Scripts one fallback `submit_payload` response.
+    pub fn with_payload_response(self, response: PayloadStatus) -> Self {
+        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_payload =
             Some(response);
         self
     }
 
-    /// Scripts one fallback `get_payload_v3` response.
-    pub fn with_get_payload_v3_response(
+    /// Scripts one fallback `resolve_payload` response.
+    pub fn with_built_payload(
         self,
-        response: Result<BaseExecutionPayloadEnvelopeV3, String>,
+        response: Result<BaseExecutionPayloadEnvelope, String>,
     ) -> Self {
-        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_get_payload_v3 =
+        self.state.lock().expect("FakeEngineClient state mutex poisoned").built_payload =
             Some(response);
         self
     }
@@ -202,102 +193,55 @@ impl FakeEngineClient {
 
 #[async_trait]
 impl EngineClient for FakeEngineClient {
-    /// Submits a payload independently of the Engine wire protocol version.
     async fn submit_payload(
         &self,
-        envelope: base_common_rpc_types_engine::BaseExecutionPayloadEnvelope,
+        payload: BaseExecutionPayloadEnvelope,
     ) -> Result<PayloadStatus, EngineClientError> {
-        let result: TransportResult<PayloadStatus> = async {
-            let root = envelope.parent_beacon_block_root.unwrap_or_default();
-            match envelope.execution_payload {
-                base_common_rpc_types_engine::BaseExecutionPayload::V1(payload) => {
-                    self.new_payload_v2(ExecutionPayloadInputV2 {
-                        execution_payload: payload,
-                        withdrawals: None,
-                    })
-                    .await
-                }
-                base_common_rpc_types_engine::BaseExecutionPayload::V2(payload) => {
-                    self.new_payload_v2(ExecutionPayloadInputV2 {
-                        execution_payload: payload.payload_inner,
-                        withdrawals: Some(payload.withdrawals),
-                    })
-                    .await
-                }
-                base_common_rpc_types_engine::BaseExecutionPayload::V3(payload) => {
-                    self.new_payload_v3(payload, root).await
-                }
-                base_common_rpc_types_engine::BaseExecutionPayload::V4(payload) => {
-                    self.new_payload_v4(payload, root).await
-                }
-            }
-        }
-        .await;
-        result.map_err(Into::into)
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
+        state.calls.push(EngineClientCall::SubmitPayload(Box::new(payload)));
+        Ok(state.scripted_payload.pop_front().or_else(|| state.single_payload.clone()).unwrap_or(
+            PayloadStatus {
+                status: alloy_rpc_types_engine::PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            },
+        ))
     }
 
-    /// Applies forkchoice and optionally requests a payload build.
     async fn update_forkchoice(
         &self,
-        state: ForkchoiceState,
-        attributes: Option<BasePayloadAttributes>,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> Result<ForkchoiceUpdated, EngineClientError> {
-        let result: TransportResult<ForkchoiceUpdated> = async {
-            if attributes.as_ref().is_some_and(|attrs| {
-                !self.cfg().is_ecotone_active(attrs.payload_attributes.timestamp)
-            }) {
-                self.fork_choice_updated_v2(state, attributes).await
-            } else {
-                self.fork_choice_updated_v3(state, attributes).await
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
+        state.calls.push(EngineClientCall::UpdateForkchoice {
+            fcs: fork_choice_state,
+            payload_attributes: Box::new(payload_attributes),
+        });
+        match state.scripted_forkchoice.pop_front().unwrap_or_else(|| {
+            ScriptedForkchoiceResponse::Err(
+                "FAKE_EXHAUSTED: no scripted forkchoice response available".to_string(),
+            )
+        }) {
+            ScriptedForkchoiceResponse::Ok(value) => Ok(value),
+            ScriptedForkchoiceResponse::Err(message) => {
+                Err(EngineClientError::RpcError(TransportErrorKind::custom_str(&message).into()))
             }
         }
-        .await;
-        result.map_err(Into::into)
     }
 
-    /// Resolves a built payload for consensus and gossip.
     async fn resolve_payload(
         &self,
-        id: PayloadId,
-        attributes: &BasePayloadAttributes,
-    ) -> Result<base_common_rpc_types_engine::BaseExecutionPayloadEnvelope, EngineClientError> {
-        let result: TransportResult<BaseExecutionPayloadEnvelope> = async {
-            let timestamp = attributes.payload_attributes.timestamp;
-            let parent_beacon_block_root = attributes.payload_attributes.parent_beacon_block_root;
-            let execution_payload = match base_consensus_engine::EngineGetPayloadVersion::from_cfg(
-                self.cfg(),
-                timestamp,
-            ) {
-                base_consensus_engine::EngineGetPayloadVersion::V5 => {
-                    BaseExecutionPayload::V4(self.get_payload_v5(id).await?.execution_payload)
-                }
-                base_consensus_engine::EngineGetPayloadVersion::V4 => {
-                    BaseExecutionPayload::V4(self.get_payload_v4(id).await?.execution_payload)
-                }
-                base_consensus_engine::EngineGetPayloadVersion::V3 => {
-                    BaseExecutionPayload::V3(self.get_payload_v3(id).await?.execution_payload)
-                }
-                base_consensus_engine::EngineGetPayloadVersion::V2 => {
-                    match self.get_payload_v2(id).await?.execution_payload.into_payload() {
-                        alloy_rpc_types_engine::ExecutionPayload::V1(payload) => {
-                            BaseExecutionPayload::V1(payload)
-                        }
-                        alloy_rpc_types_engine::ExecutionPayload::V2(payload) => {
-                            BaseExecutionPayload::V2(payload)
-                        }
-                        _ => {
-                            return Err(TransportErrorKind::custom_str(
-                                "unexpected legacy payload version",
-                            )
-                            .into());
-                        }
-                    }
-                }
-            };
-            Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
-        }
-        .await;
-        result.map_err(Into::into)
+        payload_id: PayloadId,
+    ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
+        state.calls.push(EngineClientCall::ResolvePayload(payload_id));
+        state
+            .built_payload
+            .clone()
+            .unwrap_or_else(|| Err("no built payload scripted".to_string()))
+            .map_err(|error| {
+                EngineClientError::RpcError(TransportErrorKind::custom_str(&error).into())
+            })
     }
 
     fn cfg(&self) -> &RollupConfig {
@@ -358,158 +302,5 @@ impl EngineClient for FakeEngineClient {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockInfoByLabel(numtag));
         Ok(state.l2_block_info_by_tag.get(&numtag).copied())
-    }
-}
-
-impl FakeEngineClient {
-    pub async fn new_payload_v2(
-        &self,
-        _payload: ExecutionPayloadInputV2,
-    ) -> TransportResult<PayloadStatus> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "new_payload_v2 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn new_payload_v3(
-        &self,
-        payload: ExecutionPayloadV3,
-        _parent_beacon_block_root: B256,
-    ) -> TransportResult<PayloadStatus> {
-        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::NewPayloadV3(Box::new(payload)));
-        if let Some(response) = state.scripted_new_payload_v3.pop_front() {
-            return Ok(response);
-        }
-        if let Some(response) = state.single_new_payload_v3.clone() {
-            return Ok(response);
-        }
-        Ok(PayloadStatus {
-            status: alloy_rpc_types_engine::PayloadStatusEnum::Valid,
-            latest_valid_hash: None,
-        })
-    }
-
-    pub async fn new_payload_v4(
-        &self,
-        _payload: BaseExecutionPayloadV4,
-        _parent_beacon_block_root: B256,
-    ) -> TransportResult<PayloadStatus> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "new_payload_v4 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn fork_choice_updated_v2(
-        &self,
-        fork_choice_state: ForkchoiceState,
-        _payload_attributes: Option<BasePayloadAttributes>,
-    ) -> TransportResult<ForkchoiceUpdated> {
-        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::ForkChoiceUpdatedV2(fork_choice_state));
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "fork_choice_updated_v2 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn fork_choice_updated_v3(
-        &self,
-        fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<BasePayloadAttributes>,
-    ) -> TransportResult<ForkchoiceUpdated> {
-        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {
-            fcs: fork_choice_state,
-            payload_attributes: Box::new(payload_attributes),
-        });
-        let response = state.scripted_fcu_v3.pop_front().unwrap_or_else(|| {
-            ScriptedForkchoiceResponse::Err(
-                "FAKE_EXHAUSTED: no scripted FCU-v3 response available (test setup: preload more \
-                 responses)"
-                    .to_string(),
-            )
-        });
-        match response {
-            ScriptedForkchoiceResponse::Ok(value) => Ok(value),
-            ScriptedForkchoiceResponse::Err(message) => {
-                Err(TransportError::from(TransportErrorKind::custom_str(&message)))
-            }
-        }
-    }
-
-    pub async fn get_payload_v2(
-        &self,
-        _payload_id: PayloadId,
-    ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "get_payload_v2 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn get_payload_v3(
-        &self,
-        payload_id: PayloadId,
-    ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
-        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::GetPayloadV3(payload_id));
-        let response = state.single_get_payload_v3.clone();
-        match response {
-            Some(Ok(payload)) => Ok(payload),
-            Some(Err(error)) => Err(TransportError::from(TransportErrorKind::custom_str(&error))),
-            None => Err(TransportError::from(TransportErrorKind::custom_str(
-                "get_payload_v3 is not scripted in FakeEngineClient",
-            ))),
-        }
-    }
-
-    pub async fn get_payload_v4(
-        &self,
-        _payload_id: PayloadId,
-    ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "get_payload_v4 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn get_payload_v5(
-        &self,
-        _payload_id: PayloadId,
-    ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "get_payload_v5 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn get_payload_bodies_by_hash_v1(
-        &self,
-        _block_hashes: Vec<BlockHash>,
-    ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "get_payload_bodies_by_hash_v1 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn get_payload_bodies_by_range_v1(
-        &self,
-        _start: u64,
-        _count: u64,
-    ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "get_payload_bodies_by_range_v1 is not scripted in FakeEngineClient",
-        )))
-    }
-
-    pub async fn get_client_version_v1(
-        &self,
-        _client_version: ClientVersionV1,
-    ) -> TransportResult<Vec<ClientVersionV1>> {
-        Ok(Vec::new())
-    }
-
-    pub async fn exchange_capabilities(
-        &self,
-        capabilities: Vec<String>,
-    ) -> TransportResult<Vec<String>> {
-        Ok(capabilities)
     }
 }

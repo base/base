@@ -240,7 +240,7 @@ impl HarnessBuilder {
         });
         let fake_engine_client = FakeEngineClient::new(Arc::clone(&config));
         let fake_engine_handle = fake_engine_client.handle();
-        fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses);
+        fake_engine_handle.push_scripted_forkchoice(self.scripted_el_responses);
 
         fake_engine_client
             .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default());

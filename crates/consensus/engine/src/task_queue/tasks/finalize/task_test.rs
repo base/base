@@ -178,7 +178,7 @@ async fn success_updates_engine_state_finalized_head() {
     let client = test_engine_client_builder()
         .with_config(Arc::clone(&cfg))
         .with_l2_block(BlockId::Number(BlockNumberOrTag::Number(0)), block)
-        .with_fork_choice_updated_v3_response(valid_fcu(BASE_MAINNET_GENESIS_HASH))
+        .with_forkchoice_response(valid_fcu(BASE_MAINNET_GENESIS_HASH))
         .build();
 
     // Default TestEngineStateBuilder starts with finalized_head.hash = B256::ZERO.

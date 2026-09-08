@@ -128,7 +128,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     pub async fn build_with_state(
         state: &EngineState,
         engine_client: &EngineClient_,
-        cfg: &RollupConfig,
+        _cfg: &RollupConfig,
         attributes_envelope: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
         debug!(
@@ -143,7 +143,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         );
 
         let fcu_start_time = Instant::now();
-        let payload_id = Self::start_build(state, engine_client, cfg, attributes_envelope).await?;
+        let payload_id = Self::start_build(state, engine_client, attributes_envelope).await?;
         let fcu_duration = fcu_start_time.elapsed();
 
         info!(
@@ -195,7 +195,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     pub async fn get_payload_with_state(
         state: &EngineState,
         engine: &EngineClient_,
-        cfg: &RollupConfig,
+        _cfg: &RollupConfig,
         payload_id: PayloadId,
         payload_attrs: &AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
@@ -220,7 +220,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             return Err(SealTaskError::UnsafeHeadChangedSinceBuild);
         }
 
-        Self::fetch_payload(cfg, engine, payload_id, payload_attrs).await
+        Self::fetch_payload(engine, payload_id).await
     }
 
     /// Validates a forkchoice update status returned while starting a build.
@@ -247,7 +247,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     pub async fn start_build(
         state: &EngineState,
         engine_client: &EngineClient_,
-        _cfg: &RollupConfig,
         attributes_envelope: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
         if state.sync_state.unsafe_head().block_info.number
@@ -300,14 +299,12 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             .ok_or(BuildTaskError::EngineBuildError(EngineBuildError::MissingPayloadId))
     }
 
-    /// Fetches the payload from the execution layer using the payload timestamp for versioning.
+    /// Resolves the build owned by the execution layer.
     pub async fn fetch_payload(
-        _cfg: &RollupConfig,
         engine: &EngineClient_,
         payload_id: PayloadId,
-        payload_attrs: &AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        engine.resolve_payload(payload_id, payload_attrs.attributes()).await.map_err(|error| {
+        engine.resolve_payload(payload_id).await.map_err(|error| {
             error!(target: "engine", error = %error, "Payload fetch failed");
             SealTaskError::GetPayloadFailed(error)
         })
@@ -670,7 +667,7 @@ mod tests {
         let unsafe_block = test_block_info(1);
         let cfg = RollupConfig::default();
         let client = test_engine_client_builder()
-            .with_fork_choice_updated_v2_response(valid_fcu_with_payload(payload_id))
+            .with_forkchoice_response(valid_fcu_with_payload(payload_id))
             .build();
         let attributes = TestAttributesBuilder::new().with_parent(parent_block).build();
         let state = TestEngineStateBuilder::new()
@@ -731,9 +728,8 @@ mod tests {
 
         let (state_tx, _) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
-        let client = Arc::new(
-            test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
-        );
+        let client =
+            Arc::new(test_engine_client_builder().with_forkchoice_response(valid_fcu()).build());
 
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let update = EngineSyncStateUpdate {
@@ -761,11 +757,8 @@ mod tests {
 
         let (state_tx, _) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
-        let client = Arc::new(
-            test_engine_client_builder()
-                .with_fork_choice_updated_v3_response(syncing_fcu())
-                .build(),
-        );
+        let client =
+            Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
@@ -790,9 +783,8 @@ mod tests {
 
         let (state_tx, _) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
-        let client = Arc::new(
-            test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
-        );
+        let client =
+            Arc::new(test_engine_client_builder().with_forkchoice_response(valid_fcu()).build());
 
         let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
 
@@ -824,7 +816,7 @@ mod tests {
         let client = Arc::new(
             test_engine_client_builder()
                 .with_config(Arc::new(cfg.clone()))
-                .with_fork_choice_updated_v3_response(invalid_fcu())
+                .with_forkchoice_response(invalid_fcu())
                 .build(),
         );
         let cfg = Arc::new(cfg);

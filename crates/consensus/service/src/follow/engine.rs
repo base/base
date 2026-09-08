@@ -165,7 +165,7 @@ mod tests {
         let client = Arc::new(
             test_engine_client_builder()
                 .with_config(Arc::clone(&rollup_config))
-                .with_fork_choice_updated_v3_response(valid_forkchoice_updated())
+                .with_forkchoice_response(valid_forkchoice_updated())
                 .build(),
         );
         let genesis = l2_block_info(0);
@@ -181,15 +181,15 @@ mod tests {
         let insert = tokio::spawn(async move { insert_engine.insert_payload(payload(1)).await });
 
         let deadline = Instant::now() + Duration::from_secs(1);
-        while client.last_new_payload_v2().await.is_none() && Instant::now() < deadline {
+        while client.last_payload().await.is_none() && Instant::now() < deadline {
             time::sleep(Duration::from_millis(10)).await;
         }
         assert!(
-            client.last_new_payload_v2().await.is_some(),
+            client.last_payload().await.is_some(),
             "follow insert should attempt engine_newPayload before retrying"
         );
 
-        client.set_new_payload_v2_response(valid_payload_status()).await;
+        client.set_payload_response(valid_payload_status()).await;
 
         time::timeout(Duration::from_secs(1), insert)
             .await

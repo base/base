@@ -32,7 +32,6 @@ use base_common_consensus::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-use base_consensus_engine::EngineGetPayloadVersion;
 use base_consensus_node::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };
@@ -171,30 +170,13 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         // Give the payload build loop a full block time to assemble the block before resolving
         // it, matching the production sequencer's start-of-slot to end-of-slot cadence.
         tokio::time::sleep(self.block_time).await;
-        let timestamp = attributes.attributes.payload_attributes.timestamp;
-        // Base Azul requires `engine_getPayloadV5` (still imported via `newPayloadV4` in
-        // `insert_unsafe_payload`); earlier upgrades use V4. Both envelopes carry the same
-        // `BaseExecutionPayloadV4` payload and `execution_requests` shape, so only the retrieval
-        // call differs.
-        let (execution_payload, execution_requests) =
-            match EngineGetPayloadVersion::from_cfg(&self.rollup_config, timestamp) {
-                EngineGetPayloadVersion::V5 => {
-                    let envelope = self
-                        .engine()
-                        .get_payload_v5(payload_id)
-                        .await
-                        .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-                    (envelope.execution_payload, envelope.execution_requests)
-                }
-                _ => {
-                    let envelope = self
-                        .engine()
-                        .get_payload(payload_id)
-                        .await
-                        .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-                    (envelope.execution_payload, envelope.execution_requests)
-                }
-            };
+        let envelope = self
+            .engine()
+            .get_payload(payload_id)
+            .await
+            .map_err(|error| EngineClientError::ResponseError(error.to_string()))?;
+        let execution_payload = envelope.execution_payload;
+        let execution_requests = envelope.execution_requests;
         // The production builder never populates EIP-7685 requests for Base blocks (L2 has no
         // EL-triggered requests), and post-Isthmus header validation independently rejects any
         // non-empty `requests_hash`, so a non-empty response here would indicate the builder or

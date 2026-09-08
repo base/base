@@ -704,7 +704,6 @@ impl EngineClient for ActionEngineClient {
     async fn resolve_payload(
         &self,
         id: PayloadId,
-        _attributes: &BasePayloadAttributes,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
         let pending = Self::take_pending(&mut guard, id)?;

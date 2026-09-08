@@ -80,7 +80,7 @@ impl FakeL1 {
     /// Extends the canonical chain by one block.
     ///
     /// When not stalled, each call dispatches the block through `dispatch_safe_l2_for`, which
-    /// consumes **two** scripted FCU responses: one synthetic (via `inject_fcu_v3_call`) and one
+    /// consumes **two** scripted FCU responses: one synthetic (via `inject_forkchoice_call`) and one
     /// real (from the engine actor processing `ProcessSafeL2SignalRequest`). Script the response
     /// queue with this in mind.
     ///
@@ -151,7 +151,7 @@ impl FakeL1 {
             .expect("engine actor request channel closed while dispatching safe l2 signal");
 
         if let Some(engine_handle) = &self.engine_handle {
-            engine_handle.inject_fcu_v3_call(alloy_rpc_types_engine::ForkchoiceState {
+            engine_handle.inject_forkchoice_call(alloy_rpc_types_engine::ForkchoiceState {
                 head_block_hash: safe_l2.block_info.hash,
                 safe_block_hash: safe_l2.block_info.hash,
                 finalized_block_hash: safe_l2.block_info.hash,

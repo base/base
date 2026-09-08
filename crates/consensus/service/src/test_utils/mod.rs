@@ -2,7 +2,8 @@
 
 mod fake_engine_client;
 pub use fake_engine_client::{
-    EngineClientCall, FakeEngineClient, FakeEngineClientHandle, ScriptedForkchoiceResponse,
+    EngineClientCall, FakeEngineClient, FakeEngineClientHandle, FakeEngineClientState,
+    ScriptedForkchoiceResponse,
 };
 
 mod fake_l1;

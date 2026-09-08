@@ -449,14 +449,14 @@ mod tests {
     fn test_client() -> Arc<crate::test_utils::MockEngineClient> {
         Arc::new(
             test_engine_client_builder()
-                .with_new_payload_v2_response(valid_payload_status())
-                .with_fork_choice_updated_v3_response(valid_forkchoice_updated())
+                .with_payload_response(valid_payload_status())
+                .with_forkchoice_response(valid_forkchoice_updated())
                 .build(),
         )
     }
 
     #[tokio::test]
-    async fn bedrock_payload_uses_new_payload_v2_with_no_withdrawals() {
+    async fn bedrock_payload_preserves_absent_withdrawals() {
         let client = test_client();
         let payload = bedrock_payload(1);
         let envelope = BaseExecutionPayloadEnvelope {
@@ -473,20 +473,18 @@ mod tests {
         )
         .execute(&mut state)
         .await
-        .expect("bedrock payload should be imported with engine_newPayloadV2");
+        .expect("bedrock payload should be imported by the native driver");
 
-        let payload_input = client
-            .last_new_payload_v2()
-            .await
-            .expect("new_payload_v2 should record the payload input");
+        let payload_input =
+            client.last_payload().await.expect("submission should record the payload input");
         assert!(
-            payload_input.withdrawals.is_none(),
-            "bedrock payload must keep withdrawals unset when sent via engine_newPayloadV2"
+            matches!(payload_input.execution_payload, BaseExecutionPayload::V1(_)),
+            "bedrock payload must keep withdrawals unset when sent to the native driver"
         );
     }
 
     #[tokio::test]
-    async fn canyon_payload_uses_new_payload_v2_with_withdrawals() {
+    async fn canyon_payload_preserves_withdrawals() {
         let client = test_client();
         let payload = canyon_payload(1);
         let envelope = BaseExecutionPayloadEnvelope {
@@ -503,17 +501,14 @@ mod tests {
         )
         .execute(&mut state)
         .await
-        .expect("canyon payload should be imported with engine_newPayloadV2");
+        .expect("canyon payload should be imported by the native driver");
 
-        let payload_input = client
-            .last_new_payload_v2()
-            .await
-            .expect("new_payload_v2 should record the payload input");
-        assert_eq!(
-            payload_input.withdrawals,
-            Some(vec![]),
-            "canyon payload must preserve withdrawals when sent via engine_newPayloadV2"
-        );
+        let payload_input =
+            client.last_payload().await.expect("submission should record the payload input");
+        let BaseExecutionPayload::V2(payload) = payload_input.execution_payload else {
+            panic!("Canyon must preserve its withdrawals field");
+        };
+        assert!(payload.withdrawals.is_empty());
     }
 
     #[tokio::test]
@@ -584,7 +579,7 @@ mod tests {
         .expect("stale unsafe payload should be dropped without retrying");
 
         assert!(
-            client.last_new_payload_v2().await.is_none(),
+            client.last_payload().await.is_none(),
             "stale unsafe payload should not be sent to engine_newPayload"
         );
         assert_eq!(state.sync_state.unsafe_head(), current_unsafe);
@@ -610,7 +605,7 @@ mod tests {
         .expect("wrong-parent unsafe payload should be dropped without retrying");
 
         assert!(
-            client.last_new_payload_v2().await.is_none(),
+            client.last_payload().await.is_none(),
             "wrong-parent unsafe payload should not be sent to engine_newPayload"
         );
         assert_eq!(state.sync_state.unsafe_head(), current_unsafe);
@@ -636,7 +631,7 @@ mod tests {
         .expect("direct-child unsafe payload should be inserted");
 
         assert!(
-            client.last_new_payload_v2().await.is_some(),
+            client.last_payload().await.is_some(),
             "direct-child unsafe payload should be sent to engine_newPayload"
         );
         assert_eq!(state.sync_state.unsafe_head().block_info.number, 5);
@@ -667,7 +662,7 @@ mod tests {
         .await
         .expect("authoritative payload should replace the newer unsafe head");
 
-        assert!(client.last_new_payload_v2().await.is_some());
+        assert!(client.last_payload().await.is_some());
         assert_eq!(inserted_head.block_info.number, 8);
         assert_eq!(state.sync_state.unsafe_head(), inserted_head);
         assert_eq!(state.sync_state.local_safe_head(), canonical_anchor);
@@ -736,9 +731,7 @@ mod tests {
             .expect("initial payload should be inserted");
 
         let client_without_fcu = Arc::new(
-            test_engine_client_builder()
-                .with_new_payload_v2_response(valid_payload_status())
-                .build(),
+            test_engine_client_builder().with_payload_response(valid_payload_status()).build(),
         );
         let result = InsertTask::authoritative_payload(
             client_without_fcu,

@@ -147,7 +147,6 @@ impl EngineClient for LocalEngineClient {
     async fn resolve_payload(
         &self,
         id: PayloadId,
-        _attributes: &BasePayloadAttributes,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
         let started = Instant::now();
         let result = async {

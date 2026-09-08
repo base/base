@@ -205,17 +205,9 @@ impl TestHarness {
 
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
-        let azul_active = GenesisInfo::extract_from(&chain_spec.genesis.config.extra_fields)
-            .and_then(|genesis_info| genesis_info.base.azul)
-            .is_some_and(|activation_time| next_timestamp >= activation_time);
-
-        let (execution_payload, execution_requests): (_, Vec<Bytes>) = if azul_active {
-            let payload_envelope = self.engine.get_payload_v5(payload_id).await?;
-            (payload_envelope.execution_payload, payload_envelope.execution_requests)
-        } else {
-            let payload_envelope = self.engine.get_payload_v4(payload_id).await?;
-            (payload_envelope.execution_payload, payload_envelope.execution_requests)
-        };
+        let payload_envelope = self.engine.get_payload(payload_id).await?;
+        let execution_payload = payload_envelope.execution_payload;
+        let execution_requests = payload_envelope.execution_requests;
 
         let execution_requests = if execution_requests.is_empty() {
             Requests::default()

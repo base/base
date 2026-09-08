@@ -32,9 +32,8 @@ fn valid_fcu() -> ForkchoiceUpdated {
 async fn valid_response_advances_sync_state() {
     let head = test_block_info(100);
     let cfg = Arc::new(RollupConfig::default());
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(valid_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new().build();
 
@@ -58,9 +57,8 @@ async fn valid_response_advances_sync_state() {
 async fn syncing_response_does_not_advance_sync_state() {
     let head = test_block_info(100);
     let cfg = Arc::new(RollupConfig::default());
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new().with_el_sync_finished(false).build();
     let original_unsafe = state.sync_state.unsafe_head();
@@ -86,9 +84,8 @@ async fn syncing_response_preserves_safe_head_when_it_is_behind_unsafe() {
     let unsafe_head = test_block_info(100);
     let safe_head = test_block_info(90);
     let cfg = Arc::new(RollupConfig::default());
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new()
         .with_unsafe_head(unsafe_head)
@@ -123,9 +120,8 @@ async fn syncing_response_does_not_preserve_safe_head_before_el_sync_finishes() 
     let unsafe_head = test_block_info(100);
     let safe_head = test_block_info(90);
     let cfg = Arc::new(RollupConfig::default());
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new()
         .with_unsafe_head(unsafe_head)
@@ -162,9 +158,8 @@ async fn syncing_response_does_not_advance_safe_head_past_unsafe() {
     let mut preserved_finalized_head = test_block_info(100);
     preserved_finalized_head.block_info.hash = unsafe_head.block_info.hash;
     let cfg = Arc::new(RollupConfig::default());
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new()
         .with_unsafe_head(unsafe_head)
@@ -202,9 +197,8 @@ async fn syncing_response_preserves_equal_height_safe_head_only_on_same_hash() {
     let matching_safe_head = unsafe_head;
     let mismatched_safe_head = test_block_info(100);
     let cfg = Arc::new(RollupConfig::default());
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new()
         .with_unsafe_head(unsafe_head)
@@ -257,9 +251,8 @@ async fn syncing_then_valid_advances_state_on_second_call() {
     let head_b = test_block_info(101);
     let cfg = Arc::new(RollupConfig::default());
 
-    let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
-    );
+    let client =
+        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
 
     let mut state = TestEngineStateBuilder::new().with_el_sync_finished(false).build();
 
@@ -274,7 +267,7 @@ async fn syncing_then_valid_advances_state_on_second_call() {
     assert!(!state.el_sync_finished);
 
     // Reconfigure mock to return Valid.
-    client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+    client.set_forkchoice_response(valid_fcu()).await;
 
     // Second call: EL returns Valid → state advances.
     let task = SynchronizeTask::new(

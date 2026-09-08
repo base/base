@@ -5,8 +5,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
-    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
-    ExecutionData,
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, ExecutionData,
 };
 use base_execution_payload_builder::BaseExecutionHandle;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
@@ -19,22 +18,6 @@ pub struct EngineApi {
 }
 
 impl EngineApi {
-    /// Resolves a build into the payload format used by existing block fixtures.
-    pub async fn get_payload_v4(
-        &self,
-        id: PayloadId,
-    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
-        Ok(self.execution.resolve_payload(id).await?.into())
-    }
-
-    /// Resolves a build including its execution witness metadata.
-    pub async fn get_payload_v5(
-        &self,
-        id: PayloadId,
-    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV5> {
-        Ok(self.execution.resolve_payload(id).await?.into())
-    }
-
     /// Resolves a build for the test fixture.
     pub async fn get_payload(&self, id: PayloadId) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
         Ok(self.execution.resolve_payload(id).await?.into())

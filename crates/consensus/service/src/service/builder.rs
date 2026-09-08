@@ -375,8 +375,7 @@ mod tests {
             .await
             .unwrap();
         assert!(update.payload_status.is_valid());
-        let payload =
-            client.resolve_payload(update.payload_id.unwrap(), &attributes).await.unwrap();
+        let payload = client.resolve_payload(update.payload_id.unwrap()).await.unwrap();
         let hash = payload.execution_payload.block_hash();
         let inserted = client.submit_payload(payload).await.unwrap();
         assert!(inserted.is_valid());
