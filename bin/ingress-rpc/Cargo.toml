@@ -20,7 +20,6 @@ dotenvy = { workspace = true }
 jsonrpsee = { workspace = true }
 base-bundles = { workspace = true }
 base-cli-utils = { workspace = true }
-base-common-network = { workspace = true }
 base-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["default"] }
@@ -29,3 +28,4 @@ anyhow = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 ingress-rpc-lib = { workspace = true, features = ["default"] }
 audit-archiver-lib = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}

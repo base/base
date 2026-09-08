@@ -18,7 +18,6 @@ base-common-evm = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-signer = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
-base-common-network = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
@@ -37,6 +36,7 @@ base-execution-evm = { workspace = true, features = ["default"] }
 audit-archiver-lib = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 clap = { workspace = true, features = ["default", "std", "derive", "env"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }

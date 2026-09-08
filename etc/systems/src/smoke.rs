@@ -15,7 +15,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_common_signer::PrivateKeySigner;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;

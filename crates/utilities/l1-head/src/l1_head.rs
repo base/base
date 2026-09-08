@@ -3,7 +3,7 @@
 use alloy_primitives::B256;
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_optimism_rpc::OptimismRollupProviderExt;
 use thiserror::Error;
 use tracing::debug;

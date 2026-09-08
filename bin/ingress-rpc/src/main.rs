@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_provider::RootProvider;
 use audit_archiver_lib::{AuditConnector, BundleEvent, RpcBundleEventPublisher};
 use base_cli_utils::LogConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_observability_events::GlobalTransactionEventWriter;
 use clap::Parser;
 use ingress_rpc_lib::{

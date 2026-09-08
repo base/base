@@ -22,15 +22,15 @@ impl Network for Base {
 
     type Header = alloy_consensus::Header;
 
-    type TransactionRequest = base_common_rpc_types::BaseTransactionRequest;
+    type TransactionRequest = crate::BaseTransactionRequest;
 
-    type TransactionResponse = base_common_rpc_types::Transaction;
+    type TransactionResponse = crate::Transaction;
 
-    type ReceiptResponse = base_common_rpc_types::BaseTransactionReceipt;
+    type ReceiptResponse = crate::BaseTransactionReceipt;
 
-    type HeaderResponse = base_common_rpc_types::BaseHeaderResponse;
+    type HeaderResponse = crate::BaseHeaderResponse;
 
-    type BlockResponse = base_common_rpc_types::BaseBlockResponse<Self::TransactionResponse>;
+    type BlockResponse = crate::BaseBlockResponse<Self::TransactionResponse>;
 }
 
 impl RecommendedFillers for Base {

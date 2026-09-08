@@ -6,7 +6,7 @@ use alloy_provider::Provider;
 use async_trait::async_trait;
 use base_batcher_source::{PollingSource, SourceError};
 use base_common_consensus::BaseBlock;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 
 /// Fetches full L2 blocks from an RPC provider.
 #[derive(derive_more::Debug)]

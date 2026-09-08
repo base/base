@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_consensus_engine::BaseEngineClient;
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;

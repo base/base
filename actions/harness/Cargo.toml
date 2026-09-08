@@ -30,7 +30,6 @@ alloy-primitives = { workspace = true }
 base-common-signer = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 base-consensus-node = { workspace = true }
-base-common-network = { workspace = true }
 base-batcher-source = { workspace = true }
 base-batcher-encoder = { workspace = true }
 base-consensus-gossip = { workspace = true }
@@ -54,6 +53,7 @@ base-execution-evm = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-batcher-core = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-common-rpc-types-engine = { workspace = true, features = ["std"] }

@@ -37,3 +37,16 @@ pub use transaction::{
 
 #[cfg(feature = "reth")]
 mod reth;
+
+#[cfg(feature = "network")]
+mod network;
+#[cfg(feature = "network")]
+pub use network::Base;
+
+#[cfg(feature = "network")]
+mod builder;
+
+#[cfg(feature = "network")]
+mod engine_client;
+#[cfg(feature = "network")]
+pub use engine_client::BaseEngineApi;

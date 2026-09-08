@@ -32,7 +32,7 @@ use base_builder_core::{
 };
 use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_consensus_engine::EngineGetPayloadVersion;
 use base_consensus_node::{

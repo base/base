@@ -16,7 +16,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
-base-common-network = { workspace = true }
 url = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}

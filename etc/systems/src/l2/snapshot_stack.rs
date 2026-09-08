@@ -10,7 +10,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, WrapErr, ensure};

@@ -7,7 +7,7 @@ use alloy_network::Ethereum;
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_protocol::{L2BlockInfo, SyncStatus};
 use base_system_tests::{
     L1ReorgDriver, L1RpcProxy, SystemTestProviderExt, SystemTestRpcClient, SystemTestStackBuilder,

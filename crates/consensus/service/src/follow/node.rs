@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClient};
 use base_consensus_rpc::RpcBuilder;
 use tokio::task::JoinSet;

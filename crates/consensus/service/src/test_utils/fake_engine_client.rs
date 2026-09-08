@@ -21,8 +21,9 @@ use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types::{BaseBlockResponse, Transaction as BaseTransaction};
+use base_common_rpc_types::{
+    Base, BaseBlockResponse, BaseEngineApi, Transaction as BaseTransaction,
+};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,

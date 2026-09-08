@@ -23,7 +23,7 @@ use std::{
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventType, TransactionEventWriterConfig, transaction_event,

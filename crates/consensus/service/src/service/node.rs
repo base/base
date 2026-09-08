@@ -12,7 +12,7 @@ use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{

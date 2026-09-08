@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use alloy_provider::Network;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
 use tracing::{error, warn};
 

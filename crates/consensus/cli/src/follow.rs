@@ -5,7 +5,7 @@ use std::{num::ParseIntError, sync::Arc, time::Duration};
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_consensus_node::{
     EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeMode, RemoteL2Client,
 };

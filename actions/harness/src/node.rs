@@ -6,7 +6,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
-use base_common_network::BaseEngineApi;
+use base_common_rpc_types::BaseEngineApi;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
     PipelineErrorKind, PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,

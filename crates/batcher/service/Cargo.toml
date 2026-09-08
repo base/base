@@ -18,7 +18,6 @@ base-metrics = { workspace = true }
 base-tx-manager = { workspace = true }
 base-batcher-core = { workspace = true }
 base-batcher-admin = { workspace = true }
-base-common-network = { workspace = true }
 base-batcher-source = { workspace = true }
 base-balance-monitor = { workspace = true }
 base-batcher-encoder = { workspace = true }
@@ -34,6 +33,7 @@ base-runtime = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "time"] }
@@ -43,12 +43,13 @@ alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
 httpmock = { workspace = true, features = ["default"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+
 [features]
 metrics = [
-	"base-batcher-core/metrics",
-	"base-batcher-encoder/metrics",
-	"base-consensus-rpc/metrics",
-	"base-metrics/metrics",
-	"base-tx-manager/metrics",
-	"dep:metrics",
+    "base-batcher-core/metrics",
+    "base-batcher-encoder/metrics",
+    "base-consensus-rpc/metrics",
+    "base-metrics/metrics",
+    "base-tx-manager/metrics",
+    "dep:metrics",
 ]

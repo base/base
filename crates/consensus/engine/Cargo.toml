@@ -21,7 +21,6 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 opentelemetry-http = { workspace = true }
 base-common-genesis = { workspace = true }
-base-common-network = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
@@ -40,7 +39,7 @@ alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-transport-ws = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default", "network"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
@@ -54,6 +53,7 @@ tokio-tungstenite = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default", "thread_rng"] }
 base-common-rpc-types = { workspace = true, features = ["default", "arbitrary", "k256"] }
+
 [features]
 metrics = [
 	"base-consensus-providers/metrics",

@@ -27,7 +27,6 @@ reth-node-core = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
-base-common-network = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
@@ -47,7 +46,7 @@ alloy-rpc-types = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, optional = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["default", "network"] }
 
 [dependencies.base-node-context]
 workspace = true
@@ -72,7 +71,7 @@ test-utils = [
     "dep:alloy-rpc-client",
     "dep:alloy-rpc-types",
     "dep:alloy-rpc-types-engine",
-    "dep:base-common-network",
+    "dep:base-common-rpc-types",
     "dep:base-common-rpc-types",
     "dep:base-common-rpc-types-engine",
     "dep:base-test-utils",

@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_protocol::L2BlockInfo;
 use serde::Deserialize;
 

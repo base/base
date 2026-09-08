@@ -11,7 +11,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, RemoteL2Client};
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;

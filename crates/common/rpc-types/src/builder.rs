@@ -1,9 +1,8 @@
 use alloy_consensus::TxType;
 use alloy_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilderError};
 use base_common_consensus::{BaseTypedTransaction, OpTxType};
-use base_common_rpc_types::BaseTransactionRequest;
 
-use crate::Base;
+use crate::{Base, BaseTransactionRequest};
 
 impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
     fn complete_type(&self, ty: OpTxType) -> Result<(), Vec<&'static str>> {

@@ -28,7 +28,6 @@ alloy-sol-types = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 tracing-indicatif = { workspace = true }
-base-common-network = { workspace = true }
 base-common-precompiles = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -42,6 +41,7 @@ alloy-rpc-types = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
 base-common-signer = { workspace = true, features = ["mnemonic"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter"] }

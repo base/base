@@ -9,7 +9,7 @@ use audit_archiver_lib::BundleEvent;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
 use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
-use base_common_network::Base;
+use base_common_rpc_types::Base;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };

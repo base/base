@@ -28,8 +28,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
-use base_common_network::Base;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{Base, BaseTransactionRequest};
 use base_common_signer::PrivateKeySigner;
 use base_load_tests::{CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator};
 use base_system_tests::{

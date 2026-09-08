@@ -28,7 +28,6 @@ base-common-evm = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
-base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
 base-consensus-providers = { workspace = true }
@@ -40,6 +39,7 @@ alloy-consensus = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = ["network"]}
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 alloy-rpc-types = { workspace = true, features = ["default", "debug"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
@@ -48,12 +48,13 @@ rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional
 revm = { workspace = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"], optional = true }
 [dev-dependencies]
 proptest = { workspace = true, features = ["default"] }
+
 [features]
 disk = [ "dep:rocksdb" ]
 metrics = [
-	"base-common-evm/metrics",
-	"base-consensus-providers/metrics",
-	"base-metrics/metrics",
-	"dep:metrics",
+    "base-common-evm/metrics",
+    "base-consensus-providers/metrics",
+    "base-metrics/metrics",
+    "dep:metrics",
 ]
 precompiles = [ "dep:revm" ]
