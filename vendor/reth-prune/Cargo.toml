@@ -22,7 +22,6 @@ thiserror = { workspace = true }
 rustc-hash = { workspace = true }
 reth-config = { workspace = true }
 reth-db-api = { workspace = true }
-reth-errors = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 alloy-consensus = { workspace = true }
@@ -30,6 +29,7 @@ reth-tokio-util = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
+reth-storage-errors = {workspace = true}
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }

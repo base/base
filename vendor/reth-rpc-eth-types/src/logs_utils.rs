@@ -10,9 +10,9 @@ use alloy_rpc_types_eth::{Filter, Log};
 use base_common_consensus::{BaseReceipt, ChainInfo};
 use base_common_rpc_types::BaseLogResponse;
 use jsonrpsee_types::ErrorObject;
-use reth_errors::ProviderError;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use reth_storage_api::BlockReader;
+use reth_storage_errors::provider::ProviderError;
 use thiserror::Error;
 
 use crate::EthApiError;

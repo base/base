@@ -21,10 +21,11 @@ either = { workspace = true }
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-errors = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-trie-common = { workspace = true }
+reth-storage-errors = {workspace = true}
+reth-execution-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
@@ -38,6 +39,7 @@ assert_matches = { workspace = true }
 base-common-genesis = { workspace = true }
 base-execution-chainspec = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
+
 [features]
 default = ["std"]
 std = [

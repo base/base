@@ -1,8 +1,11 @@
 use alloc::boxed::Box;
 
 use alloy_rpc_types_engine::ForkchoiceUpdateError;
-use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError, ProviderError};
-use reth_execution_errors::InternalBlockExecutionError;
+use reth_consensus::ConsensusError;
+use reth_execution_errors::{
+    BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
+};
+use reth_storage_errors::provider::ProviderError;
 
 /// Represents all error cases when handling a new payload.
 ///
@@ -119,3 +122,6 @@ pub enum InsertBlockValidationError {
     #[error(transparent)]
     Validation(#[from] BlockValidationError),
 }
+
+/// An internal failure while processing an engine request.
+pub type EngineRequestError = Box<dyn core::error::Error + Send + Sync>;

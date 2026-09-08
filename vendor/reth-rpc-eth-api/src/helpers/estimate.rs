@@ -10,7 +10,6 @@ use base_execution_evm::{
     env::BlockEnvironment,
 };
 use futures::Future;
-use reth_errors::ProviderError;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, RpcInvalidTransactionError,
     error::{
@@ -20,6 +19,7 @@ use reth_rpc_eth_types::{
 };
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use reth_storage_api::StateProvider;
+use reth_storage_errors::provider::ProviderError;
 use revm::{
     context::Block,
     context_interface::{Cfg, Transaction, result::ExecutionResult},

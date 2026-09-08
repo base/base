@@ -5,7 +5,6 @@ use alloy_rpc_types_eth::{Stage, SyncInfo, SyncStatus};
 use base_common_consensus::ChainInfo;
 use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
-use reth_errors::{RethError, RethResult};
 use reth_network_api::NetworkInfo;
 use reth_prune_types::{PruneMode, PruneSegment};
 use reth_rpc_eth_types::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
@@ -27,9 +26,11 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     fn starting_block(&self) -> U256;
 
     /// Returns the current ethereum protocol version.
-    fn protocol_version(&self) -> impl Future<Output = RethResult<U64>> + Send {
+    fn protocol_version(
+        &self,
+    ) -> impl Future<Output = Result<U64, reth_network_api::NetworkError>> + Send {
         async move {
-            let status = self.network().network_status().await.map_err(RethError::other)?;
+            let status = self.network().network_status().await?;
             Ok(U64::from(status.protocol_version))
         }
     }
@@ -40,7 +41,7 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     }
 
     /// Returns provider chain info
-    fn chain_info(&self) -> RethResult<ChainInfo> {
+    fn chain_info(&self) -> reth_storage_errors::provider::ProviderResult<ChainInfo> {
         Ok(self.provider().chain_info()?)
     }
 
@@ -48,7 +49,7 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     ///
     /// The response follows the `eth_capabilities` execution API proposal:
     /// <https://github.com/ethereum/execution-apis/pull/755>.
-    fn capabilities(&self) -> RethResult<EthCapabilities>
+    fn capabilities(&self) -> reth_storage_errors::provider::ProviderResult<EthCapabilities>
     where
         Self: EthState,
     {
@@ -96,7 +97,7 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     }
 
     /// Returns the [`SyncStatus`] of the network
-    fn sync_status(&self) -> RethResult<SyncStatus> {
+    fn sync_status(&self) -> reth_storage_errors::provider::ProviderResult<SyncStatus> {
         let status = if self.is_syncing() {
             let current_block = U256::from(
                 self.provider().chain_info().map(|info| info.best_number).unwrap_or_default(),
@@ -138,7 +139,7 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
 fn effective_resource(
     provider: &impl PruneCheckpointReader,
     segments: &[PruneSegment],
-) -> RethResult<EthCapabilitiesResource> {
+) -> reth_storage_errors::provider::ProviderResult<EthCapabilitiesResource> {
     let mut oldest_block = 0;
     let mut retention_blocks = None::<u64>;
     let mut disabled = false;

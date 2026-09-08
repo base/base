@@ -20,12 +20,12 @@ revm = { workspace = true }
 metrics = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
-reth-errors = { workspace = true }
 pin-project = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
+reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -47,6 +47,7 @@ alloy-signer-local = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+
 [features]
 serde = [
     "dep:serde",

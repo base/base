@@ -22,7 +22,6 @@ use reth_db_api::{
     database::Database, database_metrics::DatabaseMetrics, models::StoredBlockBodyIndices, tables,
     transaction::DbTx,
 };
-use reth_errors::{RethError, RethResult};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment};
 use reth_stages_types::{PipelineTarget, StageCheckpoint, StageId};
@@ -372,15 +371,14 @@ impl ProviderFactory<DatabaseEnv> {
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
-    ) -> RethResult<Self> {
-        Self::new(
-            init_db(path, args).map_err(RethError::msg)?,
+    ) -> eyre::Result<Self> {
+        Ok(Self::new(
+            init_db(path, args)?,
             chain_spec,
             static_file_provider,
             rocksdb_provider,
             runtime,
-        )
-        .map_err(RethError::Provider)
+        )?)
     }
 }
 

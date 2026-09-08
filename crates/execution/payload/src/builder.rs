@@ -366,7 +366,7 @@ impl<Txs> Builder<'_, Txs> {
         // 1. apply pre-execution changes
         builder.apply_pre_execution_changes().map_err(|err| {
             warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
-            PayloadBuilderError::Internal(err.into())
+            PayloadBuilderError::other(err)
         })?;
 
         // 2. execute sequencer transactions

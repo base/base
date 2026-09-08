@@ -24,7 +24,6 @@ smallvec = { workspace = true }
 itertools = { workspace = true }
 alloy-eips = { workspace = true }
 reth-codecs = { workspace = true }
-reth-errors = { workspace = true }
 reth-db-api = { workspace = true }
 alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
@@ -75,12 +74,10 @@ tokio-stream = { workspace = true, features = ["default", "sync"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary", "test-utils"] }
+
 [features]
 jemalloc = ["rocksdb/jemalloc"]
-partial-persistence = [
-    "reth-stages-types/partial-persistence",
-    "reth-storage-overlay/partial-persistence",
-]
+partial-persistence = ["reth-stages-types/partial-persistence", "reth-storage-overlay/partial-persistence"]
 test-utils = [
     "reth-db/test-utils",
     "reth-nippy-jar/test-utils",

@@ -23,7 +23,6 @@ itertools = { workspace = true }
 jsonrpsee = { workspace = true }
 dyn-clone = { workspace = true }
 alloy-serde = { workspace = true }
-reth-errors = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 alloy-signer = { workspace = true }
@@ -42,10 +41,12 @@ alloy-rpc-client = { workspace = true }
 reth-rpc-eth-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-network-api = { workspace = true }
+reth-storage-errors = {workspace = true}
 reth-rpc-eth-types = { workspace = true }
 reth-network-types = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
+reth-execution-errors = {workspace = true}
 reth-consensus-common = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
@@ -100,8 +101,4 @@ reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 [features]
 test-utils = ["dep:base-execution-txpool", "base-execution-evm/test-utils"]
-js-tracer = [
-    "revm-inspectors/js-tracer",
-    "reth-rpc-eth-types/js-tracer",
-    "reth-rpc-eth-api/js-tracer",
-]
+js-tracer = ["revm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer", "reth-rpc-eth-api/js-tracer"]

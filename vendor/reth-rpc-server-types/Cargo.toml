@@ -17,9 +17,10 @@ workspace = true
 
 [dependencies]
 alloy-eips = { workspace = true }
-reth-errors = { workspace = true }
+reth-consensus = {workspace = true}
 jsonrpsee-types = { workspace = true }
 reth-network-api = { workspace = true }
+reth-storage-errors = {workspace = true}
 alloy-rpc-types-engine = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }

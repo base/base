@@ -5,9 +5,9 @@ use reth_consensus::ConsensusError;
 pub use reth_engine_primitives::{
     InsertBlockErrorKind, InsertBlockFatalError, InsertBlockValidationError,
 };
-use reth_errors::ProviderError;
 use reth_payload_primitives::NewPayloadError;
 use reth_primitives_traits::SealedBlock;
+use reth_storage_errors::provider::ProviderError;
 
 use crate::tree::payload_processor::bal::BalExecutionError;
 

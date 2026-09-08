@@ -14,10 +14,10 @@ use alloy_primitives::{Address, B256, Bytes, TxHash};
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
 use reth_chain_state::CanonStateNotification;
-use reth_errors::{ProviderError, ProviderResult};
 use reth_execution_types::Chain;
 use reth_primitives_traits::{InMemorySize, RecoveredBlock};
 use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
+use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use reth_tasks::Runtime;
 use revm::{
     bytecode::Bytecode,

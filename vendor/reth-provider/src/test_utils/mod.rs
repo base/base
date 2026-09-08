@@ -6,8 +6,8 @@ use alloy_primitives::B256;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_errors::ProviderResult;
 use reth_primitives_traits::{Account, StorageEntry};
+use reth_storage_errors::provider::ProviderResult;
 use reth_trie::StateRoot;
 use reth_trie_db::DatabaseStateRoot;
 

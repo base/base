@@ -12,7 +12,6 @@ use reth_chain_state::{
     CanonStateNotification, CanonStateSubscriptions, ForkChoiceSubscriptions,
     PersistedBlockSubscriptions,
 };
-use reth_errors::RethResult;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_api::{RethApiServer, RethJitAction};
@@ -92,7 +91,7 @@ where
         let accounts_before = self.provider().account_block_changeset(block_number)?;
         let hash_map = accounts_before.iter().try_fold(
             AddressMap::default(),
-            |mut hash_map, account_before| -> RethResult<_> {
+            |mut hash_map, account_before| -> reth_storage_errors::provider::ProviderResult<_> {
                 let current_balance = state.account_balance(&account_before.address)?;
                 let prev_balance = account_before.info.map(|info| info.balance);
                 if current_balance != prev_balance {
@@ -174,9 +173,7 @@ where
         }
 
         let outcome = self.evm_config().executor(db).execute_batch(&blocks).map_err(
-            |e: base_execution_evm::BlockExecutionError| {
-                EthApiError::Internal(reth_errors::RethError::Other(e.into()))
-            },
+            |e: base_execution_evm::BlockExecutionError| EthApiError::Internal(e.into()),
         )?;
 
         Ok(Some(outcome))
@@ -212,9 +209,8 @@ where
         let outcome = Self::block_execution_outcome(self, block_id, count).await?;
         match outcome {
             Some(outcome) => {
-                let value = serde_json::to_value(&outcome).map_err(|e| {
-                    EthApiError::Internal(reth_errors::RethError::msg(e.to_string()))
-                })?;
+                let value = serde_json::to_value(&outcome)
+                    .map_err(|e| EthApiError::Internal(e.to_string().into()))?;
                 Ok(Some(value))
             }
             None => Ok(None),

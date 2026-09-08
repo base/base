@@ -22,12 +22,11 @@ use reth_chain_state::{
     CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats, MemoryOverlayStateProvider,
     NewCanonicalChain,
 };
-use reth_consensus::{Consensus, FullConsensus};
+use reth_consensus::{Consensus, ConsensusError, FullConsensus};
 use reth_engine_primitives::{
     BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
     ForkchoiceStateTracker, NewPayloadTimings, OnForkChoiceUpdated, SlowBlockInfo,
 };
-use reth_errors::{ConsensusError, ProviderResult};
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use reth_payload_primitives::{BasePayloadBuilderAttributes, NewPayloadError, PayloadAttributes};
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
@@ -39,6 +38,7 @@ use reth_provider::{
     TransactionVariant, TryIntoHistoricalStateProvider,
 };
 use reth_stages_api::ControlFlow;
+use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::OverlayManager;
 use reth_tasks::{spawn_os_thread, utils::increase_thread_priority};
 use reth_trie::ComputedTrieData;

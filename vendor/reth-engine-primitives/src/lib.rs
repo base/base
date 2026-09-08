@@ -198,5 +198,6 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
 /// Fixtures for tests of the shared execution infrastructure.
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
+pub use error::EngineRequestError;
 #[cfg(feature = "test-utils")]
 pub use test_utils::TestEngineValidator;

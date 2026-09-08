@@ -15,7 +15,6 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber};
 use parking_lot::Mutex;
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
-use reth_errors::ProviderResult;
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Histogram},
@@ -28,6 +27,7 @@ use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
+use reth_storage_errors::provider::ProviderResult;
 #[cfg(feature = "rayon")]
 use reth_tasks::WorkerPool;
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};

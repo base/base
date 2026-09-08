@@ -14,7 +14,6 @@ use alloy_rpc_types_engine::{
 };
 use base_common_consensus::BaseTxEnvelope;
 use futures::{FutureExt, TryFutureExt, future::Either};
-use reth_errors::RethResult;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
@@ -277,7 +276,7 @@ pub enum BeaconEngineMessage {
         /// The payload attributes for block building.
         payload_attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
         /// The sender for returning forkchoice updated result.
-        tx: oneshot::Sender<RethResult<OnForkChoiceUpdated>>,
+        tx: oneshot::Sender<Result<OnForkChoiceUpdated, crate::EngineRequestError>>,
     },
 }
 
@@ -376,7 +375,7 @@ impl ConsensusEngineHandle {
             .send_fork_choice_updated(state, payload_attrs)
             .map_err(|_| BeaconForkChoiceUpdateError::EngineUnavailable)
             .await?
-            .map_err(BeaconForkChoiceUpdateError::internal)?
+            .map_err(BeaconForkChoiceUpdateError::Internal)?
             .await?)
     }
 
@@ -386,7 +385,7 @@ impl ConsensusEngineHandle {
         &self,
         state: ForkchoiceState,
         payload_attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
-    ) -> oneshot::Receiver<RethResult<OnForkChoiceUpdated>> {
+    ) -> oneshot::Receiver<Result<OnForkChoiceUpdated, crate::EngineRequestError>> {
         let (tx, rx) = oneshot::channel();
         let _ = self.to_engine.send(BeaconEngineMessage::ForkchoiceUpdated {
             state,

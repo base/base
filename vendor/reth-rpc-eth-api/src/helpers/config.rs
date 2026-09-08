@@ -14,10 +14,10 @@ use alloy_primitives::Address;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BaseEvmConfig, Evm, precompiles::PrecompilesMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_errors::{ProviderError, RethError};
 use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::BlockReaderIdExt;
+use reth_storage_errors::provider::ProviderError;
 use revm::database::EmptyDB;
 
 /// RPC endpoint support for [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910)
@@ -85,7 +85,7 @@ where
         }
     }
 
-    fn config(&self) -> Result<EthConfig, RethError> {
+    fn config(&self) -> Result<EthConfig, EthApiError> {
         let chain_spec = self.provider.chain_spec();
         let latest = self
             .provider
@@ -94,7 +94,9 @@ where
             .into_header();
 
         let current_precompiles = evm_to_precompiles_map(
-            self.evm_config.evm_for_block(EmptyDB::default(), &latest).map_err(RethError::other)?,
+            self.evm_config
+                .evm_for_block(EmptyDB::default(), &latest)
+                .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?,
         );
 
         let mut fork_timestamps =
@@ -113,7 +115,7 @@ where
         };
         let (current_fork_idx, current_fork_timestamp) = current_fork_idx
             .and_then(|idx| fork_timestamps.get(idx).map(|ts| (idx, *ts)))
-            .ok_or_else(|| RethError::msg("no active timestamp fork found"))?;
+            .ok_or_else(|| EthApiError::Internal("no active timestamp fork found".into()))?;
 
         let current = self.build_fork_config_at(current_fork_timestamp, current_precompiles);
 
@@ -128,7 +130,7 @@ where
             let next_precompiles = evm_to_precompiles_map(
                 self.evm_config
                     .evm_for_block(EmptyDB::default(), &fake_header)
-                    .map_err(RethError::other)?,
+                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?,
             );
 
             config.next = Some(self.build_fork_config_at(next_fork_timestamp, next_precompiles));
@@ -146,7 +148,7 @@ where
         let last_precompiles = evm_to_precompiles_map(
             self.evm_config
                 .evm_for_block(EmptyDB::default(), &fake_header)
-                .map_err(RethError::other)?,
+                .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?,
         );
 
         config.last = Some(self.build_fork_config_at(last_fork_timestamp, last_precompiles));

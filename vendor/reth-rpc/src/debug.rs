@@ -23,7 +23,6 @@ use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
-use reth_errors::RethError;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::{
@@ -185,7 +184,7 @@ where
             .eth_api()
             .evm_config()
             .evm_env(block.header())
-            .map_err(RethError::other)
+            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)?;
 
         // Depending on EIP-2 we need to recover the transactions differently
@@ -601,7 +600,7 @@ where
                 let mut executor = eth_api
                     .evm_config()
                     .executor_for_block(&mut db, block.sealed_block())
-                    .map_err(RethError::other)
+                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;
                 executor.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;
 
@@ -1188,8 +1187,7 @@ where
             .eth_api()
             .evm_config()
             .evm_env(entry.block.header())
-            .map_err(RethError::other)
-            .to_rpc_result()?;
+            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?;
 
         let opts = opts.map(|o| o.tracing_options).unwrap_or_default();
         self.trace_block(entry.block.clone(), evm_env, opts).await.map_err(Into::into)

@@ -13,7 +13,9 @@ mod tests {
     #[test]
     fn test_resolve_transaction_empty_request() {
         let builder = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
-        let mut db = CacheDB::<revm::database::EmptyDBTyped<reth_errors::ProviderError>>::default();
+        let mut db = CacheDB::<
+            revm::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+        >::default();
         let tx = TransactionRequest::default();
         let result = resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &builder).unwrap();
 
@@ -26,7 +28,9 @@ mod tests {
 
     #[test]
     fn test_resolve_transaction_legacy() {
-        let mut db = CacheDB::<revm::database::EmptyDBTyped<reth_errors::ProviderError>>::default();
+        let mut db = CacheDB::<
+            revm::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+        >::default();
         let builder = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
 
         let tx = TransactionRequest { gas_price: Some(100), ..Default::default() };
@@ -42,7 +46,9 @@ mod tests {
 
     #[test]
     fn test_resolve_transaction_partial_eip1559() {
-        let mut db = CacheDB::<revm::database::EmptyDBTyped<reth_errors::ProviderError>>::default();
+        let mut db = CacheDB::<
+            revm::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+        >::default();
         let rpc_converter = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
 
         let tx = TransactionRequest {
@@ -63,7 +69,9 @@ mod tests {
 
     #[test]
     fn test_resolve_transaction_wraps_max_nonce_when_nonce_check_disabled() {
-        let mut db = CacheDB::<revm::database::EmptyDBTyped<reth_errors::ProviderError>>::default();
+        let mut db = CacheDB::<
+            revm::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+        >::default();
         let rpc_converter = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
 
         let tx = TransactionRequest { nonce: Some(u64::MAX), ..Default::default() };

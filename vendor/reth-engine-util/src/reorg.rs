@@ -17,7 +17,7 @@ use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
 use reth_engine_tree::tree::EngineValidator;
-use reth_errors::{BlockExecutionError, BlockValidationError, RethError, RethResult};
+use reth_execution_errors::{BlockExecutionError, BlockValidationError};
 use reth_payload_primitives::BaseBuiltPayload;
 use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use reth_storage_api::{BlockReader, StateProviderFactory, errors::ProviderError};
@@ -32,7 +32,10 @@ enum EngineReorgState {
 }
 
 type EngineReorgResponse = Result<
-    Either<Result<PayloadStatus, BeaconOnNewPayloadError>, RethResult<OnForkChoiceUpdated>>,
+    Either<
+        Result<PayloadStatus, BeaconOnNewPayloadError>,
+        Result<OnForkChoiceUpdated, reth_engine_primitives::EngineRequestError>,
+    >,
     oneshot::error::RecvError,
 >;
 
@@ -221,14 +224,15 @@ fn create_reorg_head<Provider, Validator>(
     payload_validator: &Validator,
     mut depth: usize,
     next_payload: base_common_rpc_types_engine::ExecutionData,
-) -> RethResult<(SealedBlock, Option<Bytes>)>
+) -> Result<(SealedBlock, Option<Bytes>), reth_engine_primitives::EngineRequestError>
 where
     Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
     Validator: EngineValidator,
 {
     // Ensure next payload is valid.
-    let next_block =
-        payload_validator.convert_payload_to_block(next_payload).map_err(RethError::msg)?;
+    let next_block = payload_validator
+        .convert_payload_to_block(next_payload)
+        .map_err(|error| reth_engine_primitives::EngineRequestError::from(error.to_string()))?;
 
     // Fetch reorg target block depending on its depth and its parent.
     let mut previous_hash = next_block.parent_hash();
@@ -262,8 +266,12 @@ where
         .with_bal_builder_if(has_bal)
         .build();
 
-    let ctx = evm_config.context_for_block(&reorg_target).map_err(RethError::other)?;
-    let evm = evm_config.evm_for_block(&mut state, &reorg_target).map_err(RethError::other)?;
+    let ctx = evm_config
+        .context_for_block(&reorg_target)
+        .map_err(reth_engine_primitives::EngineRequestError::from)?;
+    let evm = evm_config
+        .evm_for_block(&mut state, &reorg_target)
+        .map_err(reth_engine_primitives::EngineRequestError::from)?;
     let mut builder = evm_config.create_block_builder(evm, &reorg_target_parent, ctx);
 
     builder.apply_pre_execution_changes()?;
@@ -287,7 +295,7 @@ where
                 continue;
             }
             // Treat error as fatal
-            Err(error) => return Err(RethError::Execution(error)),
+            Err(error) => return Err(error.into()),
         };
 
         cumulative_gas_used += gas_used;

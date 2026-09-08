@@ -5,7 +5,7 @@ use std::fmt;
 use alloy_eips::BlockId;
 use alloy_rpc_types_engine::PayloadError;
 use jsonrpsee_core::RpcResult;
-use reth_errors::ConsensusError;
+use reth_consensus::ConsensusError;
 
 /// Helper trait to easily convert various `Result` types into [`RpcResult`]
 pub trait ToRpcResult<Ok, Err>: Sized {
@@ -104,8 +104,8 @@ macro_rules! impl_to_rpc_result {
 
 impl_to_rpc_result!(PayloadError);
 impl_to_rpc_result!(ConsensusError);
-impl_to_rpc_result!(reth_errors::RethError);
-impl_to_rpc_result!(reth_errors::ProviderError);
+impl_to_rpc_result!(Box<dyn core::error::Error + Send + Sync>);
+impl_to_rpc_result!(reth_storage_errors::provider::ProviderError);
 impl_to_rpc_result!(reth_network_api::NetworkError);
 
 /// Constructs an invalid params JSON-RPC error.
@@ -168,7 +168,6 @@ pub fn block_id_to_str(id: BlockId) -> String {
 
 #[cfg(test)]
 mod tests {
-    use reth_errors::{RethError, RethResult};
 
     use super::*;
 
@@ -176,9 +175,13 @@ mod tests {
 
     #[test]
     fn can_convert_rpc() {
-        assert_rpc_result::<(), RethError, RethResult<()>>();
+        assert_rpc_result::<
+            (),
+            Box<dyn core::error::Error + Send + Sync>,
+            Result<(), Box<dyn core::error::Error + Send + Sync>>,
+        >();
 
-        let res = RethResult::Ok(100);
+        let res: Result<_, Box<dyn core::error::Error + Send + Sync>> = Ok(100);
         let rpc_res = res.map_internal_err(|_| "This is a message");
         let val = rpc_res.unwrap();
         assert_eq!(val, 100);

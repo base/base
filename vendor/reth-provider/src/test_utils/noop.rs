@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use reth_errors::{ProviderError, ProviderResult};
 /// Re-exported for convenience
 pub use reth_storage_api::noop::NoopProvider;
+use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 use crate::{
     RocksDBProviderFactory, StaticFileProviderFactory,

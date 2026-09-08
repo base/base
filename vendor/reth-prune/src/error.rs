@@ -1,6 +1,6 @@
-use reth_errors::{DatabaseError, RethError};
 use reth_provider::ProviderError;
 use reth_prune_types::PruneSegmentError;
+use reth_storage_errors::db::DatabaseError;
 use thiserror::Error;
 
 /// Errors that can occur during pruning.
@@ -17,14 +17,4 @@ pub enum PrunerError {
 
     #[error(transparent)]
     Provider(#[from] ProviderError),
-}
-
-impl From<PrunerError> for RethError {
-    fn from(err: PrunerError) -> Self {
-        match err {
-            PrunerError::PruneSegment(_) | PrunerError::InconsistentData(_) => Self::other(err),
-            PrunerError::Database(err) => Self::Database(err),
-            PrunerError::Provider(err) => Self::Provider(err),
-        }
-    }
 }

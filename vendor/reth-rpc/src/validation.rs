@@ -23,10 +23,10 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BaseEvmConfig, CachedReads, Executor, StateProviderDatabase};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
-use reth_consensus::{Consensus, FullConsensus};
+use reth_consensus::{Consensus, ConsensusError, FullConsensus};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_engine_primitives::PayloadValidator;
-use reth_errors::{BlockExecutionError, ConsensusError, ProviderError};
+use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionOutput;
 use reth_metrics::{
     Metrics, metrics,
@@ -37,6 +37,7 @@ use reth_primitives_traits::{BlockBody, GotExpected, RecoveredBlock, SealedBlock
 use reth_rpc_api::BlockSubmissionValidationApiServer;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use reth_storage_api::{BlockReaderIdExt, HashedPostStateProvider, StateProviderFactory};
+use reth_storage_errors::provider::ProviderError;
 use reth_tasks::Runtime;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

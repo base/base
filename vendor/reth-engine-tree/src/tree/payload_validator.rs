@@ -124,8 +124,8 @@ use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
     ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
 };
-use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_execution_cache::{CacheFillMode, CacheStats};
+use reth_execution_errors::BlockExecutionError;
 use reth_payload_builder::{PayloadBuilderLease, PayloadBuilderResources};
 use reth_payload_primitives::{
     BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
@@ -141,6 +141,7 @@ use reth_provider::{
     StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
+use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
 use reth_tasks::LazyHandle;
 use reth_trie::{

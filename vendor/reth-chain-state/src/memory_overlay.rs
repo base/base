@@ -4,12 +4,12 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
-use reth_errors::ProviderResult;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
 };
+use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     TrieInput, updates::TrieUpdates,

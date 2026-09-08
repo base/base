@@ -9,13 +9,13 @@ use std::{
 
 use alloy_primitives::{Address, B256, StorageKey, StorageValue};
 use metrics::{Gauge, Histogram};
-use reth_errors::ProviderResult;
 use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, Bytecode, FastInstant as Instant};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateRootProvider, StorageRootProvider,
 };
+use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,

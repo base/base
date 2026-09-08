@@ -10,7 +10,6 @@ use base_execution_evm::{
     evm::EvmFactoryExt, tracing::TracingCtx,
 };
 use futures::Future;
-use reth_errors::RethError;
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::ProviderTx;
@@ -399,7 +398,7 @@ pub trait Trace: LoadState + Call {
     ) -> Result<(), BaseEthApiError> {
         self.evm_config()
             .executor_for_block(db, block.sealed_block())
-            .map_err(RethError::other)
+            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)?
             .apply_pre_execution_changes()
             .map_err(BaseEthApiError::from_eth_err)?;

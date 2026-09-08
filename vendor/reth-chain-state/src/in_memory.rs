@@ -978,12 +978,12 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, BlockNumber, Bytes, StorageKey, StorageValue};
     use rand::Rng;
-    use reth_errors::ProviderResult;
     use reth_primitives_traits::{Account, Bytecode};
     use reth_storage_api::{
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
         StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
     };
+    use reth_storage_errors::provider::ProviderResult;
     use reth_trie::{
         AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets,
         StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,

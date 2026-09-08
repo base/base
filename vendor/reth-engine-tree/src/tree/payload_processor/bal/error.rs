@@ -1,6 +1,8 @@
 //! Errors for the BAL execution path.
 
-use reth_errors::{BlockExecutionError, ConsensusError, ProviderError};
+use reth_consensus::ConsensusError;
+use reth_execution_errors::BlockExecutionError;
+use reth_storage_errors::provider::ProviderError;
 
 /// Errors surfaced by `execute_block`.
 #[derive(Debug, thiserror::Error)]

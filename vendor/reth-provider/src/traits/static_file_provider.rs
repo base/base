@@ -1,6 +1,6 @@
 use alloy_primitives::BlockNumber;
-use reth_errors::ProviderResult;
 use reth_static_file_types::StaticFileSegment;
+use reth_storage_errors::provider::ProviderResult;
 
 use crate::providers::{StaticFileProvider, StaticFileProviderRWRefMut};
 

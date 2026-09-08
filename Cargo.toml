@@ -357,7 +357,6 @@ reth-discv5 = { path = "vendor/reth-discv5", default-features = false }
 reth-db-api = { path = "vendor/reth-db-api", default-features = false }
 reth-codecs = { path = "vendor/reth-codecs", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }
-reth-errors = { path = "vendor/reth-errors", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 reth-trie-db = { path = "vendor/reth-trie-db", default-features = false }
 reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }

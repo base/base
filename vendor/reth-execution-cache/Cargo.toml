@@ -19,8 +19,8 @@ workspace = true
 revm = {workspace = true}
 metrics = { workspace = true }
 reth-trie = { workspace = true }
-reth-errors = { workspace = true }
 reth-provider = { workspace = true }
+reth-storage-errors = {workspace = true}
 base-execution-evm = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }

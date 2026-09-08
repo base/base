@@ -5,7 +5,8 @@ use core::error;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdateError, PayloadError, PayloadStatusEnum};
-use reth_errors::{BlockExecutionError, ProviderError, RethError};
+use reth_execution_errors::BlockExecutionError;
+use reth_storage_errors::provider::ProviderError;
 use tokio::sync::{mpsc, oneshot};
 
 /// Possible error variants during payload building.
@@ -23,9 +24,9 @@ pub enum PayloadBuilderError {
     /// If there's no payload to resolve.
     #[error("missing payload")]
     MissingPayload,
-    /// Other internal error
+    /// Failed to access chain data.
     #[error(transparent)]
-    Internal(#[from] RethError),
+    Provider(#[from] ProviderError),
     /// Unrecoverable error during evm execution.
     #[error("evm execution error: {0}")]
     EvmExecutionError(Box<dyn core::error::Error + Send + Sync>),
@@ -49,12 +50,6 @@ impl PayloadBuilderError {
         E: core::error::Error + Send + Sync + 'static,
     {
         Self::Other(Box::new(error))
-    }
-}
-
-impl From<ProviderError> for PayloadBuilderError {
-    fn from(error: ProviderError) -> Self {
-        Self::Internal(RethError::Provider(error))
     }
 }
 

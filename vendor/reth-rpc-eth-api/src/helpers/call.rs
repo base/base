@@ -23,7 +23,6 @@ use base_execution_evm::{
     env::BlockEnvironment,
 };
 use futures::Future;
-use reth_errors::{ProviderError, RethError};
 use reth_primitives_traits::Recovered;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
@@ -32,6 +31,7 @@ use reth_rpc_eth_types::{
     simulate::{self, EthSimulateError},
 };
 use reth_storage_api::{BlockIdReader, ProviderTx};
+use reth_storage_errors::provider::ProviderError;
 use revm::{
     Database, DatabaseCommit,
     context::Block,
@@ -131,7 +131,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                     let mut evm_env = this
                         .evm_config()
                         .next_evm_env(&parent, &attributes)
-                        .map_err(RethError::other)
+                        .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                         .map_err(BaseEthApiError::from_eth_err)?;
 
                     // Always disable EIP-3607
@@ -186,7 +186,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                     let ctx = this
                         .evm_config()
                         .context_for_next_block(&parent, attributes)
-                        .map_err(RethError::other)
+                        .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                         .map_err(BaseEthApiError::from_eth_err)?;
                     let map_err = |e: EthApiError| -> BaseEthApiError {
                         match e.as_simulate_error() {
@@ -688,7 +688,7 @@ pub trait Call: LoadState + SpawnBlocking {
 
                 let mut executor = RpcNodeCore::evm_config(&this)
                     .executor_for_block(&mut db, block.sealed_block())
-                    .map_err(RethError::other)
+                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;
                 executor.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;
 

@@ -69,7 +69,6 @@ use alloy_primitives::B256;
 use base_execution_evm::OnStateHook;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
-use reth_errors::ProviderResult;
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
@@ -78,6 +77,7 @@ use reth_provider::{
     HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
     StateRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
+use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
 use reth_tasks::utils::increase_thread_priority;
 use reth_trie::{

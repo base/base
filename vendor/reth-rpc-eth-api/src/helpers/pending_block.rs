@@ -18,7 +18,7 @@ use base_execution_evm::{
 };
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
-use reth_errors::{BlockExecutionError, BlockValidationError, ProviderError, RethError};
+use reth_execution_errors::{BlockExecutionError, BlockValidationError};
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
@@ -28,6 +28,7 @@ use reth_storage_api::{
     BlockReader, BlockReaderIdExt, ProviderTx, StateProviderBox, StateProviderFactory,
     noop::NoopProvider,
 };
+use reth_storage_errors::provider::ProviderError;
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
     error::InvalidPoolTransactionError,
@@ -68,7 +69,7 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
             let evm_env = self
                 .evm_config()
                 .evm_env(block.header())
-                .map_err(RethError::other)
+                .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                 .map_err(BaseEthApiError::from_eth_err)?;
 
             return Ok(PendingBlockEnv::new(
@@ -88,7 +89,7 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
         let evm_env = self
             .evm_config()
             .next_evm_env(&latest, &crate::BasePendingEnv::attributes(&latest))
-            .map_err(RethError::other)
+            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)?;
 
         Ok(PendingBlockEnv::new(evm_env, PendingBlockEnvOrigin::DerivedFromLatest(latest)))
@@ -243,7 +244,7 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
         let mut builder = self
             .evm_config()
             .builder_for_next_block(&mut db, parent, crate::BasePendingEnv::attributes(parent))
-            .map_err(RethError::other)
+            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)?;
 
         builder.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;

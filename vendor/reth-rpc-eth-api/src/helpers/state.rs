@@ -11,7 +11,6 @@ use alloy_serde::JsonStorageKey;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_evm::EvmEnvFor;
 use futures::Future;
-use reth_errors::RethError;
 use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,
@@ -169,8 +168,7 @@ pub trait EthState: LoadState + SpawnBlocking {
             let _permit = self
                 .acquire_owned_tracing()
                 .await
-                .map_err(RethError::other)
-                .map_err(EthApiError::Internal)?;
+                .map_err(|error| EthApiError::Internal(error.into()))?;
 
             let block_id = block_id.unwrap_or_default();
             self.ensure_within_proof_window(block_id)?;
@@ -203,8 +201,7 @@ pub trait EthState: LoadState + SpawnBlocking {
             let _permit = self
                 .acquire_owned_tracing()
                 .await
-                .map_err(RethError::other)
-                .map_err(EthApiError::Internal)?;
+                .map_err(|error| EthApiError::Internal(error.into()))?;
 
             let block_id = block_id.unwrap_or_default();
             self.ensure_within_proof_window(block_id)?;
@@ -228,7 +225,9 @@ pub trait EthState: LoadState + SpawnBlocking {
                     .map(|(address, slots)| {
                         let proof = multiproof
                             .account_proof(address, &slots)
-                            .map_err(RethError::other)
+                            .map_err(|error| {
+                                reth_rpc_eth_types::EthApiError::Internal(error.into())
+                            })
                             .map_err(BaseEthApiError::from_eth_err)?;
                         let storage_keys =
                             slots.into_iter().map(JsonStorageKey::from).collect::<Vec<_>>();
@@ -366,7 +365,7 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     ) -> Result<EvmEnvFor, BaseEthApiError> {
         self.evm_config()
             .evm_env(header)
-            .map_err(RethError::other)
+            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)
     }
 

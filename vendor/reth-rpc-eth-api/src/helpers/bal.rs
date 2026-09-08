@@ -4,7 +4,6 @@ use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::BlockId;
 use base_execution_evm::{Evm, StateProviderDatabase, block::BlockExecutor};
-use reth_errors::RethError;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, cache::db::StateProviderTraitObjWrapper, error::FromEthApiError,
 };
@@ -32,7 +31,7 @@ pub trait GetBlockAccessList: Trace + Call + LoadBlock + RpcNodeCoreExt {
                 self.cache().get_bal(block.hash()).await.map_err(BaseEthApiError::from_eth_err)?
             {
                 let (bal, _) = DecodedBal::from_rlp_bytes(cached_bal.as_raw().clone())
-                    .map_err(RethError::other)
+                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?
                     .split();
                 return Ok(Some(Vec::from(bal)));
@@ -52,7 +51,7 @@ pub trait GetBlockAccessList: Trace + Call + LoadBlock + RpcNodeCoreExt {
                 let block_txs = block.transactions_recovered();
                 let mut executor = RpcNodeCore::evm_config(&eth_api)
                     .executor_for_block(&mut db, block.sealed_block())
-                    .map_err(RethError::other)
+                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;
 
                 executor.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;

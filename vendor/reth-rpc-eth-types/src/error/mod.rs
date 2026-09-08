@@ -11,12 +11,13 @@ use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode, request::Transacti
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
-use reth_errors::{BlockExecutionError, BlockValidationError, RethError};
+use reth_execution_errors::{BlockExecutionError, BlockValidationError};
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
 use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
+use reth_storage_errors::provider::ProviderError;
 use reth_transaction_pool::error::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
@@ -136,7 +137,7 @@ pub enum EthApiError {
     BothStateAndStateDiffInOverride(Address),
     /// Other internal error
     #[error(transparent)]
-    Internal(RethError),
+    Internal(Box<dyn core::error::Error + Send + Sync>),
     /// Error related to signing
     #[error(transparent)]
     Signing(#[from] SignError),
@@ -491,7 +492,7 @@ where
                 Self::Unsupported("JS Tracer is not enabled")
             }
             DebugInspectorError::MuxInspector(err) => err.into(),
-            DebugInspectorError::Database(err) => Self::Internal(RethError::other(err)),
+            DebugInspectorError::Database(err) => Self::Internal(Box::new(err)),
             #[cfg(feature = "js-tracer")]
             DebugInspectorError::JsInspector(err) => err.into(),
             #[allow(unreachable_patterns)]
@@ -500,11 +501,11 @@ where
     }
 }
 
-impl From<RethError> for EthApiError {
-    fn from(error: RethError) -> Self {
-        match error {
-            RethError::Provider(err) => err.into(),
-            err => Self::Internal(err),
+impl From<Box<dyn core::error::Error + Send + Sync>> for EthApiError {
+    fn from(error: Box<dyn core::error::Error + Send + Sync>) -> Self {
+        match error.downcast::<ProviderError>() {
+            Ok(error) => (*error).into(),
+            Err(error) => Self::Internal(error),
         }
     }
 }
@@ -527,20 +528,17 @@ impl From<BlockExecutionError> for EthApiError {
                         ))
                     }
                 }
-                _ => Self::Internal(RethError::Execution(BlockExecutionError::Validation(
-                    validation_error,
-                ))),
+                _ => Self::Internal(Box::new(BlockExecutionError::Validation(validation_error))),
             },
             BlockExecutionError::Internal(internal_error) => {
-                Self::Internal(RethError::Execution(BlockExecutionError::Internal(internal_error)))
+                Self::Internal(Box::new(BlockExecutionError::Internal(internal_error)))
             }
         }
     }
 }
 
-impl From<reth_errors::ProviderError> for EthApiError {
-    fn from(error: reth_errors::ProviderError) -> Self {
-        use reth_errors::ProviderError;
+impl From<reth_storage_errors::provider::ProviderError> for EthApiError {
+    fn from(error: reth_storage_errors::provider::ProviderError) -> Self {
         match error {
             ProviderError::HeaderNotFound(hash) => Self::HeaderNotFound(hash.into()),
             ProviderError::BlockHashNotFound(hash) | ProviderError::UnknownBlockHash(hash) => {
@@ -1244,20 +1242,26 @@ mod tests {
 
     #[test]
     fn pruned_history_error_reports_available_range() {
-        let err: EthApiError =
-            reth_errors::ProviderError::BlockExpired { requested: 5, earliest_available: 100 }
-                .into();
-        assert!(matches!(
-            err,
-            EthApiError::PrunedHistoryUnavailable { requested: 5, earliest_available: 100 }
-        ));
-
-        let err: jsonrpsee_types::error::ErrorObject<'static> = err.into();
-        assert_eq!(err.code(), 4444);
-        assert_eq!(
-            err.message(),
-            "pruned history unavailable: requested 5, earliest available 100"
-        );
+        for boxed in [false, true] {
+            let provider_error =
+                ProviderError::BlockExpired { requested: 5, earliest_available: 100 };
+            let err: EthApiError = if boxed {
+                let error: Box<dyn core::error::Error + Send + Sync> = Box::new(provider_error);
+                error.into()
+            } else {
+                provider_error.into()
+            };
+            assert!(matches!(
+                err,
+                EthApiError::PrunedHistoryUnavailable { requested: 5, earliest_available: 100 }
+            ));
+            let err: jsonrpsee_types::error::ErrorObject<'static> = err.into();
+            assert_eq!(err.code(), 4444);
+            assert_eq!(
+                err.message(),
+                "pruned history unavailable: requested 5, earliest available 100"
+            );
+        }
     }
 
     #[test]

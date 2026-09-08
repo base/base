@@ -23,11 +23,10 @@ use reth_db_api::{
     tables,
     tables::BlockNumberList,
 };
-use reth_errors::ProviderError;
 use reth_primitives_traits::StorageEntry;
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider};
-use reth_storage_errors::provider::ProviderResult;
+use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use strum::{Display, EnumIs};
 
 use crate::{

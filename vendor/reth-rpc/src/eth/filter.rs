@@ -26,7 +26,6 @@ use futures::{
 };
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
-use reth_errors::ProviderError;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_eth_api::{
     EngineEthFilter, EthApiTypes, EthFilterApiServer, FullEthApiTypes, QueryLimits, RpcNodeCoreExt,
@@ -41,6 +40,7 @@ use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderReceipt,
     ReceiptProvider,
 };
+use reth_storage_errors::provider::ProviderError;
 use reth_tasks::Runtime;
 use reth_transaction_pool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
 use tokio::{

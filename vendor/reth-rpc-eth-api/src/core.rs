@@ -982,8 +982,8 @@ where
         trace!(target: "rpc::eth", ?block_hash, "Serving eth_getBlockAccessListByBlockHash");
 
         let bal = self.get_block_access_list(block_hash.into()).await?;
-        let json = serde_json::to_value(&bal)
-            .map_err(|e| EthApiError::Internal(reth_errors::RethError::msg(e.to_string())))?;
+        let json =
+            serde_json::to_value(&bal).map_err(|e| EthApiError::Internal(e.to_string().into()))?;
 
         Ok(Some(json))
     }
@@ -996,8 +996,8 @@ where
         trace!(target: "rpc::eth", ?number, "Serving eth_getBlockAccessListByBlockNumber");
 
         let bal = self.get_block_access_list(number.into()).await?;
-        let json = serde_json::to_value(&bal)
-            .map_err(|e| EthApiError::Internal(reth_errors::RethError::msg(e.to_string())))?;
+        let json =
+            serde_json::to_value(&bal).map_err(|e| EthApiError::Internal(e.to_string().into()))?;
 
         Ok(Some(json))
     }
@@ -1007,8 +1007,8 @@ where
         trace!(target: "rpc::eth", ?block_id, "Serving eth_getBlockAccessList");
 
         let bal = self.get_block_access_list(block_id).await?;
-        let json = serde_json::to_value(&bal)
-            .map_err(|e| EthApiError::Internal(reth_errors::RethError::msg(e.to_string())))?;
+        let json =
+            serde_json::to_value(&bal).map_err(|e| EthApiError::Internal(e.to_string().into()))?;
 
         Ok(Some(json))
     }

@@ -1,11 +1,12 @@
 use alloy_eips::eip1898::BlockWithParent;
 use reth_codecs::DecompressError;
 use reth_consensus::ConsensusError;
-use reth_errors::{BlockExecutionError, DatabaseError, RethError};
+use reth_execution_errors::BlockExecutionError;
 use reth_network_p2p::error::DownloadError;
 use reth_provider::ProviderError;
 use reth_prune::{PruneSegment, PruneSegmentError, PrunerError, UnwindTargetPrunedError};
 use reth_static_file_types::StaticFileSegment;
+use reth_storage_errors::db::DatabaseError;
 use thiserror::Error;
 use tokio::sync::broadcast::error::SendError;
 
@@ -106,7 +107,7 @@ pub enum StageError {
     PostExecuteCommit(&'static str),
     /// Internal error
     #[error(transparent)]
-    Internal(#[from] RethError),
+    Internal(#[from] Box<dyn core::error::Error + Send + Sync>),
     /// The stage encountered a recoverable error.
     ///
     /// These types of errors are caught by the [Pipeline][crate::Pipeline] and trigger a restart
@@ -167,7 +168,7 @@ pub enum PipelineError {
     Channel(#[from] Box<SendError<PipelineEvent>>),
     /// Internal error
     #[error(transparent)]
-    Internal(#[from] RethError),
+    Internal(#[from] Box<dyn core::error::Error + Send + Sync>),
     /// The pipeline encountered an unwind when `fail_on_unwind` was set to `true`.
     #[error("unexpected unwind")]
     UnexpectedUnwind,

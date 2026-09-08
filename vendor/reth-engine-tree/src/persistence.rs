@@ -10,7 +10,6 @@ use std::{
 use alloy_eips::BlockNumHash;
 use crossbeam_channel::Sender as CrossbeamSender;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_errors::ProviderError;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
@@ -18,6 +17,7 @@ use reth_provider::{
 };
 use reth_prune::{PrunerError, PrunerWithFactory};
 use reth_stages_api::{MetricEvent, MetricEventsSender};
+use reth_storage_errors::provider::ProviderError;
 use reth_tasks::spawn_os_thread;
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
