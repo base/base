@@ -58,8 +58,8 @@ base-execution-chainspec = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
-reth-trie-parallel = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
+base-execution-trie = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
@@ -114,13 +114,13 @@ test-utils = [
     "reth-trie/test-utils",
     "reth-trie-common/test-utils",
     "reth-trie-sparse/test-utils",
-    "reth-trie-parallel/test-utils",
+    "base-execution-trie/test-utils",
     "reth-tasks/test-utils",
     "reth-execution-cache/test-utils",
 ]
 trie-debug = [
     "reth-trie-sparse/trie-debug",
-    "reth-trie-parallel/trie-debug",
+    "base-execution-trie/trie-debug",
     "reth-engine-primitives/trie-debug",
     "dep:serde_json",
 ]

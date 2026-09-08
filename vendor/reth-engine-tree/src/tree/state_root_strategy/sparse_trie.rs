@@ -7,6 +7,10 @@ use alloy_primitives::{
     map::{B256Map, hash_map::Entry},
 };
 use alloy_rlp::{Decodable, Encodable};
+use base_execution_trie::{
+    AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
+    ProofWorkerHandle, StateRootTaskError,
+};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -18,13 +22,6 @@ use reth_trie::{
     updates::TrieUpdates,
 };
 use reth_trie_common::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
-use reth_trie_parallel::{
-    error::StateRootTaskError,
-    proof_task::{
-        AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
-        ProofWorkerHandle,
-    },
-};
 use reth_trie_sparse::{
     ArenaParallelSparseTrie, DeferredDrops, LeafUpdate, RevealableSparseTrie, SparseStateTrie,
     SparseTrie, TrieNodeEpoch,
@@ -1120,10 +1117,10 @@ enum SparseTrieTaskMessage {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
+    use base_execution_trie::ProofTaskCtx;
     use reth_db_common::init::init_genesis;
     use reth_provider::test_utils::create_test_provider_factory;
     use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
-    use reth_trie_parallel::proof_task::ProofTaskCtx;
     use reth_trie_sparse::ArenaParallelSparseTrie;
 
     use super::*;

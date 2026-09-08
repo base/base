@@ -9,12 +9,11 @@ use reth_db::{tables, test_utils::create_test_rw_db};
 use reth_db_api::{database::Database, transaction::DbTxMut};
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::{
-    HashedPostState, HashedStorage,
+    DatabaseHashedCursorFactory, HashedPostState, HashedStorage,
     hashed_cursor::{
         HashedCursor, HashedCursorFactory, HashedPostStateCursorFactory, HashedStorageCursor,
     },
 };
-use reth_trie_db::DatabaseHashedCursorFactory;
 
 fn assert_account_cursor_order(
     factory: &impl HashedCursorFactory,

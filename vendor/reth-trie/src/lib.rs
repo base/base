@@ -1,12 +1,4 @@
-//! The implementation of Merkle Patricia Trie, a cryptographically
-//! authenticated radix trie that is used to store key-value bindings.
-//! <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/>
-//!
-//! ## Feature Flags
-//!
-//! - `rayon`: uses rayon for parallel [`HashedPostState`] creation.
-//! - `test-utils`: Export utilities for testing
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -72,3 +64,25 @@ pub mod mock;
 
 /// Verification of existing stored trie nodes against state data.
 pub mod verify;
+
+mod database_changesets;
+pub use database_changesets::*;
+
+mod database_hashed_cursor;
+pub use database_hashed_cursor::{
+    DatabaseHashedAccountCursor, DatabaseHashedCursorFactory, DatabaseHashedStorageCursor,
+};
+mod database_prefix_set;
+pub use database_prefix_set::load_prefix_sets_with_provider;
+mod database_proof;
+pub use database_proof::{DatabaseProof, DatabaseStorageProof};
+mod database_state;
+pub use database_state::{DatabaseHashedPostState, DatabaseStateRoot};
+mod database_storage;
+pub use database_storage::{DatabaseStorageRoot, hashed_storage_from_reverts_with_provider};
+mod database_trie_cursor;
+pub use database_trie_cursor::{
+    DatabaseAccountTrieCursor, DatabaseStorageTrieCursor, DatabaseTrieCursorFactory,
+    PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter,
+};
+pub use reth_db_api::tables::{PackedAccountsTrie, PackedStoragesTrie};

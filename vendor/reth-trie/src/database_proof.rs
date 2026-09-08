@@ -1,15 +1,14 @@
 use alloy_primitives::{Address, B256, keccak256, map::HashMap};
 use reth_db_api::transaction::DbTx;
 use reth_storage_errors::StateProofError;
-use reth_trie::{
-    AccountProof, HashedPostStateSorted, HashedStorage, MultiProof, MultiProofTargets,
-    StorageMultiProof, TrieInput,
+
+use crate::{
+    AccountProof, DatabaseHashedCursorFactory, DatabaseTrieCursorFactory, HashedPostStateSorted,
+    HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof, TrieInput, TrieTableAdapter,
     hashed_cursor::HashedPostStateCursorFactory,
     proof::{Proof, StorageProof},
     trie_cursor::InMemoryTrieCursorFactory,
 };
-
-use crate::{DatabaseHashedCursorFactory, DatabaseTrieCursorFactory, TrieTableAdapter};
 
 /// Extends [`Proof`] with operations specific for working with a database transaction.
 pub trait DatabaseProof<'a> {
@@ -86,7 +85,7 @@ pub trait DatabaseStorageProof<'a, TX> {
         address: Address,
         slot: B256,
         storage: HashedStorage,
-    ) -> Result<reth_trie::StorageProof, StateProofError>;
+    ) -> Result<crate::StorageProof, StateProofError>;
 
     /// Generates the storage multiproof for target slots based on [`TrieInput`].
     fn overlay_storage_multiproof(
@@ -117,7 +116,7 @@ impl<'a, TX: DbTx, A: TrieTableAdapter> DatabaseStorageProof<'a, TX>
         address: Address,
         slot: B256,
         storage: HashedStorage,
-    ) -> Result<reth_trie::StorageProof, StateProofError> {
+    ) -> Result<crate::StorageProof, StateProofError> {
         let hashed_address = keccak256(address);
         let prefix_set = storage.construct_prefix_set();
         let state_sorted = HashedPostStateSorted::new(

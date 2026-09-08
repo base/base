@@ -8,15 +8,14 @@ use std::ops::RangeInclusive;
 use alloy_primitives::BlockNumber;
 use reth_storage_api::{BlockNumReader, ChangeSetReader, StorageChangeSetReader};
 use reth_storage_errors::provider::ProviderError;
-use reth_trie::{
-    StateRoot,
-    hashed_cursor::{HashedCursorFactory, HashedPostStateCursorFactory},
-    trie_cursor::{InMemoryTrieCursorFactory, TrieCursorFactory},
-};
 use reth_trie_common::updates::TrieUpdatesSorted;
 use tracing::debug;
 
-use crate::DatabaseHashedPostState;
+use crate::{
+    DatabaseHashedPostState, StateRoot,
+    hashed_cursor::{HashedCursorFactory, HashedPostStateCursorFactory},
+    trie_cursor::{InMemoryTrieCursorFactory, TrieCursorFactory},
+};
 
 /// Computes trie changesets for a block.
 ///
@@ -87,7 +86,7 @@ where
     );
 
     // Collect the state revert for the requested range.
-    let range_state_revert = reth_trie::HashedPostStateSorted::from_reverts(provider, range)?;
+    let range_state_revert = crate::HashedPostStateSorted::from_reverts(provider, range)?;
     let range_prefix_sets = range_state_revert.construct_prefix_sets();
 
     let (range_nodes, range_state) = if end_block == db_tip_block {
@@ -104,9 +103,7 @@ where
         // Collect the state revert from the database tip to just after the range.
         let tail_state_revert = end_block
             .checked_add(1)
-            .map(|next_block| {
-                reth_trie::HashedPostStateSorted::from_reverts(provider, next_block..)
-            })
+            .map(|next_block| crate::HashedPostStateSorted::from_reverts(provider, next_block..))
             .transpose()?
             .unwrap_or_default();
 

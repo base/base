@@ -26,13 +26,15 @@ use reth_storage_api::{
     StorageChangeSetReader, StorageSettingsCache,
 };
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use reth_trie::trie_cursor::{InMemoryTrieCursorFactory, TrieCursor, TrieCursorFactory};
+#[cfg(test)]
+use reth_trie::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
+use reth_trie::{
+    DatabaseTrieCursorFactory, TrieTableAdapter,
+    trie_cursor::{InMemoryTrieCursorFactory, TrieCursor, TrieCursorFactory},
+};
 #[cfg(test)]
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
 use reth_trie_common::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
-#[cfg(test)]
-use reth_trie_db::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
-use reth_trie_db::{DatabaseTrieCursorFactory, TrieTableAdapter};
 use tracing::{debug, warn};
 
 use crate::{OverlayManager, OverlayStateProvider, database_state_frontiers};
@@ -79,9 +81,10 @@ where
         + BlockNumReader
         + StorageSettingsCache,
 {
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         compute_block_trie_updates_inner::<_, A>(overlay_manager, provider, block_number)
-    })
+    }
 }
 
 fn compute_block_trie_updates_inner<Provider, A>(
@@ -404,7 +407,7 @@ impl ChangesetCache {
             .build_overlay_at_frontiers(provider, partial_state_trie, finish)?;
         let state_trie_provider = OverlayStateProvider::new(provider, overlay);
 
-        let accumulated_reverts = Arc::new(reth_trie_db::compute_range_trie_changesets(
+        let accumulated_reverts = Arc::new(reth_trie::compute_range_trie_changesets(
             provider,
             &state_trie_provider,
             start_block..=end_block,
@@ -709,9 +712,10 @@ mod tests {
             + BlockNumReader
             + StorageSettingsCache,
     {
-        reth_trie_db::with_adapter!(provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
             legacy_compute_block_trie_changesets_inner::<_, A>(provider, block_number)
-        })
+        }
     }
 
     fn legacy_compute_block_trie_changesets_inner<Provider, A>(
@@ -915,12 +919,15 @@ mod tests {
         changesets.write_to(&factory.static_file_provider()).unwrap();
 
         provider.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(3)).unwrap();
-        reth_trie_db::with_adapter!(provider, |A| seed_tip_trie_tables::<_, A>(&*provider));
+        {
+            type A = reth_trie::PackedKeyAdapter;
+            seed_tip_trie_tables::<_, A>(&*provider)
+        };
 
         let overlay = empty_overlay();
         let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
         let actual =
-            reth_trie_db::compute_range_trie_changesets(&*provider, &state_trie_provider, 1..=3, 3)
+            reth_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 1..=3, 3)
                 .unwrap();
         let storage_revert = actual
             .storage_tries_ref()
@@ -1001,13 +1008,16 @@ mod tests {
             .unwrap();
 
         provider.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(3)).unwrap();
-        reth_trie_db::with_adapter!(provider, |A| seed_tip_trie_tables::<_, A>(&*provider));
+        {
+            type A = reth_trie::PackedKeyAdapter;
+            seed_tip_trie_tables::<_, A>(&*provider)
+        };
 
         let expected = legacy_compute_range_trie_changesets(&*provider, 2..=3);
         let overlay = empty_overlay();
         let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
         let actual =
-            reth_trie_db::compute_range_trie_changesets(&*provider, &state_trie_provider, 2..=3, 3)
+            reth_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 2..=3, 3)
                 .unwrap();
         assert_eq!(actual, expected);
     }

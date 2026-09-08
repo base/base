@@ -48,7 +48,6 @@ reth-trie = { workspace = true, features = ["metrics"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
-reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-nippy-jar = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["std"] }
@@ -86,7 +85,7 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-codecs/test-utils",
     "reth-db-api/test-utils",
-    "reth-trie-db/test-utils",
+    "reth-trie/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
     "reth-tasks/test-utils",

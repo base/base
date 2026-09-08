@@ -10,6 +10,10 @@ available for proof generation without re-executing blocks. Provides cursor inte
 navigating account and storage tries, a pruner for removing data outside the retention window, and
 an initialization job for syncing historical proofs at startup.
 
+Also owns parallel account/storage proof workers and the state-root task handles shared by the
+Engine API and payload builder. Core trie algorithms and database cursors live in `reth-trie`,
+below the provider layer; this crate composes providers with task scheduling and proof history.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

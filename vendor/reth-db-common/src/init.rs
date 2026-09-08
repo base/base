@@ -30,14 +30,13 @@ use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::StateRootError;
 use reth_trie::{
-    IntermediateStateRootState, StateRoot as StateRootComputer, StateRootProgress,
-    prefix_set::TriePrefixSets,
+    DatabaseStateRoot, IntermediateStateRootState, StateRoot as StateRootComputer,
+    StateRootProgress, prefix_set::TriePrefixSets,
 };
-use reth_trie_db::DatabaseStateRoot;
 
 type DbStateRoot<'a, TX, A> = StateRootComputer<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 
 use std::io::BufRead;
@@ -934,9 +933,10 @@ fn compute_state_root<Provider>(
 where
     Provider: DBProvider<Tx: DbTxMut> + TrieWriter + StorageSettingsCache,
 {
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         compute_state_root_inner::<_, A>(provider, prefix_sets)
-    })
+    }
 }
 
 fn compute_state_root_inner<Provider, A>(
@@ -945,7 +945,7 @@ fn compute_state_root_inner<Provider, A>(
 ) -> Result<B256, InitStorageError>
 where
     Provider: DBProvider<Tx: DbTxMut> + TrieWriter + StorageSettingsCache,
-    A: reth_trie_db::TrieTableAdapter,
+    A: reth_trie::TrieTableAdapter,
 {
     trace!(target: "reth::cli", "Computing state root");
 
@@ -1011,10 +1011,12 @@ where
 {
     let provider_rw = provider_factory.database_provider_rw().map_err(provider_db_err)?;
 
-    reth_trie_db::with_adapter!(&provider_rw, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
+
         drop(provider_rw);
         compute_state_root_chunked_inner::<PF, A>(provider_factory)
-    })
+    }
 }
 
 fn compute_state_root_chunked_inner<PF, A>(provider_factory: &PF) -> Result<B256, InitStorageError>
@@ -1022,7 +1024,7 @@ where
     PF: DatabaseProviderFactory<
         ProviderRW: DBProvider<Tx: DbTxMut> + TrieWriter + StorageSettingsCache,
     >,
-    A: reth_trie_db::TrieTableAdapter,
+    A: reth_trie::TrieTableAdapter,
 {
     trace!(target: "reth::cli", "Computing state root");
 

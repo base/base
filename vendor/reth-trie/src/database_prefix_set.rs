@@ -12,7 +12,8 @@ use reth_db_api::{
 };
 use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use reth_storage_errors::provider::ProviderError;
-use reth_trie::{
+
+use crate::{
     Nibbles,
     prefix_set::{PrefixSetMut, TriePrefixSets},
 };

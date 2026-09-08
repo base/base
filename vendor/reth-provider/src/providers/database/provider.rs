@@ -51,10 +51,9 @@ use reth_storage_api::{
 use reth_storage_errors::provider::{ProviderResult, StaticFileWriterError};
 use reth_storage_overlay::OverlayManager;
 use reth_trie::{
-    ComputedTrieData, HashedPostStateSorted,
+    ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
-use reth_trie_db::{DatabaseStorageTrieCursor, TrieTableAdapter};
 use revm::database::states::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
@@ -2738,9 +2737,11 @@ impl<TX: DbTxMut + DbTx + 'static> TrieWriter for DatabaseProvider<TX> {
         // Track the number of inserted entries.
         let mut num_entries = 0;
 
-        reth_trie_db::with_adapter!(self, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             Self::write_account_trie_updates::<A>(self.tx_ref(), trie_updates, &mut num_entries)?;
-        });
+        };
 
         num_entries +=
             self.write_storage_trie_updates_sorted(trie_updates.storage_tries_ref().iter())?;
@@ -2762,9 +2763,11 @@ impl<TX: DbTxMut + DbTx + 'static> StorageTrieWriter for DatabaseProvider<TX> {
         let mut num_entries = 0;
         let mut storage_tries = storage_tries.collect::<Vec<_>>();
         storage_tries.sort_unstable_by(|a, b| a.0.cmp(b.0));
-        reth_trie_db::with_adapter!(self, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             Self::write_storage_tries::<A>(self.tx_ref(), storage_tries, &mut num_entries)?;
-        });
+        };
         Ok(num_entries)
     }
 }

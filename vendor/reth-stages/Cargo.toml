@@ -49,7 +49,6 @@ tracing = { workspace = true, features = ["attributes"] }
 num-traits = { workspace = true, features = ["default"] }
 reth-testing-utils = { workspace = true, optional = true }
 reth-libmdbx = { workspace = true, features = ["default"] }
-reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-execution-evm = { workspace = true, features = ["metrics"] }
@@ -96,7 +95,7 @@ test-utils = [
     "base-execution-evm/test-utils",
     "reth-codecs/test-utils",
     "reth-db-api/test-utils",
-    "reth-trie-db/test-utils",
+    "reth-trie/test-utils",
     "reth-trie/test-utils",
     "reth-prune-types/test-utils",
     "reth-tasks/test-utils",

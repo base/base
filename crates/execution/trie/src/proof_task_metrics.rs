@@ -1,13 +1,9 @@
 use std::time::Duration;
 
 use reth_metrics::{Metrics, metrics::Histogram};
-use reth_trie::{
-    TrieType,
-    hashed_cursor::{HashedCursorMetrics, HashedCursorMetricsCache},
-    trie_cursor::{TrieCursorMetrics, TrieCursorMetricsCache},
-};
+use reth_trie::{TrieType, hashed_cursor::HashedCursorMetrics, trie_cursor::TrieCursorMetrics};
 
-use crate::value_encoder::ValueEncoderStats;
+use crate::{ProofTaskCursorMetricsCache, ValueEncoderStats};
 
 /// Metrics for the proof task.
 #[derive(Clone, Metrics)]
@@ -44,7 +40,7 @@ impl ProofTaskTrieMetrics {
     }
 
     /// Record value encoder stats (deferred encoder variant counts and storage wait time).
-    pub(crate) fn record_value_encoder_stats(&self, stats: &ValueEncoderStats) {
+    pub fn record_value_encoder_stats(&self, stats: &ValueEncoderStats) {
         self.deferred_encoder_dispatched.record(stats.dispatched_count as f64);
         self.deferred_encoder_from_cache.record(stats.from_cache_count as f64);
         self.deferred_encoder_sync.record(stats.sync_count as f64);
@@ -94,46 +90,5 @@ impl ProofTaskCursorMetrics {
 impl Default for ProofTaskCursorMetrics {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Cached cursor metrics for proof task operations.
-#[derive(Clone, Debug, Default, Copy)]
-pub struct ProofTaskCursorMetricsCache {
-    /// Cached metrics for account trie cursor operations.
-    pub account_trie_cursor: TrieCursorMetricsCache,
-    /// Cached metrics for account hashed cursor operations.
-    pub account_hashed_cursor: HashedCursorMetricsCache,
-    /// Cached metrics for storage trie cursor operations.
-    pub storage_trie_cursor: TrieCursorMetricsCache,
-    /// Cached metrics for storage hashed cursor operations.
-    pub storage_hashed_cursor: HashedCursorMetricsCache,
-}
-
-impl ProofTaskCursorMetricsCache {
-    /// Extend this cache by adding the counts from another cache.
-    ///
-    /// This accumulates the counter values from `other` into this cache.
-    pub fn extend(&mut self, other: &Self) {
-        self.account_trie_cursor.extend(&other.account_trie_cursor);
-        self.account_hashed_cursor.extend(&other.account_hashed_cursor);
-        self.storage_trie_cursor.extend(&other.storage_trie_cursor);
-        self.storage_hashed_cursor.extend(&other.storage_hashed_cursor);
-    }
-
-    /// Reset all counters to zero.
-    pub const fn reset(&mut self) {
-        self.account_trie_cursor.reset();
-        self.account_hashed_cursor.reset();
-        self.storage_trie_cursor.reset();
-        self.storage_hashed_cursor.reset();
-    }
-
-    /// Record the spans for metrics.
-    pub fn record_spans(&self) {
-        self.account_trie_cursor.record_span("account_trie_cursor");
-        self.account_hashed_cursor.record_span("account_hashed_cursor");
-        self.storage_trie_cursor.record_span("storage_trie_cursor");
-        self.storage_hashed_cursor.record_span("storage_hashed_cursor");
     }
 }

@@ -2,13 +2,13 @@ use alloy_primitives::{Address, B256, BlockNumber, keccak256, map::hash_map};
 use reth_db_api::{models::BlockNumberAddress, transaction::DbTx};
 use reth_storage_api::{BlockNumReader, StorageChangeSetReader};
 use reth_storage_errors::{StorageRootError, provider::ProviderResult};
-#[cfg(feature = "metrics")]
-use reth_trie::metrics::TrieRootMetrics;
-use reth_trie::{
-    HashedPostState, HashedStorage, StorageRoot, hashed_cursor::HashedPostStateCursorFactory,
-};
 
-use crate::{DatabaseHashedCursorFactory, DatabaseTrieCursorFactory, TrieTableAdapter};
+#[cfg(feature = "metrics")]
+use crate::metrics::TrieRootMetrics;
+use crate::{
+    DatabaseHashedCursorFactory, DatabaseTrieCursorFactory, HashedPostState, HashedStorage,
+    StorageRoot, TrieTableAdapter, hashed_cursor::HashedPostStateCursorFactory,
+};
 
 /// Extends [`StorageRoot`] with operations specific for working with a database transaction.
 pub trait DatabaseStorageRoot<'a, TX> {
@@ -66,7 +66,7 @@ impl<'a, TX: DbTx, A: TrieTableAdapter> DatabaseStorageRoot<'a, TX>
             address,
             Default::default(),
             #[cfg(feature = "metrics")]
-            TrieRootMetrics::new(reth_trie::TrieType::Storage),
+            TrieRootMetrics::new(crate::TrieType::Storage),
         )
     }
 
@@ -77,7 +77,7 @@ impl<'a, TX: DbTx, A: TrieTableAdapter> DatabaseStorageRoot<'a, TX>
             hashed_address,
             Default::default(),
             #[cfg(feature = "metrics")]
-            TrieRootMetrics::new(reth_trie::TrieType::Storage),
+            TrieRootMetrics::new(crate::TrieType::Storage),
         )
     }
 
@@ -95,7 +95,7 @@ impl<'a, TX: DbTx, A: TrieTableAdapter> DatabaseStorageRoot<'a, TX>
             address,
             prefix_set,
             #[cfg(feature = "metrics")]
-            TrieRootMetrics::new(reth_trie::TrieType::Storage),
+            TrieRootMetrics::new(crate::TrieType::Storage),
         )
         .root()
     }

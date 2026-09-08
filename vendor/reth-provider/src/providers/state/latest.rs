@@ -6,35 +6,34 @@ use reth_storage_api::{
 };
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use reth_trie::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StateRoot, StorageMultiProof, StorageRoot, TrieInput,
-    TrieInputSorted,
+    AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
+    ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof,
+    MultiProofTargets, StateRoot, StorageMultiProof, StorageRoot, TrieInput, TrieInputSorted,
     hashed_cursor::{HashedPostStateCursorFactory, zero_destroyed_account_storage},
     proof::{Proof, StorageProof},
     trie_cursor::InMemoryTrieCursorFactory,
     updates::TrieUpdates,
     witness::TrieWitness,
 };
-use reth_trie_db::{DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot};
 
 use crate::{AccountReader, BlockHashReader, HashedPostStateProvider, StateRootProvider};
 
 type DbStateRoot<'a, TX, A> = StateRoot<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbStorageRoot<'a, TX, A> = StorageRoot<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbStorageProof<'a, TX, A> = StorageProof<
     'static,
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbProof<'a, TX, A> = Proof<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 /// State provider over latest state that takes tx reference.
 ///
@@ -94,46 +93,54 @@ impl<Provider: DBProvider + StorageSettingsCache> StateRootProvider
     for LatestStateProviderRef<'_, Provider>
 {
     fn state_root(&self, hashed_state: HashedPostState) -> ProviderResult<B256> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let sorted = hashed_state.into_sorted();
             Ok(<DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root(self.tx(), &sorted)?)
-        })
+        }
     }
 
     fn state_root_from_nodes(&self, input: TrieInput) -> ProviderResult<B256> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             Ok(<DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_from_nodes(
                 self.tx(),
                 TrieInputSorted::from_unsorted(input),
             )?)
-        })
+        }
     }
 
     fn state_root_with_updates(
         &self,
         hashed_state: HashedPostState,
     ) -> ProviderResult<(B256, TrieUpdates)> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let sorted = hashed_state.into_sorted();
             Ok(<DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_with_updates(
                 self.tx(),
                 &sorted,
             )?)
-        })
+        }
     }
 
     fn state_root_from_nodes_with_updates(
         &self,
         input: TrieInput,
     ) -> ProviderResult<(B256, TrieUpdates)> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             Ok(
                 <DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_from_nodes_with_updates(
                     self.tx(),
                     TrieInputSorted::from_unsorted(input),
                 )?,
             )
-        })
+        }
     }
 }
 
@@ -145,10 +152,12 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
         address: Address,
         hashed_storage: HashedStorage,
     ) -> ProviderResult<B256> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             <DbStorageRoot<'_, _, A>>::overlay_root(self.tx(), address, hashed_storage)
                 .map_err(|err| ProviderError::Database(err.into()))
-        })
+        }
     }
 
     fn storage_proof(
@@ -157,7 +166,9 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
         slot: B256,
         hashed_storage: HashedStorage,
     ) -> ProviderResult<reth_trie::StorageProof> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             <DbStorageProof<'_, _, A>>::overlay_storage_proof(
                 self.tx(),
                 address,
@@ -165,7 +176,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
                 hashed_storage,
             )
             .map_err(ProviderError::from)
-        })
+        }
     }
 
     fn storage_multiproof(
@@ -174,7 +185,9 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
         slots: &[B256],
         hashed_storage: HashedStorage,
     ) -> ProviderResult<StorageMultiProof> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             <DbStorageProof<'_, _, A>>::overlay_storage_multiproof(
                 self.tx(),
                 address,
@@ -182,7 +195,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
                 hashed_storage,
             )
             .map_err(ProviderError::from)
-        })
+        }
     }
 }
 
@@ -195,10 +208,12 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
         address: Address,
         slots: &[B256],
     ) -> ProviderResult<AccountProof> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(self.tx());
             proof.overlay_account_proof(input, address, slots).map_err(ProviderError::from)
-        })
+        }
     }
 
     fn multiproof(
@@ -206,10 +221,12 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
         input: TrieInput,
         targets: MultiProofTargets,
     ) -> ProviderResult<MultiProof> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(self.tx());
             proof.overlay_multiproof(input, targets).map_err(ProviderError::from)
-        })
+        }
     }
 
     fn witness(
@@ -218,16 +235,18 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
         target: HashedPostState,
         mode: ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
-        reth_trie_db::with_adapter!(self.0, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let nodes_sorted = input.nodes.into_sorted();
             let state_sorted = input.state.into_sorted();
             let witness = TrieWitness::new(
                 InMemoryTrieCursorFactory::new(
-                    reth_trie_db::DatabaseTrieCursorFactory::<_, A>::new(self.tx()),
+                    reth_trie::DatabaseTrieCursorFactory::<_, A>::new(self.tx()),
                     &nodes_sorted,
                 ),
                 HashedPostStateCursorFactory::new(
-                    reth_trie_db::DatabaseHashedCursorFactory::new(self.tx()),
+                    reth_trie::DatabaseHashedCursorFactory::new(self.tx()),
                     &state_sorted,
                 ),
             )
@@ -240,7 +259,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
                 values.sort_unstable();
             }
             Ok(values)
-        })
+        }
     }
 }
 
@@ -252,7 +271,7 @@ impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_
         let mut hashed_state =
             HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state());
         zero_destroyed_account_storage(
-            &reth_trie_db::DatabaseHashedCursorFactory::new(self.tx()),
+            &reth_trie::DatabaseHashedCursorFactory::new(self.tx()),
             bundle_state.state(),
             &mut hashed_state,
         )?;

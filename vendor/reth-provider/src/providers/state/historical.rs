@@ -17,16 +17,15 @@ use reth_storage_api::{
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StateRoot, StorageMultiProof, StorageRoot, TrieInput,
-    TrieInputSorted,
+    AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
+    ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof,
+    MultiProofTargets, StateRoot, StorageMultiProof, StorageRoot, TrieInput, TrieInputSorted,
     hashed_cursor::{HashedPostStateCursorFactory, zero_destroyed_account_storage},
     proof::{Proof, StorageProof},
     trie_cursor::InMemoryTrieCursorFactory,
     updates::TrieUpdates,
     witness::TrieWitness,
 };
-use reth_trie_db::{DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot};
 
 use crate::{
     AccountReader, BlockHashReader, ChangeSetReader, EitherReader, HashedPostStateProvider,
@@ -34,21 +33,21 @@ use crate::{
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbStorageRoot<'a, TX, A> = StorageRoot<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbStorageProof<'a, TX, A> = StorageProof<
     'static,
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbProof<'a, TX, A> = Proof<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 
 /// Result of a history lookup for an account or storage slot.
@@ -376,41 +375,49 @@ where
         + StorageSettingsCache,
 {
     fn state_root(&self, hashed_state: HashedPostState) -> ProviderResult<B256> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(
                 TrieInput::from_state(hashed_state),
             ))?;
             Ok(<DbStateRoot<'_, _, A>>::overlay_root_from_nodes(self.tx(), input)?)
-        })
+        }
     }
 
     fn state_root_from_nodes(&self, input: TrieInput) -> ProviderResult<B256> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(input))?;
             Ok(<DbStateRoot<'_, _, A>>::overlay_root_from_nodes(self.tx(), input)?)
-        })
+        }
     }
 
     fn state_root_with_updates(
         &self,
         hashed_state: HashedPostState,
     ) -> ProviderResult<(B256, TrieUpdates)> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(
                 TrieInput::from_state(hashed_state),
             ))?;
             Ok(<DbStateRoot<'_, _, A>>::overlay_root_from_nodes_with_updates(self.tx(), input)?)
-        })
+        }
     }
 
     fn state_root_from_nodes_with_updates(
         &self,
         input: TrieInput,
     ) -> ProviderResult<(B256, TrieUpdates)> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(input))?;
             Ok(<DbStateRoot<'_, _, A>>::overlay_root_from_nodes_with_updates(self.tx(), input)?)
-        })
+        }
     }
 }
 
@@ -430,7 +437,9 @@ where
         address: Address,
         hashed_storage: HashedStorage,
     ) -> ProviderResult<B256> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(
                 TrieInput::from_state(HashedPostState::from_hashed_storage(
                     alloy_primitives::keccak256(address),
@@ -446,7 +455,7 @@ where
                 .into();
             <DbStorageRoot<'_, _, A>>::overlay_root(self.tx(), address, hashed_storage)
                 .map_err(|err| ProviderError::Database(err.into()))
-        })
+        }
     }
 
     fn storage_proof(
@@ -455,7 +464,9 @@ where
         slot: B256,
         hashed_storage: HashedStorage,
     ) -> ProviderResult<reth_trie::StorageProof> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(
                 TrieInput::from_state(HashedPostState::from_hashed_storage(
                     alloy_primitives::keccak256(address),
@@ -476,7 +487,7 @@ where
                 hashed_storage,
             )
             .map_err(ProviderError::from)
-        })
+        }
     }
 
     fn storage_multiproof(
@@ -485,7 +496,9 @@ where
         slots: &[B256],
         hashed_storage: HashedStorage,
     ) -> ProviderResult<StorageMultiProof> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let input = self.build_overlay(TrieInputSorted::from_unsorted(
                 TrieInput::from_state(HashedPostState::from_hashed_storage(
                     alloy_primitives::keccak256(address),
@@ -506,7 +519,7 @@ where
                 hashed_storage,
             )
             .map_err(ProviderError::from)
-        })
+        }
     }
 }
 
@@ -528,7 +541,9 @@ where
         address: Address,
         slots: &[B256],
     ) -> ProviderResult<AccountProof> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let TrieInputSorted { nodes, state, prefix_sets } =
                 self.build_overlay(TrieInputSorted::from_unsorted(input))?;
             let input = TrieInput::new(
@@ -538,7 +553,7 @@ where
             );
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(self.tx());
             proof.overlay_account_proof(input, address, slots).map_err(ProviderError::from)
-        })
+        }
     }
 
     fn multiproof(
@@ -546,7 +561,9 @@ where
         input: TrieInput,
         targets: MultiProofTargets,
     ) -> ProviderResult<MultiProof> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let TrieInputSorted { nodes, state, prefix_sets } =
                 self.build_overlay(TrieInputSorted::from_unsorted(input))?;
             let input = TrieInput::new(
@@ -556,7 +573,7 @@ where
             );
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(self.tx());
             proof.overlay_multiproof(input, targets).map_err(ProviderError::from)
-        })
+        }
     }
 
     fn witness(
@@ -565,16 +582,18 @@ where
         target: HashedPostState,
         mode: ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
-        reth_trie_db::with_adapter!(self.provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
+
             let TrieInputSorted { nodes, state, prefix_sets } =
                 self.build_overlay(TrieInputSorted::from_unsorted(input))?;
             let witness = TrieWitness::new(
                 InMemoryTrieCursorFactory::new(
-                    reth_trie_db::DatabaseTrieCursorFactory::<_, A>::new(self.tx()),
+                    reth_trie::DatabaseTrieCursorFactory::<_, A>::new(self.tx()),
                     nodes.as_ref(),
                 ),
                 HashedPostStateCursorFactory::new(
-                    reth_trie_db::DatabaseHashedCursorFactory::new(self.tx()),
+                    reth_trie::DatabaseHashedCursorFactory::new(self.tx()),
                     state.as_ref(),
                 ),
             )
@@ -589,7 +608,7 @@ where
                 }
                 values
             })
-        })
+        }
     }
 }
 
@@ -621,7 +640,7 @@ where
         let historical = self.build_overlay(TrieInputSorted::default())?.state;
         zero_destroyed_account_storage(
             &HashedPostStateCursorFactory::new(
-                reth_trie_db::DatabaseHashedCursorFactory::new(self.tx()),
+                reth_trie::DatabaseHashedCursorFactory::new(self.tx()),
                 historical.as_ref(),
             ),
             bundle_state.state(),

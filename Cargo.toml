@@ -353,7 +353,6 @@ reth-db-api = { path = "vendor/reth-db-api", default-features = false }
 reth-codecs = { path = "vendor/reth-codecs", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
-reth-trie-db = { path = "vendor/reth-trie-db", default-features = false }
 reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }
 reth-tracing = { path = "vendor/reth-tracing", default-features = false }
 reth-rpc-api = { path = "vendor/reth-rpc-api", default-features = false }
@@ -395,7 +394,6 @@ reth-tracing-otlp = { path = "vendor/reth-tracing-otlp", default-features = fals
 reth-stages-types = { path = "vendor/reth-stages-types", default-features = false }
 reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }
 reth-network-peers = { path = "vendor/reth-network-peers", default-features = false }
-reth-trie-parallel = { path = "vendor/reth-trie-parallel", default-features = false }
 reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
 reth-rpc-eth-types = { path = "vendor/reth-rpc-eth-types", default-features = false }
 reth-network-types = { path = "vendor/reth-network-types", default-features = false }

@@ -11,12 +11,10 @@ use reth_db_api::transaction::DbTxMut;
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_provider::{HashingWriter, test_utils::create_test_provider_factory};
 use reth_trie::{
-    ExecutionWitnessMode, HashedPostState, HashedStorage, LeafNode, MultiProofTargets, Nibbles,
-    StateRoot, StorageRoot, TrieNodeV2, proof::Proof, witness::TrieWitness,
-};
-use reth_trie_db::{
     DatabaseHashedCursorFactory, DatabaseProof, DatabaseStateRoot, DatabaseStorageRoot,
-    DatabaseTrieCursorFactory,
+    DatabaseTrieCursorFactory, ExecutionWitnessMode, HashedPostState, HashedStorage, LeafNode,
+    MultiProofTargets, Nibbles, StateRoot, StorageRoot, TrieNodeV2, proof::Proof,
+    witness::TrieWitness,
 };
 
 type DbStateRoot<'a, TX, A> =
@@ -34,7 +32,8 @@ fn includes_empty_node_preimage() {
     let hashed_address = keccak256(address);
     let hashed_slot = B256::random();
 
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let legacy_empty_witness = TrieWitness::new(
             DatabaseTrieCursorFactory::<_, A>::new(provider.tx_ref()),
             DatabaseHashedCursorFactory::new(provider.tx_ref()),
@@ -111,7 +110,7 @@ fn includes_empty_node_preimage() {
             assert_eq!(canonical_witness.get(&keccak256(node)), Some(node));
         }
         assert!(!canonical_witness.contains_key(&EMPTY_ROOT_HASH));
-    });
+    };
 }
 
 #[test]
@@ -130,7 +129,8 @@ fn includes_nodes_for_destroyed_storage_nodes() {
         .insert_storage_for_hashing([(address, [StorageEntry { key: slot, value: U256::from(1) }])])
         .unwrap();
 
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let multiproof = proof
@@ -156,7 +156,7 @@ fn includes_nodes_for_destroyed_storage_nodes() {
         for node in multiproof.storages.values().flat_map(|storage| storage.subtree.values()) {
             assert_eq!(witness.get(&keccak256(node)), Some(node));
         }
-    });
+    };
 }
 
 #[test]
@@ -180,7 +180,8 @@ fn correctly_decodes_branch_node_values() {
         .upsert(hashed_address, &StorageEntry { key: hashed_slot2, value: U256::from(1) })
         .unwrap();
 
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let multiproof = proof
@@ -211,7 +212,7 @@ fn correctly_decodes_branch_node_values() {
         for node in multiproof.storages.values().flat_map(|storage| storage.subtree.values()) {
             assert_eq!(witness.get(&keccak256(node)), Some(node));
         }
-    });
+    };
 }
 
 #[test]
@@ -233,7 +234,8 @@ fn skips_storage_root_node_for_account_only_changes_in_canonical_mode() {
         .insert_storage_for_hashing([(address, [StorageEntry { key: slot, value: U256::from(7) }])])
         .unwrap();
 
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let storage_root =
             DbStorageRoot::<_, A>::from_tx(provider.tx_ref(), address).root().unwrap();
@@ -275,7 +277,7 @@ fn skips_storage_root_node_for_account_only_changes_in_canonical_mode() {
             assert_eq!(canonical_witness.get(&keccak256(node)), Some(node));
         }
         assert!(!canonical_witness.contains_key(&storage_root));
-    });
+    };
 }
 
 #[test]
@@ -320,7 +322,8 @@ fn canonical_mode_handles_mixed_storage_inserts_and_removals() {
         .upsert(hashed_address, &StorageEntry { key: retained_slot, value: U256::from(2) })
         .unwrap();
 
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let initial_multiproof = proof
@@ -373,5 +376,5 @@ fn canonical_mode_handles_mixed_storage_inserts_and_removals() {
         assert!(canonical_witness.contains_key(&state_root));
         assert!(!canonical_witness.contains_key(&retained_leaf_hash));
         assert!(canonical_witness.iter().all(|(_, node)| node.as_ref() != [EMPTY_STRING_CODE]));
-    });
+    };
 }

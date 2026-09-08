@@ -17,7 +17,7 @@ use reth_trie::{
 use revm::state::EvmState;
 use tracing::trace;
 
-use crate::error::StateRootTaskError;
+use crate::state_root_error::StateRootTaskError;
 
 /// Messages used internally by the multi proof task.
 #[derive(Debug)]
@@ -465,12 +465,12 @@ impl Drop for StateRootUpdateHook {
 }
 
 #[derive(Debug, Clone)]
-struct SparseTrieStateRootSink {
+pub struct SparseTrieStateRootSink {
     sender: crossbeam_channel::Sender<StateRootMessage>,
 }
 
 impl SparseTrieStateRootSink {
-    const fn new(sender: crossbeam_channel::Sender<StateRootMessage>) -> Self {
+    pub const fn new(sender: crossbeam_channel::Sender<StateRootMessage>) -> Self {
         Self { sender }
     }
 }

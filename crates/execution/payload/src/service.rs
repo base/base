@@ -18,11 +18,11 @@ use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadAttributes, PayloadBuilderError,
     PayloadEvents, PayloadKind,
 };
+use base_execution_trie::PayloadStateRootHandle;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::sync::{
     broadcast, mpsc,
     oneshot::{self, Receiver},

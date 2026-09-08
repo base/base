@@ -38,8 +38,7 @@ use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;
 use reth_storage_api::{ChangeSetReader, StorageChangeSetReader};
 use reth_testing_utils::generators::{self, generate_key};
-use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
-use reth_trie_db::DatabaseStateRoot;
+use reth_trie::{DatabaseStateRoot, HashedPostState, KeccakKeyHasher, StateRoot};
 use tokio::sync::watch;
 
 /// Counter contract deployed bytecode compiled with Solidity 0.8.31.
@@ -308,15 +307,17 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         let hashed_state =
             HashedPostState::from_bundle_state::<KeccakKeyHasher>(output.state.state());
         type TestStateRoot<'a, TX, A> = StateRoot<
-            reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-            reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+            reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+            reth_trie::DatabaseHashedCursorFactory<&'a TX>,
         >;
-        let (state_root, _trie_updates) = reth_trie_db::with_adapter!(provider, |A| {
+        let (state_root, _trie_updates) = {
+            type A = reth_trie::PackedKeyAdapter;
+
             TestStateRoot::<_, A>::overlay_root_with_updates(
                 provider.tx_ref(),
                 &hashed_state.clone().into_sorted(),
             )
-        })?;
+        }?;
 
         // Create receipts for receipt root calculation (one per transaction)
         let receipts: Vec<_> = output.receipts.iter().map(|r| r.with_bloom_ref()).collect();

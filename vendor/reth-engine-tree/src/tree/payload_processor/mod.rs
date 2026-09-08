@@ -15,6 +15,11 @@ use base_execution_evm::{
     BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
 };
+pub use base_execution_trie::{
+    PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
+    StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
+    StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
+};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;
@@ -24,14 +29,6 @@ use reth_provider::{
     StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use reth_tasks::Runtime;
-pub use reth_trie_parallel::{
-    error::StateRootTaskError,
-    state_root_task::{
-        PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
-        StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
-        StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
-    },
-};
 use revm::database::BundleState;
 use tracing::{Span, debug, instrument, trace, warn};
 

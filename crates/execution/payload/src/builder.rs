@@ -26,6 +26,7 @@ use base_execution_evm::{
 use base_execution_payload_types::{
     BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadBuilderError,
 };
+use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{
     BasePooledTx, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PoolTransaction, PredicateContext, TransactionPool,
@@ -39,7 +40,6 @@ use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_trie_common::ExecutionWitnessMode;
-use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::database::State;
 use tracing::{debug, debug_span, instrument, trace, warn};
 
@@ -1246,6 +1246,10 @@ mod tests {
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::{BaseEvmConfig, CancelOnDrop, test_utils::StateProviderTest};
+    use base_execution_trie::{
+        PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
+        StateRootUpdateStream,
+    };
     use base_execution_txpool::{
         BasePooledTransaction, PoolTransaction, ValidityOperator, ValidityPredicate,
     };
@@ -1254,12 +1258,6 @@ mod tests {
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
-    use reth_trie_parallel::{
-        error::StateRootTaskError,
-        state_root_task::{
-            PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
-        },
-    };
     use revm::state::EvmState;
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};

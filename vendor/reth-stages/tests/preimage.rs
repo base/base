@@ -52,8 +52,7 @@ use reth_stages_api::{Pipeline, StageSet};
 use reth_static_file::StaticFileProducer;
 use reth_storage_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
 use reth_testing_utils::generators::{self, generate_key};
-use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
-use reth_trie_db::DatabaseStateRoot;
+use reth_trie::{DatabaseStateRoot, HashedPostState, KeccakKeyHasher, StateRoot};
 use tokio::sync::watch;
 
 type TestProviderFactory =
@@ -1112,15 +1111,17 @@ fn execute_and_commit_block(
     let gas_used = output.gas_used;
     let hashed_state = provider.latest().hashed_post_state(&output.state)?;
     type TestStateRoot<'a, TX, A> = StateRoot<
-        reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-        reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+        reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+        reth_trie::DatabaseHashedCursorFactory<&'a TX>,
     >;
-    let (state_root, _trie_updates) = reth_trie_db::with_adapter!(provider, |A| {
+    let (state_root, _trie_updates) = {
+        type A = reth_trie::PackedKeyAdapter;
+
         TestStateRoot::<_, A>::overlay_root_with_updates(
             provider.tx_ref(),
             &hashed_state.clone().into_sorted(),
         )
-    })?;
+    }?;
 
     let receipts: Vec<_> = output.receipts.iter().map(|r| r.with_bloom_ref()).collect();
     let receipts_root = calculate_receipt_root(&receipts);

@@ -4,12 +4,11 @@ use alloy_primitives::B256;
 use reth_db_api::{cursor::DbCursorRW, tables, transaction::DbTxMut};
 use reth_provider::test_utils::create_test_provider_factory;
 use reth_trie::{
-    BranchNodeCompact, Nibbles, PackedStorageTrieEntry,
+    BranchNodeCompact, DatabaseTrieCursorFactory, Nibbles, PackedStorageTrieEntry,
     prefix_set::PrefixSetMut,
     trie_cursor::{TrieCursor, TrieCursorFactory},
     walker::TrieWalker,
 };
-use reth_trie_db::DatabaseTrieCursorFactory;
 
 #[test]
 fn walk_nodes_with_common_prefix() {
@@ -42,7 +41,8 @@ fn walk_nodes_with_common_prefix() {
         account_cursor.upsert(k.clone().into(), &v.clone()).unwrap();
     }
 
-    reth_trie_db::with_adapter!(tx, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let trie_factory = DatabaseTrieCursorFactory::<_, A>::new(tx.tx_ref());
         let account_trie = trie_factory.account_trie_cursor().unwrap();
         test_cursor(account_trie, &expected);
@@ -62,7 +62,7 @@ fn walk_nodes_with_common_prefix() {
         let trie_factory = DatabaseTrieCursorFactory::<_, A>::new(tx.tx_ref());
         let storage_trie = trie_factory.storage_trie_cursor(hashed_address).unwrap();
         test_cursor(storage_trie, &expected);
-    });
+    };
 }
 
 fn test_cursor<T>(mut trie: T, expected: &[Vec<u8>])
@@ -122,7 +122,8 @@ fn cursor_rootnode_with_changesets() {
             .unwrap();
     }
 
-    reth_trie_db::with_adapter!(tx, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let trie_factory = DatabaseTrieCursorFactory::<_, A>::new(tx.tx_ref());
         let mut trie = trie_factory.storage_trie_cursor(hashed_address).unwrap();
 
@@ -151,5 +152,5 @@ fn cursor_rootnode_with_changesets() {
 
         cursor.advance().unwrap();
         assert_eq!(cursor.key().copied(), None); // the end of trie
-    });
+    };
 }

@@ -23,23 +23,23 @@ use crate::proof_task::StorageProofResultMessage;
 ///
 /// Tracks time spent waiting for storage proofs and counts of each deferred encoder variant used.
 #[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct ValueEncoderStats {
+pub struct ValueEncoderStats {
     /// Accumulated time spent waiting for storage proof results from dispatched workers.
-    pub(crate) storage_wait_time: Duration,
+    pub storage_wait_time: Duration,
     /// Number of times the `Dispatched` variant was used (proof pre-dispatched to workers).
-    pub(crate) dispatched_count: u64,
+    pub dispatched_count: u64,
     /// Number of times the `FromCache` variant was used (storage root already cached).
-    pub(crate) from_cache_count: u64,
+    pub from_cache_count: u64,
     /// Number of times the `Sync` variant was used (synchronous computation).
-    pub(crate) sync_count: u64,
+    pub sync_count: u64,
     /// Number of times a dispatched storage proof had no root node and fell back to sync
     /// computation.
-    pub(crate) dispatched_missing_root_count: u64,
+    pub dispatched_missing_root_count: u64,
 }
 
 impl ValueEncoderStats {
     /// Extends this metrics by adding the values from another.
-    pub(crate) fn extend(&mut self, other: &Self) {
+    pub fn extend(&mut self, other: &Self) {
         self.storage_wait_time += other.storage_wait_time;
         self.dispatched_count += other.dispatched_count;
         self.from_cache_count += other.from_cache_count;
@@ -49,7 +49,8 @@ impl ValueEncoderStats {
 }
 
 /// Returned from [`AsyncAccountValueEncoder`], used to track an async storage root calculation.
-pub(crate) enum AsyncAccountDeferredValueEncoder<TC, HC> {
+#[derive(Debug)]
+pub enum AsyncAccountDeferredValueEncoder<TC, HC> {
     /// A storage proof job was dispatched to the worker pool.
     Dispatched {
         hashed_address: B256,
@@ -211,7 +212,8 @@ where
 /// For accounts without pre-dispatched proofs or cached roots, uses a shared
 /// [`StorageProofCalculator`] to compute storage roots synchronously, reusing cursors across
 /// multiple accounts.
-pub(crate) struct AsyncAccountValueEncoder<TC, HC> {
+#[derive(Debug)]
+pub struct AsyncAccountValueEncoder<TC, HC> {
     /// Storage proof jobs which were dispatched ahead of time.
     dispatched: B256Map<CrossbeamReceiver<StorageProofResultMessage>>,
     /// Storage roots which have already been computed. This can be used only if a storage proof
@@ -235,7 +237,7 @@ impl<TC, HC> AsyncAccountValueEncoder<TC, HC> {
     /// - `dispatched`: Pre-dispatched storage proof receivers for target accounts
     /// - `cached_storage_roots`: Shared cache of already-computed storage roots
     /// - `storage_calculator`: Shared storage proof calculator for synchronous computation
-    pub(crate) fn new(
+    pub fn new(
         dispatched: B256Map<CrossbeamReceiver<StorageProofResultMessage>>,
         cached_storage_roots: Arc<DashMap<B256, B256>>,
         storage_calculator: Rc<RefCell<StorageProofCalculator<TC, HC>>>,
@@ -258,7 +260,7 @@ impl<TC, HC> AsyncAccountValueEncoder<TC, HC> {
     ///
     /// This method panics if any deferred encoders produced by [`Self::deferred_encoder`] have not
     /// been dropped.
-    pub(crate) fn finalize(
+    pub fn finalize(
         self,
     ) -> Result<(B256Map<Vec<ProofTrieNodeV2>>, ValueEncoderStats), StateProofError> {
         let mut storage_proof_results = Rc::into_inner(self.storage_proof_results)

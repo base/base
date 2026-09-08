@@ -11,8 +11,10 @@ use alloy_rlp::EMPTY_STRING_CODE;
 use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::Account;
 use reth_provider::test_utils::{create_test_provider_factory_with_chain_spec, insert_genesis};
-use reth_trie::{AccountProof, Nibbles, StorageProof, proof::Proof};
-use reth_trie_db::{DatabaseHashedCursorFactory, DatabaseProof, DatabaseTrieCursorFactory};
+use reth_trie::{
+    AccountProof, DatabaseHashedCursorFactory, DatabaseProof, DatabaseTrieCursorFactory, Nibbles,
+    StorageProof, proof::Proof,
+};
 
 type DbProof<'a, TX, A> =
     Proof<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
@@ -31,10 +33,24 @@ type DbProof<'a, TX, A> =
 static TEST_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
     BaseChainSpec {
         config: base_common_chains::ChainConfig { chain_id: 12345, ..Default::default() },
-        genesis: serde_json::from_str(include_str!("../../reth-trie/testdata/proof-genesis.json"))
+        genesis: serde_json::from_str(include_str!("../testdata/proof-genesis.json"))
             .expect("Can't deserialize test genesis json"),
         ..Default::default()
     }
+    .into()
+});
+
+// These are proof vectors for historical Ethereum allocations, independent of execution rules.
+static MAINNET_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
+    BaseChainSpec::from_genesis(
+        serde_json::from_str(include_str!("../../alloy-genesis/dumpgenesis/mainnet.json")).unwrap(),
+    )
+    .into()
+});
+static HOLESKY_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
+    BaseChainSpec::from_genesis(
+        serde_json::from_str(include_str!("../../alloy-genesis/dumpgenesis/holesky.json")).unwrap(),
+    )
     .into()
 });
 
@@ -88,7 +104,8 @@ fn testspec_proofs() {
     ]);
 
     let provider = factory.provider().unwrap();
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         for (target, expected_proof) in data {
             let target = Address::from_str(target).unwrap();
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
@@ -100,7 +117,7 @@ fn testspec_proofs() {
             );
             assert_eq!(account_proof.verify(root), Ok(()));
         }
-    });
+    };
 }
 
 #[test]
@@ -113,7 +130,8 @@ fn testspec_empty_storage_proof() {
     let slots = Vec::from([B256::with_last_byte(1), B256::with_last_byte(3)]);
 
     let provider = factory.provider().unwrap();
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &slots).unwrap();
         assert_eq!(account_proof.storage_root, EMPTY_ROOT_HASH, "expected empty storage root");
@@ -131,7 +149,7 @@ fn testspec_empty_storage_proof() {
             assert_eq!(proof.verify(account_proof.storage_root), Ok(()));
         }
         assert_eq!(account_proof.verify(root), Ok(()));
-    });
+    };
 }
 
 #[test]
@@ -146,7 +164,8 @@ fn empty_state_trie_account_proof() {
     let target = address!("0x1ed9b1dd266b607ee278726d324b855a093394a6");
 
     let provider = factory.provider().unwrap();
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &[]).unwrap();
         assert_eq!(account_proof.info, None, "absent account should have no info");
@@ -158,13 +177,13 @@ fn empty_state_trie_account_proof() {
             account_proof.proof
         );
         assert_eq!(account_proof.verify(EMPTY_ROOT_HASH), Ok(()));
-    });
+    };
 }
 
 #[test]
 fn mainnet_genesis_account_proof() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&MAINNET_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     // Address from mainnet genesis allocation.
@@ -181,18 +200,19 @@ fn mainnet_genesis_account_proof() {
     ]);
 
     let provider = factory.provider().unwrap();
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &[]).unwrap();
         similar_asserts::assert_eq!(account_proof.proof, expected_account_proof);
         assert_eq!(account_proof.verify(root), Ok(()));
-    });
+    };
 }
 
 #[test]
 fn mainnet_genesis_account_proof_nonexistent() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&MAINNET_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     // Address that does not exist in mainnet genesis allocation.
@@ -207,18 +227,19 @@ fn mainnet_genesis_account_proof_nonexistent() {
     ]);
 
     let provider = factory.provider().unwrap();
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &[]).unwrap();
         similar_asserts::assert_eq!(account_proof.proof, expected_account_proof);
         assert_eq!(account_proof.verify(root), Ok(()));
-    });
+    };
 }
 
 #[test]
 fn holesky_deposit_contract_proof() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&HOLESKY_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     let target = address!("0x4242424242424242424242424242424242424242");
@@ -307,10 +328,11 @@ fn holesky_deposit_contract_proof() {
     };
 
     let provider = factory.provider().unwrap();
-    reth_trie_db::with_adapter!(provider, |A| {
+    {
+        type A = reth_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &slots).unwrap();
         similar_asserts::assert_eq!(account_proof, expected);
         assert_eq!(account_proof.verify(root), Ok(()));
-    });
+    };
 }

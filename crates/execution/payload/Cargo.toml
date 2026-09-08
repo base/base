@@ -49,8 +49,8 @@ reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-reth-trie-parallel = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
+base-execution-trie = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
@@ -80,5 +80,5 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "tokio/rt",
     "reth-execution-cache/test-utils",
-    "reth-trie-parallel/test-utils",
+    "base-execution-trie/test-utils",
 ]

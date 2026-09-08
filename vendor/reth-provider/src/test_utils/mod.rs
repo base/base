@@ -8,8 +8,7 @@ use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_storage_errors::provider::ProviderResult;
-use reth_trie::StateRoot;
-use reth_trie_db::DatabaseStateRoot;
+use reth_trie::{DatabaseStateRoot, StateRoot};
 
 use crate::{
     ChainSpecProvider, HashingWriter, ProviderFactory, TrieWriter,
@@ -17,8 +16,8 @@ use crate::{
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
-    reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie_db::DatabaseHashedCursorFactory<&'a TX>,
+    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 
 pub mod blocks;
@@ -146,9 +145,10 @@ pub fn insert_genesis<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     });
     provider.insert_storage_for_hashing(alloc_storage)?;
 
-    let (root, updates) = reth_trie_db::with_adapter!(provider, |A| {
+    let (root, updates) = {
+        type A = reth_trie::PackedKeyAdapter;
         DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root_with_updates()?
-    });
+    };
     provider.write_trie_updates(updates).unwrap();
 
     provider.commit()?;

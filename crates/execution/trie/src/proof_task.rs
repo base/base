@@ -50,23 +50,67 @@ use reth_storage_errors::{StateProofError, db::DatabaseError};
 use reth_tasks::Runtime;
 use reth_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
-    hashed_cursor::{HashedCursorFactory, HashedStorageCursor, InstrumentedHashedCursor},
+    hashed_cursor::{
+        HashedCursorFactory, HashedCursorMetricsCache, HashedStorageCursor,
+        InstrumentedHashedCursor,
+    },
     proof_v2,
-    trie_cursor::{InstrumentedTrieCursor, TrieCursorFactory, TrieStorageCursor},
+    trie_cursor::{
+        InstrumentedTrieCursor, TrieCursorFactory, TrieCursorMetricsCache, TrieStorageCursor,
+    },
 };
 use tracing::{debug, debug_span, error, instrument, trace};
 
 #[cfg(feature = "metrics")]
-use crate::proof_task_metrics::{
-    ProofTaskCursorMetrics, ProofTaskCursorMetricsCache, ProofTaskTrieMetrics,
-};
+use crate::proof_task_metrics::{ProofTaskCursorMetrics, ProofTaskTrieMetrics};
 use crate::{
-    error::StateRootTaskError,
+    StateRootTaskError,
     value_encoder::{AsyncAccountValueEncoder, ValueEncoderStats},
 };
 
+/// Cached cursor metrics for proof task operations.
+#[derive(Clone, Debug, Default, Copy)]
+pub struct ProofTaskCursorMetricsCache {
+    /// Cached metrics for account trie cursor operations.
+    pub account_trie_cursor: TrieCursorMetricsCache,
+    /// Cached metrics for account hashed cursor operations.
+    pub account_hashed_cursor: HashedCursorMetricsCache,
+    /// Cached metrics for storage trie cursor operations.
+    pub storage_trie_cursor: TrieCursorMetricsCache,
+    /// Cached metrics for storage hashed cursor operations.
+    pub storage_hashed_cursor: HashedCursorMetricsCache,
+}
+
+impl ProofTaskCursorMetricsCache {
+    /// Extend this cache by adding the counts from another cache.
+    ///
+    /// This accumulates the counter values from `other` into this cache.
+    pub fn extend(&mut self, other: &Self) {
+        self.account_trie_cursor.extend(&other.account_trie_cursor);
+        self.account_hashed_cursor.extend(&other.account_hashed_cursor);
+        self.storage_trie_cursor.extend(&other.storage_trie_cursor);
+        self.storage_hashed_cursor.extend(&other.storage_hashed_cursor);
+    }
+
+    /// Reset all counters to zero.
+    pub const fn reset(&mut self) {
+        self.account_trie_cursor.reset();
+        self.account_hashed_cursor.reset();
+        self.storage_trie_cursor.reset();
+        self.storage_hashed_cursor.reset();
+    }
+
+    /// Record the spans for metrics.
+    pub fn record_spans(&self) {
+        self.account_trie_cursor.record_span("account_trie_cursor");
+        self.account_hashed_cursor.record_span("account_hashed_cursor");
+        self.storage_trie_cursor.record_span("storage_trie_cursor");
+        self.storage_hashed_cursor.record_span("storage_hashed_cursor");
+    }
+}
+
 /// Type alias for the V2 account proof calculator with instrumented cursors.
-type V2AccountProofCalculator<'a, Provider> = proof_v2::ProofCalculator<
+pub type V2AccountProofCalculator<'a, Provider> = proof_v2::ProofCalculator<
     InstrumentedTrieCursor<'a, <Provider as TrieCursorFactory>::AccountTrieCursor<'a>>,
     InstrumentedHashedCursor<'a, <Provider as HashedCursorFactory>::AccountCursor<'a>>,
     AsyncAccountValueEncoder<
@@ -76,7 +120,7 @@ type V2AccountProofCalculator<'a, Provider> = proof_v2::ProofCalculator<
 >;
 
 /// Type alias for the V2 storage proof calculator with instrumented cursors.
-type V2StorageProofCalculator<'a, Provider> = proof_v2::StorageProofCalculator<
+pub type V2StorageProofCalculator<'a, Provider> = proof_v2::StorageProofCalculator<
     InstrumentedTrieCursor<'a, <Provider as TrieCursorFactory>::StorageTrieCursor<'a>>,
     InstrumentedHashedCursor<'a, <Provider as HashedCursorFactory>::StorageCursor<'a>>,
 >;
@@ -85,7 +129,7 @@ type V2StorageProofCalculator<'a, Provider> = proof_v2::StorageProofCalculator<
 ///
 /// It uses cacheline-aligned flags to avoid core-to-core chatter.
 #[derive(Debug)]
-struct AvailabilitySheet {
+pub struct AvailabilitySheet {
     /// One flag per worker, each on its own cacheline. Workers store `true` when idle,
     /// `false` when busy. Only the owning worker writes; the dispatcher only reads.
     flags: Vec<crossbeam_utils::CachePadded<AtomicBool>>,
@@ -93,7 +137,7 @@ struct AvailabilitySheet {
 
 impl AvailabilitySheet {
     /// Creates a new sheet with `count` workers, all initially marked as busy.
-    fn new(count: usize) -> Self {
+    pub fn new(count: usize) -> Self {
         let flags =
             (0..count).map(|_| crossbeam_utils::CachePadded::new(AtomicBool::new(false))).collect();
         Self { flags }
@@ -103,7 +147,7 @@ impl AvailabilitySheet {
     ///
     /// Note, that this is somewhat racy since a flag that was just saying `idle` and we counted it
     /// as such might turn into `busy` right away.
-    fn has_multiple_idle(&self) -> bool {
+    pub fn has_multiple_idle(&self) -> bool {
         let mut idle = 0u32;
         for flag in &self.flags {
             if flag.load(Ordering::Relaxed) {
@@ -117,12 +161,12 @@ impl AvailabilitySheet {
     }
 
     /// Marks the given worker as idle.
-    fn mark_idle(&self, worker_id: usize) {
+    pub fn mark_idle(&self, worker_id: usize) {
         self.flags[worker_id].store(true, Ordering::Relaxed);
     }
 
     /// Marks the given worker as busy.
-    fn mark_busy(&self, worker_id: usize) {
+    pub fn mark_busy(&self, worker_id: usize) {
         self.flags[worker_id].store(false, Ordering::Relaxed);
     }
 }
@@ -428,7 +472,7 @@ pub struct ProofTaskTx<Provider> {
 
 impl<Provider> ProofTaskTx<Provider> {
     /// Initializes a [`ProofTaskTx`] with the given provider and ID.
-    const fn new(provider: Provider, id: usize) -> Self {
+    pub const fn new(provider: Provider, id: usize) -> Self {
         Self { provider, id }
     }
 }
@@ -437,7 +481,7 @@ impl<Provider> ProofTaskTx<Provider>
 where
     Provider: TrieCursorFactory + HashedCursorFactory,
 {
-    fn compute_v2_storage_proof<TC, HC>(
+    pub fn compute_v2_storage_proof<TC, HC>(
         &self,
         input: StorageProofInput,
         calculator: &mut proof_v2::StorageProofCalculator<TC, HC>,
@@ -540,7 +584,7 @@ impl ProofResultContext {
 
 /// The results of a storage proof calculation.
 #[derive(Debug)]
-pub(crate) struct StorageProofResult {
+pub struct StorageProofResult {
     /// The calculated V2 proof nodes
     pub proof: Vec<ProofTrieNodeV2>,
     /// The storage root calculated by the V2 proof
@@ -549,7 +593,7 @@ pub(crate) struct StorageProofResult {
 
 impl StorageProofResult {
     /// Returns the calculated root of the trie, if one can be calculated from the proof.
-    const fn root(&self) -> Option<B256> {
+    pub const fn root(&self) -> Option<B256> {
         self.root
     }
 }
@@ -559,14 +603,14 @@ impl StorageProofResult {
 pub struct StorageProofResultMessage {
     /// The hashed address this storage proof belongs to
     #[allow(dead_code)]
-    pub(crate) hashed_address: B256,
+    pub hashed_address: B256,
     /// The storage proof calculation result
-    pub(crate) result: Result<StorageProofResult, StateProofError>,
+    pub result: Result<StorageProofResult, StateProofError>,
 }
 
 /// Internal message for storage workers.
 #[derive(Debug)]
-pub(crate) enum StorageWorkerJob {
+pub enum StorageWorkerJob {
     /// Storage proof computation request
     StorageProof {
         /// Storage proof input parameters
@@ -580,7 +624,8 @@ pub(crate) enum StorageWorkerJob {
 ///
 /// Each worker maintains a dedicated database transaction and processes
 /// storage proof requests.
-struct StorageProofWorker<Factory> {
+#[derive(Debug)]
+pub struct StorageProofWorker<Factory> {
     /// Shared task context with database factory and prefix sets
     task_ctx: ProofTaskCtx<Factory>,
     /// Channel for receiving work
@@ -604,7 +649,7 @@ where
     Factory: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>,
 {
     /// Creates a new storage proof worker.
-    const fn new(
+    pub const fn new(
         task_ctx: ProofTaskCtx<Factory>,
         work_rx: CrossbeamReceiver<StorageWorkerJob>,
         worker_id: usize,
@@ -643,7 +688,7 @@ where
     ///
     /// If this function panics, the worker thread terminates but other workers
     /// continue operating and the system degrades gracefully.
-    fn run(mut self) -> ProviderResult<()> {
+    pub fn run(self) -> ProviderResult<()> {
         // Create provider from factory
         let provider = self.task_ctx.factory.database_provider_ro()?;
         let proof_tx = ProofTaskTx::new(provider, self.worker_id);
@@ -726,14 +771,15 @@ where
         #[cfg(feature = "metrics")]
         {
             self.metrics.record_storage_worker_idle_time(total_idle_time);
-            self.cursor_metrics.record(&mut cursor_metrics_cache);
+            let mut cursor_metrics = self.cursor_metrics;
+            cursor_metrics.record(&mut cursor_metrics_cache);
         }
 
         Ok(())
     }
 
     /// Processes a storage proof request.
-    fn process_storage_proof<Provider, TC, HC>(
+    pub fn process_storage_proof<Provider, TC, HC>(
         &self,
         proof_tx: &ProofTaskTx<Provider>,
         v2_calculator: &mut proof_v2::StorageProofCalculator<TC, HC>,
@@ -793,7 +839,8 @@ where
 ///
 /// Each worker maintains a dedicated database transaction and processes
 /// account multiproof requests.
-struct AccountProofWorker<Factory> {
+#[derive(Debug)]
+pub struct AccountProofWorker<Factory> {
     /// Shared task context with database factory and prefix sets
     task_ctx: ProofTaskCtx<Factory>,
     /// Channel for receiving work
@@ -820,7 +867,7 @@ where
 {
     /// Creates a new account proof worker.
     #[expect(clippy::too_many_arguments)]
-    const fn new(
+    pub const fn new(
         task_ctx: ProofTaskCtx<Factory>,
         work_rx: CrossbeamReceiver<AccountWorkerJob>,
         worker_id: usize,
@@ -861,7 +908,7 @@ where
     ///
     /// If this function panics, the worker thread terminates but other workers
     /// continue operating and the system degrades gracefully.
-    fn run(mut self) -> ProviderResult<()> {
+    pub fn run(self) -> ProviderResult<()> {
         let provider = self.task_ctx.factory.database_provider_ro()?;
 
         trace!(
@@ -979,14 +1026,15 @@ where
         #[cfg(feature = "metrics")]
         {
             self.metrics.record_account_worker_idle_time(total_idle_time);
-            self.cursor_metrics.record(&mut cursor_metrics_cache);
+            let mut cursor_metrics = self.cursor_metrics;
+            cursor_metrics.record(&mut cursor_metrics_cache);
             self.metrics.record_value_encoder_stats(&value_encoder_stats_cache);
         }
 
         Ok(())
     }
 
-    fn compute_v2_account_multiproof<'a, Provider>(
+    pub fn compute_v2_account_multiproof<'a, Provider>(
         &self,
         v2_account_calculator: &mut V2AccountProofCalculator<'a, Provider>,
         v2_storage_calculator: Rc<RefCell<V2StorageProofCalculator<'a, Provider>>>,
@@ -1029,7 +1077,7 @@ where
     /// Processes an account multiproof request.
     ///
     /// Returns stats from the value encoder used during proof computation.
-    fn process_account_multiproof<'a, Provider>(
+    pub fn process_account_multiproof<'a, Provider>(
         &self,
         v2_account_calculator: &mut V2AccountProofCalculator<'a, Provider>,
         v2_storage_calculator: Rc<RefCell<V2StorageProofCalculator<'a, Provider>>>,
@@ -1158,14 +1206,14 @@ pub struct AccountMultiproofInput {
 
 impl AccountMultiproofInput {
     /// Returns the [`ProofResultContext`] for this input, consuming the input.
-    fn into_proof_result_sender(self) -> ProofResultContext {
+    pub fn into_proof_result_sender(self) -> ProofResultContext {
         self.proof_result_sender
     }
 }
 
 /// Internal message for account workers.
 #[derive(Debug)]
-enum AccountWorkerJob {
+pub enum AccountWorkerJob {
     /// Account multiproof computation request
     AccountMultiproof {
         /// Account multiproof input parameters

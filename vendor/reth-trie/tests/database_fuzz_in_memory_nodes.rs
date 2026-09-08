@@ -12,13 +12,11 @@ use reth_db::{
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_provider::test_utils::create_test_provider_factory;
 use reth_trie::{
+    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseTrieCursorFactory,
     HashedPostState, HashedStorage, StateRoot, StorageRoot,
     test_utils::{state_root_prehashed, storage_root_prehashed},
     trie_cursor::InMemoryTrieCursorFactory,
     updates::TrieUpdates,
-};
-use reth_trie_db::{
-    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseTrieCursorFactory,
 };
 
 type DbStateRoot<'a, TX, A> =
@@ -42,7 +40,8 @@ proptest! {
             hashed_account_cursor.upsert(hashed_address, &Account { balance, ..Default::default() }).unwrap();
         }
 
-        reth_trie_db::with_adapter!(provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
             // Compute initial root and updates
             let (_, mut trie_nodes) = DbStateRoot::<_, A>::from_tx(provider.tx_ref())
                 .root_with_updates()
@@ -81,7 +80,7 @@ proptest! {
                 );
                 assert_eq!(expected_root, state_root);
             }
-        });
+        };
     }
 
     #[test]
@@ -99,7 +98,8 @@ proptest! {
                 .unwrap();
         }
 
-        reth_trie_db::with_adapter!(provider, |A| {
+        {
+            type A = reth_trie::PackedKeyAdapter;
             // Compute initial storage root and updates
             let (_, _, mut storage_trie_nodes) =
                 DbStorageRoot::<_, A>::from_tx_hashed(provider.tx_ref(), hashed_address).root_with_updates().unwrap();
@@ -141,6 +141,6 @@ proptest! {
                 let expected_root = storage_root_prehashed(storage.clone());
                 assert_eq!(expected_root, storage_root);
             }
-        });
+        };
     }
 }

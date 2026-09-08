@@ -19,7 +19,6 @@ reth-trie = { workspace = true }
 reth-config = { workspace = true }
 reth-codecs = { workspace = true }
 reth-db-api = { workspace = true }
-reth-trie-db = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-provider = { workspace = true }

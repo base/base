@@ -28,12 +28,9 @@ use reth_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
 use reth_stages::StageId;
 use reth_tasks::TaskExecutor;
 use reth_trie::{
-    Nibbles,
-    verify::{Output, Verifier},
-};
-use reth_trie_db::{
-    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory,
+    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,
     StorageTrieEntryLike, TrieTableAdapter,
+    verify::{Output, Verifier},
 };
 use tracing::{info, warn};
 
@@ -121,7 +118,10 @@ fn verify_only<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     let mut tx = db.tx()?;
     tx.disable_long_read_transaction_safety();
 
-    reth_trie_db::with_adapter!(tool.provider_factory, |A| do_verify_only::<_, A>(&tx))
+    {
+        type A = reth_trie::PackedKeyAdapter;
+        do_verify_only::<_, A>(&tx)
+    }
 }
 
 fn do_verify_only<TX: DbTx, A: TrieTableAdapter>(tx: &TX) -> eyre::Result<()> {
@@ -220,9 +220,10 @@ fn verify_and_repair<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     // Check that a pipeline sync isn't in progress.
     verify_checkpoints(provider_rw.as_ref())?;
 
-    let inconsistent_nodes = reth_trie_db::with_adapter!(tool.provider_factory, |A| {
+    let inconsistent_nodes = {
+        type A = reth_trie::PackedKeyAdapter;
         do_verify_and_repair::<DB, A>(&mut provider_rw, finish_checkpoint.block_number)?
-    });
+    };
 
     if inconsistent_nodes == 0 {
         info!("No inconsistencies found");

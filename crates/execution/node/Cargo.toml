@@ -92,7 +92,6 @@ workspace = true
 
 [dev-dependencies]
 reth-trie = { workspace = true }
-reth-trie-db = { workspace = true }
 alloy-network = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-genesis = { workspace = true  }
@@ -161,7 +160,7 @@ test-utils = [
     "reth-stages-types/test-utils",
     "reth-tasks/test-utils",
     "base-execution-txpool/test-utils",
-    "reth-trie-db/test-utils",
+    "reth-trie/test-utils",
     "base-execution-consensus/test-utils",
     "reth-engine-tree/test-utils",
     "reth-downloaders/test-utils",

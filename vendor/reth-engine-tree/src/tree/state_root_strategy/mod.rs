@@ -66,6 +66,12 @@ use std::{
 
 use alloy_primitives::B256;
 use base_execution_evm::OnStateHook;
+pub use base_execution_trie::{
+    PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
+    StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
+    StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
+};
+use base_execution_trie::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_primitives_traits::{
@@ -82,15 +88,6 @@ use reth_tasks::utils::increase_thread_priority;
 use reth_trie::{
     HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
     updates::TrieUpdates,
-};
-use reth_trie_parallel::proof_task::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
-pub use reth_trie_parallel::{
-    error::StateRootTaskError,
-    state_root_task::{
-        PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
-        StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
-        StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
-    },
 };
 #[cfg(feature = "trie-debug")]
 use reth_trie_sparse::debug_recorder::TrieDebugRecorder;

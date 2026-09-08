@@ -6,7 +6,8 @@ use reth_db_api::{
     transaction::DbTx,
 };
 use reth_primitives_traits::Account;
-use reth_trie::hashed_cursor::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
+
+use crate::hashed_cursor::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
 
 /// A struct wrapping database transaction that implements [`HashedCursorFactory`].
 #[derive(Debug, Clone)]

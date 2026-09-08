@@ -72,3 +72,20 @@ pub use prune::{
     BaseProofStoragePruner, BaseProofStoragePrunerResult, BaseProofStoragePrunerTask, PrunerError,
     PrunerOutput,
 };
+
+mod proof_task;
+pub use proof_task::*;
+
+#[cfg(feature = "metrics")]
+mod proof_task_metrics;
+#[cfg(feature = "metrics")]
+pub use proof_task_metrics::*;
+
+mod state_root_error;
+pub use state_root_error::*;
+
+mod value_encoder;
+pub use value_encoder::*;
+
+mod state_root_task;
+pub use state_root_task::*;

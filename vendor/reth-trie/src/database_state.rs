@@ -10,14 +10,14 @@ use reth_db_api::{
 };
 use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader, StorageSettingsCache};
 use reth_storage_errors::{StateRootError, provider::ProviderError};
-use reth_trie::{
-    HashedPostStateSorted, HashedStorageSorted, StateRoot, StateRootProgress, TrieInputSorted,
+use tracing::{debug, instrument};
+
+use crate::{
+    DatabaseHashedCursorFactory, DatabaseTrieCursorFactory, HashedPostStateSorted,
+    HashedStorageSorted, StateRoot, StateRootProgress, TrieInputSorted,
     hashed_cursor::HashedPostStateCursorFactory, trie_cursor::InMemoryTrieCursorFactory,
     updates::TrieUpdates,
 };
-use tracing::{debug, instrument};
-
-use crate::{DatabaseHashedCursorFactory, DatabaseTrieCursorFactory};
 
 /// Extends [`StateRoot`] with operations specific for working with a database transaction.
 pub trait DatabaseStateRoot<'a, TX>: Sized {
@@ -101,8 +101,8 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     /// use reth_db::test_utils::create_test_rw_db;
     /// use reth_db_api::database::Database;
     /// use reth_primitives_traits::Account;
-    /// use reth_trie::{updates::TrieUpdates, HashedPostState, StateRoot};
-    /// use reth_trie_db::{DatabaseStateRoot, PackedKeyAdapter};
+    /// use crate::{updates::TrieUpdates, HashedPostState, StateRoot};
+    /// use reth_trie::{DatabaseStateRoot, PackedKeyAdapter};
     ///
     /// // Initialize the database
     /// let db = create_test_rw_db();
@@ -117,8 +117,8 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     /// // Calculate the state root
     /// let tx = db.tx().expect("failed to create transaction");
     /// let state_root = <StateRoot<
-    ///     reth_trie_db::DatabaseTrieCursorFactory<_, PackedKeyAdapter>,
-    ///     reth_trie_db::DatabaseHashedCursorFactory<_>,
+    ///     reth_trie::DatabaseTrieCursorFactory<_, PackedKeyAdapter>,
+    ///     reth_trie::DatabaseHashedCursorFactory<_>,
     /// > as DatabaseStateRoot<_>>::overlay_root(&tx, &hashed_state.into_sorted());
     /// ```
     ///
@@ -175,7 +175,7 @@ impl<'a, TX: DbTx, A: crate::TrieTableAdapter> DatabaseStateRoot<'a, TX>
         range: RangeInclusive<BlockNumber>,
     ) -> Result<Self, StateRootError> {
         let loaded_prefix_sets =
-            crate::prefix_set::load_prefix_sets_with_provider(provider, range)?;
+            crate::database_prefix_set::load_prefix_sets_with_provider(provider, range)?;
         Ok(Self::from_tx(provider.tx_ref()).with_prefix_sets(loaded_prefix_sets))
     }
 
@@ -362,25 +362,26 @@ mod tests {
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
     use reth_storage_api::StorageSettingsCache;
     use reth_storage_errors::StateRootError;
-    use reth_trie::{
-        HashedPostState, HashedPostStateSorted, HashedStorage, KeccakKeyHasher, StateRoot,
-    };
     use revm::{database::BundleState, state::AccountInfo};
 
     use super::*;
+    use crate::{
+        HashedPostState, HashedPostStateSorted, HashedStorage, KeccakKeyHasher, StateRoot,
+    };
 
     fn overlay_root_for_provider<TX: reth_db_api::transaction::DbTx>(
         _provider: &impl StorageSettingsCache,
         tx: &TX,
         sorted: &HashedPostStateSorted,
     ) -> Result<B256, StateRootError> {
-        crate::with_adapter!(provider, |A| {
+        {
+            type A = crate::PackedKeyAdapter;
             type S<'a, TX> = StateRoot<
                 crate::DatabaseTrieCursorFactory<&'a TX, A>,
                 crate::DatabaseHashedCursorFactory<&'a TX>,
             >;
             S::overlay_root(tx, sorted)
-        })
+        }
     }
 
     /// Overlay root calculation works with sorted state.

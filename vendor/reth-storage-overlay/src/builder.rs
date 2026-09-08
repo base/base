@@ -16,8 +16,7 @@ use reth_storage_api::{
     StorageChangeSetReader, StorageSettingsCache,
 };
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use reth_trie::{HashedPostStateSorted, updates::TrieUpdatesSorted};
-use reth_trie_db::DatabaseHashedPostState;
+use reth_trie::{DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, debug_span, instrument};
 
 use crate::OverlayManager;

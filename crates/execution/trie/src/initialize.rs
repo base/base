@@ -13,10 +13,10 @@ use reth_db::{
     transaction::DbTx,
 };
 use reth_primitives_traits::{Account, StorageEntry};
+use reth_trie::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
 use reth_trie_common::{
     BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };
-use reth_trie_db::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
 use tracing::{debug, info};
 
 use crate::{

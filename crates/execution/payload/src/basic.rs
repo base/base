@@ -16,6 +16,7 @@ use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, PayloadAttributes,
     PayloadBuilderError, PayloadKind,
 };
+use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{BasePooledTx, TransactionPool};
 use base_state_api::CachedReads;
 use futures_core::ready;
@@ -25,7 +26,6 @@ use reth_execution_cache::SavedCache;
 use reth_primitives_traits::SealedHeader;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_tasks::Runtime;
-use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::{
     sync::{Semaphore, oneshot},
     time::{Interval, Sleep},
