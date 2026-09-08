@@ -10,7 +10,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
@@ -28,8 +28,8 @@ use base_execution_eip8130::{
     TxAuthError,
 };
 use base_execution_txpool::{
-    EthPoolTransaction, EthTransactionValidator, InvalidPoolTransactionError, PoolTransactionError,
-    TransactionOrigin, TransactionValidationOutcome, TransactionValidator, ValidTransaction,
+    EthTransactionValidator, InvalidPoolTransactionError, PoolTransactionError, TransactionOrigin,
+    TransactionValidationOutcome, TransactionValidator, ValidTransaction,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -45,8 +45,8 @@ use reth_storage_api::{
 use revm::state::{AccountInfo, Bytecode};
 
 use crate::{
-    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
-    WatchSet,
+    BasePooledTransaction, BasePooledTx, ConfigSlot, DataAvailabilitySized, InvalidationKey,
+    LimitClass, PoolTransaction, ValidatorMetrics, WatchManifest, WatchSet,
 };
 
 /// Base-specific transaction pool validation errors.
@@ -659,9 +659,9 @@ impl BaseL1BlockInfo {
 
 /// Validator for Base transactions.
 #[derive(Debug, Clone)]
-pub struct BaseTransactionValidator<Client, Tx> {
+pub struct BaseTransactionValidator<Client> {
     /// The type that performs the actual validation.
-    inner: Arc<EthTransactionValidator<Client, Tx>>,
+    inner: Arc<EthTransactionValidator<Client, BasePooledTransaction>>,
     /// Additional block info required for validation.
     block_info: Arc<BaseL1BlockInfo>,
     /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
@@ -680,7 +680,7 @@ pub struct BaseTransactionValidator<Client, Tx> {
     limit_class_cache_generation: Arc<AtomicU64>,
 }
 
-impl<Client, Tx> BaseTransactionValidator<Client, Tx> {
+impl<Client> BaseTransactionValidator<Client> {
     /// Returns the configured chain spec
     pub fn chain_spec(&self) -> Arc<BaseChainSpec>
     where
@@ -797,13 +797,12 @@ impl<Client, Tx> BaseTransactionValidator<Client, Tx> {
     }
 }
 
-impl<Client, Tx> BaseTransactionValidator<Client, Tx>
+impl<Client> BaseTransactionValidator<Client>
 where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
-    Tx: EthPoolTransaction + BasePooledTx,
 {
     /// Create a new [`BaseTransactionValidator`].
-    pub fn new(inner: EthTransactionValidator<Client, Tx>) -> Self {
+    pub fn new(inner: EthTransactionValidator<Client, BasePooledTransaction>) -> Self {
         let this = Self::with_block_info(inner, BaseL1BlockInfo::default());
         if let Ok(Some(block)) =
             this.inner.client().block_by_number_or_tag(alloy_eips::BlockNumberOrTag::Latest)
@@ -822,7 +821,7 @@ where
 
     /// Create a new [`BaseTransactionValidator`] with the given [`BaseL1BlockInfo`].
     pub fn with_block_info(
-        inner: EthTransactionValidator<Client, Tx>,
+        inner: EthTransactionValidator<Client, BasePooledTransaction>,
         block_info: BaseL1BlockInfo,
     ) -> Self {
         let trusted_delegation_targets = Self::default_trusted_delegation_targets();
@@ -863,8 +862,8 @@ where
     pub async fn validate_one(
         &self,
         origin: TransactionOrigin,
-        transaction: Tx,
-    ) -> TransactionValidationOutcome<Tx> {
+        transaction: BasePooledTransaction,
+    ) -> TransactionValidationOutcome<BasePooledTransaction> {
         self.validate_one_with_state(origin, transaction, &mut None).await
     }
 
@@ -885,9 +884,9 @@ where
     pub async fn validate_one_with_state(
         &self,
         origin: TransactionOrigin,
-        transaction: Tx,
+        transaction: BasePooledTransaction,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
-    ) -> TransactionValidationOutcome<Tx> {
+    ) -> TransactionValidationOutcome<BasePooledTransaction> {
         let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
         let start = Instant::now();
         let outcome = self.validate_one_with_state_inner(origin, transaction, state);
@@ -898,9 +897,9 @@ where
     fn validate_one_with_state_inner(
         &self,
         origin: TransactionOrigin,
-        transaction: Tx,
+        transaction: BasePooledTransaction,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
-    ) -> TransactionValidationOutcome<Tx> {
+    ) -> TransactionValidationOutcome<BasePooledTransaction> {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
                 transaction,
@@ -2055,9 +2054,9 @@ where
     /// would never execute.
     fn apply_base_checks(
         &self,
-        outcome: TransactionValidationOutcome<Tx>,
+        outcome: TransactionValidationOutcome<BasePooledTransaction>,
         operator_fee_gas_addition: u64,
-    ) -> TransactionValidationOutcome<Tx> {
+    ) -> TransactionValidationOutcome<BasePooledTransaction> {
         if !self.requires_l1_data_gas_fee() {
             // no need to check L1 gas fee
             return outcome;
@@ -2134,12 +2133,11 @@ where
     }
 }
 
-impl<Client, Tx> TransactionValidator for BaseTransactionValidator<Client, Tx>
+impl<Client> TransactionValidator for BaseTransactionValidator<Client>
 where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
-    Tx: EthPoolTransaction + BasePooledTx,
 {
-    type Transaction = Tx;
+    type Transaction = BasePooledTransaction;
     type Block = BaseBlock;
 
     async fn validate_transaction(
@@ -2185,7 +2183,7 @@ mod tests {
     use super::*;
     use crate::BasePooledTransaction;
 
-    type TestValidator = BaseTransactionValidator<MockEthProvider, BasePooledTransaction>;
+    type TestValidator = BaseTransactionValidator<MockEthProvider>;
 
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.

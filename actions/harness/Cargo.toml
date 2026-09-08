@@ -35,7 +35,6 @@ base-batcher-source = { workspace = true }
 base-batcher-encoder = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-engine = { workspace = true }
-reth-transaction-pool = { workspace = true }
 base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

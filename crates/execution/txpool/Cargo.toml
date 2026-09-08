@@ -21,7 +21,6 @@ thiserror = { workspace = true }
 auto_impl = { workspace = true }
 rustc-hash = { workspace = true }
 reth-tasks = { workspace = true }
-derive_more = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 base-metrics = { workspace = true }

@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
+use alloy_consensus::{
+    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
+};
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -12,12 +14,13 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
-use base_execution_txpool::{
-    EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
+use base_common_consensus::{
+    BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned, Eip8130Constants,
+    Eip8130Signed,
 };
+use base_execution_txpool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 use c_kzg::KzgSettings;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_primitives_traits::InMemorySize;
 
 use crate::estimated_da_size::DataAvailabilitySized;
 
@@ -37,17 +40,16 @@ pub fn unix_time_millis() -> u128 {
 /// This type wraps the actual transaction and caches values that are frequently used by the pool.
 /// For payload building this lazily tracks values that are required during payload building:
 ///  - Estimated compressed size of this transaction
-#[derive(Debug, Clone, derive_more::Deref)]
-pub struct BasePooledTransaction<
-    Cons = BaseTransactionSigned,
-    Pooled = base_common_consensus::BasePooledTransaction,
-> {
-    #[deref]
-    inner: EthPooledTransaction<Cons>,
+#[derive(Debug, Clone)]
+pub struct BasePooledTransaction {
+    /// Recovered Base transaction.
+    pub transaction: Recovered<BaseTransactionSigned>,
+    /// Maximum execution cost, including transferred value.
+    pub cost: U256,
+    /// Encoded transaction length computed on admission.
+    pub encoded_length: usize,
     /// The estimated size of this transaction, lazily computed.
     estimated_tx_compressed_size: OnceLock<u64>,
-    /// The pooled transaction type.
-    _pd: core::marker::PhantomData<Pooled>,
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
@@ -70,9 +72,9 @@ pub struct BasePooledTransaction<
     watch_manifest: OnceLock<crate::WatchManifest>,
 }
 
-impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
+impl BasePooledTransaction {
     /// Create new instance of [Self].
-    pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
+    pub fn new(transaction: Recovered<BaseTransactionSigned>, encoded_length: usize) -> Self {
         Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
     }
 
@@ -80,14 +82,18 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     ///
     /// Primarily for testing.
     pub fn new_with_received_at(
-        transaction: Recovered<Cons>,
+        transaction: Recovered<BaseTransactionSigned>,
         encoded_length: usize,
         received_at: u128,
     ) -> Self {
+        let cost = U256::from(transaction.max_fee_per_gas())
+            .saturating_mul(U256::from(transaction.gas_limit()))
+            .saturating_add(transaction.value());
         Self {
-            inner: EthPooledTransaction::new(transaction, encoded_length),
+            transaction,
+            cost,
+            encoded_length,
             estimated_tx_compressed_size: Default::default(),
-            _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
             validity_predicates: Vec::new(),
@@ -125,42 +131,36 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
 
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
-        self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
+        self.encoded_2718.get_or_init(|| self.transaction.encoded_2718().into())
     }
 }
 
-impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
-    for BasePooledTransaction<Cons, Pooled>
-{
+impl DataAvailabilitySized for BasePooledTransaction {
     fn estimated_da_size(&self) -> u64 {
         self.estimated_compressed_size()
     }
 }
 
-impl<Pooled> PoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
-where
-    BaseTransactionSigned: From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned, Error: core::error::Error>,
-{
-    type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
+impl PoolTransaction for BasePooledTransaction {
+    type TryFromConsensusError = <BasePooledEnvelope as TryFrom<BaseTransactionSigned>>::Error;
     type Consensus = BaseTransactionSigned;
-    type Pooled = Pooled;
+    type Pooled = BasePooledEnvelope;
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
-        self.inner.transaction().clone()
+        self.transaction.clone()
     }
 
     fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
-        self.inner.transaction().as_recovered_ref()
+        self.transaction.as_recovered_ref()
     }
 
     fn into_consensus(self) -> Recovered<Self::Consensus> {
-        self.inner.transaction
+        self.transaction
     }
 
     fn into_consensus_with2718(self) -> WithEncoded<Recovered<Self::Consensus>> {
         let encoding = self.encoded_2718().clone();
-        self.inner.transaction.into_encoded_with(encoding)
+        self.transaction.into_encoded_with(encoding)
     }
 
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
@@ -169,23 +169,23 @@ where
     }
 
     fn hash(&self) -> &TxHash {
-        alloy_consensus::transaction::TxHashRef::tx_hash(self.inner.transaction.inner())
+        alloy_consensus::transaction::TxHashRef::tx_hash(self.transaction.inner())
     }
 
     fn sender(&self) -> Address {
-        self.inner.transaction.signer()
+        self.transaction.signer()
     }
 
     fn sender_ref(&self) -> &Address {
-        self.inner.transaction.signer_ref()
+        self.transaction.signer_ref()
     }
 
     fn cost(&self) -> &U256 {
-        &self.inner.cost
+        &self.cost
     }
 
     fn encoded_length(&self) -> usize {
-        self.inner.encoded_length
+        self.encoded_length
     }
 
     fn requires_nonce_check(&self) -> bool {
@@ -193,13 +193,13 @@ where
     }
 }
 
-impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> {
+impl Typed2718 for BasePooledTransaction {
     fn ty(&self) -> u8 {
-        self.inner.ty()
+        self.transaction.ty()
     }
 }
 
-impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
+impl InMemorySize for BasePooledTransaction {
     fn size(&self) -> usize {
         let watch_keys_size =
             self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
@@ -208,7 +208,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
-        self.inner.size()
+        self.transaction.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
@@ -220,86 +220,77 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
     }
 }
 
-impl<Cons, Pooled> alloy_consensus::Transaction for BasePooledTransaction<Cons, Pooled>
-where
-    Cons: alloy_consensus::Transaction,
-    Pooled: Debug + Send + Sync + 'static,
-{
+impl alloy_consensus::Transaction for BasePooledTransaction {
     fn chain_id(&self) -> Option<u64> {
-        self.inner.chain_id()
+        self.transaction.chain_id()
     }
 
     fn nonce(&self) -> u64 {
-        self.inner.nonce()
+        self.transaction.nonce()
     }
 
     fn gas_limit(&self) -> u64 {
-        self.inner.gas_limit()
+        self.transaction.gas_limit()
     }
 
     fn gas_price(&self) -> Option<u128> {
-        self.inner.gas_price()
+        self.transaction.gas_price()
     }
 
     fn max_fee_per_gas(&self) -> u128 {
-        self.inner.max_fee_per_gas()
+        self.transaction.max_fee_per_gas()
     }
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        self.inner.max_priority_fee_per_gas()
+        self.transaction.max_priority_fee_per_gas()
     }
 
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
-        self.inner.max_fee_per_blob_gas()
+        self.transaction.max_fee_per_blob_gas()
     }
 
     fn priority_fee_or_price(&self) -> u128 {
-        self.inner.priority_fee_or_price()
+        self.transaction.priority_fee_or_price()
     }
 
     fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
-        self.inner.effective_gas_price(base_fee)
+        self.transaction.effective_gas_price(base_fee)
     }
 
     fn is_dynamic_fee(&self) -> bool {
-        self.inner.is_dynamic_fee()
+        self.transaction.is_dynamic_fee()
     }
 
     fn kind(&self) -> TxKind {
-        self.inner.kind()
+        self.transaction.kind()
     }
 
     fn is_create(&self) -> bool {
-        self.inner.is_create()
+        self.transaction.is_create()
     }
 
     fn value(&self) -> U256 {
-        self.inner.value()
+        self.transaction.value()
     }
 
     fn input(&self) -> &Bytes {
-        self.inner.input()
+        self.transaction.input()
     }
 
     fn access_list(&self) -> Option<&AccessList> {
-        self.inner.access_list()
+        self.transaction.access_list()
     }
 
     fn blob_versioned_hashes(&self) -> Option<&[B256]> {
-        self.inner.blob_versioned_hashes()
+        self.transaction.blob_versioned_hashes()
     }
 
     fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
-        self.inner.authorization_list()
+        self.transaction.authorization_list()
     }
 }
 
-impl<Pooled> EthPoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
-where
-    BaseTransactionSigned: From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
-    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
-{
+impl EthPoolTransaction for BasePooledTransaction {
     fn take_blob(&mut self) -> EthBlobTransactionSidecar {
         EthBlobTransactionSidecar::None
     }
@@ -403,12 +394,7 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     }
 }
 
-impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
-where
-    BaseTransactionSigned: From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
-    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
-{
+impl BasePooledTx for BasePooledTransaction {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
     }
@@ -418,7 +404,7 @@ where
     }
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
-        self.inner.transaction().inner().as_eip8130()
+        self.transaction.inner().as_eip8130()
     }
 
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
@@ -472,11 +458,7 @@ pub trait TimestampedTransaction {
     fn received_at(&self) -> u128;
 }
 
-impl<Cons, Pooled> TimestampedTransaction for BasePooledTransaction<Cons, Pooled>
-where
-    Cons: SignedTransaction,
-    Pooled: Send + Sync + 'static,
-{
+impl TimestampedTransaction for BasePooledTransaction {
     fn received_at(&self) -> u128 {
         self.received_at
     }

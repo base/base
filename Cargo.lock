@@ -4344,7 +4344,6 @@ dependencies = [
  "bitflags 2.13.1",
  "c-kzg",
  "codspeed-criterion-compat 4.7.0",
- "derive_more",
  "futures",
  "futures-util",
  "imbl",

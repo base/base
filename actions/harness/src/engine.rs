@@ -40,7 +40,7 @@ use base_execution_payload_builder::{
     NoopPayloadTransactions, PayloadConfig,
 };
 use base_execution_payload_types::{BuiltPayload, PayloadAttributes};
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool::{BasePooledTransaction, NoopTransactionPool};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_state_api::CachedReads;
 use base_test_utils::build_test_genesis;
@@ -53,7 +53,6 @@ use reth_provider::{
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_transaction_pool::noop::NoopTransactionPool;
 use reth_trie_common::HashedStorage;
 
 use crate::{SharedBlockHashRegistry, SharedL1Chain};

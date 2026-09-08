@@ -20,9 +20,9 @@ use base_execution_payload_builder::{
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, DiskFileBlobStore, EthPoolTransaction, GuardLimits,
-    TimestampedTransaction, TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
+    BaseOrdering, BasePooledTransaction, BaseTransactionPool, BaseTransactionValidator,
+    DiskFileBlobStore, GuardLimits, TransactionValidationTaskExecutor,
+    maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
@@ -286,22 +286,20 @@ impl BaseNode {
 /// This contains various settings that can be configured and take precedence over the node's
 /// config.
 #[derive(Debug)]
-pub struct BasePoolBuilder<T = BasePooledTransaction> {
+pub struct BasePoolBuilder {
     /// Enforced overrides that are applied to the pool config.
     pub pool_config_overrides: PoolBuilderConfigOverrides,
     /// The ordering strategy for the transaction pool.
-    pub ordering: BaseOrdering<T>,
+    pub ordering: BaseOrdering<BasePooledTransaction>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
     pub max_inflight_delegated_slots: usize,
     /// Per-account EIP-8130 admission caps.
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
-    /// Marker for the pooled transaction type.
-    _pd: core::marker::PhantomData<T>,
 }
 
-impl<T> Default for BasePoolBuilder<T> {
+impl Default for BasePoolBuilder {
     fn default() -> Self {
         Self {
             pool_config_overrides: Default::default(),
@@ -309,12 +307,11 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
-            _pd: Default::default(),
         }
     }
 }
 
-impl<T> Clone for BasePoolBuilder<T> {
+impl Clone for BasePoolBuilder {
     fn clone(&self) -> Self {
         Self {
             pool_config_overrides: self.pool_config_overrides.clone(),
@@ -324,12 +321,11 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
-            _pd: core::marker::PhantomData,
         }
     }
 }
 
-impl<T> BasePoolBuilder<T> {
+impl BasePoolBuilder {
     /// Sets the [`PoolBuilderConfigOverrides`] on the pool builder.
     pub fn with_pool_config_overrides(
         mut self,
@@ -340,7 +336,7 @@ impl<T> BasePoolBuilder<T> {
     }
 
     /// Sets the ordering strategy for the transaction pool.
-    pub const fn with_ordering(mut self, ordering: BaseOrdering<T>) -> Self {
+    pub const fn with_ordering(mut self, ordering: BaseOrdering<BasePooledTransaction>) -> Self {
         self.ordering = ordering;
         self
     }
@@ -367,17 +363,18 @@ impl<T> BasePoolBuilder<T> {
     }
 }
 
-impl<T> BasePoolBuilder<T>
-where
-    T: EthPoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx + TimestampedTransaction,
-{
+impl BasePoolBuilder {
     /// Builds the Base pool and starts its maintenance and invalidation tasks.
     pub async fn build_pool<DB>(
         self,
         ctx: &BuilderContext<DB>,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<
-        BaseTransactionPool<BlockchainProvider<DB>, DiskFileBlobStore, T, BaseOrdering<T>>,
+        BaseTransactionPool<
+            BlockchainProvider<DB>,
+            DiskFileBlobStore,
+            BaseOrdering<BasePooledTransaction>,
+        >,
     >
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
