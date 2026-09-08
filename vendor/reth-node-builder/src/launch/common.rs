@@ -876,15 +876,7 @@ where
         );
 
         debug!(target: "reth::cli", "creating components");
-        let components = (components_builder.build)(&builder_ctx).await?;
-
-        let blockchain_db = self.blockchain_db().clone();
-
-        let node_adapter = NodeAdapter {
-            components,
-            task_executor: self.task_executor().clone(),
-            provider: blockchain_db,
-        };
+        let node_adapter = (components_builder.build)(&builder_ctx).await?;
 
         debug!(target: "reth::cli", "calling on_component_initialized hook");
         on_component_initialized.on_event(node_adapter.clone())?;
@@ -1047,11 +1039,6 @@ where
     /// Returns the metrics sender.
     pub fn sync_metrics_tx(&self) -> UnboundedSender<MetricEvent> {
         self.right().db_provider_container.metrics_sender.clone()
-    }
-
-    /// Returns the node adapter components.
-    pub const fn components(&self) -> &crate::components::Components<DB> {
-        &self.node_adapter().components
     }
 
     /// Launches ExEx (Execution Extensions) and returns the ExEx manager handle.

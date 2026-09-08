@@ -52,7 +52,6 @@ async fn test_base_node_custom_genesis_number() {
     let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_provider()
         .with_components(BaseNode::default().components().into_builder())
         .with_add_ons(add_ons)
         .launch_with_fn(|builder| {

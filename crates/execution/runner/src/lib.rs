@@ -23,10 +23,8 @@ pub use types::{
 };
 
 mod node;
+pub use base_node_core::{BaseAddOns, BaseAddOnsBuilder};
 pub use node::BaseNode;
-
-mod add_ons;
-pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
 
 #[cfg(feature = "test-utils")]
 pub mod test_utils;

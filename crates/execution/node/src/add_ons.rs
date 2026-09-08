@@ -39,7 +39,6 @@ where
         FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Creates a new instance from components.
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         rpc_add_ons: RpcAddOns<N, RpcMiddleware>,
         da_config: BaseDAConfig,

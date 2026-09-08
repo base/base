@@ -27,7 +27,7 @@ pub mod components;
 pub use components::ComponentBuilder;
 
 mod builder;
-pub use builder::{add_ons::AddOns, *};
+pub use builder::*;
 
 mod launch;
 pub use launch::{

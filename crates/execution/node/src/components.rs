@@ -7,7 +7,7 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BaseTransactionPool;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_node_builder::{BuilderContext, ComponentBuilder, components::Components};
+use reth_node_builder::{BuilderContext, ComponentBuilder, NodeAdapter};
 use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
@@ -16,8 +16,8 @@ use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, B
 /// The concrete transaction pool used by Base nodes.
 pub type BaseNodePool<Node> = BaseTransactionPool<BlockchainProvider<Node>, DiskFileBlobStore>;
 
-/// Base node components, with only the provider supplied by the launch adapter.
-pub type BaseNodeComponents<Node> = Components<Node>;
+/// Base runtime components, including the provider and task executor.
+pub type BaseNodeComponents<Node> = NodeAdapter<Node>;
 
 /// Constructs Base components while allowing the payload service to vary.
 #[derive(Debug)]
@@ -79,7 +79,9 @@ where
             .spawn_payload_builder_service(ctx, pool.clone(), evm_config.clone())
             .await?;
         let consensus = Arc::new(BaseBeaconConsensus::new(ctx.chain_spec()));
-        Ok(Components {
+        Ok(NodeAdapter {
+            provider: ctx.provider().clone(),
+            task_executor: ctx.task_executor().clone(),
             transaction_pool: pool,
             evm_config,
             network,

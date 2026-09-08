@@ -42,8 +42,6 @@ use crate::{
     rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
 };
 
-pub mod add_ons;
-
 mod states;
 pub use states::*;
 
@@ -253,9 +251,20 @@ impl<DB> NodeBuilder<DB>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
-    /// Configures the built-in state provider.
-    pub fn with_provider(self) -> NodeBuilderWithProvider<DB> {
-        NodeBuilderWithProvider::new(self.config, self.database, self.rocksdb_provider)
+    /// Advances the state of the node builder to the next state where all components are configured
+    pub fn with_components(
+        self,
+        components_builder: ComponentBuilder<DB>,
+    ) -> NodeBuilderWithComponents<DB, ()> {
+        NodeBuilderWithComponents {
+            config: self.config,
+            database: self.database,
+            rocksdb_provider: self.rocksdb_provider,
+            components_builder,
+            add_ons: (),
+            hooks: crate::hooks::NodeHooks::default(),
+            exexs: Vec::new(),
+        }
     }
 }
 
@@ -296,19 +305,9 @@ where
         self.builder.rocksdb_provider = Some(rocksdb_provider);
         self
     }
-
-    /// Configures the built-in state provider.
-    pub fn with_provider(self) -> WithLaunchContext<NodeBuilderWithProvider<DB>> {
-        WithLaunchContext {
-            builder: self.builder.with_provider(),
-            task_executor: self.task_executor,
-        }
-    }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>
-    WithLaunchContext<NodeBuilderWithProvider<DB>>
-{
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> WithLaunchContext<NodeBuilder<DB>> {
     /// Advances the state of the node builder to the next state where all components are configured
     pub fn with_components(
         self,
@@ -429,7 +428,7 @@ where
     /// use tower::layer::util::Identity;
     ///
     /// let builder = NodeBuilder::new(config)
-    ///     .with_provider()
+    ///
     ///     .with_components(BaseNode::components())
     ///     .with_add_ons(BaseAddOns::default())
     ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
@@ -481,7 +480,7 @@ where
     /// }
     ///
     /// let node = NodeBuilder::new(config)
-    ///     .with_provider()
+    ///
     ///     .with_components(BaseNode::default().components().into_builder())
     ///     .with_add_ons(BaseNode::default().add_ons_builder().build())
     ///     .extend_rpc_modules(|ctx| {

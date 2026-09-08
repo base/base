@@ -30,7 +30,7 @@ use reth_db_common::init::init_genesis;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
-use reth_node_builder::{NodeAdapter, components::Components};
+use reth_node_builder::NodeAdapter;
 use reth_node_core::node_config::NodeConfig;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
@@ -181,13 +181,11 @@ pub async fn test_exex_context_with_chain_spec(
     let (_, payload_builder_handle) = NoopPayloadBuilderService::new();
 
     let components = NodeAdapter::<_> {
-        components: Components {
-            transaction_pool,
-            evm_config,
-            consensus,
-            network,
-            payload_builder_handle,
-        },
+        transaction_pool,
+        evm_config,
+        consensus,
+        network,
+        payload_builder_handle,
         task_executor,
         provider,
     };
@@ -208,7 +206,7 @@ pub async fn test_exex_context_with_chain_spec(
     let notifications = ExExNotifications::new(
         head,
         components.provider.clone(),
-        components.components.evm_config.clone(),
+        components.evm_config.clone(),
         notifications_rx,
         wal.handle(),
     );

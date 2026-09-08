@@ -128,7 +128,6 @@ async fn test_custom_block_priority_config() {
     let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_provider()
         .with_components(build_components(config.chain.chain_id()).into_builder())
         .with_add_ons(add_ons)
         .launch_with_fn(|builder| {

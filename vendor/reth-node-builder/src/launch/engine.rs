@@ -32,8 +32,8 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    AddOns, AddOnsContext, FullNode, LaunchContext, LaunchNode, NodeAdapter,
-    NodeBuilderWithComponents, NodeHandle,
+    AddOnsContext, FullNode, LaunchContext, LaunchNode, NodeAdapter, NodeBuilderWithComponents,
+    NodeHandle,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
     rpc::{BasicEngineValidatorBuilder, EngineShutdown, RethRpcAddOns, RpcHandle},
@@ -74,7 +74,9 @@ impl EngineNodeLauncher {
             database,
             rocksdb_provider,
             components_builder,
-            add_ons: AddOns { hooks, exexs: installed_exex, add_ons },
+            hooks,
+            exexs: installed_exex,
+            add_ons,
             config,
         } = target;
         let NodeHooks { on_component_initialized, on_node_started, .. } = hooks;

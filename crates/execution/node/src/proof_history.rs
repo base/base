@@ -2,7 +2,6 @@
 
 use std::{sync::Arc, time::Duration};
 
-use reth_db_api::database_metrics::DatabaseMetrics;
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
@@ -14,6 +13,7 @@ use base_execution_trie::{
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
+use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_node_builder::{
     FullNodeComponents, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
 };
@@ -83,7 +83,6 @@ pub async fn launch_node_with_proof_history(
         upgrade_signal_l1_rpc,
     });
     let mut node_builder = builder
-        .with_provider()
         .with_components(node.components().into_builder())
         .with_add_ons(node.add_ons_builder().build());
 

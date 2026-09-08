@@ -36,7 +36,6 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
 
     let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
         .testing_node(exec)
-        .with_provider()
         .with_components(BaseNode::default().components().into_builder())
         .with_add_ons(add_ons)
         .launch()

@@ -16,56 +16,27 @@ use reth_provider::providers::{BlockchainProvider, RocksDBProvider};
 use reth_tasks::TaskExecutor;
 
 use crate::{
-    AddOns, FullNode,
-    components::{ComponentBuilder, Components},
+    FullNode,
+    components::ComponentBuilder,
     hooks::NodeHooks,
     launch::LaunchNode,
     rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
 };
 
-/// A node builder that also has the configured types.
-pub struct NodeBuilderWithProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
-    /// All settings for how the node should be configured.
-    config: NodeConfig,
-    /// The configured database for the node.
-    database: DB,
-    /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
-    rocksdb_provider: Option<RocksDBProvider>,
-}
-
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> NodeBuilderWithProvider<DB> {
-    /// Creates a new instance of the node builder with the given configuration and types.
-    pub const fn new(
-        config: NodeConfig,
-        database: DB,
-        rocksdb_provider: Option<RocksDBProvider>,
-    ) -> Self {
-        Self { config, database, rocksdb_provider }
-    }
-
-    /// Advances the state of the node builder to the next state where all components are configured
-    pub fn with_components(
-        self,
-        components_builder: ComponentBuilder<DB>,
-    ) -> NodeBuilderWithComponents<DB, ()> {
-        let Self { config, database, rocksdb_provider } = self;
-
-        NodeBuilderWithComponents {
-            config,
-            database,
-            rocksdb_provider,
-            components_builder,
-            add_ons: AddOns { hooks: NodeHooks::default(), exexs: Vec::new(), add_ons: () },
-        }
-    }
-}
-
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NodeAdapter<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
-    /// The components of the node.
-    pub components: Components<DB>,
+    /// The node transaction pool.
+    pub transaction_pool: reth_node_api::BaseNodePool<BlockchainProvider<DB>>,
+    /// The Base EVM configuration.
+    pub evm_config: BaseEvmConfig,
+    /// The Base consensus validator.
+    pub consensus: std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
+    /// The network handle.
+    pub network: reth_network::NetworkHandle,
+    /// The payload service handle.
+    pub payload_builder_handle: base_execution_payload_builder::PayloadBuilderHandle,
     /// The task executor for the node.
     pub task_executor: TaskExecutor,
     /// The provider of the node.
@@ -78,23 +49,23 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullNodeComponent
     type DB = DB;
     type Provider = BlockchainProvider<DB>;
     fn pool(&self) -> &reth_node_api::BaseNodePool<Self::Provider> {
-        &self.components.transaction_pool
+        &self.transaction_pool
     }
 
     fn evm_config(&self) -> &BaseEvmConfig {
-        &self.components.evm_config
+        &self.evm_config
     }
 
     fn consensus(&self) -> &std::sync::Arc<base_execution_consensus::BaseBeaconConsensus> {
-        &self.components.consensus
+        &self.consensus
     }
 
     fn network(&self) -> &reth_network::NetworkHandle {
-        &self.components.network
+        &self.network
     }
 
     fn payload_builder_handle(&self) -> &base_execution_payload_builder::PayloadBuilderHandle {
-        &self.components.payload_builder_handle
+        &self.payload_builder_handle
     }
 
     fn provider(&self) -> &Self::Provider {
@@ -103,16 +74,6 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullNodeComponent
 
     fn task_executor(&self) -> &TaskExecutor {
         &self.task_executor
-    }
-}
-
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Clone for NodeAdapter<DB> {
-    fn clone(&self) -> Self {
-        Self {
-            components: self.components.clone(),
-            task_executor: self.task_executor.clone(),
-            provider: self.provider.clone(),
-        }
     }
 }
 
@@ -133,7 +94,11 @@ where
     /// container for type specific components
     pub components_builder: ComponentBuilder<DB>,
     /// Additional node extensions.
-    pub add_ons: AddOns<NodeAdapter<DB>, AO>,
+    pub add_ons: AO,
+    /// Hooks invoked as the node starts.
+    pub hooks: NodeHooks<NodeAdapter<DB>, AO>,
+    /// Execution extensions installed on this node.
+    pub exexs: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<DB>>>)>,
 }
 
 impl<DB> NodeBuilderWithComponents<DB, ()>
@@ -153,7 +118,9 @@ where
             database,
             rocksdb_provider,
             components_builder,
-            add_ons: AddOns { hooks: NodeHooks::default(), exexs: Vec::new(), add_ons },
+            add_ons,
+            hooks: NodeHooks::default(),
+            exexs: Vec::new(),
         }
     }
 }
@@ -168,7 +135,7 @@ where
     where
         F: FnOnce(NodeAdapter<DB>) -> eyre::Result<()> + Send + 'static,
     {
-        self.add_ons.hooks.set_on_component_initialized(hook);
+        self.hooks.set_on_component_initialized(hook);
         self
     }
 
@@ -177,7 +144,7 @@ where
     where
         F: FnOnce(FullNode<NodeAdapter<DB>, AO>) -> eyre::Result<()> + Send + 'static,
     {
-        self.add_ons.hooks.set_on_node_started(hook);
+        self.hooks.set_on_node_started(hook);
         self
     }
 
@@ -192,7 +159,7 @@ where
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
-        self.add_ons.exexs.push((exex_id.into(), Box::new(exex)));
+        self.exexs.push((exex_id.into(), Box::new(exex)));
         self
     }
 
@@ -223,7 +190,7 @@ where
     /// use tower::layer::util::Identity;
     ///
     /// let builder = NodeBuilder::new(config)
-    ///     .with_provider()
+    ///
     ///     .with_components(BaseNode::components())
     ///     .with_add_ons(BaseAddOns::default())
     ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
@@ -237,7 +204,7 @@ where
     where
         F: FnOnce(AO) -> AO,
     {
-        self.add_ons.add_ons = f(self.add_ons.add_ons);
+        self.add_ons = f(self.add_ons);
         self
     }
 }

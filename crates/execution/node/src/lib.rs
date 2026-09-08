@@ -46,3 +46,6 @@ use base_common_evm as _;
 #[cfg(feature = "test-utils")]
 use reth_tasks as _;
 use revm as _;
+
+mod add_ons;
+pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
