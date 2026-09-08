@@ -9,11 +9,7 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718, IsTyped2718};
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 
-use crate::{InMemorySize, MaybeCompact, MaybeSerde};
-
-/// Helper trait that unifies all behaviour required by block to support full node operations.
-pub trait FullSignedTx: SignedTransaction + MaybeCompact {}
-impl<T> FullSignedTx for T where T: SignedTransaction + MaybeCompact {}
+use crate::{InMemorySize, MaybeSerde};
 
 /// A signed transaction.
 ///

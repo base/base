@@ -3,7 +3,6 @@
 //! This module provides traits for working with blockchain transactions:
 //! - [`Transaction`] - Basic transaction interface
 //! - [`signed::SignedTransaction`] - Transaction with signature and recovery methods
-//! - [`FullTransaction`] - Transaction with database encoding support
 //!
 //! # Transaction Recovery
 //!
@@ -24,15 +23,10 @@ pub use alloy_consensus::transaction::{
     SignerRecoverable, TransactionInfo, TransactionMeta, TxHashRef,
 };
 
-use crate::{InMemorySize, MaybeCompact, MaybeSerde};
+use crate::{InMemorySize, MaybeSerde};
 
 #[cfg(all(test, feature = "std", feature = "reth-codec"))]
 mod access_list;
-
-/// Helper trait that unifies all behaviour required by transaction to support full node operations.
-pub trait FullTransaction: Transaction + MaybeCompact {}
-
-impl<T> FullTransaction for T where T: Transaction + MaybeCompact {}
 
 /// Abstraction of a transaction.
 pub trait Transaction:

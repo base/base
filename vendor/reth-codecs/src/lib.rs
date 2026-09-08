@@ -32,6 +32,7 @@ use serde as _;
 
 #[cfg(feature = "alloy")]
 pub mod alloy;
+#[cfg(feature = "alloy")]
 pub use alloy::ReceiptFlags;
 
 pub mod compress;

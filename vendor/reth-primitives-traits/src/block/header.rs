@@ -6,13 +6,7 @@ use core::{fmt, hash::Hash};
 pub use alloy_consensus::BlockHeader as AlloyBlockHeader;
 use alloy_primitives::Sealable;
 
-use crate::{InMemorySize, MaybeCompact, MaybeSerde};
-
-/// Helper trait that unifies all behaviour required by block header to support full node
-/// operations.
-pub trait FullBlockHeader: BlockHeader + MaybeCompact {}
-
-impl<T> FullBlockHeader for T where T: BlockHeader + MaybeCompact {}
+use crate::{InMemorySize, MaybeSerde};
 
 /// Abstraction of a block header.
 pub trait BlockHeader:

@@ -22,13 +22,16 @@ impl EthereumReceiptRoot {
 #[cfg(test)]
 mod tests {
     #[cfg(all(feature = "rpc-compat", feature = "serde"))]
-    use alloy_consensus::ReceiptEnvelope;
-    use alloy_consensus::{EthereumTxEnvelope, ReceiptWithBloom, TxEip4844, TxReceipt, TxType};
+    use alloy_consensus::{ReceiptEnvelope, TxReceipt};
+    use alloy_consensus::{EthereumTxEnvelope, ReceiptWithBloom, TxEip4844, TxType};
     use alloy_eips::eip2718::Encodable2718;
+    #[cfg(feature = "reth-codec")]
+    use alloy_primitives::Bytes;
     use alloy_primitives::{
-        Address, Bloom, Bytes, Log, LogData, address, b256, bloom, bytes, hex_literal::hex,
+        Address, Bloom, Log, LogData, address, b256, bloom, bytes, hex_literal::hex,
     };
     use alloy_rlp::{Decodable, Encodable};
+    #[cfg(feature = "reth-codec")]
     use reth_codecs::Compact;
 
     use super::*;
@@ -106,6 +109,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "reth-codec")]
     fn gigantic_receipt() {
         let receipt = EthereumReceipt::<TxType> {
             cumulative_gas_used: 16747627,

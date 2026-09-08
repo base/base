@@ -8,12 +8,7 @@ use alloy_consensus::{
 };
 use alloy_rlp::{Decodable, Encodable};
 
-use crate::{InMemorySize, MaybeCompact, MaybeSerde};
-
-/// Helper trait that unifies all behaviour required by receipt to support full node operations.
-pub trait FullReceipt: Receipt + MaybeCompact {}
-
-impl<T> FullReceipt for T where T: Receipt + MaybeCompact {}
+use crate::{InMemorySize, MaybeSerde};
 
 /// Abstraction of a receipt.
 pub trait Receipt:

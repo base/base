@@ -45,11 +45,6 @@ use crate::{
     transaction::signed::RecoveryError,
 };
 
-/// Helper trait that unifies all behaviour required by block to support full node operations.
-pub trait FullBlock: Block {}
-
-impl FullBlock for BaseBlock {}
-
 /// Helper trait to access [`BlockBody::Transaction`] given a [`Block`].
 pub type BlockTx = BaseTxEnvelope;
 
