@@ -41,13 +41,13 @@ metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 reth-basic-payload-builder = { workspace = true }
 reth-payload-builder-primitives = { workspace = true }
-reth-evm = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
+base-execution-evm = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 reth-revm = { workspace = true, features = ["default", "witness"] }
@@ -62,12 +62,13 @@ base-execution-evm = { workspace = true, features = ["default"] }
 reth-revm = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
+
 [features]
 default = [ "metrics" ]
 metrics = [
-	"base-common-evm/metrics",
-	"base-metrics/metrics",
-	"base-observability-events/metrics",
-	"dep:metrics",
-	"reth-evm/metrics",
+    "base-common-evm/metrics",
+    "base-metrics/metrics",
+    "base-observability-events/metrics",
+    "dep:metrics",
+    "base-execution-evm/metrics",
 ]

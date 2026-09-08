@@ -38,7 +38,6 @@ reth-payload-builder = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["metrics"] }
 derive_more = { workspace = true, features = ["full"] }
 indexmap = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
@@ -58,6 +57,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
+base-execution-evm = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
@@ -82,12 +82,12 @@ rand_08 = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 proptest = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-tracing = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-stages = { workspace = true, features = ["test-utils"] }
 reth-exex-types = { workspace = true, features = ["default"] }
 reth-chain-state = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-consensus-common = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
@@ -98,7 +98,7 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-consensus/test-utils",
     "reth-db/test-utils",
-    "reth-evm/test-utils",
+    "base-execution-evm/test-utils",
     "reth-network-p2p/test-utils",
     "reth-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",

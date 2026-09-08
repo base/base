@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_consensus::BaseBlock;
+use base_execution_evm::BaseEvmConfig;
 use reth_config::{PruneConfig, config::StageConfig};
 use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
@@ -11,7 +12,6 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,

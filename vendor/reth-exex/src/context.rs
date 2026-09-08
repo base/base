@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
-use reth_evm::BaseEvmConfig;
+use base_execution_evm::BaseEvmConfig;
 use reth_exex_types::ExExHead;
 use reth_node_api::FullNodeComponents;
 use reth_node_core::node_config::NodeConfig;

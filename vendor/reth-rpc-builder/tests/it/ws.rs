@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
+use base_execution_evm::BaseEvmConfig;
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
-use reth_evm::BaseEvmConfig;
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tokio_util::EventSender;

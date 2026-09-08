@@ -21,7 +21,6 @@ serde = { workspace = true }
 rayon = { workspace = true }
 metrics = { workspace = true }
 fdlimit = { workspace = true }
-reth-evm = { workspace = true }
 reth-cli = { workspace = true }
 reth-revm = { workspace = true }
 itertools = { workspace = true }
@@ -52,6 +51,7 @@ reth-node-events = { workspace = true }
 reth-static-file = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-node-metrics = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-chainspec = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
@@ -99,5 +99,27 @@ secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"]
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 [features]
-arbitrary = ["dep:proptest", "dep:arbitrary", "dep:proptest-arbitrary-interop", "dep:reth-trie-common", "reth-db-api/arbitrary", "reth-eth-wire/arbitrary", "reth-db/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "reth-codecs/test-utils", "reth-prune-types/test-utils", "reth-stages-types/test-utils", "reth-trie-common?/test-utils", "reth-codecs/arbitrary", "reth-prune-types/arbitrary", "reth-stages-types/arbitrary", "reth-trie-common?/arbitrary", "alloy-consensus/arbitrary", "reth-primitives-traits/arbitrary", "reth-ethereum-primitives/arbitrary"]
+arbitrary = [
+    "dep:proptest",
+    "dep:arbitrary",
+    "dep:proptest-arbitrary-interop",
+    "dep:reth-trie-common",
+    "reth-db-api/arbitrary",
+    "reth-eth-wire/arbitrary",
+    "reth-db/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "reth-codecs/test-utils",
+    "reth-prune-types/test-utils",
+    "reth-stages-types/test-utils",
+    "reth-trie-common?/test-utils",
+    "reth-codecs/arbitrary",
+    "reth-prune-types/arbitrary",
+    "reth-stages-types/arbitrary",
+    "reth-trie-common?/arbitrary",
+    "alloy-consensus/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "reth-ethereum-primitives/arbitrary",
+]

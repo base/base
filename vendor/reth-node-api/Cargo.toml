@@ -15,19 +15,19 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-base-execution-consensus = { workspace = true }
-base-execution-txpool = { workspace = true }
-reth-network = { workspace = true }
-reth-evm = { workspace = true }
 reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }
+reth-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-tokio-util = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-payload-builder = { workspace = true }
+base-execution-txpool = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-payload-builder-primitives = { workspace = true }
 reth-payload-primitives = { workspace = true, features = ["default"] }

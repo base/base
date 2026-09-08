@@ -17,11 +17,11 @@ workspace = true
 [dependencies]
 revm = { workspace = true }
 serde = { workspace = true }
-reth-evm = { workspace = true }
 reth-trie = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-provider = { workspace = true }
 alloy-consensus = { workspace = true }
+base-execution-evm = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -40,6 +40,6 @@ alloy-eips = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }

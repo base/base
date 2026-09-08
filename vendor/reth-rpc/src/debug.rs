@@ -18,12 +18,12 @@ use alloy_rpc_types_trace::geth::{
 use async_trait::async_trait;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::{EvmEnvFor, Executor, block::BlockExecutor};
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_errors::RethError;
-use reth_evm::{EvmEnvFor, block::BlockExecutor, execute::Executor};
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_revm::{db::State, witness::ExecutionWitnessRecord};
 use reth_rpc_api::DebugApiServer;

@@ -33,6 +33,7 @@ use base_common_rpc_types::{
     BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::BaseEvmConfig;
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
 use http::{HeaderMap, header::AUTHORIZATION};
@@ -48,7 +49,6 @@ use jsonrpsee::{
 };
 use reth_consensus::FullConsensus;
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
-use reth_evm::BaseEvmConfig;
 pub use reth_ipc::server::{
     Builder as IpcServerBuilder, RpcServiceBuilder as IpcRpcServiceBuilder,
 };

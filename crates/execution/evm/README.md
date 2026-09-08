@@ -4,7 +4,7 @@ EVM configuration and execution for Base.
 
 ## Overview
 
-Provides Base's concrete EVM configuration through the shared `reth-evm` crate.
+Provides Base's concrete EVM configuration together with block execution, environment construction, and receipt assembly.
 `BaseEvmConfig` constructs execution environments from the chain's upgrade schedule
 and builds the EVM context for each block.
 Re-exports executor factories, block executors, and error types from the underlying alloy/revm

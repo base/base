@@ -9,9 +9,9 @@ use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_eth::{Account, AccountInfo, EIP1186AccountProofResponse};
 use alloy_serde::JsonStorageKey;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_evm::EvmEnvFor;
 use futures::Future;
 use reth_errors::RethError;
-use reth_evm::EvmEnvFor;
 use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,

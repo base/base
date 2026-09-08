@@ -17,6 +17,10 @@ use base_common_evm::L1BlockInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::IntrinsicGas;
+use base_execution_evm::{
+    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
+    BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, Database,
+};
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
@@ -27,12 +31,6 @@ use base_observability_events::{
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
-};
-use reth_evm::{
-    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockExecutorForEvm, Database,
-    execute::{
-        BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
-    },
 };
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;

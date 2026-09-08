@@ -29,7 +29,6 @@ serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
-reth-evm = { workspace = true, features = ["default"] }
 reth-revm = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 base-execution-evm = { workspace = true, features = ["default"] }

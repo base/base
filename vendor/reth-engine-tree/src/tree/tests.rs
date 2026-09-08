@@ -24,10 +24,10 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
 };
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseEvmConfig;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_consensus_common::test_utils::TestConsensus;
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
-use reth_evm::BaseEvmConfig;
 use reth_payload_builder::PayloadServiceCommand;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::Block as _;

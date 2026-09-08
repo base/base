@@ -5,8 +5,8 @@ use std::sync::Arc;
 use alloy_eip7928::bal::{DecodedBal, RawBal};
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
+use base_execution_evm::EvmEnvFor;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
-use reth_evm::EvmEnvFor;
 use reth_execution_cache::TxPoolPrewarmCacheSnapshot;
 
 use crate::tree::error::InsertPayloadError;

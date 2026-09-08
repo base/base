@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 sha2 = { workspace = true }
 serde = { workspace = true }
-reth-evm = { workspace = true }
 thiserror = { workspace = true }
 itertools = { workspace = true }
 jsonrpsee = { workspace = true }
@@ -45,6 +44,7 @@ reth-chain-state = { workspace = true }
 reth-network-api = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-network-types = { workspace = true }
+base-execution-evm = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 reth-consensus-common = { workspace = true }
@@ -95,12 +95,13 @@ base-execution-txpool = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
 [features]
-test-utils = ["dep:base-execution-txpool", "reth-evm/test-utils"]
+test-utils = ["dep:base-execution-txpool", "base-execution-evm/test-utils"]
 js-tracer = [
     "revm-inspectors/js-tracer",
     "reth-rpc-eth-types/js-tracer",

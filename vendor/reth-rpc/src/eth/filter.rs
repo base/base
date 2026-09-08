@@ -1374,8 +1374,8 @@ mod tests {
     use alloy_primitives::FixedBytes;
     use base_common_consensus::{BaseBlock, BaseReceipt};
     use base_execution_chainspec::ChainSpecProvider;
+    use base_execution_evm::BaseEvmConfig;
     use rand::Rng;
-    use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::MockEthProvider;
     use reth_rpc_eth_api::node::RpcNodeCoreAdapter;

@@ -14,9 +14,8 @@ use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
 use eyre::{Result as EyreResult, eyre};
-use reth_evm::{Evm as _, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{
     database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY,

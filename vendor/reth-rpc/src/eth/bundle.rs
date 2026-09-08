@@ -8,8 +8,8 @@ use alloy_evm::env::BlockEnvironment;
 use alloy_primitives::{Keccak256, U256, uint};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::Evm;
 use jsonrpsee::core::RpcResult;
-use reth_evm::Evm;
 use reth_rpc_eth_api::{
     EthCallBundleApiServer, FromEthApiError, FromEvmError,
     helpers::{Call, EthTransactions, LoadPendingBlock},

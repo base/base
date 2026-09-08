@@ -49,6 +49,7 @@ mod tests {
     use alloy_rlp::Decodable;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
     use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_evm::BaseEvmConfig;
     use reth_consensus_common::test_utils::TestConsensus;
     use reth_db::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
@@ -59,7 +60,6 @@ mod tests {
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_evm::BaseEvmConfig;
     use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{Account, Bytecode, SealedBlock, SignerRecoverable};
     use reth_provider::{

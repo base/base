@@ -29,13 +29,13 @@ metrics = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 bytes = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["serde"] }
-reth-evm = { workspace = true, features = ["default"] }
 reth-codecs = { workspace = true, features = ["alloy"] }
 rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 bincode = { workspace = true, features = ["default", "serde"] }
+base-execution-evm = { workspace = true, features = ["default"] }
 reth-revm = { workspace = true, features = ["default", "witness"] }
 reth-execution-errors = { workspace = true, features = ["default"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
@@ -56,12 +56,12 @@ eyre = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 serial_test = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-codecs = { workspace = true, features = ["alloy", "test-utils"] }
 reth-ethereum-primitives = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["default", "rand", "std"] }
@@ -77,18 +77,18 @@ harness = false
 
 [features]
 serde-bincode-compat = [
-	"alloy-consensus/serde-bincode-compat",
-	"alloy-eips/serde-bincode-compat",
-	"dep:reth-ethereum-primitives",
-	"reth-ethereum-primitives?/serde",
-	"reth-trie-common/serde-bincode-compat",
-	"reth-trie/serde-bincode-compat",
+    "alloy-consensus/serde-bincode-compat",
+    "alloy-eips/serde-bincode-compat",
+    "dep:reth-ethereum-primitives",
+    "reth-ethereum-primitives?/serde",
+    "reth-trie-common/serde-bincode-compat",
+    "reth-trie/serde-bincode-compat",
 ]
 metrics = [
-	"base-metrics/metrics",
-	"dep:eyre",
-	"dep:metrics",
-	"reth-evm/metrics",
-	"reth-trie-db/metrics",
-	"reth-trie/metrics",
+    "base-metrics/metrics",
+    "dep:eyre",
+    "dep:metrics",
+    "base-execution-evm/metrics",
+    "reth-trie-db/metrics",
+    "reth-trie/metrics",
 ]

@@ -13,11 +13,11 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
+use base_execution_evm::BaseEvmConfig;
 use futures::StreamExt;
 use itertools::Itertools;
 use metrics::Gauge;
 use reth_chain_state::ForkChoiceStream;
-use reth_evm::BaseEvmConfig;
 use reth_metrics::{Metrics, metrics::Counter};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::HeaderProvider;

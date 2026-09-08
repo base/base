@@ -43,7 +43,6 @@ reth-static-file-types = { workspace = true }
 base-execution-chainspec = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["metrics"] }
 reth-trie = { workspace = true, features = ["metrics"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -53,6 +52,7 @@ reth-libmdbx = { workspace = true, features = ["default"] }
 reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
+base-execution-evm = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
@@ -69,7 +69,6 @@ reth-testing-utils = { workspace = true }
 base-common-genesis = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-tracing = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -77,10 +76,12 @@ reth-consensus = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-consensus-common = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
+
 [features]
 test-utils = [
     "reth-network-p2p/test-utils",
@@ -90,7 +91,7 @@ test-utils = [
     "dep:reth-testing-utils",
     "dep:tempfile",
     "reth-consensus/test-utils",
-    "reth-evm/test-utils",
+    "base-execution-evm/test-utils",
     "reth-downloaders/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-revm/test-utils",

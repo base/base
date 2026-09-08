@@ -5,6 +5,7 @@ use std::sync::Arc;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::Config;
@@ -12,7 +13,6 @@ use reth_consensus::noop::NoopConsensus;
 use reth_db::DatabaseEnv;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
-use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_provider::{BlockNumReader, ProviderFactory};
 use reth_stages::{

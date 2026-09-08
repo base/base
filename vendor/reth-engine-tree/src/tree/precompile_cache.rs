@@ -6,8 +6,8 @@ use alloy_primitives::{
     Address, Bytes,
     map::{DefaultHashBuilder, FbBuildHasher},
 };
+use base_execution_evm::precompiles::{DynPrecompile, Precompile, PrecompileInput};
 use moka::policy::EvictionPolicy;
-use reth_evm::precompiles::{DynPrecompile, Precompile, PrecompileInput};
 use reth_primitives_traits::dashmap::DashMap;
 use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 use tracing::error;
@@ -255,7 +255,7 @@ impl CachedPrecompileMetrics {
 
 #[cfg(test)]
 mod tests {
-    use reth_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
+    use base_execution_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
     use reth_revm::db::EmptyDB;
     use revm::{
         context::TxEnv,

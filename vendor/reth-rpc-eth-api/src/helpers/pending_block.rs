@@ -12,14 +12,13 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::{
+    BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
+    EvmEnvFor, block::TxResult,
+};
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_errors::{BlockExecutionError, BlockValidationError, ProviderError, RethError};
-use reth_evm::{
-    BaseNextBlockEnvAttributes, Evm, EvmEnvFor,
-    block::TxResult,
-    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
-};
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_rpc_eth_types::{

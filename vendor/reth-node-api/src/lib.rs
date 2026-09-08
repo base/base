@@ -8,11 +8,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+/// Traits and helper types used to abstract over EVM methods and types.
+pub use base_execution_evm::NextBlockEnvAttributes;
 /// Traits, validation methods, and helper types used to abstract over engine types.
 pub use reth_engine_primitives as engine;
 pub use reth_engine_primitives::*;
-/// Traits and helper types used to abstract over EVM methods and types.
-pub use reth_evm::NextBlockEnvAttributes;
 /// Traits and helper types used to abstract over payload builder types.
 pub use reth_payload_builder_primitives as payload_builder;
 pub use reth_payload_builder_primitives::*;

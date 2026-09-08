@@ -11,9 +11,8 @@ use base_common_consensus::{
 };
 use base_common_evm::BaseTime;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm::{BaseEvmConfig, BasicBlockExecutor, Executor};
 use base_protocol::BaseTimeUpdateTx;
-use reth_evm::execute::{BasicBlockExecutor, Executor};
 use reth_primitives_traits::{Account, RecoveredBlock};
 use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
 

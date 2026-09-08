@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_evm::BaseEvmConfig;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::DatabaseEnv;
 use reth_db_api::{
@@ -8,7 +9,6 @@ use reth_db_api::{
     table::TableImporter, tables, transaction::DbTx,
 };
 use reth_db_common::DbTool;
-use reth_evm::BaseEvmConfig;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,

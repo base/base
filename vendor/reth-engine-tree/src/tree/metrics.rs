@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
+use base_execution_evm::ExecutorMetrics;
 use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
 use reth_errors::ProviderError;
-use reth_evm::metrics::ExecutorMetrics;
 use reth_execution_types::BlockExecutionOutput;
 use reth_metrics::{
     Metrics,

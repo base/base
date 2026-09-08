@@ -17,6 +17,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_execution_evm::BaseEvmConfig;
 use futures_util::FutureExt;
 use reth_db::{
     DatabaseEnv,
@@ -25,7 +26,6 @@ use reth_db::{
     },
 };
 use reth_db_common::init::init_genesis;
-use reth_evm::BaseEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};

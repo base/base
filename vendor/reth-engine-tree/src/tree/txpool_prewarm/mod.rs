@@ -1,7 +1,7 @@
 //! Txpool-driven state prewarming and immutable snapshot publication.
 
 use base_common_consensus::BaseTxEnvelope;
-use reth_evm::BaseEvmConfig;
+use base_execution_evm::BaseEvmConfig;
 mod control;
 mod worker;
 
@@ -9,7 +9,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, B256};
-use reth_evm::EvmEnvFor;
+use base_execution_evm::EvmEnvFor;
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,

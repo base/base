@@ -31,6 +31,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set, FbBuildHasher, HashMap, HashSet, hash_map::Entry},
 };
 use alloy_rlp::Encodable;
+use base_execution_evm::SenderRecoveryCache;
 use config::AnnouncementAcceptance;
 pub use config::{
     AnnouncementFilteringPolicy, TransactionFetcherConfig, TransactionIngressPolicy,
@@ -47,7 +48,6 @@ use reth_eth_wire::{
     PooledTransactions, RequestTxHashes, Transactions, ValidAnnouncementData,
 };
 use reth_ethereum_primitives::TxType;
-use reth_evm::SenderRecoveryCache;
 use reth_metrics::common::mpsc::MemoryBoundedReceiver;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerKind, PeerRequest, PeerRequestSender, Peers,

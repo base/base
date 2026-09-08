@@ -2,8 +2,8 @@
 //! `reth_rpc_eth_api::EthApiTypes`.
 
 use alloy_primitives::Bytes;
+use base_execution_evm::{EvmErrorFor, HaltReasonFor};
 use reth_errors::ProviderError;
-use reth_evm::{EvmErrorFor, HaltReasonFor};
 use reth_revm::db::bal::EvmDatabaseError;
 use revm::{context::result::ExecutionResult, context_interface::result::HaltReason};
 

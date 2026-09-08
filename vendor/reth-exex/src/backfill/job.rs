@@ -7,10 +7,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
-use reth_evm::{
-    BaseEvmConfig,
-    execute::{BlockExecutionError, BlockExecutionOutput, Executor},
-};
+use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor};
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
@@ -230,8 +227,8 @@ impl<P> From<BackfillJob<P>> for SingleBlockBackfillJob<P> {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::BlockHeader;
+    use base_execution_evm::BaseEvmConfig;
     use reth_db_common::init::init_genesis;
-    use reth_evm::BaseEvmConfig;
     use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
     use reth_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,

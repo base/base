@@ -2,8 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use base_execution_evm::BaseEvmConfig;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_evm::BaseEvmConfig;
 use reth_rpc_eth_api::{BaseRpcConverter, RpcNodeCore, node::RpcNodeCoreAdapter};
 use reth_rpc_eth_types::{
     EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,

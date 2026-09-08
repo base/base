@@ -5,7 +5,7 @@ use std::{
 };
 
 use base_execution_chainspec::BaseChainSpec;
-use reth_evm::BaseEvmConfig;
+use base_execution_evm::BaseEvmConfig;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
 use reth_node_core::{

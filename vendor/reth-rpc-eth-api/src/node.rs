@@ -2,8 +2,8 @@
 
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::BaseEvmConfig;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_evm::BaseEvmConfig;
 use reth_network_api::NetworkInfo;
 use reth_node_api::FullNodeComponents;
 use reth_rpc_eth_types::EthStateCache;

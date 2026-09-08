@@ -570,7 +570,7 @@ impl From<InvalidHeader> for EthApiError {
 impl<T, TxError> From<EVMError<T, TxError>> for EthApiError
 where
     T: Into<Self>,
-    TxError: reth_evm::InvalidTxError,
+    TxError: base_execution_evm::InvalidTxError,
 {
     fn from(err: EVMError<T, TxError>) -> Self {
         match err {

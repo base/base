@@ -3,9 +3,9 @@
 use std::{fmt::Debug, future::Future};
 
 use alloy_rpc_types_engine::JwtSecret;
+use base_execution_evm::BaseEvmConfig;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
-use reth_evm::BaseEvmConfig;
 use reth_node_core::node_config::NodeConfig;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::FullProvider;

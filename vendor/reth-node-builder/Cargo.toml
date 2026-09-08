@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 rayon = { workspace = true }
 fdlimit = { workspace = true }
-reth-evm = { workspace = true }
 reth-rpc = { workspace = true }
 reth-exex = { workspace = true }
 jsonrpsee = { workspace = true }
@@ -52,6 +51,7 @@ reth-node-metrics = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 reth-payload-builder = { workspace = true }
 base-execution-txpool = { workspace = true }
@@ -87,10 +87,11 @@ tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thre
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+
 [features]
 default = []
 js-tracer = [
@@ -102,7 +103,7 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-consensus/test-utils",
     "reth-engine-tree/test-utils",
-    "reth-evm/test-utils",
+    "base-execution-evm/test-utils",
     "reth-downloaders/test-utils",
     "reth-network/test-utils",
     "reth-network-p2p/test-utils",

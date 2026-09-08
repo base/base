@@ -8,12 +8,57 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod error;
-pub use error::{BaseBlockExecutionError, L1BlockInfoError};
+extern crate alloc;
+
+mod errors;
+pub use errors::{BaseBlockExecutionError, L1BlockInfoError};
 
 mod l1;
 pub use l1::*;
-pub use reth_evm::{
-    BaseBlockAssembler, BaseEvmConfig, BaseEvmEnvBuilder, BaseNextBlockEnvAttributes,
-    BaseRethReceiptBuilder,
+mod base_build;
+pub use base_build::BaseBlockAssembler;
+
+mod base_config;
+pub use base_config::{BaseEvmConfig, BaseExecutorFactory, BaseNextBlockEnvAttributes};
+
+mod base_env;
+pub use base_env::BaseEvmEnvBuilder;
+
+mod base_receipts;
+pub use base_receipts::BaseRethReceiptBuilder;
+
+mod base_payload_env;
+
+mod either;
+pub use either::Either;
+/// EVM environment configuration.
+mod execute;
+pub use execute::*;
+
+mod aliases;
+pub use aliases::*;
+
+#[cfg(feature = "std")]
+mod engine;
+#[cfg(feature = "std")]
+pub use engine::EitherIter;
+#[cfg(feature = "std")]
+pub use engine::{ConvertTx, ExecutableTxIterator, ExecutableTxTuple};
+mod sender_recovery;
+pub use sender_recovery::SenderRecoveryCache;
+
+#[cfg(feature = "metrics")]
+mod metrics;
+#[cfg(feature = "metrics")]
+pub use metrics::ExecutorMetrics;
+#[cfg(any(test, feature = "test-utils"))]
+/// test helpers for mocking executor
+pub mod test_utils;
+
+pub use alloy_evm::{
+    block::{OnStateHook, state_changes, system_calls},
+    *,
 };
+
+mod next_block;
+pub use next_block::NextBlockEnvAttributes;

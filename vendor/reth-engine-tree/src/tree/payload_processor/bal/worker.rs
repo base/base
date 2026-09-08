@@ -7,11 +7,10 @@ use alloy_evm::{
     block::{BlockExecutionError, BlockExecutor, BlockExecutorFactory},
 };
 use alloy_primitives::Address;
-use crossbeam_channel::{Receiver, Sender};
-use reth_evm::{
-    BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutionCtxFor,
-    execute::ExecutableTxFor,
+use base_execution_evm::{
+    BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
 };
+use crossbeam_channel::{Receiver, Sender};
 use revm::{database::State, state::bal::Bal as RevmBal};
 
 use super::BalExecutionError;

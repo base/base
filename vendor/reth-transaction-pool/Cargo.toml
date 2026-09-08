@@ -19,7 +19,6 @@ workspace = true
 revm = { workspace = true }
 imbl = { workspace = true }
 metrics = { workspace = true }
-reth-evm = { workspace = true }
 bitflags = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
@@ -34,6 +33,7 @@ reth-metrics = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 paste = { workspace = true, optional = true }
@@ -63,10 +63,10 @@ rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
@@ -76,6 +76,50 @@ harness = false
 required-features = ["test-utils"]
 
 [features]
-serde = ["reth-execution-types/serde", "reth-eth-wire-types/serde", "alloy-consensus/serde", "alloy-eips/serde", "alloy-primitives/serde", "bitflags/serde", "imbl/serde", "parking_lot/serde", "rand?/serde", "smallvec/serde", "reth-primitives-traits/serde", "reth-ethereum-primitives/serde", "reth-chain-state/serde", "reth-storage-api/serde", "revm/serde", "reth-transaction-pool/serde"]
-test-utils = ["rand", "paste", "serde", "reth-chain-state/test-utils", "reth-provider/test-utils", "reth-primitives-traits/test-utils", "reth-ethereum-primitives/test-utils", "alloy-primitives/rand", "reth-evm/test-utils", "reth-tasks/test-utils", "reth-transaction-pool/test-utils"]
-arbitrary = ["proptest", "proptest-arbitrary-interop", "imbl/arbitrary", "reth-eth-wire-types/arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "bitflags/arbitrary", "reth-primitives-traits/arbitrary", "smallvec/arbitrary", "reth-ethereum-primitives/arbitrary", "revm/arbitrary", "imbl/arbitrary", "reth-transaction-pool/arbitrary"]
+serde = [
+    "reth-execution-types/serde",
+    "reth-eth-wire-types/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "bitflags/serde",
+    "imbl/serde",
+    "parking_lot/serde",
+    "rand?/serde",
+    "smallvec/serde",
+    "reth-primitives-traits/serde",
+    "reth-ethereum-primitives/serde",
+    "reth-chain-state/serde",
+    "reth-storage-api/serde",
+    "revm/serde",
+    "reth-transaction-pool/serde",
+]
+test-utils = [
+    "rand",
+    "paste",
+    "serde",
+    "reth-chain-state/test-utils",
+    "reth-provider/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-ethereum-primitives/test-utils",
+    "alloy-primitives/rand",
+    "base-execution-evm/test-utils",
+    "reth-tasks/test-utils",
+    "reth-transaction-pool/test-utils",
+]
+arbitrary = [
+    "proptest",
+    "proptest-arbitrary-interop",
+    "imbl/arbitrary",
+    "reth-eth-wire-types/arbitrary",
+    "alloy-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "bitflags/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "smallvec/arbitrary",
+    "reth-ethereum-primitives/arbitrary",
+    "revm/arbitrary",
+    "imbl/arbitrary",
+    "reth-transaction-pool/arbitrary",
+]

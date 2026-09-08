@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_execution_consensus::BaseBeaconConsensus;
-use reth_evm::BaseEvmConfig;
+use base_execution_evm::BaseEvmConfig;
 
 /// Concrete execution and consensus components for CLI commands.
 #[derive(Debug)]

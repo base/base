@@ -1,8 +1,8 @@
 //! Base fixtures for the shared RPC implementation.
 
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::BasePooledTransaction;
-use reth_evm::BaseEvmConfig;
 use reth_rpc_eth_api::{RpcNodeCore, node::RpcNodeCoreAdapter};
 use reth_transaction_pool::{
     CoinbaseTipOrdering, Pool, blobstore::InMemoryBlobStore, noop::MockTransactionValidator,

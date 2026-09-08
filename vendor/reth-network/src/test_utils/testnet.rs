@@ -13,10 +13,10 @@ use base_common_consensus::{
     BaseTxEnvelope as TransactionSigned,
 };
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::BaseEvmConfig;
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
 use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
-use reth_evm::BaseEvmConfig;
 use reth_metrics::common::mpsc::memory_bounded_channel;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, NetworkInfo, Peers,

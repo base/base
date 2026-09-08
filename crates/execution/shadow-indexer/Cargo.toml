@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-reth-evm = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
@@ -21,6 +20,7 @@ base-metrics = { workspace = true }
 reth-node-api = { workspace = true }
 base-node-runner = { workspace = true }
 reth-network-api = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -39,10 +39,11 @@ alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-ethereum-primitives = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+
 [features]
 default = [ "metrics" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

@@ -5,6 +5,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};
 use reth_chain_state::{
@@ -12,7 +13,6 @@ use reth_chain_state::{
     PersistedBlockSubscriptions,
 };
 use reth_errors::RethResult;
-use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_api::{RethApiServer, RethJitAction};
@@ -174,7 +174,7 @@ where
         }
 
         let outcome = self.evm_config().executor(db).execute_batch(&blocks).map_err(
-            |e: reth_evm::execute::BlockExecutionError| {
+            |e: base_execution_evm::BlockExecutionError| {
                 EthApiError::Internal(reth_errors::RethError::Other(e.into()))
             },
         )?;

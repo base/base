@@ -17,12 +17,12 @@ use alloy_rpc_types_eth::{
 };
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::{
+    BlockBuilder, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
+    block::BlockExecutor, env::BlockEnvironment,
+};
 use futures::Future;
 use reth_errors::{ProviderError, RethError};
-use reth_evm::{
-    Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
-    block::BlockExecutor, env::BlockEnvironment, execute::BlockBuilder,
-};
 use reth_primitives_traits::Recovered;
 use reth_revm::{
     cancelled::CancelOnDrop,
@@ -536,7 +536,7 @@ pub trait Call: LoadState + SpawnBlocking {
         Ok(res)
     }
 
-    /// Executes the [`reth_evm::EvmEnv`] against the given [Database] without committing state
+    /// Executes the [`base_execution_evm::EvmEnv`] against the given [Database] without committing state
     /// changes.
     fn transact_with_inspector<DB, I>(
         &self,
@@ -612,7 +612,7 @@ pub trait Call: LoadState + SpawnBlocking {
     /// Prepares the state and env for the given [`RpcTxReq`] at the given [`BlockId`] and
     /// executes the closure on a new task returning the result of the closure.
     ///
-    /// This returns the configured [`reth_evm::EvmEnv`] for the given [`RpcTxReq`] at
+    /// This returns the configured [`base_execution_evm::EvmEnv`] for the given [`RpcTxReq`] at
     /// the given [`BlockId`] and with configured call settings: `prepare_call_env`.
     ///
     /// This is primarily used by `eth_call`.
@@ -751,7 +751,7 @@ pub trait Call: LoadState + SpawnBlocking {
 
     ///
     /// All `TxEnv` fields are derived from the given [`RpcTxReq`], if fields are
-    /// `None`, they fall back to the [`reth_evm::EvmEnv`]'s settings.
+    /// `None`, they fall back to the [`base_execution_evm::EvmEnv`]'s settings.
     fn create_txn_env(
         &self,
         evm_env: &EvmEnvFor,
@@ -770,7 +770,7 @@ pub trait Call: LoadState + SpawnBlocking {
         Ok(self.converter().tx_env(request, evm_env)?)
     }
 
-    /// Prepares the [`reth_evm::EvmEnv`] for execution of calls.
+    /// Prepares the [`base_execution_evm::EvmEnv`] for execution of calls.
     ///
     /// Does not commit any changes to the underlying database.
     ///

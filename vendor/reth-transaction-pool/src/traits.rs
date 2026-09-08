@@ -1386,7 +1386,7 @@ pub trait PoolTransaction:
     /// Recovers and converts a pooled transaction using the provided sender recovery cache.
     fn try_recover_with_cache(
         pooled: Self::Pooled,
-        cache: &reth_evm::SenderRecoveryCache,
+        cache: &base_execution_evm::SenderRecoveryCache,
     ) -> Result<Self, Self::Pooled> {
         match cache.recover(&pooled) {
             Ok(signer) => Ok(Self::from_pooled(Recovered::new_unchecked(pooled, signer))),

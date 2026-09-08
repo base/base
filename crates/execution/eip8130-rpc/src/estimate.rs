@@ -9,8 +9,8 @@ use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
     FromEthApiError,
     helpers::{FullEthApi, LoadPendingBlock},

@@ -11,27 +11,48 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+revm = { workspace = true }
 thiserror = { workspace = true }
+alloy-evm = { workspace = true }
+auto_impl = { workspace = true }
+alloy-eips = { workspace = true }
+futures-util = { workspace = true }
 alloy-consensus = { workspace = true }
-alloy-primitives = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-trie-common = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-evm = { workspace = true, features = ["default"] }
+rayon = { workspace = true, optional = true }
+reth-payload-primitives = { workspace = true }
+base-execution-chainspec = { workspace = true }
+base-execution-consensus = { workspace = true }
+metrics = { workspace = true, optional = true }
+reth-metrics = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["full"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+fixed-cache = { workspace = true, features = ["alloc"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 reth-execution-errors = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth", "evm"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
+alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-evm = { workspace = true, features = ["default", "test-utils"] }
+base-common-genesis = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
 reth-revm = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 
 [features]
 default = ["metrics", "std"]
-metrics = ["base-common-evm/metrics", "reth-evm/metrics"]
+metrics = ["base-common-evm/metrics", "std", "dep:metrics", "dep:reth-metrics"]
 std = [
     "alloy-consensus/std",
     "alloy-eips/std",
@@ -40,11 +61,24 @@ std = [
     "base-common-consensus/std",
     "base-common-evm/std",
     "base-execution-chainspec/std",
-    "reth-evm/std",
     "reth-execution-errors/std",
     "reth-primitives-traits/std",
     "reth-revm/std",
     "thiserror/std",
+    "base-execution-consensus/std",
+    "reth-payload-primitives/std",
+    "dep:rayon",
+    "revm/std",
+    "alloy-evm/std",
+    "reth-execution-types/std",
+    "reth-storage-errors/std",
+    "futures-util/std",
+    "derive_more/std",
+    "reth-storage-api/std",
+    "reth-trie-common/std",
+    "alloy-eip7928/std",
+    "fixed-cache/std",
 ]
 portable = ["base-common-evm/portable", "reth-revm/portable"]
-rpc = ["reth-evm/rpc"]
+rpc = ["alloy-evm/rpc"]
+test-utils = ["std", "reth-primitives-traits/test-utils", "reth-trie-common/test-utils"]

@@ -852,8 +852,8 @@ pub async fn backup_local_transactions_task<P>(
 mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{U256, hex};
+    use base_execution_evm::BaseEvmConfig;
     use reth_ethereum_primitives::PooledTransactionVariant;
-    use reth_evm::BaseEvmConfig;
     use reth_fs_util as fs;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;

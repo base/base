@@ -26,7 +26,7 @@ use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
-use reth_evm::BaseEvmConfig;
+use base_execution_evm::BaseEvmConfig;
 use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };

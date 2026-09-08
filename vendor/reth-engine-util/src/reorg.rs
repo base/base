@@ -12,15 +12,12 @@ use alloy_primitives::Bytes;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatus};
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::{BaseEvmConfig, BlockBuilder, BlockBuilderOutcome};
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
 use reth_engine_tree::tree::EngineValidator;
 use reth_errors::{BlockExecutionError, BlockValidationError, RethError, RethResult};
-use reth_evm::{
-    BaseEvmConfig,
-    execute::{BlockBuilder, BlockBuilderOutcome},
-};
 use reth_payload_primitives::BaseBuiltPayload;
 use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use reth_revm::{database::StateProviderDatabase, db::State};

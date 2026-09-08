@@ -135,7 +135,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
     use base_execution_chainspec::BaseChainSpecBuilder;
-    use reth_evm::BaseEvmConfig;
+    use base_execution_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,

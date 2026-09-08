@@ -3,8 +3,8 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::BaseEvmConfig;
 use futures_util::{StreamExt, lock::Mutex};
-use reth_evm::BaseEvmConfig;
 use reth_primitives_traits::SealedBlock;
 use reth_storage_api::BlockReaderIdExt;
 use reth_tasks::Runtime;

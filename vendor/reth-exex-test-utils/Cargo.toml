@@ -34,7 +34,7 @@ base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
-reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["default", "test-utils"] }

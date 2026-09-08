@@ -5,8 +5,8 @@ pub mod receipt;
 pub mod transaction;
 
 mod base_time;
+use base_execution_evm::BaseEvmConfig;
 pub use base_time::BaseTimeCache;
-use reth_evm::BaseEvmConfig;
 
 mod block;
 mod call;

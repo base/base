@@ -12,11 +12,8 @@ use alloy_rpc_types_eth::{
 };
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
+use base_execution_evm::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
-use reth_evm::{
-    Evm, HaltReasonFor,
-    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
-};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 use reth_storage_api::{StateProvider, noop::NoopProvider};

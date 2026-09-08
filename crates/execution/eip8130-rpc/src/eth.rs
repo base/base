@@ -8,11 +8,11 @@ use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
     EthApiTypes, RpcNodeCore,
     helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},

@@ -7,7 +7,7 @@ use base_common_rpc_types::{
     BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };
 use base_execution_chainspec::ChainSpecProvider;
-use reth_evm::{EvmEnvFor, TxEnvFor};
+use base_execution_evm::{EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::{
     FromConsensusHeader, FromConsensusTx, TransactionConversionError, TryIntoSimTx, TryIntoTxEnv,

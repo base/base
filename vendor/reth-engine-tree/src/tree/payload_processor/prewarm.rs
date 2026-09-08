@@ -21,9 +21,9 @@ use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
 use base_common_consensus::BaseReceipt;
+use base_execution_evm::{BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor};
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
-use reth_evm::{BaseEvmConfig, Evm, EvmFor, RecoveredTx, SpecFor, execute::ExecutableTxFor};
 use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, FastInstant as Instant};
 use reth_provider::{

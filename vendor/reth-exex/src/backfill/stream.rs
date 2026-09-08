@@ -6,13 +6,10 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use futures::{
     StreamExt,
     stream::{FuturesOrdered, Stream},
-};
-use reth_evm::{
-    BaseEvmConfig,
-    execute::{BlockExecutionError, BlockExecutionOutput},
 };
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReader, Chain, StateProviderFactory};

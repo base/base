@@ -203,7 +203,7 @@
 //! use reth_transaction_pool::{TransactionValidationTaskExecutor, Pool, TransactionPool};
 //! use reth_transaction_pool::blobstore::InMemoryBlobStore;
 //! use alloy_hardforks::{EthereumHardforks};
-//! use reth_evm::BaseEvmConfig;
+//! use base_execution_evm::BaseEvmConfig;
 //! use alloy_consensus::Header;
 //! async fn t<C>(client: C, evm_config: BaseEvmConfig)
 //! where
@@ -420,7 +420,7 @@ where
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
     /// use alloy_hardforks::{EthereumHardforks};
-    /// use reth_evm::BaseEvmConfig;
+    /// use base_execution_evm::BaseEvmConfig;
     /// use alloy_consensus::Header;
     /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
     /// # where

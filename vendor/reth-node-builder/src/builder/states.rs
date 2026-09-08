@@ -7,8 +7,8 @@
 
 use std::{fmt::Debug, future::Future};
 
+use base_execution_evm::BaseEvmConfig;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_evm::BaseEvmConfig;
 use reth_exex::ExExContext;
 use reth_node_api::{FullNodeComponents, NodeAddOns};
 use reth_node_core::node_config::NodeConfig;

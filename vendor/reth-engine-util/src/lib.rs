@@ -10,9 +10,9 @@
 
 use std::path::PathBuf;
 
+use base_execution_evm::BaseEvmConfig;
 use futures::{Future, Stream};
 use reth_engine_primitives::BeaconEngineMessage;
-use reth_evm::BaseEvmConfig;
 use tokio_util::either::Either;
 
 pub mod engine_store;

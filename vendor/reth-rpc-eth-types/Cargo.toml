@@ -20,7 +20,6 @@ lru = { workspace = true }
 revm = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
-reth-evm = { workspace = true }
 reth-revm = { workspace = true }
 thiserror = { workspace = true }
 itertools = { workspace = true }
@@ -75,5 +74,6 @@ serde_json = { workspace = true, features = ["alloc"] }
 reth-storage-api = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+
 [features]
 js-tracer = ["revm-inspectors/js-tracer"]

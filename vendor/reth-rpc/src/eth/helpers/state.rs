@@ -30,7 +30,7 @@ mod tests {
         Address, StorageKey, StorageValue, U256,
         map::{AddressMap, B256Map},
     };
-    use reth_evm::BaseEvmConfig;
+    use base_execution_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,

@@ -2,9 +2,9 @@
 
 use alloy_consensus::TxEnvelope;
 use alloy_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
+use base_execution_evm::BaseEvmConfig;
 use eyre::OptionExt;
 use reth_engine_primitives::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
-use reth_evm::BaseEvmConfig;
 use reth_invalid_block_hooks::InvalidBlockWitnessHook;
 use reth_node_core::{
     args::InvalidBlockHookType,

@@ -9,8 +9,8 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use base_common_consensus::BaseBlock;
+use base_execution_evm::BaseEvmConfig;
 use futures::{Stream, StreamExt};
-use reth_evm::BaseEvmConfig;
 use reth_exex_types::ExExHead;
 use reth_provider::{BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory};
 use reth_stages_api::ExecutionStageThresholds;

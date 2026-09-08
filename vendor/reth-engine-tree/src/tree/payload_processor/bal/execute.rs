@@ -27,8 +27,8 @@ use alloy_evm::{
 };
 use alloy_primitives::Address;
 use base_common_consensus::BaseReceipt;
+use base_execution_evm::{BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor};
 use crossbeam_channel::{Receiver, Sender};
-use reth_evm::{BaseEvmConfig, Database, EvmEnvFor, ExecutionCtxFor, execute::ExecutableTxFor};
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::Runtime;
 use revm::{

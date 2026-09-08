@@ -15,6 +15,7 @@ use base_common_consensus::{
     BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
 use reth_db::tables;
@@ -27,7 +28,6 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_libmdbx::{Environment, EnvironmentFlags, Mode};
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,

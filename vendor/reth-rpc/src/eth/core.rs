@@ -7,8 +7,8 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
+use base_execution_evm::BaseEvmConfig;
 use derive_more::Deref;
-use reth_evm::BaseEvmConfig;
 use reth_rpc_eth_api::{
     BaseRpcConverter, EthApiTypes, RpcNodeCore,
     helpers::{SpawnBlocking, spec::SignersForRpc},
@@ -489,10 +489,10 @@ mod tests {
         BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTxEnvelope as TransactionSigned,
     };
     use base_execution_chainspec::ChainSpecProvider;
+    use base_execution_evm::BaseEvmConfig;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
     use reth_chain_state::CanonStateSubscriptions;
-    use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         PruneCheckpointReader, StageCheckpointReader,

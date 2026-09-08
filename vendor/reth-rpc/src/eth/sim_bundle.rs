@@ -11,8 +11,8 @@ use alloy_rpc_types_mev::{
     BundleItem, Inclusion, MevSendBundle, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
     SimBundleResponse, Validity,
 };
+use base_execution_evm::Evm;
 use jsonrpsee::core::RpcResult;
-use reth_evm::Evm;
 use reth_primitives_traits::Recovered;
 use reth_rpc_api::MevSimApiServer;
 use reth_rpc_eth_api::{

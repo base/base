@@ -11,6 +11,7 @@ use base_common_consensus::{
     BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+use base_execution_evm::{BaseEvmConfig, Executor};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
@@ -19,7 +20,6 @@ use derive_more::Constructor;
 use reth_db::Database;
 use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_db_common::init::init_genesis;
-use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
@@ -158,7 +158,7 @@ fn execute_block<DB>(
     block: &mut RecoveredBlock,
     provider_factory: &ProviderFactory<DB>,
     chain_spec: &Arc<BaseChainSpec>,
-) -> eyre::Result<reth_evm::execute::BlockExecutionOutput<Receipt>>
+) -> eyre::Result<base_execution_evm::BlockExecutionOutput<Receipt>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
@@ -182,7 +182,7 @@ where
 /// Commits a block and its execution output to the database
 fn commit_block_to_database<DB>(
     block: &RecoveredBlock,
-    execution_output: &reth_evm::execute::BlockExecutionOutput<Receipt>,
+    execution_output: &base_execution_evm::BlockExecutionOutput<Receipt>,
     provider_factory: &ProviderFactory<DB>,
 ) -> eyre::Result<()>
 where

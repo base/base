@@ -257,10 +257,10 @@ mod tests {
 
     use alloy_consensus::Receipt;
     use alloy_primitives::B256;
+    use base_execution_evm::BaseEvmConfig;
     use futures::TryStreamExt;
     use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;
-    use reth_evm::BaseEvmConfig;
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use reth_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};

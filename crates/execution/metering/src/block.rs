@@ -6,9 +6,8 @@ use alloy_consensus::{BlockHeader, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder};
 use eyre::{Result as EyreResult, eyre};
-use reth_evm::execute::BlockBuilder;
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
@@ -125,12 +124,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{Header, TxEip1559};
     use alloy_primitives::{Address, Signature};
     use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::Account;
-    use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;

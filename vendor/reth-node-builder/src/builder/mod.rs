@@ -62,7 +62,7 @@ pub use states::*;
 /// Configuring a node starts with a [`NodeConfig`], a database, and a state provider.
 /// Next the runtime components are configured:
 ///
-///  - The EVM and Executor configuration: [`BaseEvmConfig`](reth_evm::BaseEvmConfig)
+///  - The EVM and Executor configuration: [`BaseEvmConfig`](base_execution_evm::BaseEvmConfig)
 ///  - The transaction pool: the Base transaction pool builder
 ///  - The network: the Base network builder
 ///  - The payload builder: [`PayloadBuilder`](crate::components::PayloadServiceBuilder)
@@ -613,7 +613,7 @@ pub struct BuilderContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'stat
     /// Config container
     pub(crate) config_container: WithConfigs,
     /// Cache of recovered transaction senders shared by node components, if enabled.
-    sender_recovery_cache: Option<reth_evm::SenderRecoveryCache>,
+    sender_recovery_cache: Option<base_execution_evm::SenderRecoveryCache>,
 }
 
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB> {
@@ -628,7 +628,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
             .config
             .engine
             .sender_recovery_cache_enabled
-            .then(reth_evm::SenderRecoveryCache::default);
+            .then(base_execution_evm::SenderRecoveryCache::default);
         Self { head, provider, executor, config_container, sender_recovery_cache }
     }
 
@@ -665,7 +665,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
     }
 
     /// Returns the sender recovery cache shared by node components, if enabled.
-    pub const fn sender_recovery_cache(&self) -> Option<&reth_evm::SenderRecoveryCache> {
+    pub const fn sender_recovery_cache(&self) -> Option<&base_execution_evm::SenderRecoveryCache> {
         self.sender_recovery_cache.as_ref()
     }
 

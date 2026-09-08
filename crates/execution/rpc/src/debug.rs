@@ -9,6 +9,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_execution_evm::{BaseEvmConfig, Executor};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes,
     builder::{BasePayloadBuilderCtx, Builder},
@@ -18,7 +19,6 @@ use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_node_api::PayloadBuilderError;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;

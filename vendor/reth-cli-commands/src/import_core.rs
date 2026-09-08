@@ -3,6 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
+use base_execution_evm::BaseEvmConfig;
 use futures::StreamExt;
 use reth_config::Config;
 use reth_consensus::FullConsensus;
@@ -12,7 +13,6 @@ use reth_downloaders::{
     file_client::{ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient},
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_evm::BaseEvmConfig;
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},

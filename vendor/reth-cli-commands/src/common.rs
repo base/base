@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseEvmConfig;
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::{Config, config::EtlConfig};
@@ -11,7 +12,6 @@ use reth_consensus::noop::NoopConsensus;
 use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
-use reth_evm::BaseEvmConfig;
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},

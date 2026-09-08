@@ -12,14 +12,13 @@ use std::{
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
 use base_common_consensus::BaseReceipt;
+use base_execution_evm::{
+    BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxTuple, SpecFor,
+    TxEnvFor, WithTxEnv, block::ExecutableTxParts,
+};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;
-use reth_evm::{
-    BaseEvmConfig, ConvertTx, ExecutableTxIterator, ExecutableTxTuple, SpecFor, TxEnvFor,
-    block::ExecutableTxParts,
-    execute::{ExecutableTxFor, WithTxEnv},
-};
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
@@ -625,7 +624,7 @@ mod tests {
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
     use base_execution_chainspec::BaseChainSpec;
-    use reth_evm::BaseEvmConfig;
+    use base_execution_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
     use reth_revm::db::BundleState;
     use revm::state::AccountInfo;

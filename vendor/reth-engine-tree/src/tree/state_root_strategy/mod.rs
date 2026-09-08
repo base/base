@@ -66,10 +66,10 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_execution_evm::OnStateHook;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_errors::ProviderResult;
-use reth_evm::OnStateHook;
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
@@ -1307,10 +1307,10 @@ mod tests {
     use alloy_consensus::constants::KECCAK_EMPTY;
     use alloy_primitives::{Address, U256, map::HashMap};
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_evm::OnStateHook;
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_common::init::init_genesis;
-    use reth_evm::OnStateHook;
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{
         HashingWriter, providers::BlockchainProvider,

@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
-reth-evm = { workspace = true }
 reth-revm = { workspace = true }
 itertools = { workspace = true }
 reth-errors = { workspace = true }
@@ -26,6 +25,7 @@ reth-fs-util = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-engine-tree = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }

@@ -1,6 +1,6 @@
 //! Error types for the Base EVM module.
 
-use reth_evm::execute::BlockExecutionError;
+use reth_execution_errors::BlockExecutionError;
 
 /// L1 Block Info specific errors
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
