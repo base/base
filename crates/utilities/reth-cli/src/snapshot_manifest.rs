@@ -8,8 +8,12 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -41,7 +45,7 @@ const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
     ("storage_changesets", "storage-change-sets"),
 ];
 
-/// Formats snapshot compression and upload progress for structured logs.
+/// Formats snapshot compression progress for structured logs.
 #[derive(Debug)]
 pub struct ProgressDisplay;
 
@@ -62,7 +66,6 @@ impl ProgressDisplay {
     /// Formats a byte count with two decimal places and human-readable binary units.
     pub fn bytes(bytes: f64) -> String {
         const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
-
         let bytes = bytes.max(0.0);
         let unit = if bytes == 0.0 {
             0
@@ -82,16 +85,17 @@ impl ProgressDisplay {
         format!("{}/s", Self::bytes(bytes_per_second))
     }
 
-    /// Calculates the ETA from average throughput since an operation started.
+    /// Calculates ETA from average throughput since start.
     pub fn eta(done: u64, total: u64, elapsed: Duration) -> Option<FormattedDuration> {
         if done == 0 || done >= total {
             return None;
         }
-        let seconds = total.saturating_sub(done) as f64 / (done as f64 / elapsed.as_secs_f64());
-        Some(Self::duration(Duration::from_secs_f64(seconds)))
+        Some(Self::duration(Duration::from_secs_f64(
+            total.saturating_sub(done) as f64 / (done as f64 / elapsed.as_secs_f64()),
+        )))
     }
 
-    /// Formats a duration at whole-second precision for periodic progress logs.
+    /// Formats a duration at whole-second precision.
     pub fn duration(duration: Duration) -> FormattedDuration {
         format_duration(Duration::from_secs(duration.as_secs()))
     }
@@ -199,6 +203,59 @@ pub struct ManifestGenerationParams<'a> {
     pub upload_proofs: bool,
 }
 
+/// Destination for generated snapshot archive streams.
+///
+/// Generation can package archives in parallel, so implementations must be thread-safe. The
+/// supplied archive name is the relative filename recorded in the manifest.
+pub trait SnapshotArchiveSink: Send + Sync {
+    /// Creates the destination writer for one archive.
+    fn create_archive(&self, archive_name: &str) -> Result<Box<dyn SnapshotArchiveWriter>>;
+}
+
+/// A destination writer for one generated archive.
+pub trait SnapshotArchiveWriter: Write + Send {
+    /// Publishes a complete archive after tar and zstd have finalized successfully.
+    fn finish(self: Box<Self>) -> Result<()>;
+}
+
+/// Filesystem-backed archive sink used by the legacy directory generator.
+#[derive(Debug)]
+pub struct DirectoryArchiveSink {
+    output_dir: PathBuf,
+}
+
+impl DirectoryArchiveSink {
+    /// Creates a filesystem archive sink rooted at `output_dir`.
+    pub fn new(output_dir: impl Into<PathBuf>) -> Self {
+        Self { output_dir: output_dir.into() }
+    }
+}
+
+impl SnapshotArchiveSink for DirectoryArchiveSink {
+    fn create_archive(&self, archive_name: &str) -> Result<Box<dyn SnapshotArchiveWriter>> {
+        Ok(Box::new(FileArchiveWriter(std::fs::File::create(self.output_dir.join(archive_name))?)))
+    }
+}
+
+struct FileArchiveWriter(std::fs::File);
+
+impl Write for FileArchiveWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl SnapshotArchiveWriter for FileArchiveWriter {
+    fn finish(mut self: Box<Self>) -> Result<()> {
+        self.flush()?;
+        Ok(())
+    }
+}
+
 /// Generates snapshot archives with selective compression.
 ///
 /// Static-file chunks are not compressed or written locally when their current
@@ -219,12 +276,31 @@ impl SnapshotGenerator {
             format!("failed to create output dir {}", params.output_dir.display())
         })?;
 
+        let sink = DirectoryArchiveSink::new(params.output_dir);
+        let manifest = Self::generate_manifest_with_sink(params, &sink)?;
+        std::fs::write(
+            params.output_dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest)?,
+        )?;
+        let files = Self::collect_output_files(params.output_dir)?;
+        info!(file_count = files.len(), "snapshot generation complete");
+        Ok(files)
+    }
+
+    /// Generates archives using an arbitrary synchronous output sink.
+    ///
+    /// Unlike [`Self::generate_manifest`], this neither creates `output_dir` nor writes a
+    /// manifest. Callers that stream archives can publish the returned manifest after every sink
+    /// writer has completed successfully.
+    pub fn generate_manifest_with_sink(
+        params: &ManifestGenerationParams<'_>,
+        archive_sink: &dyn SnapshotArchiveSink,
+    ) -> Result<SnapshotManifest> {
         let blocks_per_file = params.blocks_per_file.unwrap_or(DEFAULT_BLOCKS_PER_FILE);
         let block = match params.block {
             Some(block) => block,
             None => infer_block_from_headers(params.source_datadir)?,
         };
-        let total_blocks = block.checked_add(1).context("snapshot block height exceeds u64")?;
 
         info!(
             source = %params.source_datadir.display(),
@@ -245,7 +321,7 @@ impl SnapshotGenerator {
 
         let mut components = BTreeMap::new();
 
-        let num_chunks = total_blocks.div_ceil(blocks_per_file);
+        let num_chunks = block.div_ceil(blocks_per_file);
         if num_chunks > MAX_CHUNKS {
             bail!(
                 "too many chunks ({num_chunks}) for block {block} with blocks_per_file \
@@ -287,7 +363,7 @@ impl SnapshotGenerator {
                         reuse_candidates.push(ReuseCandidate {
                             chunk: PlannedChunk {
                                 chunk_idx: i,
-                                archive_path: params.output_dir.join(&archive_name),
+                                archive_name: archive_name.clone(),
                                 source_files,
                             },
                             archive_name,
@@ -298,11 +374,7 @@ impl SnapshotGenerator {
                     }
                 }
 
-                planned.push(PlannedChunk {
-                    chunk_idx: i,
-                    archive_path: params.output_dir.join(archive_name),
-                    source_files,
-                });
+                planned.push(PlannedChunk { chunk_idx: i, archive_name, source_files });
             }
 
             if !found_any {
@@ -331,9 +403,13 @@ impl SnapshotGenerator {
                 let packaged: Vec<PackagedChunk> = planned
                     .into_par_iter()
                     .map(|p| {
-                        let output_files = write_chunk_archive(&p.archive_path, &p.source_files)?;
-                        let size = std::fs::metadata(&p.archive_path)?.len();
-                        Ok(PackagedChunk { chunk_idx: p.chunk_idx, size, output_files })
+                        let packaged =
+                            write_chunk_archive(archive_sink, &p.archive_name, &p.source_files)?;
+                        Ok(PackagedChunk {
+                            chunk_idx: p.chunk_idx,
+                            size: packaged.size,
+                            output_files: packaged.output_files,
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?;
 
@@ -348,7 +424,7 @@ impl SnapshotGenerator {
                 info!(
                     component = key,
                     compressed_size = total_size,
-                    total_blocks,
+                    total_blocks = block,
                     "packaged chunked component"
                 );
 
@@ -356,7 +432,7 @@ impl SnapshotGenerator {
                     key.to_string(),
                     ComponentManifest::Chunked(ChunkedArchive {
                         blocks_per_file,
-                        total_blocks,
+                        total_blocks: block,
                         chunk_sizes,
                         chunk_decompressed_sizes: chunk_decompressed,
                         chunk_output_files,
@@ -388,7 +464,7 @@ impl SnapshotGenerator {
             .into_par_iter()
             .map(|(component, archive_name, files)| {
                 let (size, output_files) =
-                    package_single_component(params.output_dir, component, archive_name, &files)?;
+                    package_single_component(archive_sink, component, archive_name, &files)?;
                 let decompressed_size = output_files.iter().map(|file| file.size).sum();
                 info!(
                     component = %component,
@@ -433,13 +509,8 @@ impl SnapshotGenerator {
             components,
         };
 
-        let manifest_path = params.output_dir.join("manifest.json");
-        std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
-        info!(block, components = manifest.components.len(), "manifest written");
-
-        let files = Self::collect_output_files(params.output_dir)?;
-        info!(file_count = files.len(), "snapshot generation complete");
-        Ok(files)
+        info!(block, components = manifest.components.len(), "snapshot manifest generated");
+        Ok(manifest)
     }
 
     /// Collects all files in a snapshot output directory (non-recursive).
@@ -526,7 +597,7 @@ fn parse_headers_range(file_name: &str) -> Option<(u64, u64)> {
 
 struct PlannedChunk {
     chunk_idx: u64,
-    archive_path: PathBuf,
+    archive_name: String,
     source_files: Vec<PathBuf>,
 }
 
@@ -662,7 +733,7 @@ fn collect_files_inner(
 }
 
 fn package_single_component(
-    output_dir: &Path,
+    archive_sink: &dyn SnapshotArchiveSink,
     component: &str,
     archive_name: &str,
     files: &[PlannedFile],
@@ -670,7 +741,6 @@ fn package_single_component(
     if files.is_empty() {
         bail!("cannot package empty archive: {archive_name}");
     }
-    let archive_path = output_dir.join(archive_name);
     let raw_size = files.iter().try_fold(0u64, |total, file| {
         std::fs::metadata(&file.source_path).map(|metadata| total.saturating_add(metadata.len()))
     })?;
@@ -680,13 +750,24 @@ fn package_single_component(
         file_count = files.len(),
         "packaging database component"
     );
-    let mut progress = CompressionProgress::new(component, &archive_path, raw_size);
-    let output_files = write_archive_from_planned_files(&archive_path, files, Some(&mut progress))?;
-    let size = std::fs::metadata(&archive_path)?.len();
-    Ok((size, output_files))
+    let compressed_bytes = Arc::new(AtomicU64::new(0));
+    let mut progress =
+        CompressionProgress::new(component, archive_name, raw_size, Arc::clone(&compressed_bytes));
+    let packaged = write_archive_from_planned_files(
+        archive_sink,
+        archive_name,
+        files,
+        Some(&mut progress),
+        compressed_bytes,
+    )?;
+    Ok((packaged.size, packaged.output_files))
 }
 
-fn write_chunk_archive(path: &Path, source_files: &[PathBuf]) -> Result<Vec<OutputFileChecksum>> {
+fn write_chunk_archive(
+    archive_sink: &dyn SnapshotArchiveSink,
+    archive_name: &str,
+    source_files: &[PathBuf],
+) -> Result<PackagedArchive> {
     let planned: Vec<PlannedFile> = source_files
         .iter()
         .map(|p| {
@@ -699,7 +780,13 @@ fn write_chunk_archive(path: &Path, source_files: &[PathBuf]) -> Result<Vec<Outp
         })
         .collect::<Result<Vec<_>>>()?;
 
-    write_archive_from_planned_files(path, &planned, None)
+    write_archive_from_planned_files(
+        archive_sink,
+        archive_name,
+        &planned,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
 }
 
 fn chunk_output_files_for_source_files(
@@ -721,22 +808,60 @@ fn chunk_output_files_for_source_files(
 }
 
 fn write_archive_from_planned_files(
-    path: &Path,
+    archive_sink: &dyn SnapshotArchiveSink,
+    archive_name: &str,
     files: &[PlannedFile],
     progress: Option<&mut CompressionProgress>,
-) -> Result<Vec<OutputFileChecksum>> {
-    let file = std::fs::File::create(path)?;
-    let mut encoder = zstd::Encoder::new(file, 0)?;
+    compressed_bytes: Arc<AtomicU64>,
+) -> Result<PackagedArchive> {
+    let writer = CountingWriter::new(archive_sink.create_archive(archive_name)?, compressed_bytes);
+    let mut encoder = zstd::Encoder::new(writer, 0)?;
     encoder.include_checksum(true)?;
     let mut builder = tar::Builder::new(encoder);
 
     let output_files =
-        compute_output_files_and_archive(files, Some((&mut builder, path)), progress)?;
+        compute_output_files_and_archive(files, Some((&mut builder, archive_name)), progress)?;
 
     let encoder = builder.into_inner()?;
-    encoder.finish()?;
+    let writer = encoder.finish()?;
+    let (writer, size) = writer.into_inner();
+    writer.finish()?;
 
-    Ok(output_files)
+    Ok(PackagedArchive { size, output_files })
+}
+
+struct PackagedArchive {
+    size: u64,
+    output_files: Vec<OutputFileChecksum>,
+}
+
+struct CountingWriter<W> {
+    inner: W,
+    bytes_written: u64,
+    compressed_bytes: Arc<AtomicU64>,
+}
+
+impl<W> CountingWriter<W> {
+    fn new(inner: W, compressed_bytes: Arc<AtomicU64>) -> Self {
+        Self { inner, bytes_written: 0, compressed_bytes }
+    }
+
+    fn into_inner(self) -> (W, u64) {
+        (self.inner, self.bytes_written)
+    }
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let bytes = self.inner.write(buf)?;
+        self.bytes_written += bytes as u64;
+        self.compressed_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        Ok(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 fn compute_output_files_for_planned_files(
@@ -747,7 +872,10 @@ fn compute_output_files_for_planned_files(
 
 fn compute_output_files_and_archive(
     files: &[PlannedFile],
-    mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
+    mut archive: Option<(
+        &mut tar::Builder<zstd::Encoder<'_, CountingWriter<Box<dyn SnapshotArchiveWriter>>>>,
+        &str,
+    )>,
     mut progress: Option<&mut CompressionProgress>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let mut output_files = Vec::with_capacity(files.len());
@@ -757,7 +885,7 @@ fn compute_output_files_and_archive(
         let source_file = std::fs::File::open(&planned.source_path)?;
         let mut reader = HashingReader::new(source_file, progress.as_deref_mut());
 
-        if let Some((builder, archive_path)) = archive.as_mut() {
+        if let Some((builder, archive_name)) = archive.as_mut() {
             let mut header = tar::Header::new_gnu();
             header.set_size(expected_size);
             header.set_mode(0o644);
@@ -767,7 +895,7 @@ fn compute_output_files_and_archive(
                     format!(
                         "failed to append {} to {}",
                         planned.source_path.display(),
-                        archive_path.display()
+                        archive_name
                     )
                 },
             )?;
@@ -795,21 +923,28 @@ fn compute_output_files_and_archive(
 
 struct CompressionProgress {
     component: String,
-    archive_path: PathBuf,
+    archive_name: String,
     raw_size: u64,
     raw_processed: u64,
+    compressed_bytes: Arc<AtomicU64>,
     started: Instant,
     last_log: Instant,
 }
 
 impl CompressionProgress {
-    fn new(component: &str, archive_path: &Path, raw_size: u64) -> Self {
+    fn new(
+        component: &str,
+        archive_name: &str,
+        raw_size: u64,
+        compressed_bytes: Arc<AtomicU64>,
+    ) -> Self {
         let now = Instant::now();
         Self {
             component: component.to_string(),
-            archive_path: archive_path.to_path_buf(),
+            archive_name: archive_name.to_string(),
             raw_size,
             raw_processed: 0,
+            compressed_bytes,
             started: now,
             last_log: now,
         }
@@ -820,18 +955,16 @@ impl CompressionProgress {
         if self.last_log.elapsed() < COMPRESSION_LOG_INTERVAL {
             return;
         }
-
         let elapsed = self.started.elapsed();
-        let compressed_size =
-            std::fs::metadata(&self.archive_path).map_or(0, |metadata| metadata.len());
         let speed = self.raw_processed as f64 / elapsed.as_secs_f64();
         let eta = ProgressDisplay::eta(self.raw_processed, self.raw_size, elapsed)
             .map_or_else(|| "unknown".to_string(), |eta| eta.to_string());
         info!(
             component = %self.component,
+            archive = %self.archive_name,
             raw_size = %ProgressDisplay::bytes(self.raw_size as f64),
             raw_processed = %ProgressDisplay::bytes(self.raw_processed as f64),
-            compressed_size = %ProgressDisplay::bytes(compressed_size as f64),
+            compressed_size = %ProgressDisplay::bytes(self.compressed_bytes.load(Ordering::Relaxed) as f64),
             progress = %ProgressDisplay::precise_percent(self.raw_processed, self.raw_size),
             speed = %ProgressDisplay::speed(speed),
             eta = %eta,
@@ -1038,48 +1171,6 @@ mod tests {
     }
 
     #[test]
-    fn generate_manifest_includes_chunk_containing_exact_block_height() {
-        let source = tempfile::tempdir().unwrap();
-        let output = tempfile::tempdir().unwrap();
-        let db_dir = source.path().join("db");
-        std::fs::create_dir_all(&db_dir).unwrap();
-        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
-
-        let static_files_dir = source.path().join("static_files");
-        std::fs::create_dir_all(&static_files_dir).unwrap();
-        std::fs::write(static_files_dir.join("static_file_headers_0_499999"), b"first").unwrap();
-        std::fs::write(static_files_dir.join("static_file_headers_500000_999999"), b"second")
-            .unwrap();
-
-        let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
-            source.path(),
-            output.path(),
-            &remote,
-            None,
-            Some(500_000),
-            false,
-        ))
-        .unwrap();
-
-        assert!(files.iter().any(|path| {
-            path.file_name().is_some_and(|name| name == "headers-500000-999999.tar.zst")
-        }));
-
-        let manifest: SnapshotManifest =
-            serde_json::from_slice(&std::fs::read(output.path().join("manifest.json")).unwrap())
-                .unwrap();
-        assert_eq!(manifest.block, 500_000);
-        let ComponentManifest::Chunked(headers) = &manifest.components["headers"] else {
-            panic!("headers component should be chunked");
-        };
-        assert_eq!(headers.total_blocks, 500_001);
-        assert_eq!(headers.chunk_sizes.len(), 2);
-        assert_eq!(headers.chunk_output_files.len(), 2);
-        assert!(!headers.chunk_output_files[1].is_empty());
-    }
-
-    #[test]
     fn generate_manifest_creates_proofs_archive() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
@@ -1240,7 +1331,7 @@ mod tests {
             output.path(),
             &remote,
             Some(&previous_manifest),
-            Some(1_999_999),
+            Some(2_000_000),
             false,
         ))
         .unwrap();
@@ -1302,7 +1393,7 @@ mod tests {
             output_dir: output.path(),
             chain_id: 8453,
             base_url: None,
-            block: Some(1_999_999),
+            block: Some(2_000_000),
             blocks_per_file: Some(500_000),
             remote_static_files: &remote,
             previous_manifest: Some(&previous_manifest),

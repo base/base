@@ -7,14 +7,14 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
+use base_reth_cli::{ChunkFilename, ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
 use tracing::{error, info, warn};
 
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     tip::TipChecker,
-    upload::{SnapshotUploadParams, SnapshotUploader},
+    upload::{SnapshotUploadParams, SnapshotUploader, StreamingS3ArchiveSink},
 };
 
 /// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
@@ -162,8 +162,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     async fn generate_and_upload(&self, latest_block: u64) -> Result<()> {
         let run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        let run_output_dir = create_run_output_dir(&self.config.output_dir, run_timestamp)?;
-
         let remote_static_files = self.uploader.list_remote_static_files().await?;
 
         info!(remote_files = remote_static_files.len(), "fetched remote static file listing");
@@ -175,15 +173,40 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         );
 
         let source_datadir = self.config.source_datadir.clone();
-        let output_dir_for_gen = run_output_dir.clone();
+        // `output_dir` remains part of the generator parameters for directory-backed callers and
+        // upload-existing recovery, but the streaming sink never materializes this run directory.
+        let output_dir_for_gen = self.config.output_dir.join(format!("run-{run_timestamp}"));
         let chain_id = self.config.chain_id;
         let block = Some(self.config.block.unwrap_or(latest_block));
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files.clone();
         let previous_manifest_for_gen = remote_manifest.clone();
         let upload_proofs = self.config.upload_proofs;
+        let effective_block = block.expect("snapshot block is always set above");
+        let effective_blocks_per_file = blocks_per_file.unwrap_or(500_000);
+        let latest_chunk_start = effective_block
+            .checked_sub(1)
+            .unwrap_or(0)
+            .checked_div(effective_blocks_per_file)
+            .and_then(|index| index.checked_mul(effective_blocks_per_file))
+            .context("latest static-file chunk range overflow")?;
+        let key_uploader = self.uploader.clone();
+        let sink = StreamingS3ArchiveSink::new(
+            self.uploader.clone(),
+            tokio::runtime::Handle::current(),
+            1,
+            move |archive_name| {
+                let key = match ChunkFilename::parse(archive_name) {
+                    Some((_component, start, _end)) if start != latest_chunk_start => {
+                        key_uploader.static_file_object_key(archive_name)
+                    }
+                    _ => key_uploader.run_object_key(run_timestamp, archive_name),
+                };
+                Ok(key)
+            },
+        )?;
 
-        let files = tokio::task::spawn_blocking(move || {
+        let manifest = tokio::task::spawn_blocking(move || {
             let params = ManifestGenerationParams {
                 source_datadir: &source_datadir,
                 output_dir: &output_dir_for_gen,
@@ -195,29 +218,18 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 previous_manifest: previous_manifest_for_gen.as_ref(),
                 upload_proofs,
             };
-            SnapshotGenerator::generate_manifest(&params)
+            SnapshotGenerator::generate_manifest_with_sink(&params, &sink)
         })
         .await
         .context("snapshot generation task panicked")?
         .context("snapshot generation failed")?;
 
-        if files.is_empty() {
-            bail!("snapshot generation produced no files");
-        }
-
-        self.upload_run_directory(
-            &run_output_dir,
-            run_timestamp,
-            files,
-            remote_manifest.as_ref(),
-            &remote_static_files,
-        )
-        .await?;
-
-        info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
-        if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
-            error!(error = %e, "failed to clean up output directory");
-        }
+        self.uploader
+            .publish_streamed_manifest(&manifest, run_timestamp, self.config.retain_runs.get())
+            .await
+            .with_context(|| {
+                format!("failed to publish streamed snapshot manifest for {run_timestamp}")
+            })?;
 
         Ok(())
     }
@@ -305,14 +317,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             }
         }
     }
-}
-
-/// Creates a unique run output directory using the provided timestamp.
-fn create_run_output_dir(base: &std::path::Path, timestamp: u64) -> Result<PathBuf> {
-    let run_dir = base.join(format!("run-{timestamp}"));
-    std::fs::create_dir_all(&run_dir)
-        .with_context(|| format!("failed to create run dir {}", run_dir.display()))?;
-    Ok(run_dir)
 }
 
 /// Resolves an existing `run-<timestamp>` directory for upload-only mode.

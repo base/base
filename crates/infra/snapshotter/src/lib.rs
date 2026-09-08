@@ -9,7 +9,8 @@
 
 pub use base_reth_cli::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    ProgressDisplay, SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ProgressDisplay, SingleArchive, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerator,
+    SnapshotManifest, SnapshotManifestExt,
 };
 
 mod config;
@@ -26,7 +27,8 @@ pub use tip::{RpcTipChecker, TipChecker, TipStatus};
 
 mod upload;
 pub use upload::{
-    SnapshotRun, SnapshotUploadParams, SnapshotUploader, StreamingMultipartUpload, UploadStrategy,
+    SnapshotRun, SnapshotUploadParams, SnapshotUploader, StreamingMultipartUpload,
+    StreamingS3ArchiveSink, UploadStrategy,
 };
 
 mod orchestrator;
