@@ -258,10 +258,12 @@ impl TestBlockBuilder {
         let post_info =
             AccountInfo { nonce: final_nonce, balance: final_balance, ..Default::default() };
 
-        let account_revert = if pre_info.balance == initial_info.balance && pre_info.nonce == 0 {
-            Some(None)
-        } else {
+        // A known parent already persisted the signer, even when it contained no transactions.
+        // Balance and nonce cannot distinguish that account from an absent genesis account.
+        let account_revert = if self.post_block_state.contains_key(&parent_hash) {
             Some(Some(pre_info))
+        } else {
+            Some(None)
         };
 
         let new_slot_value = U256::from(block_number).wrapping_add(U256::from(1));
