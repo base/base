@@ -3,12 +3,12 @@
 //! [InsertTask]: crate::InsertTask
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
-use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_rpc_types_engine::BasePayloadError;
 use base_protocol::FromBlockError;
 
 use crate::{
-    EngineTaskError, SynchronizeTaskError, task_queue::tasks::task::EngineTaskErrorSeverity,
+    EngineClientError, EngineTaskError, SynchronizeTaskError,
+    task_queue::tasks::task::EngineTaskErrorSeverity,
 };
 
 /// An error that occurs when running the [`InsertTask`].
@@ -24,7 +24,7 @@ pub enum InsertTaskError {
     FromBlockError(#[from] BasePayloadError),
     /// Failed to insert new payload.
     #[error("Failed to insert new payload: {0}")]
-    InsertFailed(RpcError<TransportErrorKind>),
+    InsertFailed(EngineClientError),
     /// Unexpected payload status
     #[error("Unexpected payload status: {0}")]
     UnexpectedPayloadStatus(PayloadStatusEnum),
@@ -55,6 +55,7 @@ impl EngineTaskError for InsertTaskError {
 
 #[cfg(test)]
 mod tests {
+
     use super::InsertTaskError;
     use crate::{EngineTaskError, EngineTaskErrorSeverity};
 

@@ -13,14 +13,18 @@ workspace = true
 [dependencies]
 tower = { workspace = true }
 async-trait = { workspace = true }
+reth-network = { workspace = true }
 base-metrics = { workspace = true }
 alloy-pubsub = { workspace = true }
+reth-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
+reth-network-api = { workspace = true }
 alloy-primitives = { workspace = true }
 opentelemetry-http = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-network = { workspace = true }
+reth-engine-primitives = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
@@ -29,6 +33,7 @@ url = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
+base-execution-payload-builder = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 opentelemetry = { workspace = true, features = ["default"] }

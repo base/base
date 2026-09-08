@@ -43,99 +43,73 @@ pub enum EngineClientError {
     #[error("An RPC error occurred: {0}")]
     RpcError(#[from] RpcError<TransportErrorKind>),
 
+    /// A local execution command failed.
+    #[error(transparent)]
+    Execution(#[from] base_execution_payload_builder::ExecutionCommandError),
+    /// Submitting a block to the execution driver failed.
+    #[error(transparent)]
+    Submit(#[from] reth_engine_primitives::BeaconOnNewPayloadError),
+    /// Native build attributes could not be decoded.
+    #[error("invalid build attributes: {0}")]
+    InvalidAttributes(String),
+    /// Reading local execution state failed.
+    #[error(transparent)]
+    Local(#[from] base_consensus_providers::LocalL2Error),
+
     /// An error occurred while decoding the payload
     #[error("An error occurred while decoding the payload: {0}")]
     BlockInfoDecodeError(#[from] FromBlockError),
 }
+impl EngineClientError {
+    /// Whether the execution driver rejected the requested forkchoice state.
+    pub fn is_invalid_forkchoice(&self) -> bool {
+        match self {
+            Self::Execution(base_execution_payload_builder::ExecutionCommandError::Forkchoice(
+                reth_engine_primitives::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
+                    alloy_rpc_types_engine::ForkchoiceUpdateError::InvalidState,
+                ),
+            )) => true,
+            Self::RpcError(error) => error.as_error_resp().is_some_and(|error| {
+                error.code == alloy_rpc_types_engine::INVALID_FORK_CHOICE_STATE_ERROR as i64
+            }),
+            _ => false,
+        }
+    }
+
+    /// Whether a build request violates the active chain rules.
+    pub fn is_invalid_attributes(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidAttributes(_)
+                | Self::Execution(
+                    base_execution_payload_builder::ExecutionCommandError::InvalidAttributes(_)
+                )
+        )
+    }
+}
+
 /// Engine API client used to communicate with L1/L2 ELs.
 /// `EngineClient` trait that is very coupled to its only implementation.
 /// The main reason this exists is for mocking/unit testing.
 #[async_trait]
-pub trait EngineClient: BaseEngineApi + Send + Sync {
-    /// Submits a payload independently of the Engine wire protocol version.
+pub trait EngineClient: Send + Sync {
+    /// Submits a payload for execution.
     async fn submit_payload(
         &self,
-        envelope: base_common_rpc_types_engine::BaseExecutionPayloadEnvelope,
-    ) -> TransportResult<PayloadStatus> {
-        let root = envelope.parent_beacon_block_root.unwrap_or_default();
-        match envelope.execution_payload {
-            base_common_rpc_types_engine::BaseExecutionPayload::V1(payload) => {
-                self.new_payload_v2(ExecutionPayloadInputV2 {
-                    execution_payload: payload,
-                    withdrawals: None,
-                })
-                .await
-            }
-            base_common_rpc_types_engine::BaseExecutionPayload::V2(payload) => {
-                self.new_payload_v2(ExecutionPayloadInputV2 {
-                    execution_payload: payload.payload_inner,
-                    withdrawals: Some(payload.withdrawals),
-                })
-                .await
-            }
-            base_common_rpc_types_engine::BaseExecutionPayload::V3(payload) => {
-                self.new_payload_v3(payload, root).await
-            }
-            base_common_rpc_types_engine::BaseExecutionPayload::V4(payload) => {
-                self.new_payload_v4(payload, root).await
-            }
-        }
-    }
-
-    /// Applies forkchoice and optionally requests a payload build.
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Result<PayloadStatus, EngineClientError>;
+    /// Applies forkchoice and optionally starts a build.
     async fn update_forkchoice(
         &self,
         state: ForkchoiceState,
         attributes: Option<BasePayloadAttributes>,
-    ) -> TransportResult<ForkchoiceUpdated> {
-        if attributes
-            .as_ref()
-            .is_some_and(|attrs| !self.cfg().is_ecotone_active(attrs.payload_attributes.timestamp))
-        {
-            self.fork_choice_updated_v2(state, attributes).await
-        } else {
-            self.fork_choice_updated_v3(state, attributes).await
-        }
-    }
-
-    /// Resolves a built payload for consensus and gossip.
+    ) -> Result<ForkchoiceUpdated, EngineClientError>;
+    /// Resolves the payload built for the supplied attributes.
     async fn resolve_payload(
         &self,
         id: PayloadId,
         attributes: &BasePayloadAttributes,
-    ) -> TransportResult<base_common_rpc_types_engine::BaseExecutionPayloadEnvelope> {
-        let timestamp = attributes.payload_attributes.timestamp;
-        let parent_beacon_block_root = attributes.payload_attributes.parent_beacon_block_root;
-        let execution_payload =
-            match crate::EngineGetPayloadVersion::from_cfg(self.cfg(), timestamp) {
-                crate::EngineGetPayloadVersion::V5 => {
-                    BaseExecutionPayload::V4(self.get_payload_v5(id).await?.execution_payload)
-                }
-                crate::EngineGetPayloadVersion::V4 => {
-                    BaseExecutionPayload::V4(self.get_payload_v4(id).await?.execution_payload)
-                }
-                crate::EngineGetPayloadVersion::V3 => {
-                    BaseExecutionPayload::V3(self.get_payload_v3(id).await?.execution_payload)
-                }
-                crate::EngineGetPayloadVersion::V2 => {
-                    match self.get_payload_v2(id).await?.execution_payload.into_payload() {
-                        alloy_rpc_types_engine::ExecutionPayload::V1(payload) => {
-                            BaseExecutionPayload::V1(payload)
-                        }
-                        alloy_rpc_types_engine::ExecutionPayload::V2(payload) => {
-                            BaseExecutionPayload::V2(payload)
-                        }
-                        _ => {
-                            return Err(TransportErrorKind::custom_str(
-                                "unexpected legacy payload version",
-                            )
-                            .into());
-                        }
-                    }
-                }
-            };
-        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
-    }
+    ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError>;
 
     /// Returns a reference to the inner [`RollupConfig`].
     fn cfg(&self) -> &RollupConfig;
@@ -289,6 +263,102 @@ where
     L1Provider: Provider,
     L2Provider: Provider<Base>,
 {
+    /// Submits a payload independently of the Engine wire protocol version.
+    async fn submit_payload(
+        &self,
+        envelope: base_common_rpc_types_engine::BaseExecutionPayloadEnvelope,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let result: TransportResult<PayloadStatus> = async {
+            let root = envelope.parent_beacon_block_root.unwrap_or_default();
+            match envelope.execution_payload {
+                base_common_rpc_types_engine::BaseExecutionPayload::V1(payload) => {
+                    self.new_payload_v2(ExecutionPayloadInputV2 {
+                        execution_payload: payload,
+                        withdrawals: None,
+                    })
+                    .await
+                }
+                base_common_rpc_types_engine::BaseExecutionPayload::V2(payload) => {
+                    self.new_payload_v2(ExecutionPayloadInputV2 {
+                        execution_payload: payload.payload_inner,
+                        withdrawals: Some(payload.withdrawals),
+                    })
+                    .await
+                }
+                base_common_rpc_types_engine::BaseExecutionPayload::V3(payload) => {
+                    self.new_payload_v3(payload, root).await
+                }
+                base_common_rpc_types_engine::BaseExecutionPayload::V4(payload) => {
+                    self.new_payload_v4(payload, root).await
+                }
+            }
+        }
+        .await;
+        result.map_err(Into::into)
+    }
+
+    /// Applies forkchoice and optionally requests a payload build.
+    async fn update_forkchoice(
+        &self,
+        state: ForkchoiceState,
+        attributes: Option<BasePayloadAttributes>,
+    ) -> Result<ForkchoiceUpdated, EngineClientError> {
+        let result: TransportResult<ForkchoiceUpdated> = async {
+            if attributes.as_ref().is_some_and(|attrs| {
+                !self.cfg().is_ecotone_active(attrs.payload_attributes.timestamp)
+            }) {
+                self.fork_choice_updated_v2(state, attributes).await
+            } else {
+                self.fork_choice_updated_v3(state, attributes).await
+            }
+        }
+        .await;
+        result.map_err(Into::into)
+    }
+
+    /// Resolves a built payload for consensus and gossip.
+    async fn resolve_payload(
+        &self,
+        id: PayloadId,
+        attributes: &BasePayloadAttributes,
+    ) -> Result<base_common_rpc_types_engine::BaseExecutionPayloadEnvelope, EngineClientError> {
+        let result: TransportResult<BaseExecutionPayloadEnvelope> = async {
+            let timestamp = attributes.payload_attributes.timestamp;
+            let parent_beacon_block_root = attributes.payload_attributes.parent_beacon_block_root;
+            let execution_payload =
+                match crate::EngineGetPayloadVersion::from_cfg(self.cfg(), timestamp) {
+                    crate::EngineGetPayloadVersion::V5 => {
+                        BaseExecutionPayload::V4(self.get_payload_v5(id).await?.execution_payload)
+                    }
+                    crate::EngineGetPayloadVersion::V4 => {
+                        BaseExecutionPayload::V4(self.get_payload_v4(id).await?.execution_payload)
+                    }
+                    crate::EngineGetPayloadVersion::V3 => {
+                        BaseExecutionPayload::V3(self.get_payload_v3(id).await?.execution_payload)
+                    }
+                    crate::EngineGetPayloadVersion::V2 => {
+                        match self.get_payload_v2(id).await?.execution_payload.into_payload() {
+                            alloy_rpc_types_engine::ExecutionPayload::V1(payload) => {
+                                BaseExecutionPayload::V1(payload)
+                            }
+                            alloy_rpc_types_engine::ExecutionPayload::V2(payload) => {
+                                BaseExecutionPayload::V2(payload)
+                            }
+                            _ => {
+                                return Err(TransportErrorKind::custom_str(
+                                    "unexpected legacy payload version",
+                                )
+                                .into());
+                            }
+                        }
+                    }
+                };
+            Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+        }
+        .await;
+        result.map_err(Into::into)
+    }
+
     fn cfg(&self) -> &RollupConfig {
         self.cfg.as_ref()
     }

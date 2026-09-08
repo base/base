@@ -2,7 +2,7 @@
 
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 
-use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum};
+use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
@@ -274,13 +274,13 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             .await
             .map_err(|e| {
                 error!(target: "engine_builder", error = %e, "Forkchoice update failed");
-                let error = e
-                    .as_error_resp()
-                    .and_then(|e| {
-                        (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
-                            .then_some(EngineBuildError::ForkchoiceStateInvalid)
-                    })
-                    .unwrap_or_else(|| EngineBuildError::AttributesInsertionFailed(e));
+                let error = if e.is_invalid_forkchoice() {
+                    EngineBuildError::ForkchoiceStateInvalid
+                } else if e.is_invalid_attributes() {
+                    EngineBuildError::InvalidPayload(e.to_string())
+                } else {
+                    EngineBuildError::AttributesInsertionFailed(e)
+                };
 
                 BuildTaskError::EngineBuildError(error)
             })?;

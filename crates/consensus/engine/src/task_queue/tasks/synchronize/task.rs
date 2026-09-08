@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum};
+use alloy_rpc_types_engine::PayloadStatusEnum;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -185,13 +185,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
         let valid_response = response.map_err(|e| {
             // Fatal forkchoice update error.
-            let error = e
-                .as_error_resp()
-                .and_then(|e| {
-                    (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
-                        .then_some(SynchronizeTaskError::InvalidForkchoiceState)
-                })
-                .unwrap_or_else(|| SynchronizeTaskError::ForkchoiceUpdateFailed(e));
+            let error = if e.is_invalid_forkchoice() {
+                SynchronizeTaskError::InvalidForkchoiceState
+            } else {
+                SynchronizeTaskError::ForkchoiceUpdateFailed(e)
+            };
 
             debug!(target: "engine", error = ?error, "Unexpected forkchoice update error");
 

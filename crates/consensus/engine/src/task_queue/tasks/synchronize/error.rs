@@ -1,17 +1,16 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
-use alloy_transport::{RpcError, TransportErrorKind};
 use thiserror::Error;
 
-use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
+use crate::{EngineClientError, EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
 
 /// An error that occurs when running the [`crate::SynchronizeTask`].
 #[derive(Debug, Error)]
 pub enum SynchronizeTaskError {
     /// The forkchoice update call to the engine api failed.
     #[error("Forkchoice update engine api call failed due to an RPC error: {0}")]
-    ForkchoiceUpdateFailed(RpcError<TransportErrorKind>),
+    ForkchoiceUpdateFailed(EngineClientError),
     /// The finalized head is behind the unsafe head.
     #[error("Invalid forkchoice state: unsafe head {0} is ahead of finalized head {1}")]
     FinalizedAheadOfUnsafe(u64, u64),
@@ -54,7 +53,7 @@ mod tests {
         EngineTaskErrorSeverity::Critical
     )]
     #[case::rpc_failure_is_temporary(
-        SynchronizeTaskError::ForkchoiceUpdateFailed(RpcError::local_usage_str("test")),
+        SynchronizeTaskError::ForkchoiceUpdateFailed(RpcError::local_usage_str("test").into()),
         EngineTaskErrorSeverity::Temporary
     )]
     #[case::invalid_forkchoice_state_resets(

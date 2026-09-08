@@ -1,13 +1,12 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
-use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::FromBlockError;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::{
-    EngineTaskError, InsertTaskError, SynchronizeTaskError,
+    EngineClientError, EngineTaskError, InsertTaskError, SynchronizeTaskError,
     task_queue::tasks::task::EngineTaskErrorSeverity,
 };
 
@@ -19,7 +18,7 @@ pub enum SealTaskError {
     PayloadInsertionFailed(#[from] Box<InsertTaskError>),
     /// The get payload call to the engine api failed.
     #[error(transparent)]
-    GetPayloadFailed(RpcError<TransportErrorKind>),
+    GetPayloadFailed(EngineClientError),
     /// A deposit-only payload failed to import.
     #[error("Deposit-only payload failed to import")]
     DepositOnlyPayloadFailed,
@@ -120,8 +119,8 @@ mod tests {
 
     use super::*;
 
-    fn rpc_error() -> RpcError<TransportErrorKind> {
-        RpcError::local_usage_str("test")
+    fn rpc_error() -> EngineClientError {
+        RpcError::local_usage_str("test").into()
     }
 
     #[rstest]

@@ -21,6 +21,9 @@ pub use task_queue::{
 mod attributes;
 pub use attributes::{AttributesMatch, AttributesMismatch};
 
+mod local_client;
+pub use local_client::LocalEngineClient;
+
 mod client;
 pub use client::{BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError};
 

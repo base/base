@@ -1,10 +1,9 @@
 //! Contains error types for direct engine build operations.
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
-use alloy_transport::{RpcError, TransportErrorKind};
 use thiserror::Error;
 
-use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
+use crate::{EngineClientError, EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
 
 /// An error that occurs during payload building within the engine.
 ///
@@ -26,7 +25,7 @@ pub enum EngineBuildError {
     FinalizedAheadOfUnsafe(u64, u64),
     /// The forkchoice update call to the engine api failed.
     #[error("Failed to build payload attributes in the engine. Forkchoice RPC error: {0}")]
-    AttributesInsertionFailed(#[from] RpcError<TransportErrorKind>),
+    AttributesInsertionFailed(#[from] EngineClientError),
     /// The engine returned an invalid forkchoice state error.
     #[error("Invalid forkchoice state")]
     ForkchoiceStateInvalid,
@@ -85,6 +84,7 @@ impl EngineTaskError for BuildTaskError {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     /// `InvalidPayload` must surface `Flush` (so the engine processor flushes
