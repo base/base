@@ -1,6 +1,5 @@
 use alloy_consensus::{TxType, TypedTransaction};
-use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
-use alloy_rpc_types_eth::{AccessList, TransactionInputKind, request::TransactionRequest};
+use alloy_rpc_types_eth::{request::TransactionRequest};
 
 use crate::{
     BuildResult, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
@@ -8,112 +7,11 @@ use crate::{
 };
 
 impl TransactionBuilder for TransactionRequest {
-    fn chain_id(&self) -> Option<ChainId> {
-        self.chain_id
+    fn transaction_request(&self) -> &TransactionRequest {
+        self
     }
-
-    fn set_chain_id(&mut self, chain_id: ChainId) {
-        self.chain_id = Some(chain_id);
-    }
-
-    fn nonce(&self) -> Option<u64> {
-        self.nonce
-    }
-
-    fn set_nonce(&mut self, nonce: u64) {
-        self.nonce = Some(nonce);
-    }
-
-    fn take_nonce(&mut self) -> Option<u64> {
-        self.nonce.take()
-    }
-
-    fn input(&self) -> Option<&Bytes> {
-        self.input.input()
-    }
-
-    fn set_input<T: Into<Bytes>>(&mut self, input: T) {
-        self.input.input = Some(input.into());
-    }
-
-    fn set_input_kind<T: Into<Bytes>>(&mut self, input: T, kind: TransactionInputKind) {
-        match kind {
-            TransactionInputKind::Input => self.input.input = Some(input.into()),
-            TransactionInputKind::Data => self.input.data = Some(input.into()),
-            TransactionInputKind::Both => {
-                let bytes = input.into();
-                self.input.input = Some(bytes.clone());
-                self.input.data = Some(bytes);
-            }
-        }
-    }
-
-    fn from(&self) -> Option<Address> {
-        self.from
-    }
-
-    fn set_from(&mut self, from: Address) {
-        self.from = Some(from);
-    }
-
-    fn kind(&self) -> Option<TxKind> {
-        self.to
-    }
-
-    fn clear_kind(&mut self) {
-        self.to = None;
-    }
-
-    fn set_kind(&mut self, kind: TxKind) {
-        self.to = Some(kind);
-    }
-
-    fn value(&self) -> Option<U256> {
-        self.value
-    }
-
-    fn set_value(&mut self, value: U256) {
-        self.value = Some(value)
-    }
-
-    fn gas_price(&self) -> Option<u128> {
-        self.gas_price
-    }
-
-    fn set_gas_price(&mut self, gas_price: u128) {
-        self.gas_price = Some(gas_price);
-    }
-
-    fn max_fee_per_gas(&self) -> Option<u128> {
-        self.max_fee_per_gas
-    }
-
-    fn set_max_fee_per_gas(&mut self, max_fee_per_gas: u128) {
-        self.max_fee_per_gas = Some(max_fee_per_gas);
-    }
-
-    fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        self.max_priority_fee_per_gas
-    }
-
-    fn set_max_priority_fee_per_gas(&mut self, max_priority_fee_per_gas: u128) {
-        self.max_priority_fee_per_gas = Some(max_priority_fee_per_gas);
-    }
-
-    fn gas_limit(&self) -> Option<u64> {
-        self.gas
-    }
-
-    fn set_gas_limit(&mut self, gas_limit: u64) {
-        self.gas = Some(gas_limit);
-    }
-
-    fn access_list(&self) -> Option<&AccessList> {
-        self.access_list.as_ref()
-    }
-
-    fn set_access_list(&mut self, access_list: AccessList) {
-        self.access_list = Some(access_list);
+    fn transaction_request_mut(&mut self) -> &mut TransactionRequest {
+        self
     }
 }
 

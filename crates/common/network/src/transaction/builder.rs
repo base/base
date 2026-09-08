@@ -1,6 +1,6 @@
 pub use alloy_network_primitives::{TransactionBuilder4844, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
-use alloy_rpc_types_eth::{AccessList, TransactionInputKind};
+use alloy_rpc_types_eth::{AccessList, TransactionInputKind, TransactionRequest};
 use alloy_sol_types::SolCall;
 use futures_utils_wasm::impl_future;
 
@@ -59,11 +59,21 @@ impl<N: Network> TransactionBuilderError<N> {
 /// Transaction builder.
 #[doc(alias = "TxBuilder")]
 pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
+    /// Returns the shared Ethereum transaction fields.
+    fn transaction_request(&self) -> &TransactionRequest;
+
+    /// Returns the shared Ethereum transaction fields for mutation.
+    fn transaction_request_mut(&mut self) -> &mut TransactionRequest;
+
     /// Get the chain ID for the transaction.
-    fn chain_id(&self) -> Option<ChainId>;
+    fn chain_id(&self) -> Option<ChainId> {
+        self.transaction_request().chain_id
+    }
 
     /// Set the chain ID for the transaction.
-    fn set_chain_id(&mut self, chain_id: ChainId);
+    fn set_chain_id(&mut self, chain_id: ChainId) {
+        self.transaction_request_mut().chain_id = Some(chain_id);
+    }
 
     /// Builder-pattern method for setting the chain ID.
     fn with_chain_id(mut self, chain_id: ChainId) -> Self {
@@ -72,13 +82,19 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the nonce for the transaction.
-    fn nonce(&self) -> Option<u64>;
+    fn nonce(&self) -> Option<u64> {
+        self.transaction_request().nonce
+    }
 
     /// Set the nonce for the transaction.
-    fn set_nonce(&mut self, nonce: u64);
+    fn set_nonce(&mut self, nonce: u64) {
+        self.transaction_request_mut().nonce = Some(nonce);
+    }
 
     /// Takes the nonce out of the transaction, clearing it.
-    fn take_nonce(&mut self) -> Option<u64>;
+    fn take_nonce(&mut self) -> Option<u64> {
+        self.transaction_request_mut().nonce.take()
+    }
 
     /// Builder-pattern method for setting the nonce.
     fn with_nonce(mut self, nonce: u64) -> Self {
@@ -93,10 +109,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the input data for the transaction.
-    fn input(&self) -> Option<&Bytes>;
+    fn input(&self) -> Option<&Bytes> {
+        self.transaction_request().input.input()
+    }
 
     /// Set the input data for the transaction.
-    fn set_input<T: Into<Bytes>>(&mut self, input: T);
+    fn set_input<T: Into<Bytes>>(&mut self, input: T) {
+        self.transaction_request_mut().input.input = Some(input.into());
+    }
 
     /// Builder-pattern method for setting the input data.
     fn with_input<T: Into<Bytes>>(mut self, input: T) -> Self {
@@ -105,9 +125,20 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Set the input data for the transaction, respecting the input kind
-    fn set_input_kind<T: Into<Bytes>>(&mut self, input: T, _: TransactionInputKind) {
-        // forward all to input by default
-        self.set_input(input);
+    fn set_input_kind<T: Into<Bytes>>(&mut self, input: T, kind: TransactionInputKind) {
+        match kind {
+            TransactionInputKind::Input => {
+                self.transaction_request_mut().input.input = Some(input.into())
+            }
+            TransactionInputKind::Data => {
+                self.transaction_request_mut().input.data = Some(input.into())
+            }
+            TransactionInputKind::Both => {
+                let bytes = input.into();
+                self.transaction_request_mut().input.input = Some(bytes.clone());
+                self.transaction_request_mut().input.data = Some(bytes);
+            }
+        }
     }
 
     /// Builder-pattern method for setting the input data, respecting the input kind
@@ -117,10 +148,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the sender for the transaction.
-    fn from(&self) -> Option<Address>;
+    fn from(&self) -> Option<Address> {
+        self.transaction_request().from
+    }
 
     /// Set the sender for the transaction.
-    fn set_from(&mut self, from: Address);
+    fn set_from(&mut self, from: Address) {
+        self.transaction_request_mut().from = Some(from);
+    }
 
     /// Builder-pattern method for setting the sender.
     fn with_from(mut self, from: Address) -> Self {
@@ -129,13 +164,19 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the kind of transaction.
-    fn kind(&self) -> Option<TxKind>;
+    fn kind(&self) -> Option<TxKind> {
+        self.transaction_request().to
+    }
 
     /// Clear the kind of transaction.
-    fn clear_kind(&mut self);
+    fn clear_kind(&mut self) {
+        self.transaction_request_mut().to = None;
+    }
 
     /// Set the kind of transaction.
-    fn set_kind(&mut self, kind: TxKind);
+    fn set_kind(&mut self, kind: TxKind) {
+        self.transaction_request_mut().to = Some(kind);
+    }
 
     /// Builder-pattern method for setting the kind of transaction.
     fn with_kind(mut self, kind: TxKind) -> Self {
@@ -216,10 +257,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the value for the transaction.
-    fn value(&self) -> Option<U256>;
+    fn value(&self) -> Option<U256> {
+        self.transaction_request().value
+    }
 
     /// Set the value for the transaction.
-    fn set_value(&mut self, value: U256);
+    fn set_value(&mut self, value: U256) {
+        self.transaction_request_mut().value = Some(value)
+    }
 
     /// Builder-pattern method for setting the value.
     fn with_value(mut self, value: U256) -> Self {
@@ -228,10 +273,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the legacy gas price for the transaction.
-    fn gas_price(&self) -> Option<u128>;
+    fn gas_price(&self) -> Option<u128> {
+        self.transaction_request().gas_price
+    }
 
     /// Set the legacy gas price for the transaction.
-    fn set_gas_price(&mut self, gas_price: u128);
+    fn set_gas_price(&mut self, gas_price: u128) {
+        self.transaction_request_mut().gas_price = Some(gas_price);
+    }
 
     /// Builder-pattern method for setting the legacy gas price.
     fn with_gas_price(mut self, gas_price: u128) -> Self {
@@ -240,10 +289,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the max fee per gas for the transaction.
-    fn max_fee_per_gas(&self) -> Option<u128>;
+    fn max_fee_per_gas(&self) -> Option<u128> {
+        self.transaction_request().max_fee_per_gas
+    }
 
     /// Set the max fee per gas  for the transaction.
-    fn set_max_fee_per_gas(&mut self, max_fee_per_gas: u128);
+    fn set_max_fee_per_gas(&mut self, max_fee_per_gas: u128) {
+        self.transaction_request_mut().max_fee_per_gas = Some(max_fee_per_gas);
+    }
 
     /// Builder-pattern method for setting max fee per gas .
     fn with_max_fee_per_gas(mut self, max_fee_per_gas: u128) -> Self {
@@ -252,10 +305,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the max priority fee per gas for the transaction.
-    fn max_priority_fee_per_gas(&self) -> Option<u128>;
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        self.transaction_request().max_priority_fee_per_gas
+    }
 
     /// Set the max priority fee per gas for the transaction.
-    fn set_max_priority_fee_per_gas(&mut self, max_priority_fee_per_gas: u128);
+    fn set_max_priority_fee_per_gas(&mut self, max_priority_fee_per_gas: u128) {
+        self.transaction_request_mut().max_priority_fee_per_gas = Some(max_priority_fee_per_gas);
+    }
 
     /// Builder-pattern method for setting max priority fee per gas.
     fn with_max_priority_fee_per_gas(mut self, max_priority_fee_per_gas: u128) -> Self {
@@ -263,10 +320,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
         self
     }
     /// Get the gas limit for the transaction.
-    fn gas_limit(&self) -> Option<u64>;
+    fn gas_limit(&self) -> Option<u64> {
+        self.transaction_request().gas
+    }
 
     /// Set the gas limit for the transaction.
-    fn set_gas_limit(&mut self, gas_limit: u64);
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.transaction_request_mut().gas = Some(gas_limit);
+    }
 
     /// Builder-pattern method for setting the gas limit.
     fn with_gas_limit(mut self, gas_limit: u64) -> Self {
@@ -275,10 +336,14 @@ pub trait TransactionBuilder: Default + Sized + Send + Sync + 'static {
     }
 
     /// Get the EIP-2930 access list for the transaction.
-    fn access_list(&self) -> Option<&AccessList>;
+    fn access_list(&self) -> Option<&AccessList> {
+        self.transaction_request().access_list.as_ref()
+    }
 
     /// Sets the EIP-2930 access list.
-    fn set_access_list(&mut self, access_list: AccessList);
+    fn set_access_list(&mut self, access_list: AccessList) {
+        self.transaction_request_mut().access_list = Some(access_list);
+    }
 
     /// Builder-pattern method for setting the access list.
     fn with_access_list(mut self, access_list: AccessList) -> Self {
