@@ -189,7 +189,6 @@ impl From<&HandlerReqId> for RequestId {
 }
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
-#[derive(Debug)]
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
@@ -226,6 +225,27 @@ pub struct Handler {
 
 type HandlerReturn =
     (oneshot::Sender<()>, mpsc::UnboundedSender<HandlerIn>, mpsc::Receiver<HandlerOut>);
+
+impl core::fmt::Debug for Handler {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Handler")
+            .field("request_retries", &self.request_retries)
+            .field("node_id", &self.node_id)
+            .field("protocol_identity", &self.protocol_identity)
+            .field("enr", &self.enr)
+            .field("active_requests", &self.active_requests)
+            .field("filter_expected_responses", &self.filter_expected_responses)
+            .field("pending_requests", &self.pending_requests)
+            .field("active_challenges", &self.active_challenges)
+            .field("sessions", &self.sessions)
+            .field("service_recv", &self.service_recv)
+            .field("service_send", &self.service_send)
+            .field("listen_sockets", &self.listen_sockets)
+            .field("socket", &self.socket)
+            .field("exit", &self.exit)
+            .finish_non_exhaustive()
+    }
+}
 
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.

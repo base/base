@@ -622,7 +622,7 @@ notify = { version = "8.2", default-features = false }
 governor = { version = "0.7", default-features = false }
 
 # Additional vendored crates
-enr = { path = "vendor/enr", default-features = false }
+enr = { version = "=0.13.0", default-features = false }
 nybbles = { version = "=0.4.8", default-features = false }
 tree_hash = { path = "vendor/tree_hash", default-features = false }
 ethereum_serde_utils = { path = "vendor/ethereum_serde_utils", default-features = false }

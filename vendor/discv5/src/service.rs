@@ -156,7 +156,6 @@ pub enum ServiceRequest {
 
 use crate::discv5::PERMIT_BAN_LIST;
 
-#[derive(Debug)]
 pub struct Service {
     /// Configuration parameters.
     config: Config,
@@ -244,6 +243,29 @@ struct NodesResponse {
 impl Default for NodesResponse {
     fn default() -> Self {
         NodesResponse { count: 1, received_nodes: Vec::new() }
+    }
+}
+
+impl core::fmt::Debug for Service {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Service")
+            .field("config", &self.config)
+            .field("local_enr", &self.local_enr)
+            .field("kbuckets", &self.kbuckets)
+            .field("queries", &self.queries)
+            .field("active_requests", &self.active_requests)
+            .field("active_nodes_responses", &self.active_nodes_responses)
+            .field("ip_votes", &self.ip_votes)
+            .field("handler_send", &self.handler_send)
+            .field("handler_recv", &self.handler_recv)
+            .field("handler_exit", &self.handler_exit)
+            .field("discv5_recv", &self.discv5_recv)
+            .field("exit", &self.exit)
+            .field("peers_to_ping", &self.peers_to_ping)
+            .field("event_stream", &self.event_stream)
+            .field("ip_mode", &self.ip_mode)
+            .field("connectivity_state", &self.connectivity_state)
+            .finish_non_exhaustive()
     }
 }
 

@@ -78,7 +78,6 @@ pub enum Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-#[derive(Debug)]
 pub struct Discv5 {
     config: Config,
     /// The channel to make requests from the main service.
@@ -93,6 +92,19 @@ pub struct Discv5 {
     enr_key: Arc<RwLock<CombinedKey>>,
     // Type of socket we are using
     ip_mode: IpMode,
+}
+
+impl core::fmt::Debug for Discv5 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Discv5")
+            .field("config", &self.config)
+            .field("service_channel", &self.service_channel)
+            .field("service_exit", &self.service_exit)
+            .field("kbuckets", &self.kbuckets)
+            .field("local_enr", &self.local_enr)
+            .field("ip_mode", &self.ip_mode)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Discv5 {

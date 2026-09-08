@@ -8499,7 +8499,9 @@ dependencies = [
 
 [[package]]
 name = "enr"
-version = "0.0.0"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "851bd664a3d3a3c175cff92b2f0df02df3c541b4895d0ae307611827aae46152"
 dependencies = [
  "alloy-rlp",
  "base64 0.22.1",
@@ -8511,7 +8513,6 @@ dependencies = [
  "rand 0.8.7",
  "secp256k1 0.30.0",
  "serde",
- "serde_json",
  "sha3 0.10.9",
  "zeroize",
 ]
