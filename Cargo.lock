@@ -770,14 +770,14 @@ dependencies = [
 
 [[package]]
 name = "alloy-serde"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ff89f75b8a9d00f659750e9220c31b42d67c69ffc43b2ac8911dfd0506eb4a6"
 dependencies = [
  "alloy-primitives",
  "arbitrary",
- "rand 0.8.7",
  "serde",
  "serde_json",
- "similar-asserts",
 ]
 
 [[package]]
