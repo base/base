@@ -1,9 +1,9 @@
 use alloy_chains::Chain;
 use alloy_genesis::Genesis;
-use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, U256};
+use base_common_chains::{ChainUpgrades, ExecutionFork};
 use base_common_genesis::BaseUpgrade;
-use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
+use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
 
 use crate::{BaseChainSpec, BaseChainSpecError};
 
@@ -15,7 +15,7 @@ pub struct BaseChainSpecBuilder {
     /// Genesis boundary configuration.
     genesis: Option<Genesis>,
     /// Configured execution forks.
-    hardforks: ChainHardforks,
+    hardforks: ChainUpgrades,
     /// Activation registry admin address.
     activation_admin_address: Option<Address>,
 }
@@ -45,13 +45,13 @@ impl BaseChainSpecBuilder {
     }
 
     /// Add the given fork with the given activation condition to the spec.
-    pub fn with_fork<H: Hardfork>(mut self, fork: H, condition: ForkCondition) -> Self {
+    pub fn with_fork<H: Into<ExecutionFork>>(mut self, fork: H, condition: ForkCondition) -> Self {
         self.hardforks.insert(fork, condition);
         self
     }
 
     /// Add the given forks with the given activation condition to the spec.
-    pub fn with_forks(mut self, forks: ChainHardforks) -> Self {
+    pub fn with_forks(mut self, forks: ChainUpgrades) -> Self {
         self.hardforks = forks;
         self
     }

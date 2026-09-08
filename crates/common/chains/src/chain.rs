@@ -10,7 +10,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{BaseUpgradeExt, Upgrades};
+use crate::{BaseUpgradeExt, ExecutionFork, Upgrades};
 
 /// Number of upgrades in the Base execution fork ladder
 /// ([`BaseUpgrade::EXECUTION_VARIANTS`]).
@@ -27,12 +27,14 @@ const EXECUTION_FORK_COUNT: usize = BaseUpgrade::EXECUTION_VARIANTS.len();
 /// upgrades is described by predicate [`EthereumHardfork`] `=>` [`BaseUpgrade`], since a Base
 /// chain can undergo a [`BaseUpgrade`] without an [`EthereumHardfork`], but not the other way
 /// around.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainUpgrades {
     /// Activation conditions for the execution fork ladder, indexed by
     /// [`BaseUpgrade::execution_idx`]. Upgrades absent from the input default to
     /// [`ForkCondition::Never`].
     forks: [ForkCondition; EXECUTION_FORK_COUNT],
+    /// Genesis-only Zenith activation; never changed by the runtime execution registry.
+    pub zenith: ForkCondition,
 }
 
 impl ChainUpgrades {
@@ -43,12 +45,68 @@ impl ChainUpgrades {
     /// When an upgrade appears more than once, the last entry wins.
     pub fn new(forks: impl IntoIterator<Item = (BaseUpgrade, ForkCondition)>) -> Self {
         let mut conditions = [ForkCondition::Never; EXECUTION_FORK_COUNT];
+        let mut zenith = ForkCondition::Never;
         for (upgrade, condition) in forks {
+            if upgrade == BaseUpgrade::Zenith {
+                zenith = condition;
+            }
             if let Some(idx) = upgrade.execution_idx() {
                 conditions[idx] = condition;
             }
         }
-        Self { forks: conditions }
+        Self { forks: conditions, zenith }
+    }
+
+    /// Iterates over the configured Base execution ladder.
+    pub fn iter(&self) -> impl Iterator<Item = (BaseUpgrade, ForkCondition)> + '_ {
+        BaseUpgrade::EXECUTION_VARIANTS
+            .into_iter()
+            .map(|fork| (fork, self[fork]))
+            .chain(core::iter::once((BaseUpgrade::Zenith, self.zenith)))
+    }
+
+    /// Looks up a typed execution rule.
+    pub fn fork(&self, fork: impl Into<ExecutionFork>) -> ForkCondition {
+        match fork.into() {
+            ExecutionFork::Base(fork) => self[fork],
+            ExecutionFork::Ethereum(fork) => self[fork],
+        }
+    }
+
+    /// Updates a Base upgrade, including the corresponding Ethereum rule.
+    pub fn insert(&mut self, fork: impl Into<ExecutionFork>, condition: ForkCondition) {
+        if let Some(upgrade) = fork.into().base_upgrade() {
+            if let Some(index) = upgrade.execution_idx() {
+                self.forks[index] = condition;
+            }
+        }
+    }
+
+    /// Removes a configured Base activation.
+    pub fn remove(&mut self, fork: &BaseUpgrade) {
+        self.insert(*fork, ForkCondition::Never);
+    }
+
+    /// Looks up a scheduled execution rule.
+    pub fn get(&self, fork: impl Into<ExecutionFork>) -> Option<ForkCondition> {
+        let condition = self.fork(fork);
+        (condition != ForkCondition::Never).then_some(condition)
+    }
+
+    /// Iterates over derived Ethereum rules and Base upgrades in protocol order.
+    pub fn forks_iter(&self) -> impl Iterator<Item = (ExecutionFork, ForkCondition)> + '_ {
+        EthereumHardfork::VARIANTS
+            .iter()
+            .copied()
+            .take_while(|fork| *fork != EthereumHardfork::Shanghai)
+            .map(|fork| (ExecutionFork::Ethereum(fork), self[fork]))
+            .chain(self.iter().flat_map(|(fork, condition)| {
+                fork.execution_hardfork()
+                    .map(|eth| (ExecutionFork::Ethereum(eth), condition))
+                    .into_iter()
+                    .chain(core::iter::once((ExecutionFork::Base(fork), condition)))
+            }))
+            .filter(|(_, condition)| *condition != ForkCondition::Never)
     }
 
     /// Creates a new [`ChainUpgrades`] with Base mainnet configuration.
@@ -89,7 +147,11 @@ impl Index<BaseUpgrade> for ChainUpgrades {
 
     fn index(&self, hf: BaseUpgrade) -> &Self::Output {
         // Contract-only upgrades are absent from the execution fork ladder.
-        hf.execution_idx().map_or(&ForkCondition::Never, |idx| &self.forks[idx])
+        if hf == BaseUpgrade::Zenith {
+            &self.zenith
+        } else {
+            hf.execution_idx().map_or(&ForkCondition::Never, |idx| &self.forks[idx])
+        }
     }
 }
 
@@ -370,5 +432,11 @@ mod tests {
         for base_upgrade in BaseUpgrade::VARIANTS {
             let _ = base_mainnet_forks.fork_condition(*base_upgrade);
         }
+    }
+}
+
+impl Default for ChainUpgrades {
+    fn default() -> Self {
+        Self::new([])
     }
 }

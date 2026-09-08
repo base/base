@@ -11,7 +11,7 @@ use alloy_evm::precompiles::Precompile;
 use alloy_primitives::Address;
 use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_chainspec::{EthereumHardforks, Hardforks, Head};
+use reth_chainspec::{EthereumHardforks, Head};
 use reth_errors::{ProviderError, RethError};
 use reth_evm::{BaseEvmConfig, Evm, precompiles::PrecompilesMap};
 use reth_primitives_traits::header::HeaderMut;

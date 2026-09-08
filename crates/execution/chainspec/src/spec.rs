@@ -6,7 +6,7 @@ use alloy_eips::{eip1559::INITIAL_BASE_FEE, eip7840::BlobParams, eip7892::BlobSc
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
-use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
+use base_common_chains::{BaseUpgradeExt, ChainConfig, ChainUpgrades, ExecutionFork, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
     BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
@@ -14,13 +14,13 @@ use base_common_genesis::{
 use base_protocol::OutputRoot;
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks,
-    EthereumHardforks, ForkFilter, ForkId, Hardforks, Head, MAINNET_PRUNE_DELETE_LIMIT,
+    EthereumHardforks, ForkFilter, ForkId, Head, MAINNET_PRUNE_DELETE_LIMIT,
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::{NodeRecord, parse_nodes};
 use reth_primitives_traits::SealedHeader;
 
-use crate::{ChainUpgradesExt, compute_jovian_base_fee, decode_holocene_base_fee};
+use crate::{compute_jovian_base_fee, decode_holocene_base_fee};
 
 /// Error constructing a [`BaseChainSpec`].
 #[derive(Debug, thiserror::Error)]
@@ -108,7 +108,7 @@ pub struct BaseChainSpec {
     pub paris_block_and_final_difficulty: Option<(u64, U256)>,
 
     /// The active hard forks and their activation conditions
-    pub hardforks: ChainHardforks,
+    pub hardforks: ChainUpgrades,
 
     /// The deposit contract deployed for `PoS`
     pub deposit_contract: Option<DepositContract>,
@@ -211,12 +211,16 @@ impl BaseChainSpec {
 
 impl BaseChainSpec {
     /// Tests the runtime-aware condition at a block number.
-    pub fn is_fork_active_at_block<H: Hardfork>(&self, fork: H, block: u64) -> bool {
+    pub fn is_fork_active_at_block<H: Into<ExecutionFork>>(&self, fork: H, block: u64) -> bool {
         self.fork(fork).active_at_block(block)
     }
 
     /// Tests the runtime-aware condition at a timestamp.
-    pub fn is_fork_active_at_timestamp<H: Hardfork>(&self, fork: H, timestamp: u64) -> bool {
+    pub fn is_fork_active_at_timestamp<H: Into<ExecutionFork>>(
+        &self,
+        fork: H,
+        timestamp: u64,
+    ) -> bool {
         self.fork(fork).active_at_timestamp(timestamp)
     }
 
@@ -252,76 +256,64 @@ impl BaseChainSpec {
         let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
         let activation_admin_address = genesis_info.activation_admin_address;
 
-        // Block-based upgrades in canonical fork ID order.
-        let block_upgrade_opts = [
-            (EthereumHardfork::Frontier.boxed(), Some(0)),
-            (EthereumHardfork::Homestead.boxed(), genesis.config.homestead_block),
-            (EthereumHardfork::Tangerine.boxed(), genesis.config.eip150_block),
-            (EthereumHardfork::SpuriousDragon.boxed(), genesis.config.eip155_block),
-            (EthereumHardfork::Byzantium.boxed(), genesis.config.byzantium_block),
-            (EthereumHardfork::Constantinople.boxed(), genesis.config.constantinople_block),
-            (EthereumHardfork::Petersburg.boxed(), genesis.config.petersburg_block),
-            (EthereumHardfork::Istanbul.boxed(), genesis.config.istanbul_block),
-            (EthereumHardfork::MuirGlacier.boxed(), genesis.config.muir_glacier_block),
-            (EthereumHardfork::Berlin.boxed(), genesis.config.berlin_block),
-            (EthereumHardfork::London.boxed(), genesis.config.london_block),
-            (EthereumHardfork::ArrowGlacier.boxed(), genesis.config.arrow_glacier_block),
-            (EthereumHardfork::GrayGlacier.boxed(), genesis.config.gray_glacier_block),
-        ];
-        let mut upgrades = block_upgrade_opts
-            .into_iter()
-            .filter_map(|(upgrade, opt)| opt.map(|block| (upgrade, ForkCondition::Block(block))))
-            .collect::<Vec<_>>();
-
-        // We set the paris upgrade for Base networks to zero
-        upgrades.push((
-            EthereumHardfork::Paris.boxed(),
-            ForkCondition::TTD {
-                activation_block_number: 0,
-                total_difficulty: U256::ZERO,
-                fork_block: genesis.config.merge_netsplit_block,
-            },
-        ));
-
-        if let Some(block) = genesis_info.bedrock_block {
-            upgrades.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
-        }
-
-        // Time-based upgrades
-        // L1 upgrades are mapped to the activation timestamps of the corresponding Base upgrades
-        let azul_time = genesis_info.base.azul;
-        let beryl_time = genesis_info.base.beryl;
-        let cobalt_time = genesis_info.base.cobalt;
-        let denim_time = genesis_info.base.denim;
-        let zenith_time = genesis_info.base.zenith;
-        let time_upgrade_opts = [
-            (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
-            (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
-            (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
-            (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
-            (BaseUpgrade::Ecotone.boxed(), genesis_info.ecotone_time),
-            (BaseUpgrade::Fjord.boxed(), genesis_info.fjord_time),
-            (BaseUpgrade::Granite.boxed(), genesis_info.granite_time),
-            (BaseUpgrade::Holocene.boxed(), genesis_info.holocene_time),
-            (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
-            (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
-            (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
-            (EthereumHardfork::Osaka.boxed(), azul_time),
-            (BaseUpgrade::Azul.boxed(), azul_time),
-            (BaseUpgrade::Beryl.boxed(), beryl_time),
-            (BaseUpgrade::Cobalt.boxed(), cobalt_time),
-            (BaseUpgrade::Denim.boxed(), denim_time),
-            (BaseUpgrade::Zenith.boxed(), zenith_time),
-        ];
-
-        let mut time_upgrades = time_upgrade_opts
-            .into_iter()
-            .filter_map(|(upgrade, opt)| opt.map(|time| (upgrade, ForkCondition::Timestamp(time))))
-            .collect::<Vec<_>>();
-
-        upgrades.append(&mut time_upgrades);
-
-        let upgrades = ChainHardforks::new(upgrades);
+        let upgrades = ChainUpgrades::new([
+            (
+                BaseUpgrade::Bedrock,
+                genesis_info.bedrock_block.map(ForkCondition::Block).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Regolith,
+                genesis_info.regolith_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Canyon,
+                genesis_info.canyon_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Ecotone,
+                genesis_info.ecotone_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Fjord,
+                genesis_info.fjord_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Granite,
+                genesis_info.granite_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Holocene,
+                genesis_info.holocene_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Isthmus,
+                genesis_info.isthmus_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Jovian,
+                genesis_info.jovian_time.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Azul,
+                genesis_info.base.azul.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Beryl,
+                genesis_info.base.beryl.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Cobalt,
+                genesis_info.base.cobalt.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Denim,
+                genesis_info.base.denim.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+            (
+                BaseUpgrade::Zenith,
+                genesis_info.base.zenith.map(ForkCondition::Timestamp).unwrap_or_default(),
+            ),
+        ]);
         let chain_id = genesis.config.chain_id;
         Self::validate_beryl_activation_admin(&upgrades, activation_admin_address, chain_id)?;
         let genesis_header =
@@ -345,7 +337,11 @@ impl BaseChainSpec {
         activation_admin_address: Option<Address>,
     ) -> Result<Self, BaseChainSpecError> {
         Self::validate_beryl_activation_admin(
-            &value.hardforks,
+            &ChainUpgrades::new(
+                BaseUpgrade::EXECUTION_VARIANTS
+                    .into_iter()
+                    .map(|fork| (fork, value.hardforks.fork(fork))),
+            ),
             activation_admin_address,
             value.chain.id(),
         )?;
@@ -354,7 +350,11 @@ impl BaseChainSpec {
             genesis: value.genesis,
             genesis_header: value.genesis_header,
             paris_block_and_final_difficulty: value.paris_block_and_final_difficulty,
-            hardforks: value.hardforks,
+            hardforks: ChainUpgrades::new(
+                BaseUpgrade::EXECUTION_VARIANTS
+                    .into_iter()
+                    .map(|fork| (fork, value.hardforks.fork(fork))),
+            ),
             deposit_contract: value.deposit_contract,
             base_fee_params: value.base_fee_params,
             prune_delete_limit: value.prune_delete_limit,
@@ -366,7 +366,7 @@ impl BaseChainSpec {
     /// Validates that Beryl-enabled chains have a valid activation registry admin address:
     /// present (not `None`) and non-zero.
     pub fn validate_beryl_activation_admin(
-        upgrades: &ChainHardforks,
+        upgrades: &ChainUpgrades,
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
@@ -388,8 +388,9 @@ impl BaseChainSpec {
     /// Extends [`reth_chainspec::make_genesis_header`] with Isthmus-specific withdrawals root
     /// logic: if Isthmus is active at the genesis timestamp, the withdrawals root is set to the
     /// storage root of the `L2ToL1MessagePasser` predeploy.
-    pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainHardforks) -> Header {
-        let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
+    pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainUpgrades) -> Header {
+        let mut header =
+            reth_chainspec::make_genesis_header(genesis, &Self::reth_hardforks(upgrades));
 
         if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
             && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
@@ -435,18 +436,21 @@ impl BaseChainSpec {
     }
 
     /// Activates or updates the given upgrade condition in-place.
-    pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
+    pub fn set_fork<H: Into<ExecutionFork>>(&mut self, fork: H, condition: ForkCondition) {
         self.hardforks.insert(fork, condition);
     }
 
     /// Returns the runtime-aware activation condition for a hardfork.
-    pub fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
-        self.runtime_fork_condition(&fork).unwrap_or_else(|| self.hardforks.fork(fork))
+    pub fn fork<H: Into<ExecutionFork>>(&self, fork: H) -> ForkCondition {
+        {
+            let fork = fork.into();
+            self.runtime_fork_condition(fork).unwrap_or_else(|| self.hardforks.fork(fork))
+        }
     }
 
     /// Returns a runtime upgrade override for an execution fork condition.
-    pub fn runtime_fork_condition<H: Hardfork + ?Sized>(&self, fork: &H) -> Option<ForkCondition> {
-        let upgrade_id = BaseUpgrade::from_contract_fork_name(fork.name())?;
+    pub fn runtime_fork_condition(&self, fork: impl Into<ExecutionFork>) -> Option<ForkCondition> {
+        let upgrade_id = fork.into().base_upgrade()?;
         RuntimeUpgradeRegistry::activation(self.chain().id(), upgrade_id).map(|activation| {
             match activation {
                 UpgradeActivation::Never => ForkCondition::Never,
@@ -456,7 +460,7 @@ impl BaseChainSpec {
     }
 
     /// Returns hardforks with runtime overrides materialized into the schedule.
-    pub fn runtime_hardforks(&self) -> ChainHardforks {
+    pub fn runtime_hardforks(&self) -> ChainUpgrades {
         let mut hardforks = self.hardforks.clone();
         if let Some(overrides) = RuntimeUpgradeRegistry::overrides(self.chain().id()) {
             for (hardfork_id, activation) in overrides.activations {
@@ -478,13 +482,13 @@ impl BaseChainSpec {
             genesis: self.genesis.clone(),
             genesis_header: self.genesis_header.clone(),
             paris_block_and_final_difficulty: self.paris_block_and_final_difficulty.clone(),
-            hardforks: self.hardforks.clone(),
+            hardforks: Self::reth_hardforks(&self.hardforks),
             deposit_contract: self.deposit_contract.clone(),
             base_fee_params: self.base_fee_params.clone(),
             prune_delete_limit: self.prune_delete_limit.clone(),
             blob_params: self.blob_params.clone(),
         };
-        inner.hardforks = self.runtime_hardforks();
+        inner.hardforks = Self::reth_hardforks(&self.runtime_hardforks());
         inner
     }
 
@@ -492,35 +496,25 @@ impl BaseChainSpec {
     ///
     /// Includes upgrades scheduled purely at runtime (via the registry) that were absent from the
     /// startup schedule, so enumeration matches [`Self::runtime_hardforks`] and [`Self::fork_id`].
-    pub fn forks_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (&'a dyn Hardfork, ForkCondition)> + 'a {
-        // Mirror of the execution fork ladder with `'static` storage, so runtime-scheduled
-        // upgrades absent from the startup schedule can be handed out as `&'static dyn Hardfork`.
-        // Derived from the single source of truth, so new variants require no changes here.
-        static EXECUTION_LADDER: [BaseUpgrade; BaseUpgrade::EXECUTION_VARIANTS.len()] =
-            BaseUpgrade::EXECUTION_VARIANTS;
+    pub fn forks_iter(&self) -> impl Iterator<Item = (ExecutionFork, ForkCondition)> {
+        let schedule = self.runtime_hardforks();
+        schedule.forks_iter().collect::<Vec<_>>().into_iter()
+    }
 
-        // Forks in the startup schedule, with any runtime override applied to the condition.
-        let mut forks = self
-            .hardforks
-            .forks_iter()
-            .map(|(fork, condition)| (fork, self.runtime_fork_condition(fork).unwrap_or(condition)))
-            .collect::<Vec<(&'a dyn Hardfork, ForkCondition)>>();
-
-        // Upgrades scheduled purely at runtime that were absent from the startup schedule are
-        // missing above. Append them so enumeration matches `runtime_hardforks()`/`fork_id()`.
-        // They are always the latest forks, so appending keeps the enumeration chronological.
-        for upgrade in &EXECUTION_LADDER {
-            if self.hardforks.get(*upgrade).is_some() {
-                continue; // already present in the startup schedule
-            }
-            if let Some(condition) = self.runtime_fork_condition(upgrade) {
-                forks.push((upgrade, condition));
-            }
-        }
-
-        forks.into_iter()
+    /// Materializes the legacy Reth boundary while its callers are migrated.
+    pub fn reth_hardforks(schedule: &ChainUpgrades) -> ChainHardforks {
+        ChainHardforks::new(
+            schedule
+                .forks_iter()
+                .map(|(fork, condition)| {
+                    let fork: Box<dyn Hardfork> = match fork {
+                        ExecutionFork::Base(fork) => Box::new(fork),
+                        ExecutionFork::Ethereum(fork) => Box::new(fork),
+                    };
+                    (fork, condition)
+                })
+                .collect(),
+        )
     }
 
     /// Returns the runtime-aware fork ID for the given head.
@@ -539,8 +533,11 @@ impl BaseChainSpec {
     }
 
     /// Returns the runtime-aware fork ID for the given hardfork.
-    pub fn hardfork_fork_id<HF: Hardfork + Clone>(&self, fork: HF) -> Option<ForkId> {
-        self.runtime_chain_spec().hardfork_fork_id(fork)
+    pub fn hardfork_fork_id<HF: Into<ExecutionFork> + Clone>(&self, fork: HF) -> Option<ForkId> {
+        match fork.into() {
+            ExecutionFork::Base(fork) => self.runtime_chain_spec().hardfork_fork_id(fork),
+            ExecutionFork::Ethereum(fork) => self.runtime_chain_spec().hardfork_fork_id(fork),
+        }
     }
 
     /// Recomputes the sealed genesis header from the current genesis and hardfork schedule.
@@ -623,7 +620,7 @@ impl BaseChainSpec {
 
     /// Sets a hardfork activation condition by contract hardfork ID on a hardfork collection.
     pub fn set_hardfork_activation_condition_for(
-        hardforks: &mut ChainHardforks,
+        hardforks: &mut ChainUpgrades,
         hardfork_id: BaseUpgrade,
         condition: ForkCondition,
     ) -> bool {
@@ -671,8 +668,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
 
     fn try_from(cfg: &ChainConfig) -> Result<Self, Self::Error> {
         let genesis = serde_json::from_str(cfg.genesis_json)?;
-        let upgrades =
-            base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg)).to_chain_upgrades();
+        let upgrades = ChainUpgrades::new(BaseUpgrade::forks_for(cfg));
         let activation_admin_address = cfg.beryl_activation_admin_address();
         Self::validate_beryl_activation_admin(&upgrades, activation_admin_address, cfg.chain_id)?;
         let genesis_header = match cfg.genesis_l2_hash {
@@ -727,11 +723,10 @@ impl BaseChainSpec {
 
     /// Returns a string representation of the hardforks.
     pub fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
-        let hardforks = self.runtime_hardforks();
+        let hardforks = Self::reth_hardforks(&self.runtime_hardforks());
         let base_forks = hardforks.forks_iter().filter(|(fork, _)| {
             !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
         });
-
         Box::new(DisplayHardforks::new(base_forks))
     }
 
@@ -754,28 +749,6 @@ impl BaseChainSpec {
         } else {
             self.runtime_chain_spec().next_block_base_fee(parent, target_timestamp)
         }
-    }
-}
-
-impl Hardforks for BaseChainSpec {
-    fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
-        Self::fork(self, fork)
-    }
-
-    fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
-        Self::forks_iter(self)
-    }
-
-    fn fork_id(&self, head: &Head) -> ForkId {
-        self.runtime_chain_spec().fork_id(head)
-    }
-
-    fn latest_fork_id(&self) -> ForkId {
-        self.runtime_chain_spec().latest_fork_id()
-    }
-
-    fn fork_filter(&self, head: Head) -> ForkFilter {
-        self.runtime_chain_spec().fork_filter(head)
     }
 }
 
@@ -882,7 +855,7 @@ mod tests {
         let mut base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         base_mainnet.genesis_header.set_hash(base_mainnet_spec.genesis_hash());
         test_fork_ids(
-            &base_mainnet_spec,
+            &base_mainnet_spec.runtime_chain_spec(),
             &[
                 (
                     Head { number: 0, ..Default::default() },
@@ -951,7 +924,7 @@ mod tests {
     fn base_sepolia_forkids() {
         let base_sepolia_spec = BaseChainSpec::sepolia();
         test_fork_ids(
-            &base_sepolia_spec,
+            &base_sepolia_spec.runtime_chain_spec(),
             &[
                 (
                     Head { number: 0, ..Default::default() },
@@ -1059,7 +1032,8 @@ mod tests {
 
         let cobalt_condition = |spec: &BaseChainSpec| {
             spec.forks_iter().find_map(|(fork, condition)| {
-                (fork.name() == BaseUpgrade::Cobalt.name()).then_some(condition)
+                (fork == base_common_chains::ExecutionFork::Base(BaseUpgrade::Cobalt))
+                    .then_some(condition)
             })
         };
 
@@ -1798,7 +1772,7 @@ mod tests {
         ];
 
         for (expected, actual) in expected_upgrades.iter().zip(upgrades.iter()) {
-            assert_eq!(&**expected, &**actual);
+            assert_eq!(expected.name(), actual.to_string());
         }
         assert_eq!(expected_upgrades.len(), upgrades.len());
     }

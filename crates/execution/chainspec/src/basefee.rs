@@ -100,7 +100,7 @@ mod tests {
         let mut base_sepolia_spec = BaseChainSpec::sepolia();
         base_sepolia_spec
             .hardforks
-            .insert(BaseUpgrade::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
+            .insert(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         Arc::new(BaseChainSpec::from(ChainSpec {
             chain: base_sepolia_spec.chain,
             genesis: base_sepolia_spec.genesis,
