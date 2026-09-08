@@ -7,7 +7,6 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
     PraguePayloadFields,
 };
-use alloy_transport::{TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
@@ -51,19 +50,20 @@ impl EngineClient for LocalEngineClient {
     async fn get_l2_block(
         &self,
         id: BlockId,
-    ) -> TransportResult<Option<reth_primitives_traits::SealedBlock>> {
+    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
         self.l2
             .block(id)
             .await
             .map(|block| block.map(reth_primitives_traits::SealedBlock::seal_slow))
-            .map_err(|error| TransportErrorKind::custom(error).into())
+            .map_err(EngineClientError::Local)
     }
 
-    async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256> {
-        self.l2
-            .storage_root(block, address)
-            .await
-            .map_err(|error| TransportErrorKind::custom(error).into())
+    async fn storage_root(
+        &self,
+        address: Address,
+        block: BlockId,
+    ) -> Result<B256, EngineClientError> {
+        self.l2.storage_root(block, address).await.map_err(EngineClientError::Local)
     }
 
     async fn l2_block_by_label(
@@ -77,10 +77,7 @@ impl EngineClient for LocalEngineClient {
         &self,
         tag: BlockNumberOrTag,
     ) -> Result<Option<L2BlockInfo>, EngineClientError> {
-        self.l2
-            .block_info(tag.into())
-            .await
-            .map_err(|error| EngineClientError::RpcError(TransportErrorKind::custom(error).into()))
+        self.l2.block_info(tag.into()).await.map_err(EngineClientError::Local)
     }
 
     async fn el_syncing(&self) -> Result<bool, EngineClientError> {
@@ -93,23 +90,19 @@ impl EngineClient for LocalEngineClient {
     ) -> Result<PayloadStatus, EngineClientError> {
         let started = Instant::now();
         let result = async {
-            let sidecar = match &envelope.execution_payload {
-                BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_) => {
-                    BaseExecutionPayloadSidecar::default()
+            let sidecar = match envelope.parent_beacon_block_root {
+                None => BaseExecutionPayloadSidecar::default(),
+                Some(root) => {
+                    let cancun = CancunPayloadFields::new(root, Vec::new());
+                    if matches!(envelope.execution_payload, BaseExecutionPayload::V4(_)) {
+                        BaseExecutionPayloadSidecar::v4(
+                            cancun,
+                            PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                        )
+                    } else {
+                        BaseExecutionPayloadSidecar::v3(cancun)
+                    }
                 }
-                BaseExecutionPayload::V3(_) => {
-                    BaseExecutionPayloadSidecar::v3(CancunPayloadFields::new(
-                        envelope.parent_beacon_block_root.unwrap_or_default(),
-                        Vec::new(),
-                    ))
-                }
-                BaseExecutionPayload::V4(_) => BaseExecutionPayloadSidecar::v4(
-                    CancunPayloadFields::new(
-                        envelope.parent_beacon_block_root.unwrap_or_default(),
-                        Vec::new(),
-                    ),
-                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
-                ),
             };
             self.execution
                 .driver

@@ -140,11 +140,6 @@ impl PayloadProcessor {
             })
             .clone()
     }
-
-    /// Returns the shared execution cache handle used for engine backpressure.
-    pub(crate) fn execution_cache(&self) -> PayloadExecutionCache {
-        self.execution_cache.clone()
-    }
 }
 
 impl PayloadProcessor {

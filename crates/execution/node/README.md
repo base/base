@@ -4,10 +4,9 @@ Base execution node implementation.
 
 ## Overview
 
-Provides the core node type definitions and builder components for the Base execution node. Includes
-`BaseEngineTypes` for consensus/execution engine integration, `BaseEngineApiBuilder` for
-constructing the Engine API handler, and payload and proof-history types. This crate wires
-together the execution layer's engine, RPC, and payload subsystems.
+Provides the node types and builders for Base execution. The node owns the execution driver,
+payload builder, local provider, proof-history progress, and shutdown lifecycle. Consensus receives
+these services directly. Public HTTP/WS RPC is an optional node service.
 
 `BaseComponentsBuilder` constructs the Base EVM, transaction pool, network, and consensus directly.
 `BasePayloadServiceBuilder` configures either the standard service on a dedicated thread or the

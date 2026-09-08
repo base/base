@@ -25,7 +25,6 @@ services:
       - --metrics.port=7300
       - rpc
       - --datadir=/data
-      - --auth-ipc.path=/data/engine.ipc
       - --http
       - --http.addr=0.0.0.0
       - --http.api=web3,debug,eth,net,txpool,miner

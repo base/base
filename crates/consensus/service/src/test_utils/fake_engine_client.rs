@@ -13,7 +13,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898
 use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
-use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
+use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
@@ -266,7 +266,7 @@ impl EngineClient for FakeEngineClient {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> TransportResult<Option<base_consensus_engine::SealedBlock>> {
+    ) -> Result<Option<base_consensus_engine::SealedBlock>, EngineClientError> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         let BlockId::Number(tag) = block else { return Ok(None) };
         state.calls.push(EngineClientCall::L2BlockByLabel(tag));
@@ -277,9 +277,15 @@ impl EngineClient for FakeEngineClient {
             .map(base_consensus_engine::test_utils::MockEngineClient::native_block))
     }
 
-    async fn storage_root(&self, _address: Address, _block: BlockId) -> TransportResult<B256> {
-        Err(TransportErrorKind::custom_str("storage roots are not scripted for FakeEngineClient")
-            .into())
+    async fn storage_root(
+        &self,
+        _address: Address,
+        _block: BlockId,
+    ) -> Result<B256, EngineClientError> {
+        Err(EngineClientError::RpcError(
+            TransportErrorKind::custom_str("storage roots are not scripted for FakeEngineClient")
+                .into(),
+        ))
     }
 
     async fn l2_block_by_label(

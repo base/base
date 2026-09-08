@@ -18,7 +18,7 @@ mod cached_state;
 pub use cached_state::*;
 
 mod txpool;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use alloy_primitives::B256;
 use metrics::{Counter, Histogram};
@@ -102,27 +102,6 @@ impl PayloadExecutionCache {
         }
 
         None
-    }
-
-    /// Waits until the execution cache becomes available for use.
-    ///
-    /// This acquires a write lock to ensure exclusive access, then immediately releases it.
-    /// This is useful for synchronization before starting payload processing.
-    ///
-    /// Returns the time spent waiting for the lock.
-    pub fn wait_for_availability(&self) -> Duration {
-        let start = Instant::now();
-        // Acquire lock to wait for any current holders to finish
-        let _guard = self.inner.lock();
-        let elapsed = start.elapsed();
-        if elapsed.as_millis() > 5 {
-            debug!(
-                target: "engine::tree::payload_processor",
-                blocked_for=?elapsed,
-                "Waited for execution cache to become available"
-            );
-        }
-        elapsed
     }
 
     /// Updates the cache with a closure that has exclusive access to the guard.

@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as EthTransaction};
-use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
+use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
@@ -385,21 +385,25 @@ impl EngineClient for MockEngineClient {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> TransportResult<Option<reth_primitives_traits::SealedBlock>> {
+    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
         let block_key = block_id_to_key(&block);
         let storage = self.storage.read().await;
         if let Some(error) = storage.l2_block_errors_by_id.get(&block_key).cloned() {
-            return Err(match error {
+            return Err(EngineClientError::RpcError(match error {
                 MockL2BlockError::ErrorResp(payload) => TransportError::ErrorResp(payload),
                 MockL2BlockError::Custom(message) => {
                     TransportErrorKind::custom_str(&message).into()
                 }
-            });
+            }));
         }
         Ok(storage.l2_blocks_by_id.get(&block_key).cloned().map(Self::native_block))
     }
 
-    async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256> {
+    async fn storage_root(
+        &self,
+        address: Address,
+        block: BlockId,
+    ) -> Result<B256, EngineClientError> {
         self.storage
             .read()
             .await
@@ -407,10 +411,12 @@ impl EngineClient for MockEngineClient {
             .get(&(address, block_id_to_key(&block)))
             .map(|proof| proof.storage_hash)
             .ok_or_else(|| {
-                TransportErrorKind::custom_str(
-                    "No storage root configured for this account and block",
+                EngineClientError::RpcError(
+                    TransportErrorKind::custom_str(
+                        "No storage root configured for this account and block",
+                    )
+                    .into(),
                 )
-                .into()
             })
     }
 

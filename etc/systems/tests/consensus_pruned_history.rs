@@ -3,7 +3,6 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
@@ -16,7 +15,7 @@ use base_consensus_derive::Signal;
 use base_consensus_engine::{
     Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader,
-    test_utils::{MockEngineClient, MockL2BlockError, test_engine_client_builder},
+    test_utils::{MockEngineClient, test_engine_client_builder},
 };
 use base_consensus_node::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
@@ -32,8 +31,6 @@ const FINALIZED_BLOCK_NUMBER: u64 = 44_343_400;
 const LATEST_BLOCK_NUMBER: u64 = 44_343_433;
 const NEXT_UNSAFE_HASH_BYTE: u8 = 0x62;
 const ENGINE_RESET_TIMEOUT: Duration = Duration::from_secs(5);
-const PRUNED_HISTORY_UNAVAILABLE_CODE: i64 = 4444;
-const PRUNED_HISTORY_UNAVAILABLE_MESSAGE: &str = "pruned history unavailable";
 
 #[derive(Debug)]
 struct NoopDerivationClient;
@@ -75,14 +72,9 @@ impl ForkchoiceCheckpointReader for StaticCheckpointReader {
     }
 }
 
-/// A validator seeds its unsafe head from reth, accepts its first unsafe payload, then performs the
-/// initial reset after EL sync completes. Some pruned reth nodes return `4444: pruned history
-/// unavailable` for full historical labeled-block requests during that reset. The consensus
-/// service should treat the labeled block as unavailable, fall back to genesis, and continue
-/// startup instead of exiting the engine processor.
-///
-/// The observed failure mode is an engine task exit with
-/// `EngineReset(SyncStart(RpcError(...)))`.
+/// A validator accepts its first unsafe payload, then resets after execution sync completes.
+/// If the local provider has no finalized block body, startup recovers from its checkpoint
+/// and available canonical history instead of exiting the engine processor.
 #[tokio::test]
 async fn validator_initial_reset_survives_pruned_history_unavailable_from_reth() {
     let mut processor = PrunedHistoryStartup::new().start_validator_processor();
@@ -122,10 +114,6 @@ impl PrunedHistoryStartup {
             test_engine_client_builder()
                 .with_config(Arc::clone(&rollup))
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, reth_latest_head)
-                .with_l2_block_error(
-                    BlockId::Number(BlockNumberOrTag::Finalized),
-                    MockL2BlockError::ErrorResp(pruned_history_unavailable_error()),
-                )
                 .with_l2_block(BlockId::Number(0.into()), genesis_block)
                 .with_l2_block(
                     BlockId::from(checkpointed_finalized_head.block_info.hash),
@@ -288,14 +276,6 @@ fn block_info_from_rpc_block(block: &RpcBlock<BaseTransaction>) -> L2BlockInfo {
             timestamp: block.header.timestamp,
         },
         ..Default::default()
-    }
-}
-
-fn pruned_history_unavailable_error() -> ErrorPayload {
-    ErrorPayload {
-        code: PRUNED_HISTORY_UNAVAILABLE_CODE,
-        message: PRUNED_HISTORY_UNAVAILABLE_MESSAGE.into(),
-        data: None,
     }
 }
 

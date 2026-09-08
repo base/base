@@ -5,8 +5,8 @@ Unified Base node binary.
 ## `base rpc`
 
 `base rpc` starts a validator-oriented node by launching an embedded execution node and an embedded
-consensus node in the same process. The execution node exposes the Engine API over auth IPC, and the
-consensus node connects to that IPC endpoint internally.
+consensus node in the same process. Consensus calls the execution driver and payload builder directly
+and reads canonical state from the local database.
 
 The execution CLI surface comes from `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
 sequencer, builder, and conductor options.
@@ -55,8 +55,8 @@ the Compose command. Existing execution databases can be reused through `HOST_DA
 
 ## `base sequencer`
 
-`base sequencer` starts a sequencing node by launching embedded execution, full-block builder, and consensus nodes. The execution node exposes the
-Engine API over auth IPC, and the consensus node connects to that IPC endpoint internally.
+`base sequencer` starts a sequencing node with embedded execution, full-block builder, and consensus
+services. Consensus uses the same native execution handle as validator mode.
 
 The command accepts the shared execution flags, builder flags, and sequencer consensus flags. It
 requires L1 execution and beacon RPC endpoints, and sequencer mode requires a signing key provided

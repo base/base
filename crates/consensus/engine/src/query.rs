@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_consensus::Predeploys;
 use base_common_genesis::RollupConfig;
 use base_protocol::{L2BlockInfo, OutputRoot};
@@ -61,9 +60,6 @@ pub enum EngineQueriesError {
     /// No L2 block found for block number or tag.
     #[error("No L2 block found for block number or tag: {0}")]
     NoL2BlockFound(BlockNumberOrTag),
-    /// Impossible to retrieve L2 withdrawals root from state.
-    #[error("Impossible to retrieve L2 withdrawals root from state. {0}")]
-    FailedToRetrieveWithdrawalsRoot(#[from] RpcError<TransportErrorKind>),
 }
 
 impl EngineQueries {

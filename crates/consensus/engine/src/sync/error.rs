@@ -11,6 +11,9 @@ use super::{ForkchoiceCheckpointLabel, checkpoint::ForkchoiceCheckpointError};
 /// An error that can occur during the sync start process.
 #[derive(Error, Debug)]
 pub enum SyncStartError {
+    /// Reading local execution state failed.
+    #[error(transparent)]
+    Local(#[from] crate::EngineClientError),
     /// An rpc error occurred
     #[error("An RPC error occurred: {0}")]
     RpcError(#[from] RpcError<TransportErrorKind>),

@@ -28,7 +28,7 @@ use reth_chain_state::{
 };
 use reth_engine_primitives::{
     BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
-    ForkchoiceStateTracker, NewPayloadTimings, OnForkChoiceUpdated, SlowBlockInfo,
+    ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
 };
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_provider::{
@@ -436,7 +436,7 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    V: EngineValidator + WaitForCaches,
+    V: EngineValidator,
 {
     /// Creates a new [`EngineApiTreeHandler`].
     #[expect(clippy::too_many_arguments)]
@@ -1838,97 +1838,6 @@ where
                                 }
 
                                 // handle the event if any
-                                self.on_maybe_tree_event(maybe_event)?;
-                            }
-                            BeaconEngineMessage::RethNewPayload {
-                                payload,
-                                wait_for_persistence,
-                                wait_for_caches,
-                                tx,
-                                enqueued_at,
-                            } => {
-                                debug!(
-                                    target: "engine::tree",
-                                    wait_for_persistence,
-                                    wait_for_caches,
-                                    "Processing reth_newPayload"
-                                );
-
-                                let backpressure_wait = enqueued_at.elapsed();
-
-                                let explicit_persistence_wait = if wait_for_persistence {
-                                    let pending_persistence = self.persistence_state.rx.take();
-                                    if let Some((rx, start_time, _action)) = pending_persistence {
-                                        let (persistence_tx, persistence_rx) =
-                                            std::sync::mpsc::channel();
-                                        self.runtime.spawn_blocking_named(
-                                            "wait-persist",
-                                            move || {
-                                                let start = Instant::now();
-                                                let result = rx
-                                                    .recv()
-                                                    .expect("persistence state channel closed");
-                                                let _ = persistence_tx.send((
-                                                    result,
-                                                    start_time,
-                                                    start.elapsed(),
-                                                ));
-                                            },
-                                        );
-                                        let (result, start_time, wait_duration) = persistence_rx
-                                            .recv()
-                                            .expect("persistence result channel closed");
-                                        let _ = self.on_persistence_complete(result, start_time);
-                                        wait_duration
-                                    } else {
-                                        Duration::ZERO
-                                    }
-                                } else {
-                                    Duration::ZERO
-                                };
-
-                                let cache_wait = wait_for_caches
-                                    .then(|| self.payload_validator.wait_for_caches());
-
-                                let start = Instant::now();
-                                let gas_used = payload.gas_used();
-                                let num_hash = payload.num_hash();
-                                let mut output = self.on_new_payload(payload);
-                                let latency = start.elapsed();
-                                self.metrics.engine.new_payload.update_response_metrics(
-                                    start,
-                                    &mut self.metrics.engine.forkchoice_updated.latest_finish_at,
-                                    &output,
-                                    gas_used,
-                                );
-
-                                let maybe_event =
-                                    output.as_mut().ok().and_then(|out| out.event.take());
-
-                                let timings = NewPayloadTimings {
-                                    latency,
-                                    persistence_wait: backpressure_wait + explicit_persistence_wait,
-                                    execution_cache_wait: cache_wait
-                                        .map(|wait| wait.execution_cache),
-                                    sparse_trie_wait: cache_wait.map(|wait| wait.sparse_trie),
-                                };
-                                if let Err(err) =
-                                    tx.send(output.map(|o| (o.outcome, timings)).map_err(|e| {
-                                        BeaconOnNewPayloadError::Internal(Box::new(e))
-                                    }))
-                                {
-                                    error!(
-                                        target: "engine::tree",
-                                        payload=?num_hash,
-                                        elapsed=?latency,
-                                        "Failed to send event: {err:?}"
-                                    );
-                                    self.metrics
-                                        .engine
-                                        .failed_new_payload_response_deliveries
-                                        .increment(1);
-                                }
-
                                 self.on_maybe_tree_event(maybe_event)?;
                             }
                         }
@@ -3659,24 +3568,4 @@ enum PersistTarget {
     Threshold,
     /// Persist all blocks up to and including the canonical head.
     Head,
-}
-
-/// Result of waiting for caches to become available.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CacheWaitDurations {
-    /// Time spent waiting for the execution cache lock.
-    pub execution_cache: Duration,
-    /// Time spent waiting for the sparse trie lock.
-    pub sparse_trie: Duration,
-}
-
-/// Trait for types that can wait for caches to become available.
-///
-/// This is used by `reth_newPayload` endpoint to ensure that payload processing
-/// waits for any ongoing operations to complete before starting.
-pub trait WaitForCaches {
-    /// Waits for cache updates to complete.
-    ///
-    /// Returns the time spent waiting for each cache separately.
-    fn wait_for_caches(&self) -> CacheWaitDurations;
 }

@@ -167,3 +167,105 @@ impl LocalNode {
         format!("ws://{}", self.ws_api_addr)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use alloy_eips::eip7685::Requests;
+    use alloy_primitives::B256;
+    use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+    use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes};
+    use base_execution_chainspec::BaseChainSpec;
+    use base_execution_payload_types::BasePayloadBuilderAttributes;
+    use base_node_core::{NodeBuilder, NodeConfig, RollupArgs};
+    use base_test_utils::build_test_genesis;
+    use reth_node_core::{
+        args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
+        dirs::{DataDirPath, MaybePlatformPath},
+    };
+    use reth_provider::{DatabaseProviderFactory, HeaderProvider};
+    use reth_tasks::Runtime;
+
+    use super::LocalNode;
+    use crate::{BaseNode, test_utils::engine::EngineApi};
+
+    #[tokio::test]
+    async fn execution_builds_and_persists_with_all_rpc_disabled() {
+        let chain = Arc::new(BaseChainSpec::from(build_test_genesis()));
+        let genesis = chain.genesis_header();
+        let head = genesis.hash_slow();
+        let attributes = BasePayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: genesis.timestamp + 2,
+                withdrawals: Some(Vec::new()),
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Default::default()
+            },
+            gas_limit: Some(genesis.gas_limit),
+            eip_1559_params: Some(Default::default()),
+            min_base_fee: Some(0),
+            no_tx_pool: Some(true),
+            ..Default::default()
+        };
+        let (db, path) = LocalNode::create_test_database().unwrap();
+        let runtime = Runtime::test();
+        let base = BaseNode::new(RollupArgs::default());
+        let config = NodeConfig::new(chain)
+            .with_network(NetworkArgs {
+                discovery: DiscoveryArgs { disable_discovery: true, ..Default::default() },
+                ..Default::default()
+            })
+            .with_unused_ports()
+            .with_datadir_args(DatadirArgs {
+                datadir: MaybePlatformPath::<DataDirPath>::from(path.clone()),
+                ..Default::default()
+            });
+        let handle = NodeBuilder::new(config)
+            .with_database(db)
+            .with_launch_context(runtime.clone())
+            .with_components(base.components().into_builder())
+            .with_add_ons(base.add_ons_builder().build())
+            .launch()
+            .await
+            .unwrap();
+        assert!(handle.node.rpc_server_handle().http_local_addr().is_none());
+        assert!(handle.node.rpc_server_handle().ws_local_addr().is_none());
+        let execution = &handle.node.execution;
+        let started = execution
+            .update_forkchoice(
+                ForkchoiceState::same_hash(head),
+                Some(BasePayloadBuilderAttributes::try_new(head, attributes, 3).unwrap()),
+            )
+            .await
+            .unwrap();
+        let built = execution.resolve_payload(started.payload_id.unwrap()).await.unwrap();
+        let hash = built.block().hash();
+        let payload: BaseExecutionPayloadEnvelopeV4 = built.into();
+        let imported = EngineApi { execution: execution.clone() }
+            .new_payload(payload.execution_payload, Vec::new(), B256::ZERO, Requests::default())
+            .await
+            .unwrap();
+        assert!(imported.is_valid());
+        let canonical =
+            execution.update_forkchoice(ForkchoiceState::same_hash(hash), None).await.unwrap();
+        assert!(canonical.payload_status.is_valid());
+        let done = handle.node.engine_shutdown.shutdown().unwrap();
+        tokio::time::timeout(Duration::from_secs(10), done).await.unwrap().unwrap();
+        assert_eq!(
+            handle
+                .node
+                .provider
+                .database_provider_ro()
+                .unwrap()
+                .header_by_number(1)
+                .unwrap()
+                .unwrap()
+                .hash_slow(),
+            hash
+        );
+        drop(handle);
+        drop(runtime);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+}

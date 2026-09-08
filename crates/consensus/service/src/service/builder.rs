@@ -377,6 +377,10 @@ mod tests {
         assert!(update.payload_status.is_valid());
         let payload = client.resolve_payload(update.payload_id.unwrap()).await.unwrap();
         let hash = payload.execution_payload.block_hash();
+        let mut malformed = payload.clone();
+        malformed.parent_beacon_block_root =
+            if payload.parent_beacon_block_root.is_some() { None } else { Some(B256::ZERO) };
+        assert!(client.submit_payload(malformed).await.unwrap().is_invalid());
         let inserted = client.submit_payload(payload).await.unwrap();
         assert!(inserted.is_valid());
         let update = client

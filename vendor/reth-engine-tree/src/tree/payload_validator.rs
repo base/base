@@ -151,8 +151,8 @@ use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, wa
 
 pub use crate::tree::types::ValidationOutcome;
 use crate::tree::{
-    CacheWaitDurations, CachedStateProvider, EngineApiMetrics, EngineApiTreeState, ExecutionEnv,
-    PayloadHandle, StateProviderBuilder, TreeConfig, WaitForCaches,
+    CachedStateProvider, EngineApiMetrics, EngineApiTreeState, ExecutionEnv, PayloadHandle,
+    StateProviderBuilder, TreeConfig,
     error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
     instrumented_state::{InstrumentedStateProvider, StateProviderMetrics, StateProviderStats},
     payload_processor::{
@@ -1846,36 +1846,6 @@ where
             resources = resources.with_lease(txpool_lease);
         }
         resources
-    }
-}
-
-impl<P, V> WaitForCaches for BasicEngineValidator<P, V> {
-    fn wait_for_caches(&self) -> CacheWaitDurations {
-        debug!(target: "engine::tree::payload_validator", "Waiting for execution cache and sparse trie locks");
-
-        let execution_cache = self.payload_processor.execution_cache();
-        let overlay_manager = self.overlay_manager.clone();
-        let (execution_tx, execution_rx) = std::sync::mpsc::channel();
-        let (sparse_trie_tx, sparse_trie_rx) = std::sync::mpsc::channel();
-
-        self.runtime.spawn_blocking_named("wait-exec-cache", move || {
-            let _ = execution_tx.send(execution_cache.wait_for_availability());
-        });
-        self.runtime.spawn_blocking_named("wait-sparse-tri", move || {
-            let _ = sparse_trie_tx.send(overlay_manager.wait_for_sparse_trie_availability());
-        });
-
-        let execution_cache =
-            execution_rx.recv().expect("execution cache wait task failed to send result");
-        let sparse_trie =
-            sparse_trie_rx.recv().expect("sparse trie wait task failed to send result");
-        debug!(
-            target: "engine::tree::payload_validator",
-            ?execution_cache,
-            ?sparse_trie,
-            "Execution cache and sparse trie locks acquired"
-        );
-        CacheWaitDurations { execution_cache, sparse_trie }
     }
 }
 

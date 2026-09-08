@@ -26,7 +26,7 @@ use crate::{
     download::BasicBlockDownloader,
     engine::{EngineApiKind, EngineApiRequest, EngineApiRequestHandler, EngineHandler},
     persistence::PersistenceHandle,
-    tree::{EngineApiTreeHandler, EngineValidator, TreeConfig, WaitForCaches},
+    tree::{EngineApiTreeHandler, EngineValidator, TreeConfig},
 };
 
 /// Builds the engine [`ChainOrchestrator`] that drives the chain forward.
@@ -73,7 +73,7 @@ where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
-    V: EngineValidator + WaitForCaches,
+    V: EngineValidator,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());
 

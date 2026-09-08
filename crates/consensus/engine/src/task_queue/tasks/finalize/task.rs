@@ -55,7 +55,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             .client
             .get_l2_block(self.block_number.into())
             .await
-            .map_err(FinalizeTaskError::TransportError)?
+            .map_err(FinalizeTaskError::Local)?
             .ok_or(FinalizeTaskError::BlockNotFound(self.block_number))?
             .into_block();
         let block_info = L2BlockInfo::from_block_and_genesis(&block, &self.client.cfg().genesis)

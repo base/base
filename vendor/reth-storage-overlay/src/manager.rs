@@ -20,7 +20,7 @@ use reth_metrics::{
     metrics::{Counter, Histogram},
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, FastInstant,
+    AlloyBlockHeader,
     dashmap::{DashMap, mapref::entry::Entry},
 };
 use reth_storage_api::{
@@ -189,24 +189,6 @@ impl OverlayManager {
     /// Clears any preserved sparse trie state.
     pub fn clear_sparse_trie(&self) {
         *self.preserved_sparse_trie.lock() = None;
-    }
-
-    /// Waits until the sparse trie lock becomes available.
-    ///
-    /// This acquires and immediately releases the lock, ensuring that any ongoing operations
-    /// complete before returning. Returns the time spent waiting for the lock.
-    pub fn wait_for_sparse_trie_availability(&self) -> std::time::Duration {
-        let start = FastInstant::now();
-        let _guard = self.preserved_sparse_trie.lock();
-        let elapsed = start.elapsed();
-        if elapsed.as_millis() > 5 {
-            debug!(
-                target: "storage::overlay::manager",
-                blocked_for=?elapsed,
-                "Waited for preserved sparse trie to become available"
-            );
-        }
-        elapsed
     }
 
     /// Inserts an executed in-memory block into the state trie overlay manager.

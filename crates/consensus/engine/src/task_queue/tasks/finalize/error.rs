@@ -1,6 +1,5 @@
 //! Contains error types for the [`crate::FinalizeTask`].
 
-use alloy_transport::{RpcError, TransportErrorKind};
 use base_protocol::FromBlockError;
 use thiserror::Error;
 
@@ -17,14 +16,14 @@ pub enum FinalizeTaskError {
     /// The block to finalize was not found.
     #[error("The block to finalize was not found: Number {0}")]
     BlockNotFound(u64),
-    /// An error occurred while transforming the RPC block into [`L2BlockInfo`].
+    /// An error occurred while decoding the native block into [`L2BlockInfo`].
     ///
     /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
-    /// A temporary RPC failure.
+    /// A temporary local read failure.
     #[error(transparent)]
-    TransportError(#[from] RpcError<TransportErrorKind>),
+    Local(#[from] crate::EngineClientError),
     /// The forkchoice update call to finalize the block failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
@@ -36,7 +35,7 @@ impl EngineTaskError for FinalizeTaskError {
             Self::BlockNotSafe | Self::BlockNotFound(_) | Self::FromBlock(_) => {
                 EngineTaskErrorSeverity::Critical
             }
-            Self::TransportError(_) => EngineTaskErrorSeverity::Temporary,
+            Self::Local(_) => EngineTaskErrorSeverity::Temporary,
             Self::ForkchoiceUpdateFailed(inner) => inner.severity(),
         }
     }

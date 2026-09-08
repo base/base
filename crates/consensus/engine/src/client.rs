@@ -4,7 +4,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256};
 use alloy_provider::EthGetBlock;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
-use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
+use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
@@ -45,9 +45,6 @@ impl EngineClientError {
                     alloy_rpc_types_engine::ForkchoiceUpdateError::InvalidState,
                 ),
             )) => true,
-            Self::RpcError(error) => error.as_error_resp().is_some_and(|error| {
-                error.code == alloy_rpc_types_engine::INVALID_FORK_CHOICE_STATE_ERROR as i64
-            }),
             _ => false,
         }
     }
@@ -94,10 +91,14 @@ pub trait EngineClient: Send + Sync {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> TransportResult<Option<reth_primitives_traits::SealedBlock>>;
+    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError>;
 
     /// Reads the account storage root at a specific L2 block.
-    async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256>;
+    async fn storage_root(
+        &self,
+        address: Address,
+        block: BlockId,
+    ) -> Result<B256, EngineClientError>;
 
     /// Fetches the native L2 block for the given [`BlockNumberOrTag`].
     async fn l2_block_by_label(

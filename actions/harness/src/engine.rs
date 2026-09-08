@@ -748,7 +748,7 @@ impl EngineClient for ActionEngineClient {
         )
     }
 
-    async fn get_l2_block(&self, block: BlockId) -> TransportResult<Option<SealedBlock>> {
+    async fn get_l2_block(&self, block: BlockId) -> Result<Option<SealedBlock>, EngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let header = match block {
             BlockId::Number(BlockNumberOrTag::Number(number)) => {
@@ -764,7 +764,11 @@ impl EngineClient for ActionEngineClient {
         Ok(header.map(|header| Self::header_to_l2_block(header, header.hash_slow())))
     }
 
-    async fn storage_root(&self, _address: Address, _block: BlockId) -> TransportResult<B256> {
+    async fn storage_root(
+        &self,
+        _address: Address,
+        _block: BlockId,
+    ) -> Result<B256, EngineClientError> {
         Ok(B256::ZERO)
     }
 
