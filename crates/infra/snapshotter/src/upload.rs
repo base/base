@@ -352,6 +352,12 @@ impl StreamingS3ArchiveSink {
 
 impl SnapshotArchiveSink for StreamingS3ArchiveSink {
     fn create_archive(&self, archive_name: &str) -> Result<Box<dyn SnapshotArchiveWriter>> {
+        // Reth invokes archive sinks from synchronous Rayon workers. Calling Handle::block_on
+        // from a Tokio worker would panic, so catch an upstream threading-model regression early.
+        debug_assert!(
+            Handle::try_current().is_err(),
+            "streaming archive creation must not run from within a Tokio runtime"
+        );
         let permit = self.limiter.acquire();
         let key = (self.destination)(archive_name)?;
         let upload = self.runtime.block_on(self.uploader.start_streaming_multipart_upload(key))?;
