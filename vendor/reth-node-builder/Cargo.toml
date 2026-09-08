@@ -49,7 +49,6 @@ reth-node-metrics = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
 base-execution-evm = { workspace = true }
-reth-rpc-engine-api = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }

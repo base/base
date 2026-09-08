@@ -78,3 +78,18 @@ pub use core_miner::*;
 
 mod rpc_eth_api;
 pub use rpc_eth_api::*;
+
+mod engine_backend;
+pub use engine_backend::*;
+
+mod engine_capabilities;
+pub use engine_capabilities::*;
+
+mod engine_error;
+pub use engine_error::*;
+
+mod engine_metrics;
+pub use engine_metrics::*;
+
+mod reth_engine_api;
+pub use reth_engine_api::*;

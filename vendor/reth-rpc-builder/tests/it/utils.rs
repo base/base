@@ -4,6 +4,7 @@ use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::test_utils::spawn_test_payload_service;
+use base_execution_rpc::BaseEngineApi;
 use base_execution_txpool::NoopTransactionPool;
 use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
 use reth_network_api::noop::NoopNetwork;
@@ -13,7 +14,6 @@ use reth_rpc_builder::{
     auth::{AuthRpcModule, AuthServerConfig, AuthServerHandle},
     middleware::{RethAuthHttpMiddleware, RethRpcMiddleware},
 };
-use reth_rpc_engine_api::{EngineApi, capabilities::EngineCapabilities};
 use reth_rpc_layer::JwtSecret;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
@@ -48,7 +48,7 @@ where
         commit: "defa64b2".to_string(),
     };
 
-    let engine_api = EngineApi::<_, _, _>::new(
+    let engine_api = BaseEngineApi::<_, _, _>::new(
         NoopProvider::default(),
         std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
         beacon_engine_handle,
@@ -56,7 +56,6 @@ where
         NoopTransactionPool::default(),
         Runtime::test(),
         client,
-        EngineCapabilities::default(),
         TestEngineValidator::new(std::sync::Arc::new(
             base_execution_chainspec::BaseChainSpec::mainnet(),
         )),

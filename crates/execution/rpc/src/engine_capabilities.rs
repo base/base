@@ -15,37 +15,6 @@ const CRITICAL_METHOD_PREFIXES: &[&str] =
 const UNSTABLE_METHODS: &[&str] =
     &["engine_forkchoiceUpdatedV4", "engine_getPayloadV6", "engine_newPayloadV5"];
 
-/// All Engine API capabilities supported by Reth (Ethereum mainnet).
-///
-/// See <https://github.com/ethereum/execution-apis/tree/main/src/engine> for updates.
-pub const CAPABILITIES: &[&str] = &[
-    "engine_forkchoiceUpdatedV1",
-    "engine_forkchoiceUpdatedV2",
-    "engine_forkchoiceUpdatedV3",
-    "engine_forkchoiceUpdatedV4",
-    "engine_getClientVersionV1",
-    "engine_getPayloadV1",
-    "engine_getPayloadV2",
-    "engine_getPayloadV3",
-    "engine_getPayloadV4",
-    "engine_getPayloadV5",
-    "engine_getPayloadV6",
-    "engine_newPayloadV1",
-    "engine_newPayloadV2",
-    "engine_newPayloadV3",
-    "engine_newPayloadV4",
-    "engine_newPayloadV5",
-    "engine_getPayloadBodiesByHashV1",
-    "engine_getPayloadBodiesByHashV2",
-    "engine_getPayloadBodiesByRangeV1",
-    "engine_getPayloadBodiesByRangeV2",
-    "engine_getBlobsV1",
-    "engine_getBlobsV2",
-    "engine_getBlobsV3",
-    "engine_getBlobsV4",
-    "engine_hasBlobs",
-];
-
 /// Engine API capabilities set.
 #[derive(Debug, Clone)]
 pub struct EngineCapabilities {
@@ -157,7 +126,7 @@ fn is_unstable_method(method: &str) -> bool {
 
 impl Default for EngineCapabilities {
     fn default() -> Self {
-        Self::new(CAPABILITIES.iter().copied())
+        Self::new(crate::ENGINE_CAPABILITIES.iter().copied())
     }
 }
 

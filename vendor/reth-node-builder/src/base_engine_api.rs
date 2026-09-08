@@ -8,10 +8,9 @@ use std::sync::Arc;
 
 use alloy_rpc_types::engine::ClientVersionV1;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadStore};
-use base_execution_rpc::{BaseEngineApi, ENGINE_CAPABILITIES};
+use base_execution_rpc::BaseEngineApi;
 use reth_node_api::{AddOnsContext, FullNodeComponents};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
-use reth_rpc_engine_api::{EngineApi, EngineCapabilities};
 use reth_trie_common::KeccakKeyHasher;
 
 /// Builder for basic [`BaseEngineApi`] implementation.
@@ -32,7 +31,7 @@ impl BaseEngineApiBuilder {
             version: version_metadata().cargo_pkg_version.to_string(),
             commit: version_metadata().vergen_git_sha.to_string(),
         };
-        let inner = EngineApi::new(
+        BaseEngineApi::new(
             ctx.node.provider().clone(),
             Arc::clone(&ctx.config.chain),
             ctx.beacon_engine_handle.clone(),
@@ -40,12 +39,9 @@ impl BaseEngineApiBuilder {
             ctx.node.pool().clone(),
             ctx.node.task_executor().clone(),
             client,
-            EngineCapabilities::new(ENGINE_CAPABILITIES.iter().copied()),
             engine_validator,
             ctx.config.engine.accept_execution_requests_hash,
             ctx.node.network().clone(),
-        );
-
-        BaseEngineApi::new(inner)
+        )
     }
 }

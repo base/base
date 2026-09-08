@@ -26,7 +26,7 @@ pub const REQUEST_TOO_LARGE_CODE: i32 = -38004;
 /// Error message for the request too large error.
 const REQUEST_TOO_LARGE_MESSAGE: &str = "Too large request";
 
-/// Error returned by [`EngineApi`][crate::EngineApi]
+/// Error returned by [`BaseEngineApi`][crate::BaseEngineApi]
 ///
 /// Note: This is a high-fidelity error type which can be converted to an RPC error that adheres to
 /// the [Engine API spec](https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#errors).

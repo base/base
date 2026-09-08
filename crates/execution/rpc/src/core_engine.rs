@@ -9,8 +9,6 @@ use base_common_rpc_types::{
 };
 use jsonrpsee::core::RpcResult as Result;
 use reth_rpc_api::EngineEthApiServer;
-/// Re-export for convenience
-pub use reth_rpc_engine_api::EngineApi;
 use serde_json::Value;
 use tracing_futures::Instrument;
 

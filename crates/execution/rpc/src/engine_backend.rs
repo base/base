@@ -30,19 +30,17 @@ use base_execution_payload_types::{
     PayloadOrAttributes, validate_payload_timestamp,
 };
 use base_execution_txpool::TransactionPool;
-use jsonrpsee_core::{RpcResult, server::RpcModule};
+use jsonrpsee_core::RpcResult;
 use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
 use reth_network_api::{CellCustody, NetworkInfo};
 use reth_primitives_traits::{Block, BlockBody};
-use reth_rpc_api::{EngineApiServer, IntoEngineApiRpcModule};
+use reth_rpc_api::EngineApiServer;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
 use reth_tasks::Runtime;
 use tokio::sync::oneshot;
 use tracing::{debug, trace, warn};
 
-use crate::{
-    EngineApiError, EngineApiResult, capabilities::EngineCapabilities, metrics::EngineApiMetrics,
-};
+use crate::{EngineApiError, EngineApiMetrics, EngineApiResult, EngineCapabilities};
 
 /// The Engine API response sender.
 pub type EngineApiSender<Ok> = oneshot::Sender<EngineApiResult<Ok>>;
@@ -57,11 +55,11 @@ const MAX_BLOB_LIMIT: usize = 128;
 /// functions in the Execution layer that are crucial for the consensus process.
 ///
 /// Uses concrete Base payloads and versioned engine API responses.
-pub struct EngineApi<Provider, Pool, Validator> {
+pub struct BaseEngineApi<Provider, Pool, Validator> {
     inner: Arc<EngineApiInner<Provider, Pool, Validator>>,
 }
 
-impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator> {
+impl<Provider, Pool, Validator> BaseEngineApi<Provider, Pool, Validator> {
     /// Returns the configured chainspec.
     pub fn chain_spec(&self) -> &Arc<BaseChainSpec> {
         &self.inner.chain_spec
@@ -73,13 +71,13 @@ impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator> {
     }
 }
 
-impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator>
+impl<Provider, Pool, Validator> BaseEngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
 {
-    /// Create new instance of [`EngineApi`].
+    /// Create new instance of [`BaseEngineApi`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: Provider,
@@ -89,7 +87,6 @@ where
         tx_pool: Pool,
         task_spawner: Runtime,
         client: ClientVersionV1,
-        capabilities: EngineCapabilities,
         validator: Validator,
         accept_execution_requests_hash: bool,
         network: impl NetworkInfo + 'static,
@@ -104,7 +101,7 @@ where
             task_spawner,
             metrics: EngineApiMetrics::default(),
             client,
-            capabilities,
+            capabilities: EngineCapabilities::default(),
             tx_pool,
             validator,
             accept_execution_requests_hash,
@@ -289,7 +286,7 @@ where
     }
 }
 
-impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator>
+impl<Provider, Pool, Validator> BaseEngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
@@ -1157,7 +1154,7 @@ where
 
 // Engine RPC endpoints backed by Base payload validation.
 #[async_trait]
-impl<Provider, Pool, Validator> EngineApiServer for EngineApi<Provider, Pool, Validator>
+impl<Provider, Pool, Validator> EngineApiServer for BaseEngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
@@ -1520,22 +1517,13 @@ where
     }
 }
 
-impl<Provider, Pool, Validator> IntoEngineApiRpcModule for EngineApi<Provider, Pool, Validator>
-where
-    Self: EngineApiServer,
-{
-    fn into_rpc_module(self) -> RpcModule<()> {
-        EngineApiServer::into_rpc(self).remove_context()
-    }
-}
-
-impl<Provider, Pool, Validator> std::fmt::Debug for EngineApi<Provider, Pool, Validator> {
+impl<Provider, Pool, Validator> std::fmt::Debug for BaseEngineApi<Provider, Pool, Validator> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EngineApi").finish_non_exhaustive()
+        f.debug_struct("BaseEngineApi").finish_non_exhaustive()
     }
 }
 
-impl<Provider, Pool, Validator> Clone for EngineApi<Provider, Pool, Validator> {
+impl<Provider, Pool, Validator> Clone for BaseEngineApi<Provider, Pool, Validator> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
@@ -1596,7 +1584,7 @@ mod tests {
 
     fn setup_engine_api() -> (
         EngineApiTestHandle,
-        EngineApi<Arc<MockEthProvider>, NoopTransactionPool, TestEngineValidator>,
+        BaseEngineApi<Arc<MockEthProvider>, NoopTransactionPool, TestEngineValidator>,
     ) {
         let client = ClientVersionV1 {
             code: ClientCode::RH,
@@ -1611,7 +1599,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, engine_rx) = unbounded_channel();
         let task_executor = Runtime::test();
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1619,7 +1607,6 @@ mod tests {
             NoopTransactionPool::default(),
             task_executor,
             client,
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec.clone()),
             false,
             NoopNetwork::default(),
@@ -1677,7 +1664,7 @@ mod tests {
             std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1685,7 +1672,6 @@ mod tests {
             NoopTransactionPool::default(),
             Runtime::test(),
             client,
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             NoopNetwork::default(),
@@ -1733,7 +1719,7 @@ mod tests {
             std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1741,7 +1727,6 @@ mod tests {
             NoopTransactionPool::default(),
             Runtime::test(),
             client,
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             NoopNetwork::default(),
@@ -1805,7 +1790,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(error.code(), crate::error::UNSUPPORTED_FORK_CODE);
+        assert_eq!(error.code(), crate::engine_error::UNSUPPORTED_FORK_CODE);
         assert!(matches!(
             handle.from_api.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -1820,7 +1805,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
 
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1833,7 +1818,6 @@ mod tests {
                 version: "v0.0.0-test".to_string(),
                 commit: "test".to_string(),
             },
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             NoopNetwork::default(),
@@ -1921,7 +1905,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
 
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1934,7 +1918,6 @@ mod tests {
                 version: "v0.0.0-test".to_string(),
                 commit: "test".to_string(),
             },
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             TestNetworkInfo { syncing: true },
@@ -1952,7 +1935,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
 
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1965,7 +1948,6 @@ mod tests {
                 version: "v0.0.0-test".to_string(),
                 commit: "test".to_string(),
             },
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             TestNetworkInfo { syncing: true },
@@ -1990,7 +1972,7 @@ mod tests {
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
 
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -2003,7 +1985,6 @@ mod tests {
                 version: "v0.0.0-test".to_string(),
                 commit: "test".to_string(),
             },
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             network,
@@ -2056,7 +2037,7 @@ mod tests {
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
 
-        let api = EngineApi::<_, _, _>::new(
+        let api = BaseEngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -2069,7 +2050,6 @@ mod tests {
                 version: "v0.0.0-test".to_string(),
                 commit: "test".to_string(),
             },
-            EngineCapabilities::default(),
             TestEngineValidator::new(chain_spec),
             false,
             network,

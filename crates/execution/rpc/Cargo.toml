@@ -46,7 +46,6 @@ reth-storage-errors = {workspace = true}
 opentelemetry-http = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-network-types = { workspace = true }
-reth-rpc-engine-api = { workspace = true }
 base-execution-trie = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
@@ -56,12 +55,11 @@ alloy-rpc-types-admin = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 base-execution-chainspec = { workspace = true }
-metrics = { workspace = true, optional = true }
 base-execution-consensus = { workspace = true }
+metrics = { workspace = true, optional = false }
 base-observability-events = { workspace = true }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
-base-execution-payload-types = { workspace = true }
 alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
@@ -94,6 +92,7 @@ reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 derive_more = { workspace = true, features = ["constructor", "full"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
+base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-common-rpc-types = { workspace = true, features = ["default", "reth"] }
@@ -104,15 +103,20 @@ base-execution-txpool = { workspace = true, features = ["default"], optional = f
 revm = {workspace = true,features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"]}
 [dev-dependencies]
 reth-db-api = { workspace = true }
+assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-consensus = {workspace = true, features = ["serde"]}
+reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
 base-execution-chainspec = { workspace = true, features = ["default"] }
+reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["metrics"]
@@ -122,7 +126,6 @@ metrics = [
     "base-execution-trie/metrics",
     "base-metrics/metrics",
     "base-observability-events/metrics",
-    "dep:metrics",
     "base-execution-evm/metrics",
 ]
 test-utils = ["base-execution-evm/test-utils"]

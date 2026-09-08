@@ -407,7 +407,6 @@ reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = fa
 reth-dns-discovery = { path = "vendor/reth-dns-discovery", default-features = false }
 reth-codecs-derive = { path = "vendor/reth-codecs-derive", default-features = false }
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
-reth-rpc-engine-api = { path = "vendor/reth-rpc-engine-api", default-features = false }
 reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
 reth-storage-errors = { path = "vendor/reth-storage-errors", default-features = false }
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }

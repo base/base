@@ -13,14 +13,14 @@ use base_common_rpc_types_engine::{
 };
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_txpool::TransactionPool;
-use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_node_api::EngineApiValidator;
 use reth_rpc_api::IntoEngineApiRpcModule;
-use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
 use tracing::{debug, instrument, trace};
+
+use crate::BaseEngineApi;
 
 /// The list of all supported Engine capabilities available over the engine endpoint.
 ///
@@ -244,19 +244,6 @@ pub trait BaseEngineApi {
     async fn exchange_capabilities(&self, capabilities: Vec<String>) -> RpcResult<Vec<String>>;
 }
 
-/// The Engine API implementation that grants the Consensus layer access to data and
-/// functions in the Execution layer that are crucial for the consensus process.
-#[derive(Debug, Constructor)]
-pub struct BaseEngineApi<Provider, Pool, Validator> {
-    inner: EngineApi<Provider, Pool, Validator>,
-}
-
-impl<Provider, Pool, Validator> Clone for BaseEngineApi<Provider, Pool, Validator> {
-    fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
-    }
-}
-
 #[async_trait::async_trait]
 impl<Provider, Pool, Validator> BaseEngineApiServer for BaseEngineApi<Provider, Pool, Validator>
 where
@@ -267,7 +254,7 @@ where
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV2");
         let payload = ExecutionData::v2(payload);
-        Ok(self.inner.new_payload_v2_metered(payload).await?)
+        Ok(self.new_payload_v2_metered(payload).await?)
     }
 
     async fn new_payload_v3(
@@ -279,7 +266,7 @@ where
         trace!(target: "rpc::engine", "Serving engine_newPayloadV3");
         let payload = ExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
 
-        Ok(self.inner.new_payload_v3_metered(payload).await?)
+        Ok(self.new_payload_v3_metered(payload).await?)
     }
 
     async fn new_payload_v4(
@@ -297,7 +284,7 @@ where
             execution_requests,
         );
 
-        Ok(self.inner.new_payload_v4_metered(payload).await?)
+        Ok(self.new_payload_v4_metered(payload).await?)
     }
 
     #[instrument(
@@ -317,7 +304,7 @@ where
         payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV1");
-        Ok(self.inner.fork_choice_updated_v1_metered(fork_choice_state, payload_attributes).await?)
+        Ok(self.fork_choice_updated_v1_metered(fork_choice_state, payload_attributes).await?)
     }
 
     #[instrument(
@@ -337,7 +324,7 @@ where
         payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV2");
-        Ok(self.inner.fork_choice_updated_v2_metered(fork_choice_state, payload_attributes).await?)
+        Ok(self.fork_choice_updated_v2_metered(fork_choice_state, payload_attributes).await?)
     }
 
     #[instrument(
@@ -357,13 +344,13 @@ where
         payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV3");
-        Ok(self.inner.fork_choice_updated_v3_metered(fork_choice_state, payload_attributes).await?)
+        Ok(self.fork_choice_updated_v3_metered(fork_choice_state, payload_attributes).await?)
     }
 
     #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
     async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         debug!(target: "rpc::engine", "Serving engine_getPayloadV2");
-        Ok(self.inner.get_payload_v2_metered(payload_id).await?)
+        Ok(self.get_payload_v2_metered(payload_id).await?)
     }
 
     #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
@@ -372,7 +359,7 @@ where
         payload_id: PayloadId,
     ) -> RpcResult<BaseExecutionPayloadEnvelopeV3> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV3");
-        Ok(self.inner.get_payload_v3_metered(payload_id).await?)
+        Ok(self.get_payload_v3_metered(payload_id).await?)
     }
 
     #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
@@ -381,7 +368,7 @@ where
         payload_id: PayloadId,
     ) -> RpcResult<BaseExecutionPayloadEnvelopeV4> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV4");
-        Ok(self.inner.get_payload_v4_metered(payload_id).await?)
+        Ok(self.get_payload_v4_metered(payload_id).await?)
     }
 
     #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
@@ -390,7 +377,7 @@ where
         payload_id: PayloadId,
     ) -> RpcResult<BaseExecutionPayloadEnvelopeV5> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV5");
-        Ok(self.inner.get_payload_v5_metered(payload_id).await?)
+        Ok(self.get_payload_v5_metered(payload_id).await?)
     }
 
     async fn get_payload_bodies_by_hash_v1(
@@ -398,7 +385,7 @@ where
         block_hashes: Vec<BlockHash>,
     ) -> RpcResult<ExecutionPayloadBodiesV1> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadBodiesByHashV1");
-        Ok(self.inner.get_payload_bodies_by_hash_v1_metered(block_hashes).await?)
+        Ok(self.get_payload_bodies_by_hash_v1_metered(block_hashes).await?)
     }
 
     async fn get_payload_bodies_by_range_v1(
@@ -407,7 +394,7 @@ where
         count: U64,
     ) -> RpcResult<ExecutionPayloadBodiesV1> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadBodiesByRangeV1");
-        Ok(self.inner.get_payload_bodies_by_range_v1_metered(start.to(), count.to()).await?)
+        Ok(self.get_payload_bodies_by_range_v1_metered(start.to(), count.to()).await?)
     }
 
     async fn get_client_version_v1(
@@ -415,11 +402,11 @@ where
         client: ClientVersionV1,
     ) -> RpcResult<Vec<ClientVersionV1>> {
         trace!(target: "rpc::engine", "Serving engine_getClientVersionV1");
-        Ok(self.inner.get_client_version_v1(client)?)
+        Ok(self.get_client_version_v1(client)?)
     }
 
     async fn exchange_capabilities(&self, _capabilities: Vec<String>) -> RpcResult<Vec<String>> {
-        Ok(self.inner.capabilities().list())
+        Ok(self.capabilities().list())
     }
 }
 

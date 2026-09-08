@@ -36,7 +36,8 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_rpc::{
     AdminApi, BaseEthApi, DebugApi, EngineEthApi, EthApiBuilder, EthApiServer, EthApiTypes,
     EthBundle, EthCallBundleApiServer, EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi,
-    OtterscanApi, RPCApi, RethApi, RpcNodeCore, RpcNodeCoreAdapter, TraceApi, TxPoolApi, Web3Api,
+    OtterscanApi, RPCApi, RethApi, RethEngineApi, RpcNodeCore, RpcNodeCoreAdapter, TraceApi,
+    TxPoolApi, Web3Api,
 };
 use base_execution_txpool::{NoopTransactionPool, TransactionPool};
 pub use cors::CorsDomainError;
@@ -58,7 +59,6 @@ pub use reth_ipc::server::{
 };
 use reth_network_api::{NetworkInfo, Peers, noop::NoopNetwork};
 use reth_rpc_api::servers::*;
-use reth_rpc_engine_api::RethEngineApi;
 use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider};
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 pub use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
