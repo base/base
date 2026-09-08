@@ -669,13 +669,14 @@ dependencies = [
 
 [[package]]
 name = "alloy-rpc-types-debug"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32f6d7c9462a3cf3bb046d0b870b86f1ce8c6892157491abebba62913e6f53cb"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "derive_more",
  "serde",
- "serde_json",
  "serde_with",
 ]
 
