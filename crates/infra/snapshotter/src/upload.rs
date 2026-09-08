@@ -306,11 +306,15 @@ impl io::Write for StreamingMultipartUpload {
 ///
 /// Reth archive generation invokes the sink from Rayon workers. The supplied Tokio runtime handle
 /// starts and awaits S3 work from those synchronous workers; the limiter prevents Rayon from
-/// creating unbounded 640 MiB streaming buffers in parallel.
+/// creating unbounded 640 `MiB` streaming buffers in parallel.
+/// Maps a generated archive filename to its S3 object key.
+type StreamingArchiveDestination = dyn Fn(&str) -> Result<String> + Send + Sync;
+
+/// Bridges Base's synchronous snapshot archive sink to direct S3 multipart uploads.
 pub struct StreamingS3ArchiveSink {
     uploader: SnapshotUploader,
     runtime: Handle,
-    destination: Arc<dyn Fn(&str) -> Result<String> + Send + Sync>,
+    destination: Arc<StreamingArchiveDestination>,
     limiter: Arc<StreamingUploadLimiter>,
 }
 
@@ -324,7 +328,7 @@ impl StreamingS3ArchiveSink {
     /// Creates a streaming sink whose `destination` maps relative archive names to S3 keys.
     ///
     /// `max_active_archives` bounds concurrent archive generation and streaming-memory use. Use
-    /// one for state snapshots unless the deployment has memory for multiple ~1.25 GiB streams.
+    /// one for state snapshots unless the deployment has memory for multiple ~1.25 `GiB` streams.
     pub fn new<F>(
         uploader: SnapshotUploader,
         runtime: Handle,
