@@ -1,9 +1,4 @@
-//! Engine API integration for canonical block production.
-//!
-//! This module provides a typed, type-safe Engine API client based on
-//! reth's `BaseEngineApiClient` trait instead of raw string-based RPC calls.
-
-use std::{fmt, marker::PhantomData, time::Duration};
+//! Direct execution commands for integration block production.
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
@@ -11,145 +6,41 @@ use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, Payl
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
+    ExecutionData,
 };
+use base_execution_payload_builder::BaseExecutionHandle;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_execution_rpc::BaseEngineApiClient;
-use eyre::Result;
-use jsonrpsee::core::client::SubscriptionClientT;
-use reth_rpc_layer::{AuthClientLayer, JwtSecret};
-use tracing::debug;
-use url::Url;
 
-use crate::test_utils::DEFAULT_JWT_SECRET;
-
-/// Describes how to reach the Engine API endpoint.
+/// Integration access to the local execution driver and payload builder.
 #[derive(Clone, Debug)]
-pub enum EngineAddress {
-    /// Connect to an HTTP endpoint.
-    Http(Url),
-    /// Connect to an IPC endpoint.
-    Ipc(String),
+pub struct EngineApi {
+    /// Native execution services owned by the test node.
+    pub execution: BaseExecutionHandle,
 }
 
-/// Abstraction over HTTP and IPC engine transports so tests can swap easily.
-pub trait EngineProtocol: Send + Sync {
-    /// Build a subscription-capable client for the Engine API.
-    fn client(
-        jwt: JwtSecret,
-        address: EngineAddress,
-    ) -> impl std::future::Future<
-        Output = impl jsonrpsee::core::client::SubscriptionClientT + Send + Sync + Unpin + 'static,
-    > + Send;
-}
-
-/// Implementation of [`EngineProtocol`] that talks to the Engine API over HTTP.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct HttpEngine;
-
-impl EngineProtocol for HttpEngine {
-    async fn client(
-        jwt: JwtSecret,
-        address: EngineAddress,
-    ) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
-        let EngineAddress::Http(url) = address else {
-            unreachable!();
-        };
-
-        let secret_layer = AuthClientLayer::new(jwt);
-        let middleware = tower::ServiceBuilder::default().layer(secret_layer);
-
-        jsonrpsee::http_client::HttpClientBuilder::default()
-            .request_timeout(Duration::from_secs(10))
-            .set_http_middleware(middleware)
-            .build(url)
-            .expect("Failed to create http client")
-    }
-}
-
-/// Implementation of [`EngineProtocol`] that talks to the Engine API over IPC.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct IpcEngine;
-
-impl EngineProtocol for IpcEngine {
-    async fn client(
-        _: JwtSecret, // ipc does not use JWT
-        address: EngineAddress,
-    ) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
-        let EngineAddress::Ipc(path) = address else {
-            unreachable!();
-        };
-        reth_ipc::client::IpcClientBuilder::default()
-            .build(&path)
-            .await
-            .expect("Failed to create ipc client")
-    }
-}
-
-/// Thin wrapper around a typed Engine API client that hides transport details.
-pub struct EngineApi<P: EngineProtocol = HttpEngine> {
-    address: EngineAddress,
-    jwt_secret: JwtSecret,
-    _phantom: PhantomData<P>,
-}
-
-impl EngineApi<HttpEngine> {
-    /// Build a new HTTP-backed Engine API client from the provided URL.
-    pub fn new(engine_url: String) -> Result<Self> {
-        let url: Url = engine_url.parse()?;
-        let jwt_secret = JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string())?;
-
-        Ok(Self { address: EngineAddress::Http(url), jwt_secret, _phantom: PhantomData })
-    }
-}
-
-impl EngineApi<IpcEngine> {
-    /// Build a new IPC-backed Engine API client using the IPC socket path.
-    pub fn new(path: String) -> Result<Self> {
-        let jwt_secret = JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string())?;
-
-        Ok(Self { address: EngineAddress::Ipc(path), jwt_secret, _phantom: PhantomData })
-    }
-}
-
-impl<P: EngineProtocol> fmt::Debug for EngineApi<P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("EngineApi").field("address", &self.address).finish_non_exhaustive()
-    }
-}
-
-impl<P: EngineProtocol> EngineApi<P> {
-    /// Create a subscription-capable client for the configured Engine endpoint.
-    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static + use<P> {
-        P::client(self.jwt_secret, self.address.clone()).await
-    }
-
-    /// Get a Prague/Isthmus payload by ID from the Engine API.
+impl EngineApi {
+    /// Resolves a build into the payload format used by existing block fixtures.
     pub async fn get_payload_v4(
         &self,
-        payload_id: PayloadId,
+        id: PayloadId,
     ) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
-        debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(BaseEngineApiClient::get_payload_v4(&self.client().await, payload_id).await?)
+        Ok(self.execution.resolve_payload(id).await?.into())
     }
 
-    /// Get an Osaka/Azul payload by ID from the Engine API.
+    /// Resolves a build including its execution witness metadata.
     pub async fn get_payload_v5(
         &self,
-        payload_id: PayloadId,
+        id: PayloadId,
     ) -> eyre::Result<BaseExecutionPayloadEnvelopeV5> {
-        debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(BaseEngineApiClient::get_payload_v5(&self.client().await, payload_id).await?)
+        Ok(self.execution.resolve_payload(id).await?.into())
     }
 
-    /// Get a payload by ID from the Engine API.
-    pub async fn get_payload(
-        &self,
-        payload_id: PayloadId,
-    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
-        self.get_payload_v4(payload_id).await
+    /// Resolves a build for the test fixture.
+    pub async fn get_payload(&self, id: PayloadId) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
+        Ok(self.execution.resolve_payload(id).await?.into())
     }
 
-    /// Submit a new payload to the Engine API
+    /// Submits a fixture payload to the serialized validation queue.
     pub async fn new_payload(
         &self,
         payload: BaseExecutionPayloadV4,
@@ -157,46 +48,35 @@ impl<P: EngineProtocol> EngineApi<P> {
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
-        debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
-        Ok(BaseEngineApiClient::new_payload_v4(
-            &self.client().await,
-            payload,
-            versioned_hashes,
-            parent_beacon_block_root,
-            execution_requests,
-        )
-        .await?)
+        Ok(self
+            .execution
+            .driver
+            .new_payload(ExecutionData::v4(
+                payload,
+                versioned_hashes,
+                parent_beacon_block_root,
+                execution_requests,
+            ))
+            .await?)
     }
 
-    /// Update forkchoice on the Engine API
+    /// Applies forkchoice and optionally starts a validated build.
     pub async fn update_forkchoice(
         &self,
         current_head: B256,
         new_head: B256,
         payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> eyre::Result<ForkchoiceUpdated> {
-        debug!(
-            "Updating forkchoice at {} (current: {}, new: {})",
-            chrono::Utc::now(),
-            current_head,
-            new_head
-        );
-        let result = BaseEngineApiClient::fork_choice_updated_v3(
-            &self.client().await,
-            ForkchoiceState {
-                head_block_hash: new_head,
-                safe_block_hash: current_head,
-                finalized_block_hash: current_head,
-            },
-            payload_attributes,
-        )
-        .await;
-
-        match &result {
-            Ok(fcu) => debug!(fcu = ?fcu, "Forkchoice updated successfully"),
-            Err(e) => debug!(error = ?e, "Forkchoice update failed"),
-        }
-
-        Ok(result?)
+        Ok(self
+            .execution
+            .update_forkchoice(
+                ForkchoiceState {
+                    head_block_hash: new_head,
+                    safe_block_hash: current_head,
+                    finalized_block_hash: current_head,
+                },
+                payload_attributes,
+            )
+            .await?)
     }
 }

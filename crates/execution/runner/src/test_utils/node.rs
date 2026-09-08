@@ -33,7 +33,6 @@ pub struct LocalNode {
     pub network: reth_network::NetworkHandle,
     /// HTTP API address of the local node.
     pub http_api_addr: SocketAddr,
-    engine_ipc_path: String,
     /// WebSocket API address of the local node.
     pub ws_api_addr: SocketAddr,
     provider: LocalNodeProvider,
@@ -55,7 +54,6 @@ impl fmt::Debug for LocalNode {
         f.debug_struct("LocalNode")
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
-            .field("engine_ipc_path", &self.engine_ipc_path)
             .finish_non_exhaustive()
     }
 }
@@ -73,16 +71,7 @@ impl LocalNode {
             ..NetworkArgs::default()
         };
 
-        let unique_ipc_path = format!(
-            "/tmp/reth_engine_api_{}_{}_{:?}.ipc",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-            std::process::id(),
-            std::thread::current().id()
-        );
-
-        let mut rpc_args =
-            RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
-        rpc_args.auth_ipc_path = unique_ipc_path;
+        let rpc_args = RpcServerArgs::default().with_unused_ports().with_http().with_ws();
 
         let base_node = BaseNode::new(RollupArgs::default());
 
@@ -127,7 +116,6 @@ impl LocalNode {
             .ws_local_addr()
             .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
 
-        let engine_ipc_path = node_config.rpc.auth_ipc_path;
         let provider = node_handle.provider().clone();
 
         Ok(Self {
@@ -135,7 +123,6 @@ impl LocalNode {
             network: node_handle.network.clone(),
             http_api_addr,
             ws_api_addr,
-            engine_ipc_path,
             provider,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
@@ -165,9 +152,9 @@ impl LocalNode {
         self.http_api_addr
     }
 
-    /// Build an Engine API client that talks to the node's IPC endpoint.
-    pub fn engine_api(&self) -> Result<EngineApi<crate::test_utils::engine::IpcEngine>> {
-        EngineApi::<crate::test_utils::engine::IpcEngine>::new(self.engine_ipc_path.clone())
+    /// Access the local execution driver and payload builder.
+    pub fn engine_api(&self) -> EngineApi {
+        EngineApi { execution: self.execution.clone() }
     }
 
     /// Clone the underlying blockchain provider so callers can inspect chain state.

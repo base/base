@@ -23,7 +23,7 @@ use crate::{
     BaseNodeExtension, FromExtensionConfig,
     test_utils::{
         BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
-        engine::{EngineApi, IpcEngine},
+        engine::EngineApi,
         node::{LocalNode, LocalNodeProvider},
         tracing::init_silenced_tracing,
     },
@@ -86,7 +86,7 @@ impl TestHarnessBuilder {
         });
 
         let node = LocalNode::new(self.extensions, chain_spec).await?;
-        let engine = node.engine_api()?;
+        let engine = node.engine_api();
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
 
@@ -98,7 +98,7 @@ impl TestHarnessBuilder {
 #[derive(Debug)]
 pub struct TestHarness {
     node: LocalNode,
-    engine: EngineApi<IpcEngine>,
+    engine: EngineApi,
 }
 
 impl TestHarness {
@@ -115,7 +115,7 @@ impl TestHarness {
     /// Create a harness from pre-built parts.
     ///
     /// This is useful when you need to capture extension state before building the harness.
-    pub const fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
+    pub const fn from_parts(node: LocalNode, engine: EngineApi) -> Self {
         Self { node, engine }
     }
 
@@ -146,7 +146,7 @@ impl TestHarness {
     }
 
     /// Direct access to the IPC-backed Engine API client.
-    pub const fn engine(&self) -> &EngineApi<IpcEngine> {
+    pub const fn engine(&self) -> &EngineApi {
         &self.engine
     }
 

@@ -114,7 +114,8 @@ pub fn build_test_genesis() -> Genesis {
         difficulty: U256::ZERO,
         nonce: 0,
         timestamp: 1,
-        extra_data: Bytes::from_static(&[0x00]),
+        // Jovian is active at genesis: version, denominator, elasticity, minimum base fee.
+        extra_data: Bytes::from_static(&[1, 0, 0, 0, 50, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0]),
         mix_hash: B256::ZERO,
         coinbase: Address::ZERO,
         ..Default::default()
