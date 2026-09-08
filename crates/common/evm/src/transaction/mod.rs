@@ -1,8 +1,5 @@
 //! Contains the `[BaseTransaction]` type and its implementation.
 
-mod traits;
-pub use traits::BaseTxTr;
-
 mod core;
 pub use core::BaseTransaction;
 

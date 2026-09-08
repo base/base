@@ -4,7 +4,7 @@ use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv, precompiles::Precompiles
 use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
     BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, Evm as RevmEvm,
-    ExecResultAndState, ExecutionResult, FrameStack, JournalTr, ResultAndState, TxEnv,
+    ExecResultAndState, ExecutionResult, FrameStack, JournalTr, ResultAndState,
 };
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
@@ -21,7 +21,7 @@ use revm::{
 #[cfg(feature = "std")]
 use crate::Eip8130Executor;
 use crate::{
-    BaseContext, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError, BaseTxTr,
+    BaseContext, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
     handler::BaseHandler,
 };
 
@@ -203,7 +203,7 @@ where
     DB: RevmDatabase,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
-    type Tx = BaseTransaction<TxEnv>;
+    type Tx = BaseTransaction;
     type Block = BlockEnv;
     type State = EvmState;
     type Error = EVMError<DB::Error, BaseTransactionError>;
@@ -347,7 +347,7 @@ where
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type DB = DB;
-    type Tx = BaseTransaction<TxEnv>;
+    type Tx = BaseTransaction;
     type Error = EVMError<DB::Error, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;

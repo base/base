@@ -1,6 +1,6 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::Address;
-use base_evm_context::{BlockEnv, DBErrorMarker, EVMError, TxEnv};
+use base_evm_context::{BlockEnv, DBErrorMarker, EVMError};
 use revm::{Context, Inspector, inspector::NoOpInspector};
 
 use crate::{
@@ -58,7 +58,7 @@ impl Default for BaseEvmFactory {
 impl EvmFactory for BaseEvmFactory {
     type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
     type Context<DB: Database> = BaseContext<DB>;
-    type Tx = BaseTransaction<TxEnv>;
+    type Tx = BaseTransaction;
     type Error<DBError: DBErrorMarker> = EVMError<DBError, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;

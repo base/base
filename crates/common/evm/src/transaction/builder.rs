@@ -2,7 +2,7 @@
 
 use alloc::vec;
 
-use base_evm_context::{TxEnv, TxEnvBuilder};
+use base_evm_context::TxEnvBuilder;
 use revm::primitives::{B256, Bytes};
 
 use super::{
@@ -80,7 +80,7 @@ impl BaseTransactionBuilder {
     /// `source_hash != B256::ZERO`), set the transaction type accordingly and ensure the
     /// `enveloped_tx` is removed (`None`). For non-deposit transactions, ensure
     /// `enveloped_tx` is set.
-    pub fn build_fill(mut self) -> BaseTransaction<TxEnv> {
+    pub fn build_fill(mut self) -> BaseTransaction {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if tx_type == Some(DEPOSIT_TRANSACTION_TYPE) {
@@ -116,7 +116,7 @@ impl BaseTransactionBuilder {
 
     /// Build the [`BaseTransaction`] instance, return error if the transaction is not valid.
     ///
-    pub fn build(mut self) -> Result<BaseTransaction<TxEnv>, BuildError> {
+    pub fn build(mut self) -> Result<BaseTransaction, BuildError> {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if Some(DEPOSIT_TRANSACTION_TYPE) == tx_type {

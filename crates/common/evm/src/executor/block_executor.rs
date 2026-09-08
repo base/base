@@ -22,7 +22,7 @@ use base_execution_eip8130::IntrinsicGas;
 use revm::{DatabaseCommit, database::DatabaseCommitExt};
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTransaction,
     BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
@@ -77,10 +77,8 @@ where
 
 impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
-    E: Evm<
-            DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
-        >,
+    E: Evm<DB: Database + DatabaseCommit + StateDB, Tx = BaseTransaction>,
+    BaseTransaction: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: Upgrades,
 {
@@ -102,7 +100,7 @@ where
     /// validation, keeping them consistent.
     #[cfg(feature = "std")]
     fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
-        let Some(signed) = tx_env.eip8130_signed() else {
+        let Some(signed) = tx_env.eip8130.as_ref().map(|parts| &parts.signed) else {
             return Ok(gas_limit);
         };
         let payer_auth =
@@ -128,7 +126,8 @@ where
     ) -> Result<u64, BlockExecutionError> {
         // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
         let encoded = tx_env
-            .encoded_bytes()
+            .enveloped_tx
+            .as_ref()
             .map_or_else(
                 || estimate_tx_compressed_size(tx.tx().encoded_2718().as_ref()),
                 |encoded| estimate_tx_compressed_size(encoded),
@@ -149,10 +148,8 @@ where
 
 impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
 where
-    E: Evm<
-            DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
-        >,
+    E: Evm<DB: Database + DatabaseCommit + StateDB, Tx = BaseTransaction>,
+    BaseTransaction: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
     R: BaseReceiptBuilder<
             Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
             Receipt: TxReceipt,

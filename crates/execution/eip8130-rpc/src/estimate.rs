@@ -9,7 +9,7 @@ use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_evm_context::{Block, BlockEnv, ExecutionResult, TxEnv};
+use base_evm_context::{Block, BlockEnv, ExecutionResult};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_api::{
@@ -74,7 +74,7 @@ impl Eip8130GasEstimator {
     ) -> Result<U256, ErrorObjectOwned>
     where
         Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
-        TxEnvFor: From<BaseRevm<TxEnv>>,
+        TxEnvFor: From<BaseRevm>,
         // Pin the block env to revm's concrete type so block overrides can be
         // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
         EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,

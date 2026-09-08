@@ -1,9 +1,9 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
+use alloy_evm::EvmFactory;
 use alloy_primitives::B256;
-use base_common_evm::{BaseSpecId, BaseTxEnv};
+use base_common_evm::{BaseSpecId, BaseTransaction};
 use base_consensus_derive::EthereumDataSource;
 use base_evm_context::BlockEnv;
 use base_proof::{
@@ -33,7 +33,11 @@ pub struct FaultProofDriver<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + 'static,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv, Tx = BaseTransaction>
+        + Send
+        + Sync
+        + Clone
+        + 'static,
 {
     rollup_config: Arc<base_common_genesis::RollupConfig>,
     claimed_l2_block_number: u64,
@@ -48,10 +52,12 @@ impl<P, H, F> FaultProofDriver<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
-    F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
-        + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
-        + BaseTxEnv,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv, Tx = BaseTransaction>
+        + Send
+        + Sync
+        + Clone
+        + Debug
+        + 'static,
 {
     /// Creates a new driver.
     pub const fn new(

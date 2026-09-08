@@ -2,9 +2,8 @@ use alloc::sync::Arc;
 use core::fmt::Debug;
 
 use alloy_consensus::Sealed;
-use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
-use base_common_evm::{BaseEvmFactory, BaseTxEnv};
+use base_common_evm::BaseEvmFactory;
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
@@ -27,9 +26,6 @@ impl<P, H> Prologue<P, H>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    <BaseEvmFactory as EvmFactory>::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
-        + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
-        + BaseTxEnv,
 {
     /// Creates a new prologue.
     pub const fn new(oracle_client: P, hint_writer: H, evm_factory: BaseEvmFactory) -> Self {

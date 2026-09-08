@@ -9,7 +9,6 @@ use base_common_consensus::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
 };
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
-use base_evm_context::TxEnv;
 
 use crate::{BaseTransactionRequest, Eip8130AuthScheme};
 
@@ -70,11 +69,7 @@ impl BaseTransactionRequest {
     /// contains conflicting `sender` and `from` values, or supplies an invalid authentication
     /// blob. The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
     /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
-    pub fn to_eip8130_simulation_tx(
-        &self,
-        chain_id: u64,
-        gas_limit_cap: u64,
-    ) -> Option<BaseRevm<TxEnv>> {
+    pub fn to_eip8130_simulation_tx(&self, chain_id: u64, gas_limit_cap: u64) -> Option<BaseRevm> {
         let aa = self.as_eip8130()?;
         let req = self.as_ref();
 
@@ -190,12 +185,12 @@ mod tests {
     const SENDER: Address = address!("00000000000000000000000000000000000000a1");
     const FROM: Address = address!("00000000000000000000000000000000000000c3");
 
-    fn simulation(request: serde_json::Value) -> BaseRevm<TxEnv> {
+    fn simulation(request: serde_json::Value) -> BaseRevm {
         let request = serde_json::from_value::<BaseTransactionRequest>(request).unwrap();
         request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).unwrap()
     }
 
-    fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
+    fn signed(tx: &BaseRevm) -> &Eip8130Signed {
         &tx.eip8130.as_ref().unwrap().signed
     }
 

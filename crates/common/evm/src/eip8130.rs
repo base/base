@@ -74,8 +74,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, BaseTxTr,
-    Eip8130PhaseStatuses, L1BlockInfo, handler::BaseHandler,
+    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, Eip8130PhaseStatuses,
+    L1BlockInfo, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -1788,7 +1788,7 @@ mod tests {
         Eip8130Signed::new(tx, eoa_sig(key, hash), Bytes::new())
     }
 
-    fn into_base_tx(signed: &Eip8130Signed) -> BaseTransaction<base_evm_context::TxEnv> {
+    fn into_base_tx(signed: &Eip8130Signed) -> BaseTransaction {
         let envelope = BaseTxEnvelope::Eip8130(signed.clone());
         let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
         BaseTransaction::from_encoded_tx(&envelope, Address::ZERO, encoded)

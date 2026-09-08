@@ -3356,7 +3356,6 @@ dependencies = [
  "arbitrary",
  "base-common-consensus",
  "base-common-evm",
- "base-evm-context",
  "derive_more",
  "rand 0.9.5",
  "serde",

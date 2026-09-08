@@ -1,4 +1,4 @@
-//! Base transaction abstraction containing the `[BaseTxTr]` trait and corresponding `[BaseTransaction]` type.
+//! The transaction environment used by Base execution.
 
 use alloc::vec;
 
@@ -12,16 +12,16 @@ use revm::{
 };
 
 use crate::{
-    BaseTransactionBuilder, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    BaseTransactionBuilder, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
     EIP8130_TRANSACTION_TYPE, Eip8130TransactionParts,
 };
 
 /// Base transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct BaseTransaction<T: Transaction> {
+pub struct BaseTransaction {
     /// Base transaction fields.
-    pub base: T,
+    pub base: TxEnv,
     /// An enveloped EIP-2718 typed transaction
     ///
     /// This is used to compute the L1 tx cost using the L1 block info, as
@@ -38,15 +38,15 @@ pub struct BaseTransaction<T: Transaction> {
     pub eip8130: Option<Eip8130TransactionParts>,
 }
 
-impl<T: Transaction> AsRef<T> for BaseTransaction<T> {
-    fn as_ref(&self) -> &T {
+impl AsRef<TxEnv> for BaseTransaction {
+    fn as_ref(&self) -> &TxEnv {
         &self.base
     }
 }
 
-impl<T: Transaction> BaseTransaction<T> {
+impl BaseTransaction {
     /// Create a new Base transaction.
-    pub fn new(base: T) -> Self {
+    pub fn new(base: TxEnv) -> Self {
         Self {
             base,
             enveloped_tx: None,
@@ -56,14 +56,14 @@ impl<T: Transaction> BaseTransaction<T> {
     }
 }
 
-impl BaseTransaction<TxEnv> {
+impl BaseTransaction {
     /// Create a new Base transaction.
     pub fn builder() -> BaseTransactionBuilder {
         BaseTransactionBuilder::new()
     }
 }
 
-impl Default for BaseTransaction<TxEnv> {
+impl Default for BaseTransaction {
     fn default() -> Self {
         Self {
             base: TxEnv::default(),
@@ -74,14 +74,14 @@ impl Default for BaseTransaction<TxEnv> {
     }
 }
 
-impl<TX: Transaction + SystemCallTx> SystemCallTx for BaseTransaction<TX> {
+impl SystemCallTx for BaseTransaction {
     fn new_system_tx_with_caller(
         caller: Address,
         system_contract_address: Address,
         data: Bytes,
     ) -> Self {
         let mut tx =
-            Self::new(TX::new_system_tx_with_caller(caller, system_contract_address, data));
+            Self::new(TxEnv::new_system_tx_with_caller(caller, system_contract_address, data));
 
         tx.enveloped_tx = Some(Bytes::default());
 
@@ -89,15 +89,15 @@ impl<TX: Transaction + SystemCallTx> SystemCallTx for BaseTransaction<TX> {
     }
 }
 
-impl<T: Transaction> Transaction for BaseTransaction<T> {
+impl Transaction for BaseTransaction {
     type AccessListItem<'a>
-        = T::AccessListItem<'a>
+        = <TxEnv as Transaction>::AccessListItem<'a>
     where
-        T: 'a;
+        Self: 'a;
     type Authorization<'a>
-        = T::Authorization<'a>
+        = <TxEnv as Transaction>::Authorization<'a>
     where
-        T: 'a;
+        Self: 'a;
 
     fn tx_type(&self) -> u8 {
         // If this is a deposit transaction (has source_hash set), return deposit type
@@ -202,41 +202,60 @@ impl<T: Transaction> Transaction for BaseTransaction<T> {
     }
 }
 
-impl<T: Transaction> BaseTxTr for BaseTransaction<T> {
-    fn enveloped_tx(&self) -> Option<&Bytes> {
+impl BaseTransaction {
+    /// Enveloped transaction bytes.
+    pub fn enveloped_tx(&self) -> Option<&Bytes> {
         self.enveloped_tx.as_ref()
     }
 
-    fn source_hash(&self) -> Option<B256> {
+    /// Source hash of the deposit transaction.
+    pub fn source_hash(&self) -> Option<B256> {
         if self.tx_type() != DEPOSIT_TRANSACTION_TYPE {
             return None;
         }
         Some(self.deposit.source_hash)
     }
 
-    fn mint(&self) -> Option<u128> {
+    /// Mint of the deposit transaction
+    pub fn mint(&self) -> Option<u128> {
         self.deposit.mint
     }
 
-    fn is_system_transaction(&self) -> bool {
+    /// Whether the transaction is a system transaction
+    pub fn is_system_transaction(&self) -> bool {
         self.deposit.is_system_transaction
     }
 
-    fn eip8130_parts(&self) -> Option<&Eip8130TransactionParts> {
+    /// The EIP-8130 account-abstraction parts (the signed envelope), or `None`
+    /// for every other transaction type.
+    pub fn eip8130_parts(&self) -> Option<&Eip8130TransactionParts> {
         self.eip8130.as_ref()
+    }
+    /// Returns `true` if transaction is of type [`DEPOSIT_TRANSACTION_TYPE`].
+    pub fn is_deposit(&self) -> bool {
+        self.tx_type() == DEPOSIT_TRANSACTION_TYPE
+    }
+
+    /// Returns `true` if transaction is of type [`EIP8130_TRANSACTION_TYPE`].
+    pub fn is_eip8130(&self) -> bool {
+        self.tx_type() == EIP8130_TRANSACTION_TYPE
+    }
+
+    /// Returns `true` if this is a read-only EIP-8130 simulation
+    /// (`eth_estimateGas` / `eth_call`) that must be routed to
+    /// `Eip8130Executor::simulate` rather than `execute`.
+    pub fn is_eip8130_simulate(&self) -> bool {
+        self.eip8130_parts().is_some_and(|parts| parts.mode.is_simulate())
     }
 }
 
-impl<T> IntoTxEnv<Self> for BaseTransaction<T>
-where
-    T: Transaction,
-{
+impl IntoTxEnv<Self> for BaseTransaction {
     fn into_tx_env(self) -> Self {
         self
     }
 }
 
-impl<T: alloy_evm::TransactionEnvMut> alloy_evm::TransactionEnvMut for BaseTransaction<T> {
+impl alloy_evm::TransactionEnvMut for BaseTransaction {
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.base.set_gas_limit(gas_limit);
     }
@@ -250,14 +269,14 @@ impl<T: alloy_evm::TransactionEnvMut> alloy_evm::TransactionEnvMut for BaseTrans
     }
 }
 
-impl FromRecoveredTx<BaseTxEnvelope> for BaseTransaction<TxEnv> {
+impl FromRecoveredTx<BaseTxEnvelope> for BaseTransaction {
     fn from_recovered_tx(tx: &BaseTxEnvelope, sender: Address) -> Self {
         let encoded = tx.encoded_2718();
         Self::from_encoded_tx(tx, sender, encoded.into())
     }
 }
 
-impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
+impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction {
     fn from_encoded_tx(tx: &BaseTxEnvelope, caller: Address, encoded: Bytes) -> Self {
         match tx {
             BaseTxEnvelope::Legacy(tx) => Self {
@@ -326,14 +345,14 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
     }
 }
 
-impl FromRecoveredTx<TxDeposit> for BaseTransaction<TxEnv> {
+impl FromRecoveredTx<TxDeposit> for BaseTransaction {
     fn from_recovered_tx(tx: &TxDeposit, sender: Address) -> Self {
         let encoded = tx.encoded_2718();
         Self::from_encoded_tx(tx, sender, encoded.into())
     }
 }
 
-impl FromTxWithEncoded<TxDeposit> for BaseTransaction<TxEnv> {
+impl FromTxWithEncoded<TxDeposit> for BaseTransaction {
     fn from_encoded_tx(tx: &TxDeposit, caller: Address, encoded: Bytes) -> Self {
         let base = TxEnv::from_recovered_tx(tx, caller);
         let deposit = DepositTransactionParts {

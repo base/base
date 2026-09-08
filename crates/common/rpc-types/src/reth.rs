@@ -7,16 +7,13 @@ use alloy_evm::{
 };
 use alloy_primitives::Bytes;
 use base_common_evm::BaseTransaction as BaseRevm;
-use base_evm_context::TxEnv;
 
 use crate::BaseTransactionRequest;
 
-impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
-    for BaseTransactionRequest
-{
+impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for BaseTransactionRequest {
     type Err = EthTxEnvError;
 
-    fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<BaseRevm<TxEnv>, Self::Err> {
+    fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<BaseRevm, Self::Err> {
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),
@@ -44,12 +41,12 @@ mod tests {
     const SENDER: Address = address!("0x00000000000000000000000000000000000000a1");
     const FROM: Address = address!("0x00000000000000000000000000000000000000c3");
 
-    fn sim_tx(request: serde_json::Value) -> BaseRevm<TxEnv> {
+    fn sim_tx(request: serde_json::Value) -> BaseRevm {
         let req: BaseTransactionRequest = serde_json::from_value(request).expect("valid request");
         req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).expect("simulation tx")
     }
 
-    fn signed(tx: &BaseRevm<TxEnv>) -> &Eip8130Signed {
+    fn signed(tx: &BaseRevm) -> &Eip8130Signed {
         &tx.eip8130.as_ref().expect("eip8130 parts").signed
     }
 

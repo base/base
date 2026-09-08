@@ -7,7 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_evm_context::{BlockEnv, TxEnv};
+use base_evm_context::BlockEnv;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
 use jsonrpsee::{
@@ -83,7 +83,7 @@ impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
     Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
-    TxEnvFor: From<BaseRevm<TxEnv>>,
+    TxEnvFor: From<BaseRevm>,
     EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
 {
     async fn get_transaction_count(

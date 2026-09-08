@@ -9,12 +9,13 @@ use core::fmt::Debug;
 
 use alloy_consensus::{Header, Sealed, crypto::RecoveryError};
 use alloy_evm::{
-    EvmFactory, FromRecoveredTx, FromTxWithEncoded,
+    EvmFactory,
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
-use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
+use base_common_consensus::BaseReceiptEnvelope;
 use base_common_evm::{
-    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
+    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId,
+    BaseTransaction,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -54,9 +55,7 @@ impl<'a, P, H, Evm> StatelessL2Builder<'a, P, H, Evm>
 where
     P: TrieDBProvider + Debug,
     H: TrieHinter + Debug,
-    Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + 'static,
-    <Evm as EvmFactory>::Tx:
-        FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
+    Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv, Tx = BaseTransaction> + 'static,
 {
     /// Creates a new stateless L2 block builder instance.
     ///

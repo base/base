@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(actual_admin, admin);
     }
 
-    fn activation_registry_tx(caller: Address, nonce: u64, data: Bytes) -> BaseTransaction<TxEnv> {
+    fn activation_registry_tx(caller: Address, nonce: u64, data: Bytes) -> BaseTransaction {
         BaseTransaction::builder()
             .base(
                 TxEnv::builder()

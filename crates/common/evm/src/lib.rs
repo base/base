@@ -21,7 +21,7 @@ pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
 pub use transaction::{
-    BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
+    BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BuildError,
     DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
     Eip8130ExecutionMode, Eip8130TransactionParts,
 };
@@ -51,9 +51,6 @@ pub use eip8130_phase_statuses::Eip8130PhaseStatuses;
 
 mod factory;
 pub use factory::BaseEvmFactory;
-
-mod tx_env;
-pub use tx_env::BaseTxEnv;
 
 mod error;
 pub use error::BaseBlockExecutionError;

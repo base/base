@@ -22,7 +22,7 @@ use revm::{
 
 use crate::{
     BaseContext, BaseEvm, BaseHaltReason, L1BlockInfo,
-    transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
+    transaction::{BaseTransactionError, DEPOSIT_TRANSACTION_TYPE},
 };
 
 /// Base handler extends the [`Handler`] with Base-specific logic.
@@ -897,21 +897,21 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus)))
     }
 
-    fn invalid_contract_caller_tx(caller: Address) -> BaseTransaction<TxEnv> {
+    fn invalid_contract_caller_tx(caller: Address) -> BaseTransaction {
         BaseTransaction::builder()
             .base(TxEnv::builder().caller(caller).gas_limit(100_000))
             .enveloped_tx(Some(bytes!("FACADE")))
             .build_fill()
     }
 
-    fn stale_nonce_tx(caller: Address) -> BaseTransaction<TxEnv> {
+    fn stale_nonce_tx(caller: Address) -> BaseTransaction {
         BaseTransaction::builder()
             .base(TxEnv::builder().caller(caller).nonce(0).gas_limit(100_000))
             .enveloped_tx(Some(bytes!("FACADE")))
             .build_fill()
     }
 
-    fn probe_tx(caller: Address, probe: Address) -> BaseTransaction<TxEnv> {
+    fn probe_tx(caller: Address, probe: Address) -> BaseTransaction {
         BaseTransaction::builder()
             .base(TxEnv::builder().caller(caller).kind(TxKind::Call(probe)).gas_limit(100_000))
             .enveloped_tx(Some(bytes!("FACADE")))

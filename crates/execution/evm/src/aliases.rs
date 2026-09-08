@@ -25,7 +25,7 @@ pub type EvmContextFor<DB> = base_common_evm::BaseContext<DB>;
 pub type HaltReasonFor = base_common_evm::BaseHaltReason;
 
 /// Helper to access [`alloy_evm::EvmFactory::Tx`] for a given [`crate::BaseEvmConfig`].
-pub type TxEnvFor = base_common_evm::BaseTransaction<base_evm_context::TxEnv>;
+pub type TxEnvFor = base_common_evm::BaseTransaction;
 
 /// Helper to access [`alloy_evm::block::BlockExecutorFactory::ExecutionCtx`] for a given [`crate::BaseEvmConfig`].
 pub type ExecutionCtxFor = base_common_evm::BaseBlockExecutionCtx;

@@ -19,7 +19,6 @@ alloy-consensus = { workspace = true }
 alloy-network-primitives = { workspace = true }
 alloy-evm = { workspace = true, optional = true }
 alloy-network = { workspace = true, optional = true }
-base-evm-context = { workspace = true, optional = true}
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
 base-common-evm = { workspace = true, optional = true }
@@ -50,7 +49,6 @@ std = [
     "base-common-consensus/std",
     "base-common-evm?/std",
     "derive_more/std",
-    "base-evm-context?/std",
     "serde/std",
     "serde_json/std",
 ]
@@ -73,8 +71,7 @@ serde = [
     "alloy-rpc-types-eth/serde",
     "base-common-consensus/serde",
     "base-common-evm?/serde",
-    "base-evm-context?/serde",
 ]
 network = ["dep:alloy-network"]
-eip8130 = ["dep:alloy-evm", "dep:base-common-evm", "std", "dep:base-evm-context"]
+eip8130 = ["dep:alloy-evm", "dep:base-common-evm", "std"]
 reth = ["eip8130", "network", "std"]
