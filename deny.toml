@@ -261,21 +261,15 @@ skip = [
     "sha2",
 
     # Alloy and other upstream transitive dependency mismatches
-    "alloy-consensus",
     "alloy-consensus-any",
     "alloy-eips",
     # alloy-node-bindings (anvil harness for base-challenger-e2e) pins an older
     # alloy-hardforks than the rest of the workspace.
     "alloy-hardforks",
     "alloy-json-rpc",
-    "alloy-network",
     "alloy-network-primitives",
     "alloy-rpc-types-any",
     "alloy-rpc-types-eth",
-    "alloy-serde",
-    "alloy-signer",
-    "base-common-network",
-    "alloy-tx-macros",
     "cpufeatures",
     "num-bigint",
 

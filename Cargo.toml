@@ -625,11 +625,9 @@ discv5-reth = { path = "vendor/discv5-reth", default-features = false, package =
 
 # Additional shared dependencies
 fnv = { version = "1", default-features = false }
-crc = { version = "3", default-features = false }
 itoa = { version = "1", default-features = false }
 aes = { version = "0.8", default-features = false }
 ctr = { version = "0.9", default-features = false }
-log = { version = "0.4", default-features = false }
 heck = { version = "0.5", default-features = false }
 phf = { version = "0.14", default-features = false }
 bitvec = { version = "1", default-features = false }
@@ -639,8 +637,6 @@ hkdf = { version = "0.12", default-features = false }
 uint = { version = "0.10", default-features = false }
 paste = { version = "1.0", default-features = false }
 borsh = { version = "1.5", default-features = false }
-ruint = { version = "=1.19.0", default-features = false }
-bcs = { version = "0.2.1", default-features = false }
 ethabi = { version = "18", default-features = false }
 bimap = { version = "0.6", default-features = false }
 slotmap = { version = "1", default-features = false }
@@ -648,7 +644,6 @@ indexmap = { version = "2", default-features = false }
 smallvec = { version = "1", default-features = false }
 winnow = { version = "1.0", default-features = false }
 insta = { version = "1.47", default-features = false }
-diesel = { version = "2.2", default-features = false }
 schemars = { version = "1", default-features = false }
 ark-ec = { version = "0.6", default-features = false }
 ripemd = { version = "0.2", default-features = false }
@@ -658,7 +653,6 @@ quanta = { version = "0.12", default-features = false }
 test-fuzz = { version = "7", default-features = false }
 dunce = { version = "1.0.4", default-features = false }
 socket2 = { version = "0.6", default-features = false }
-rapidhash = { version = "4", default-features = false }
 blst = { version = "0.3.15", default-features = false }
 ark-std = { version = "0.6", default-features = false }
 anstyle = { version = "1.0", default-features = false }
@@ -667,11 +661,8 @@ snapbox = { version = "1.2", default-features = false }
 hmac = { version = "0.12.1", default-features = false }
 bindgen = { version = "0.72", default-features = false }
 bitflags = { version = "2.4", default-features = false }
-yubihsm = { version = "0.42", default-features = false }
 arrayvec = { version = "0.7", default-features = false }
-foldhash = { version = "0.2", default-features = false }
 trybuild = { version = "1.0", default-features = false }
-darling = { version = "0.23", default-features = false }
 num_enum = { version = "0.7", default-features = false }
 mappings = { version = "0.7", default-features = false }
 sysinfo = { version = "0.38", default-features = false }
@@ -685,7 +676,6 @@ delay_map = { version = "0.4", default-features = false }
 hashlink = { version = "0.11", default-features = false }
 if-addrs = { version = "0.13", default-features = false }
 rand_core = { version = "0.6", default-features = false }
-sqlx-core = { version = "0.8", default-features = false }
 fdlimit = { version = "0.3.0", default-features = false }
 procfs = { version = "0.18.0", default-features = false }
 vergen = { version = "10.0.1", default-features = false }
@@ -702,7 +692,6 @@ aes-gcm = { version = "0.10.3", default-features = false }
 multiaddr = { version = "0.18", default-features = false }
 quickcheck = { version = "0.9", default-features = false }
 aquamarine = { version = "0.6", default-features = false }
-hashbrown = { version = "0.17", default-features = false }
 arrayref = { version = "0.3.6", default-features = false }
 roaring = { version = "0.11.3", default-features = false }
 pprof_util = { version = "0.8", default-features = false }
@@ -710,7 +699,6 @@ triehash = { version = "0.8.4", default-features = false }
 hyper-tls = { version = "0.6.0", default-features = false }
 ci_info = { version = "0.14.14", default-features = false }
 wasmtimer = { version = "0.4.0", default-features = false }
-tiny-keccak = { version = "2.0", default-features = false }
 rustversion = { version = "1.0", default-features = false }
 boa_engine = { version = "0.21", default-features = false }
 colorchoice = { version = "1.0", default-features = false }
@@ -725,8 +713,6 @@ coins-bip32 = { version = "0.12", default-features = false }
 coins-bip39 = { version = "0.12", default-features = false }
 more-asserts = { version = "0.3", default-features = false }
 dyn-clone = { version = "1.0.17", default-features = false }
-allocative = { version = "0.3.2", default-features = false }
-keccak-asm = { version = "0.1.5", default-features = false }
 aws-lc-rs = { version = "1.16.2", default-features = false }
 substrate-bn = { version = "0.6", default-features = false }
 gmp-mpfr-sys = { version = "1.6", default-features = false }
@@ -738,13 +724,11 @@ ringbuffer = { version = "0.16.0", default-features = false }
 rand_xorshift = { version = "0.3", default-features = false }
 num-traits = { version = "0.2.16", default-features = false }
 ark-serialize = { version = "0.6", default-features = false }
-ed25519-dalek = { version = "2.1", default-features = false }
 snmalloc-rs = { version = "0.3.7", default-features = false }
 serde_derive = { version = "1.0.0", default-features = false }
 pin-project = { version = "1.1.12", default-features = false }
 syn-solidity = { version = "1.6.1", default-features = false }
 fixed-cache = { version = "0.1.10", default-features = false }
-eth-keystore = { version = "0.5.0", default-features = false }
 jemalloc_pprof = { version = "0.8", default-features = false }
 tracing-samply = { version = "0.1", default-features = false }
 tracing-tracy = { version = "0.11", default-features = false }
@@ -752,16 +736,13 @@ rolling-file = { version = "0.2.0", default-features = false }
 jsonwebtoken = { version = "10.3.0", default-features = false }
 crossbeam-queue = { version = "0.3", default-features = false }
 humantime-serde = { version = "1.1", default-features = false }
-proptest-derive = { version = "0.8", default-features = false }
 crossbeam-utils = { version = "0.8", default-features = false }
-elliptic-curve = { version = "0.13", default-features = false }
 tracy-client = { version = "0.18.0", default-features = false }
 tracing-futures = { version = "0.2", default-features = false }
 linked_hash_set = { version = "0.1", default-features = false }
 assert_matches = { version = "1.5.0", default-features = false }
 ethereum_hashing = { version = "0.8", default-features = false }
 ws_stream_wasm = { version = "0.7.4", default-features = false }
-postgres-types = { version = "0.2.6", default-features = false }
 derive_arbitrary = { version = "1.3", default-features = false }
 tracing-chrome = { version = "0.7.2", default-features = false }
 tracing-journald = { version = "0.3", default-features = false }

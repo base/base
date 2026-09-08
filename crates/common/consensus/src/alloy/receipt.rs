@@ -108,14 +108,20 @@ impl<T: Compact> Compact for AlloyEthereumReceipt<T> {
 #[cfg(test)]
 mod tests {
     use base_common_consensus::TxType;
-    use proptest::proptest;
+    use proptest::{prelude::any, proptest, sample::select};
     use proptest_arbitrary_interop::arb;
 
     use super::*;
 
     proptest! {
         #[test]
-        fn roundtrip_receipt(receipt in arb::<AlloyEthereumReceipt<TxType>>()) {
+        fn roundtrip_receipt(
+            tx_type in select(vec![TxType::Legacy, TxType::Eip2930, TxType::Eip1559, TxType::Eip4844, TxType::Eip7702]),
+            success in any::<bool>(),
+            cumulative_gas_used in any::<u64>(),
+            logs in arb::<Vec<Log>>(),
+        ) {
+            let receipt = AlloyEthereumReceipt { tx_type, success, cumulative_gas_used, logs };
             let mut compacted_receipt = Vec::<u8>::new();
             let len = receipt.to_compact(&mut compacted_receipt);
             let (decoded, _) = AlloyEthereumReceipt::<TxType>::from_compact(&compacted_receipt, len);

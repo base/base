@@ -1077,9 +1077,11 @@ mod tests {
     use alloy_rlp::Decodable;
 
     use super::*;
+    #[cfg(any(feature = "k256", feature = "secp256k1"))]
+    use crate::transaction::SignerRecoverable;
     use crate::{
         Transaction, TxEip4844, TxEip4844WithSidecar,
-        transaction::{Recovered, SignableTransaction, SignerRecoverable},
+        transaction::{Recovered, SignableTransaction},
     };
 
     #[test]
