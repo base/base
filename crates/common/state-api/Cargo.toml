@@ -22,28 +22,22 @@ rustdoc-args = [
 
 [dependencies]
 either = { workspace = true }
+alloy-trie = {workspace = true}
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 revm-state = { workspace = true }
-revm-primitives = { workspace = true }
-tokio = { workspace = true, optional = true, features = ["default"] }
-serde = { workspace = true, features = [
-    "derive",
-    "rc",
-    "derive",
-    "rc",
-], optional = true }
-alloy-trie = {workspace = true}
 alloy-genesis = {workspace = true}
 revm-bytecode = {workspace = true}
 alloy-consensus = {workspace = true}
 alloy-primitives = {workspace = true}
+revm-primitives = { workspace = true }
 bytes = {workspace = true, optional = true}
-byteorder = {workspace = true, optional = true}
 derive_more = {workspace = true, features = ["deref"]}
 modular-bitfield = {workspace = true, optional = true}
+tokio = { workspace = true, optional = true, features = ["default"] }
 arbitrary = {workspace = true, optional = true, features = ["derive"]}
 reth-codecs = {workspace = true, optional = true, features = ["alloy"]}
+serde = { workspace = true, features = ["derive", "rc"], optional = true }
 [dev-dependencies]
 proptest = {workspace = true}
 mockall = { workspace = true }
@@ -80,5 +74,5 @@ std = [
     "reth-codecs?/std",
 ]
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
-reth-codec = ["dep:reth-codecs", "dep:bytes", "dep:byteorder", "dep:modular-bitfield"]
+reth-codec = ["dep:reth-codecs", "dep:bytes", "dep:modular-bitfield"]
 test-utils = ["arbitrary", "reth-codecs?/test-utils"]

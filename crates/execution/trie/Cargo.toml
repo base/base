@@ -53,7 +53,6 @@ test-case = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-node-context = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-storage-overlay = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }

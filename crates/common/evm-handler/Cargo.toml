@@ -46,7 +46,6 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 [dev-dependencies]
-test-case = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-signer-local = { workspace = true }
 revm-database = { workspace = true, features = ["serde"]}

@@ -3814,7 +3814,6 @@ dependencies = [
  "derive-where",
  "either",
  "revm-bytecode",
- "revm-database",
  "revm-primitives",
  "revm-state",
  "serde",
@@ -3845,7 +3844,6 @@ dependencies = [
  "revm-state",
  "serde",
  "serde_json",
- "test-case",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -4311,7 +4309,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-evm",
  "base-metrics",
- "base-node-context",
  "bincode 2.0.1",
  "bytes",
  "criterion 0.8.2",
@@ -5692,7 +5689,6 @@ dependencies = [
  "alloy-trie",
  "arbitrary",
  "auto_impl",
- "byteorder",
  "bytes",
  "derive_more",
  "either",
@@ -15607,7 +15603,6 @@ dependencies = [
  "reth-metrics",
  "reth-nippy-jar",
  "reth-primitives-traits",
- "reth-prune-types",
  "reth-static-file-types",
  "reth-storage-errors",
  "reth-tracing",
@@ -15652,7 +15647,6 @@ dependencies = [
 name = "reth-db-common"
 version = "0.0.0"
 dependencies = [
- "alloy-chains",
  "alloy-consensus",
  "alloy-genesis",
  "alloy-primitives",
@@ -15832,7 +15826,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
- "base-execution-consensus",
  "base-execution-payload-builder",
  "base-execution-payload-types",
  "base-execution-rpc",
@@ -15842,15 +15835,10 @@ dependencies = [
  "eyre",
  "futures-util",
  "jsonrpsee",
- "reth-cli-commands",
- "reth-config",
  "reth-db",
- "reth-db-common",
- "reth-engine-local",
  "reth-engine-primitives",
  "reth-network",
  "reth-network-api",
- "reth-network-p2p",
  "reth-network-peers",
  "reth-node-core",
  "reth-primitives-traits",
@@ -15986,7 +15974,6 @@ dependencies = [
  "reth-db",
  "reth-db-api",
  "reth-db-common",
- "reth-e2e-test-utils",
  "reth-engine-primitives",
  "reth-execution-cache",
  "reth-execution-types",
@@ -16243,7 +16230,6 @@ dependencies = [
 name = "reth-exex-types"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "arbitrary",
@@ -16274,7 +16260,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-debug",
- "base-common-consensus",
  "base-execution-evm",
  "eyre",
  "futures",
@@ -16454,7 +16439,6 @@ dependencies = [
  "alloy-eip2124",
  "alloy-primitives",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-eth",
  "auto_impl",
  "base-common-consensus",
  "derive_more",
@@ -16746,7 +16730,6 @@ dependencies = [
  "reth-codecs",
  "reth-db",
  "reth-db-api",
- "reth-engine-primitives",
  "reth-execution-types",
  "reth-fs-util",
  "reth-metrics",
@@ -16761,7 +16744,6 @@ dependencies = [
  "reth-tasks",
  "reth-testing-utils",
  "reth-tokio-util",
- "reth-tracing",
  "reth-trie",
  "revm",
  "rocksdb",
@@ -16783,7 +16765,6 @@ dependencies = [
  "base-common-consensus",
  "metrics",
  "reth-config",
- "reth-db",
  "reth-db-api",
  "reth-exex-types",
  "reth-metrics",
@@ -17016,7 +16997,6 @@ dependencies = [
 name = "reth-stages"
 version = "0.0.0"
 dependencies = [
- "alloy-chains",
  "alloy-consensus",
  "alloy-eips",
  "alloy-genesis",
@@ -17318,9 +17298,7 @@ dependencies = [
 name = "reth-trie"
 version = "0.0.0"
 dependencies = [
- "alloy-chains",
  "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",

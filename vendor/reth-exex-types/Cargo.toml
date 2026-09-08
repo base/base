@@ -27,7 +27,6 @@ arbitrary = { workspace = true }
 bincode_1_3_3 = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
-alloy-consensus = {workspace = true, features = ["arbitrary", "serde", "std"]}
 
 [features]
 default = []
@@ -39,6 +38,5 @@ serde = [
     "rand/serde",
     "reth-primitives-traits/serde",
     "reth-chain-state/serde",
-    "alloy-consensus/serde",
 ]
 serde-bincode-compat = ["reth-execution-types/serde-bincode-compat", "serde_with", "alloy-eips/serde-bincode-compat"]

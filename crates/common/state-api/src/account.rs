@@ -3,8 +3,6 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::TrieAccount;
 #[cfg(feature = "reth-codec")]
-use byteorder::ReadBytesExt;
-#[cfg(feature = "reth-codec")]
 use bytes::Buf;
 use derive_more::Deref;
 use revm_bytecode::{Bytecode as RevmBytecode, BytecodeDecodeError};
@@ -172,17 +170,16 @@ impl reth_codecs::Compact for Bytecode {
     // A panic will be triggered if a bytecode variant of 1 or greater than 2 is passed from the
     // database.
     fn from_compact(mut buf: &[u8], _: usize) -> (Self, &[u8]) {
-        let len = buf.read_u32::<byteorder::BigEndian>().expect("could not read bytecode length")
-            as usize;
+        let len = buf.get_u32() as usize;
         let bytes = Bytes::from(buf.copy_to_bytes(len));
-        let variant = buf.read_u8().expect("could not read bytecode variant");
+        let variant = buf.get_u8();
         let decoded = match variant {
             LEGACY_RAW_BYTECODE_ID => Self(RevmBytecode::new_raw(bytes)),
             REMOVED_BYTECODE_ID => {
                 unreachable!("Junk data in database: checked Bytecode variant was removed")
             }
             LEGACY_ANALYZED_BYTECODE_ID => {
-                let original_len = buf.read_u64::<byteorder::BigEndian>().unwrap() as usize;
+                let original_len = buf.get_u64() as usize;
                 // When saving jumptable, its length is getting aligned to u8 boundary. Thus, we
                 // need to re-calculate the internal length of bitvec and truncate it when loading
                 // jumptables to avoid inconsistencies during `Compact` roundtrip.

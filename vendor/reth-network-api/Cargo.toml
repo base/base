@@ -23,7 +23,6 @@ alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 futures = { workspace = true, features = ["default"] }
@@ -35,6 +34,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+
 [features]
 serde = [
     "dep:serde",
@@ -43,5 +43,4 @@ serde = [
     "alloy-primitives/serde",
     "enr/serde",
     "alloy-consensus/serde",
-    "alloy-rpc-types-eth/serde",
 ]

@@ -22,9 +22,9 @@ rayon = { workspace = true, optional = true }
 either = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 smallvec = { workspace = true, optional = true }
-strum = { workspace = true, features = ["derive"] }
 reth-metrics = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
+strum = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 slotmap = { workspace = true, optional = true, features = ["default"] }

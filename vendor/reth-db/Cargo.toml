@@ -43,7 +43,6 @@ libc = { workspace = true, features = ["default"] }
 serde = { workspace = true }
 assert_matches = { workspace = true }
 alloy-consensus = { workspace = true }
-reth-prune-types = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
@@ -51,6 +50,7 @@ arbitrary = { workspace = true, features = ["derive"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["reth-codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+
 [features]
 default = ["mdbx"]
 mdbx = [
@@ -71,13 +71,11 @@ test-utils = [
     "reth-db-api/test-utils",
     "reth-nippy-jar/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-prune-types/test-utils",
 ]
 arbitrary = [
     "reth-db-api/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-consensus/arbitrary",
     "reth-primitives-traits/arbitrary",
-    "reth-prune-types/arbitrary",
 ]
 disable-lock = []
