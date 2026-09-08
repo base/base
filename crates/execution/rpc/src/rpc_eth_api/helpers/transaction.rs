@@ -1,7 +1,7 @@
 //! Database access for `eth_` transaction RPC methods. Loads transaction and receipt data w.r.t.
 //! network.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use alloy_consensus::{
     BlockHeader, Transaction,
@@ -13,20 +13,18 @@ use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::{TransactionInfo, state::EvmOverrides};
 use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
+use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, PoolTx, TransactionOrigin,
     TransactionPool,
 };
-use futures::{Future, StreamExt};
-use reth_chain_state::CanonStateSubscriptions;
+use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
 use reth_rpc_convert::TransactionConversionError;
 use reth_rpc_eth_types::{
     BaseEthApiError,
-    EthApiError::{self, TransactionConfirmationTimeout},
+    EthApiError::{self},
     FillTransaction, SignError, TransactionSource,
-    block::convert_transaction_receipt,
     utils::binary_search,
 };
 use reth_storage_api::{
@@ -34,10 +32,9 @@ use reth_storage_api::{
     TransactionsProvider,
 };
 
-use super::{EthApiSpec, EthSigner, LoadBlock, LoadFee, LoadReceipt, LoadState, SpawnBlocking};
+use super::EthSigner;
 use crate::{
-    FromEthApiError, FullEthApiTypes, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt,
-    helpers::{estimate::EstimateCall, spec::SignersForRpc},
+    BaseEthApi, EthApiTypes, FromEthApiError, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt,
 };
 
 /// Transaction related functions for the [`EthApiServer`](crate::EthApiServer) trait in
@@ -62,30 +59,22 @@ use crate::{
 /// See also <https://github.com/paradigmxyz/reth/issues/6240>
 ///
 /// This implementation follows the behaviour of Geth and disables the basefee check for tracing.
-pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
-    /// Returns a handle for signing data.
-    ///
-    /// Signer access in default (L1) trait method implementations.
-    fn signers(&self) -> &SignersForRpc<Self::Provider>;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns a list of addresses owned by provider.
-    fn accounts(&self) -> Vec<Address> {
+    pub fn accounts(&self) -> Vec<Address> {
         self.signers().read().iter().flat_map(|s| s.accounts()).collect()
     }
-
-    /// Returns the timeout duration for `send_raw_transaction_sync` RPC method.
-    fn send_raw_transaction_sync_timeout(&self) -> Duration;
 
     /// Decodes and recovers the transaction and submits it to the pool.
     ///
     /// Returns the hash of the transaction.
-    fn send_raw_transaction(
+    pub fn send_raw_transaction(
         &self,
         tx: Bytes,
     ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let pool_transaction =
-                <PoolTx<Self::Pool> as PoolTransaction>::recover_raw_transaction(&tx)
+                <PoolTx<N::Pool> as PoolTransaction>::recover_raw_transaction(&tx)
                     .map_err(BaseEthApiError::from_eth_err)?;
             self.send_pool_transaction(
                 TransactionOrigin::Local,
@@ -96,98 +85,22 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Submits the transaction to the pool with the given [`TransactionOrigin`].
-    fn send_transaction(
+    pub fn send_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<Recovered<PoolPooledTx<Self::Pool>>>,
+        tx: WithEncoded<Recovered<PoolPooledTx<N::Pool>>>,
     ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let (encoded, recovered) = tx.split();
             let pool_transaction =
-                <Self::Pool as TransactionPool>::Transaction::from_pooled(recovered);
+                <N::Pool as TransactionPool>::Transaction::from_pooled(recovered);
 
             self.send_pool_transaction(origin, WithEncoded::new(encoded, pool_transaction)).await
         }
     }
 
-    /// Submits the pool transaction to the pool with the given [`TransactionOrigin`].
-    fn send_pool_transaction(
-        &self,
-        origin: TransactionOrigin,
-        tx: WithEncoded<PoolTx<Self::Pool>>,
-    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send;
-
-    /// Decodes and recovers the transaction and submits it to the pool.
-    ///
-    /// And awaits the receipt.
-    fn send_raw_transaction_sync(
-        &self,
-        tx: Bytes,
-        timeout_ms: Option<u64>,
-    ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send
-    where
-        Self: LoadReceipt + 'static,
-    {
-        let this = self.clone();
-        let configured_timeout = self.send_raw_transaction_sync_timeout();
-        let timeout_duration = timeout_ms
-            .filter(|timeout_ms| *timeout_ms > 0)
-            .map(Duration::from_millis)
-            .map(|timeout| timeout.min(configured_timeout))
-            .unwrap_or(configured_timeout);
-        async move {
-            let mut stream = this.provider().canonical_state_stream();
-            let hash = EthTransactions::send_raw_transaction(&this, tx).await?;
-            tokio::time::timeout(timeout_duration, async {
-                while let Some(notification) = stream.next().await {
-                    let chain = notification.committed();
-                    if let Some((block, tx, receipt, all_receipts)) =
-                        chain.find_transaction_and_receipt_by_hash(hash)
-                        && let Some(receipt) = convert_transaction_receipt(
-                            block,
-                            all_receipts,
-                            tx,
-                            receipt,
-                            this.converter(),
-                        )
-                        .transpose()
-                        .map_err(BaseEthApiError::from)?
-                    {
-                        return Ok(receipt);
-                    }
-                }
-                Err(BaseEthApiError::from_eth_err(TransactionConfirmationTimeout {
-                    hash,
-                    duration: timeout_duration,
-                }))
-            })
-            .await
-            .unwrap_or_else(|_elapsed| {
-                Err(BaseEthApiError::from_eth_err(TransactionConfirmationTimeout {
-                    hash,
-                    duration: timeout_duration,
-                }))
-            })
-        }
-    }
-
-    /// Returns the transaction by hash.
-    ///
-    /// Checks the pool and state.
-    ///
-    /// Returns `Ok(None)` if no matching transaction was found.
-    #[expect(clippy::complexity)]
-    fn transaction_by_hash(
-        &self,
-        hash: B256,
-    ) -> impl Future<
-        Output = Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, BaseEthApiError>,
-    > + Send {
-        LoadTransaction::transaction_by_hash(self, hash)
-    }
-
     /// Returns all transactions from the local pending pool.
-    fn pending_transactions(
+    pub fn pending_transactions(
         &self,
     ) -> Result<Vec<base_common_rpc_types::Transaction>, BaseEthApiError> {
         self.pool()
@@ -202,10 +115,10 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     ///
     /// Returns `None` if block does not exist.
     #[expect(clippy::type_complexity)]
-    fn transactions_by_block(
+    pub fn transactions_by_block(
         &self,
         block: B256,
-    ) -> impl Future<Output = Result<Option<Vec<ProviderTx<Self::Provider>>>, BaseEthApiError>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<ProviderTx<N::Provider>>>, BaseEthApiError>> + Send
     {
         async move {
             self.cache()
@@ -223,7 +136,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Checks the pool and state.
     ///
     /// Returns `Ok(None)` if no matching transaction was found.
-    fn raw_transaction_by_hash(
+    pub fn raw_transaction_by_hash(
         &self,
         hash: B256,
     ) -> impl Future<Output = Result<Option<Bytes>, BaseEthApiError>> + Send {
@@ -248,12 +161,12 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
 
     /// Returns the _historical_ transaction and the block it was mined in
     #[expect(clippy::type_complexity)]
-    fn historical_transaction_by_hash_at(
+    pub fn historical_transaction_by_hash_at(
         &self,
         hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(TransactionSource<ProviderTx<Self::Provider>>, B256)>,
+            Option<(TransactionSource<ProviderTx<N::Provider>>, B256)>,
             BaseEthApiError,
         >,
     > + Send {
@@ -265,42 +178,20 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         }
     }
 
-    /// Returns the transaction receipt for the given hash.
-    ///
-    /// Returns None if the transaction does not exist or is pending
-    /// Note: The tx receipt is not available for pending transactions.
-    fn transaction_receipt(
-        &self,
-        hash: B256,
-    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, BaseEthApiError>> + Send
-    where
-        Self: LoadReceipt + 'static,
-    {
-        async move {
-            match self.load_transaction_and_receipt(hash).await? {
-                Some((tx, meta, receipt, all_receipts, block)) => self
-                    .build_transaction_receipt(tx, meta, receipt, all_receipts, block)
-                    .await
-                    .map(Some),
-                None => Ok(None),
-            }
-        }
-    }
-
     /// Helper method that loads a transaction and its receipt.
     ///
     /// The returned transaction has its sender already recovered.
     #[expect(clippy::complexity)]
-    fn load_transaction_and_receipt(
+    pub fn load_transaction_and_receipt(
         &self,
         hash: TxHash,
     ) -> impl Future<
         Output = Result<
             Option<(
-                Recovered<ProviderTx<Self::Provider>>,
+                Recovered<ProviderTx<N::Provider>>,
                 TransactionMeta,
-                ProviderReceipt<Self::Provider>,
-                Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
+                ProviderReceipt<N::Provider>,
+                Option<Arc<Vec<ProviderReceipt<N::Provider>>>>,
                 Option<Arc<RecoveredBlock>>,
             )>,
             BaseEthApiError,
@@ -361,13 +252,11 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Get transaction by [`BlockId`] and index of transaction within that block.
     ///
     /// Returns `Ok(None)` if the block does not exist, or index is out of range.
-    fn transaction_by_block_and_tx_index(
+    pub fn transaction_by_block_and_tx_index(
         &self,
         block_id: BlockId,
         index: usize,
     ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, BaseEthApiError>> + Send
-    where
-        Self: LoadBlock,
     {
         async move {
             if let Some(block) = self.recovered_block(block_id).await? {
@@ -396,14 +285,12 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Find a transaction by sender's address and nonce.
-    fn get_transaction_by_sender_and_nonce(
+    pub fn get_transaction_by_sender_and_nonce(
         &self,
         sender: Address,
         nonce: u64,
         include_pending: bool,
     ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, BaseEthApiError>> + Send
-    where
-        Self: LoadBlock + LoadState,
     {
         async move {
             // Check the pool first
@@ -472,14 +359,11 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Get transaction, as raw bytes, by [`BlockId`] and index of transaction within that block.
     ///
     /// Returns `Ok(None)` if the block does not exist, or index is out of range.
-    fn raw_transaction_by_block_and_tx_index(
+    pub fn raw_transaction_by_block_and_tx_index(
         &self,
         block_id: BlockId,
         index: usize,
-    ) -> impl Future<Output = Result<Option<Bytes>, BaseEthApiError>> + Send
-    where
-        Self: LoadBlock,
-    {
+    ) -> impl Future<Output = Result<Option<Bytes>, BaseEthApiError>> + Send {
         async move {
             if let Some(block) = self.recovered_block(block_id).await?
                 && let Some(tx) = block.body().transactions.get(index)
@@ -493,13 +377,10 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
 
     /// Signs transaction with a matching signer, if any and submits the transaction to the pool.
     /// Returns the hash of the signed transaction.
-    fn send_transaction_request(
+    pub fn send_transaction_request(
         &self,
         mut request: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send
-    where
-        Self: EthApiSpec + LoadBlock + EstimateCall,
-    {
+    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let from = match request.as_ref().from() {
                 Some(from) => from,
@@ -547,13 +428,10 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Fills the defaults on a given unsigned transaction.
-    fn fill_transaction(
+    pub fn fill_transaction(
         &self,
         mut request: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<FillTransaction<BaseTxEnvelope>, BaseEthApiError>> + Send
-    where
-        Self: EthApiSpec + LoadBlock + EstimateCall + LoadFee,
-    {
+    ) -> impl Future<Output = Result<FillTransaction<BaseTxEnvelope>, BaseEthApiError>> + Send {
         async move {
             if request.as_ref().value().is_none() {
                 request.as_mut().set_value(U256::ZERO);
@@ -620,11 +498,11 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Signs a transaction, with configured signers.
-    fn sign_request(
+    pub fn sign_request(
         &self,
         from: &Address,
         txn: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<ProviderTx<Self::Provider>, BaseEthApiError>> + Send {
+    ) -> impl Future<Output = Result<ProviderTx<N::Provider>, BaseEthApiError>> + Send {
         async move {
             self.find_signer(from)?
                 .sign_transaction(txn, from)
@@ -634,7 +512,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Signs given message. Returns the signature.
-    fn sign(
+    pub fn sign(
         &self,
         account: Address,
         message: Bytes,
@@ -652,7 +530,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
 
     /// Signs a transaction request using the given account in request
     /// Returns the EIP-2718 encoded signed transaction.
-    fn sign_transaction(
+    pub fn sign_transaction(
         &self,
         request: BaseTransactionRequest,
     ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send {
@@ -667,7 +545,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Encodes and signs the typed data according EIP-712. Payload must implement Eip712 trait.
-    fn sign_typed_data(
+    pub fn sign_typed_data(
         &self,
         data: &TypedData,
         account: Address,
@@ -682,11 +560,11 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
 
     /// Returns the signer for the given account, if found in configured signers.
     #[expect(clippy::type_complexity)]
-    fn find_signer(
+    pub fn find_signer(
         &self,
         account: &Address,
     ) -> Result<
-        Box<dyn EthSigner<ProviderTx<Self::Provider>, BaseTransactionRequest> + 'static>,
+        Box<dyn EthSigner<ProviderTx<N::Provider>, BaseTransactionRequest> + 'static>,
         BaseEthApiError,
     > {
         self.signers()
@@ -702,73 +580,17 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` transactions RPC
 /// methods.
-pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
-    /// Returns the transaction by hash.
-    ///
-    /// Checks the pool and state.
-    ///
-    /// Returns `Ok(None)` if no matching transaction was found.
-    #[expect(clippy::complexity)]
-    fn transaction_by_hash(
-        &self,
-        hash: B256,
-    ) -> impl Future<
-        Output = Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, BaseEthApiError>,
-    > + Send {
-        async move {
-            // First, try the RPC cache
-            if let Some(cached) = self.cache().get_transaction_by_hash(hash).await
-                && let Some(source) = cached.to_transaction_source()
-            {
-                return Ok(Some(source));
-            }
-
-            // Cache miss - try to find the transaction on disk
-            if let Some((tx, meta)) = self
-                .spawn_blocking_io(move |this| {
-                    this.provider()
-                        .transaction_by_hash_with_meta(hash)
-                        .map_err(BaseEthApiError::from_eth_err)
-                })
-                .await?
-            {
-                // Note: we assume this transaction is valid, because it's mined (or
-                // part of pending block) and already. We don't need to
-                // check for pre EIP-2 because this transaction could be pre-EIP-2.
-                let transaction = tx
-                    .try_into_recovered_unchecked()
-                    .map_err(|_| EthApiError::InvalidTransactionSignature)?;
-
-                return Ok(Some(TransactionSource::Block {
-                    transaction,
-                    index: meta.index,
-                    block_hash: meta.block_hash,
-                    block_number: meta.block_number,
-                    block_timestamp: meta.timestamp,
-                    base_fee: meta.base_fee,
-                }));
-            }
-
-            // tx not found on disk, check pool
-            if let Some(tx) = self.pool().get(&hash).map(|tx| tx.transaction.clone_into_consensus())
-            {
-                return Ok(Some(TransactionSource::Pool(tx.into())));
-            }
-
-            Ok(None)
-        }
-    }
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the transaction by including its corresponding [`BlockId`].
     ///
     /// Note: this supports pending transactions
     #[expect(clippy::type_complexity)]
-    fn transaction_by_hash_at(
+    pub fn transaction_by_hash_at(
         &self,
         transaction_hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(TransactionSource<ProviderTx<Self::Provider>>, BlockId)>,
+            Option<(TransactionSource<ProviderTx<N::Provider>>, BlockId)>,
             BaseEthApiError,
         >,
     > + Send {
@@ -784,12 +606,12 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
 
     /// Fetches the transaction and the transaction's block
     #[expect(clippy::type_complexity)]
-    fn transaction_and_block(
+    pub fn transaction_and_block(
         &self,
         hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(TransactionSource<ProviderTx<Self::Provider>>, Arc<RecoveredBlock>)>,
+            Option<(TransactionSource<ProviderTx<N::Provider>>, Arc<RecoveredBlock>)>,
             BaseEthApiError,
         >,
     > + Send {
@@ -811,5 +633,295 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
                 .map_err(BaseEthApiError::from_eth_err)?;
             Ok(block.map(|block| (transaction, block)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use alloy_consensus::{Block, Header, Transaction};
+    use alloy_primitives::{Address, Bytes, U256, hex, map::AddressMap};
+    use alloy_rpc_types_eth::request::TransactionRequest;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_evm::BaseEvmConfig;
+    use base_execution_txpool::{TransactionOrigin, TransactionPool};
+    use reth_network_api::noop::NoopNetwork;
+    use reth_provider::{
+        ChainSpecProvider,
+        test_utils::{ExtendedAccount, MockEthProvider},
+    };
+
+    use super::*;
+    use crate::RpcNodeCoreAdapter;
+
+    fn mock_eth_api(
+        accounts: AddressMap<ExtendedAccount>,
+    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
+    {
+        mock_eth_api_with_sync_timeout(accounts, Duration::from_secs(30))
+    }
+
+    fn mock_eth_api_with_sync_timeout(
+        accounts: AddressMap<ExtendedAccount>,
+        send_raw_transaction_sync_timeout: Duration,
+    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
+    {
+        let mock_provider = MockEthProvider::default()
+            .with_chain_spec(BaseChainSpecBuilder::base_mainnet().ecotone_activated().build());
+        mock_provider.extend_accounts(accounts);
+
+        let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());
+        let pool = crate::test_utils::RpcTestUtils::pool();
+
+        let genesis_header = Header {
+            number: 0,
+            gas_limit: 30_000_000,
+            timestamp: 1,
+            excess_blob_gas: Some(0),
+            base_fee_per_gas: Some(1000000000),
+            blob_gas_used: Some(0),
+            ..Default::default()
+        };
+
+        let genesis_hash = genesis_header.hash_slow();
+        mock_provider.add_block(genesis_hash, Block::new(genesis_header, Default::default()));
+        mock_provider.add_receipts(0, Vec::new());
+
+        crate::test_utils::RpcTestUtils::api_builder(
+            mock_provider,
+            pool,
+            NoopNetwork::default().with_chain_id(evm_config.chain_spec().chain_id()),
+            evm_config,
+        )
+        .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)
+        .build()
+    }
+
+    fn raw_transfer_tx() -> Bytes {
+        // https://etherscan.io/tx/0xa694b71e6c128a2ed8e2e0f6770bddbe52e3bb8f10e8472f9a79ab81497a8b5d
+        Bytes::from(hex!(
+            "02f871018303579880850555633d1b82520894eee27662c2b8eba3cd936a23f039f3189633e4c887ad591c62bdaeb180c080a07ea72c68abfb8fca1bd964f0f99132ed9280261bdca3e549546c0205e800f7d0a05b4ef3039e9c9b9babc179a1878fb825b5aaf5aed2fa8744854150157b08d6f3"
+        ))
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction() {
+        let eth_api = mock_eth_api(Default::default());
+        let pool = eth_api.pool();
+
+        let tx_1 = raw_transfer_tx();
+
+        let tx_1_result = eth_api.send_raw_transaction(tx_1).await.unwrap();
+        assert_eq!(
+            pool.len(),
+            1,
+            "expect 1 transaction in the pool, but pool size is {}",
+            pool.len()
+        );
+
+        // https://etherscan.io/tx/0x48816c2f32c29d152b0d86ff706f39869e6c1f01dc2fe59a3c1f9ecf39384694
+        let tx_2 = Bytes::from(hex!(
+            "02f9043c018202b7843b9aca00850c807d37a08304d21d94ef1c6e67703c7bd7107eed8303fbe6ec2554bf6b881bc16d674ec80000b903c43593564c000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000063e2d99f00000000000000000000000000000000000000000000000000000000000000030b000800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000001bc16d674ec80000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000065717fe021ea67801d1088cc80099004b05b64600000000000000000000000000000000000000000000000001bc16d674ec80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002bc02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000180000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009e95fd5965fd1f1a6f0d4600000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48000000000000000000000000428dca9537116148616a5a3e44035af17238fe9dc080a0c6ec1e41f5c0b9511c49b171ad4e04c6bb419c74d99fe9891d74126ec6e4e879a032069a753d7a2cfa158df95421724d24c0e9501593c09905abf3699b4a4405ce"
+        ));
+
+        let tx_2_result = eth_api.send_raw_transaction(tx_2).await.unwrap();
+        assert_eq!(
+            pool.len(),
+            2,
+            "expect 2 transactions in the pool, but pool size is {}",
+            pool.len()
+        );
+
+        assert!(pool.get(&tx_1_result).is_some(), "tx1 not found in the pool");
+        assert!(pool.get(&tx_2_result).is_some(), "tx2 not found in the pool");
+        assert_eq!(pool.get(&tx_1_result).unwrap().origin, TransactionOrigin::Local);
+        assert_eq!(pool.get(&tx_2_result).unwrap().origin, TransactionOrigin::Local);
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_sync_uses_request_timeout() {
+        let eth_api = mock_eth_api(Default::default());
+
+        let err = eth_api.send_raw_transaction_sync(raw_transfer_tx(), Some(1)).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+                if duration == Duration::from_millis(1)
+        ));
+        assert_eq!(eth_api.pool().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_sync_uses_configured_timeout_when_omitted() {
+        let eth_api = mock_eth_api_with_sync_timeout(Default::default(), Duration::from_millis(1));
+
+        let err = eth_api.send_raw_transaction_sync(raw_transfer_tx(), None).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+                if duration == Duration::from_millis(1)
+        ));
+        assert_eq!(eth_api.pool().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_sync_uses_configured_timeout_when_zero() {
+        let eth_api = mock_eth_api_with_sync_timeout(Default::default(), Duration::from_millis(1));
+
+        let err = eth_api.send_raw_transaction_sync(raw_transfer_tx(), Some(0)).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+                if duration == Duration::from_millis(1)
+        ));
+        assert_eq!(eth_api.pool().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_sync_caps_request_timeout() {
+        let eth_api = mock_eth_api_with_sync_timeout(Default::default(), Duration::from_millis(1));
+
+        let err = eth_api.send_raw_transaction_sync(raw_transfer_tx(), Some(50)).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+                if duration == Duration::from_millis(1)
+        ));
+        assert_eq!(eth_api.pool().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_fill_transaction_fills_chain_id() {
+        let address = Address::random();
+        let accounts = AddressMap::from_iter([(
+            address,
+            ExtendedAccount::new(0, U256::from(10_000_000_000_000_000_000u64)), // 10 ETH
+        )]);
+
+        let eth_api = mock_eth_api(accounts);
+
+        let tx_req = TransactionRequest {
+            from: Some(address),
+            to: Some(Address::random().into()),
+            gas: Some(21_000),
+            ..Default::default()
+        };
+
+        let filled =
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
+
+        // Should fill with the chain id from provider
+        assert!(filled.tx.chain_id().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_fill_transaction_fills_nonce() {
+        let address = Address::random();
+        let nonce = 42u64;
+
+        let accounts = AddressMap::from_iter([(
+            address,
+            ExtendedAccount::new(nonce, U256::from(1_000_000_000_000_000_000u64)), // 1 ETH
+        )]);
+
+        let eth_api = mock_eth_api(accounts);
+
+        let tx_req = TransactionRequest {
+            from: Some(address),
+            to: Some(Address::random().into()),
+            value: Some(U256::from(1000)),
+            gas: Some(21_000),
+            ..Default::default()
+        };
+
+        let filled =
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
+
+        assert_eq!(filled.tx.nonce(), nonce);
+    }
+
+    #[tokio::test]
+    async fn test_fill_transaction_preserves_provided_fields() {
+        let address = Address::random();
+        let provided_nonce = 100u64;
+        let provided_gas_limit = 50_000u64;
+
+        let accounts = AddressMap::from_iter([(
+            address,
+            ExtendedAccount::new(42, U256::from(10_000_000_000_000_000_000u64)),
+        )]);
+
+        let eth_api = mock_eth_api(accounts);
+
+        let tx_req = TransactionRequest {
+            from: Some(address),
+            to: Some(Address::random().into()),
+            value: Some(U256::from(1000)),
+            nonce: Some(provided_nonce),
+            gas: Some(provided_gas_limit),
+            ..Default::default()
+        };
+
+        let filled =
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
+
+        // Should preserve the provided nonce and gas limit
+        assert_eq!(filled.tx.nonce(), provided_nonce);
+        assert_eq!(filled.tx.gas_limit(), provided_gas_limit);
+    }
+
+    #[tokio::test]
+    async fn test_fill_transaction_fills_all_missing_fields() {
+        let address = Address::random();
+
+        let balance = U256::from(100u128) * U256::from(1_000_000_000_000_000_000u128);
+        let accounts = AddressMap::from_iter([(address, ExtendedAccount::new(5, balance))]);
+
+        let eth_api = mock_eth_api(accounts);
+
+        // Create a simple transfer transaction
+        let tx_req = TransactionRequest {
+            from: Some(address),
+            to: Some(Address::random().into()),
+            ..Default::default()
+        };
+
+        let filled =
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
+
+        assert!(filled.tx.is_eip1559());
+    }
+
+    #[tokio::test]
+    async fn test_fill_transaction_non_blob_tx_no_blob_fee() {
+        let address = Address::random();
+        let accounts = AddressMap::from_iter([(
+            address,
+            ExtendedAccount::new(0, U256::from(10_000_000_000_000_000_000u64)),
+        )]);
+
+        let eth_api = mock_eth_api(accounts);
+
+        // EIP-1559 transaction without blob fields
+        let tx_req = TransactionRequest {
+            from: Some(address),
+            to: Some(Address::random().into()),
+            transaction_type: Some(2), // EIP-1559
+            ..Default::default()
+        };
+
+        let filled =
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
+
+        // Non-blob transaction should NOT have blob fee filled
+        assert!(
+            filled.tx.max_fee_per_blob_gas().is_none(),
+            "max_fee_per_blob_gas should not be set for non-blob tx"
+        );
     }
 }

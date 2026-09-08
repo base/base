@@ -2,7 +2,7 @@
 
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use alloy_rpc_types_eth::{Filter, pubsub::TransactionReceiptsParams};
-use base_common_rpc_types::{BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt};
+use base_common_rpc_types::{BaseLogResponse, BaseTransactionReceipt};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::TransactionMeta;
@@ -10,14 +10,14 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::logs_utils;
 use tracing::error;
 
-use crate::{EthApiTypes, RpcNodeCore};
+use crate::{BaseEthApi, EthApiTypes, RpcNodeCore};
 
 /// Provides streams subscriptions for `eth_subscribe`.
 ///
 /// Override the default methods to inject additional data sources (e.g. flashblocks).
-pub trait EthSubscriptions: RpcNodeCore + EthApiTypes {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns a stream that yields matching logs from canonical chain updates.
-    fn log_stream(
+    pub fn log_stream(
         &self,
         filter: Filter,
     ) -> impl futures::Stream<Item = BaseLogResponse> + Send + Unpin {
@@ -56,30 +56,8 @@ pub trait EthSubscriptions: RpcNodeCore + EthApiTypes {
         })
     }
 
-    /// Returns a stream that yields new block headers from canonical chain updates.
-    fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
-        let converter = self.converter();
-        self.provider().canonical_state_stream().flat_map(move |new_chain| {
-            let headers = new_chain
-                .committed()
-                .blocks_iter()
-                .filter_map(|block| {
-                    match converter.convert_header(block.clone_sealed_header(), block.rlp_length())
-                    {
-                        Ok(header) => Some(header),
-                        Err(err) => {
-                            error!(target = "rpc", %err, "Failed to convert header");
-                            None
-                        }
-                    }
-                })
-                .collect::<Vec<_>>();
-            futures::stream::iter(headers)
-        })
-    }
-
     /// Returns a stream that yields matching transaction receipts from canonical chain updates.
-    fn transaction_receipts_stream(
+    pub fn transaction_receipts_stream(
         &self,
         filter: TransactionReceiptsParams,
     ) -> impl futures::Stream<Item = Vec<BaseTransactionReceipt>> + Send + Unpin {

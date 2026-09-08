@@ -2,25 +2,19 @@ use alloy_consensus::{EthereumTxEnvelope, TxEip4844Variant};
 use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::BaseBlock;
+use base_execution_rpc::{BaseEthApi, BaseEthApiError, EthApiTypes};
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::rpc::RpcRegistry;
-use reth_provider::BlockReader;
 use reth_rpc_api::DebugApiServer;
-use reth_rpc_eth_api::{
-    BaseEthApiError, EthApiTypes,
-    helpers::{EthApiSpec, EthTransactions, TraceExt},
-};
 
 #[expect(missing_debug_implementations)]
 pub struct RpcTestContext<Node: FullNodeComponents, EthApi: EthApiTypes> {
     pub inner: RpcRegistry<Node, EthApi>,
 }
 
-impl<Node, EthApi> RpcTestContext<Node, EthApi>
+impl<Node> RpcTestContext<Node, BaseEthApi<Node>>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiSpec<Provider: BlockReader<Block = BaseBlock>> + EthTransactions + TraceExt,
 {
     /// Injects a raw transaction into the node tx pool via RPC server
     pub async fn inject_tx(&self, raw_tx: Bytes) -> Result<B256, BaseEthApiError> {

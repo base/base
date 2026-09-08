@@ -5,8 +5,9 @@ use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_rpc::BaseEthApi;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
@@ -14,11 +15,10 @@ use reth_node_api::FullNodeComponents;
 use reth_node_builder::{FullNode, rpc::RethRpcAddOns};
 use reth_primitives_traits::Block;
 use reth_provider::{
-    BlockReader, BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions,
-    HeaderProvider, StageCheckpointReader,
+    BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
+    StageCheckpointReader,
 };
 use reth_rpc_builder::auth::AuthServerHandle;
-use reth_rpc_eth_api::helpers::{EthApiSpec, EthTransactions, TraceExt};
 use reth_stages_types::StageId;
 use tokio_stream::StreamExt;
 use url::Url;
@@ -86,8 +86,7 @@ where
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
     ) -> eyre::Result<Vec<BaseBuiltPayload>>
     where
-        AddOns::EthApi:
-            EthApiSpec<Provider: BlockReader<Block = BaseBlock>> + EthTransactions + TraceExt,
+        AddOns: RethRpcAddOns<Node, EthApi = BaseEthApi<Node>>,
     {
         let mut chain = Vec::with_capacity(length as usize);
         for i in 0..length {

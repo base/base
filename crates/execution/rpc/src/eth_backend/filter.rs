@@ -28,10 +28,6 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_eth_api::{
-    EngineEthFilter, EthApiTypes, EthFilterApiServer, FullEthApiTypes, QueryLimits, RpcNodeCoreExt,
-    helpers::{EthBlocks, LoadReceipt},
-};
 use reth_rpc_eth_types::{
     EthApiError, EthFilterConfig, EthStateCache, EthSubscriptionIdProvider,
     logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
@@ -49,14 +45,12 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
-impl<Eth> EngineEthFilter<BaseLogResponse> for EthFilter<Eth>
-where
-    Eth: FullEthApiTypes
-        + RpcNodeCoreExt<Provider: BlockIdReader>
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
-{
+use crate::{
+    BaseEthApi, EngineEthFilter, EthApiTypes, EthFilterApiServer, QueryLimits, RpcNodeCore,
+    RpcNodeCoreExt,
+};
+
+impl<ApiNode: RpcNodeCore> EngineEthFilter<BaseLogResponse> for EthFilter<BaseEthApi<ApiNode>> {
     /// Returns logs matching given filter object, no query limits
     fn logs(
         &self,
@@ -106,10 +100,7 @@ where
     }
 }
 
-impl<Eth> EthFilter<Eth>
-where
-    Eth: EthApiTypes + 'static,
-{
+impl<ApiNode: RpcNodeCore> EthFilter<BaseEthApi<ApiNode>> {
     /// Creates a new, shareable instance.
     ///
     /// This uses the given pool to get notified about new transactions, the provider to interact
@@ -123,14 +114,18 @@ where
     ///
     /// ```no_run
     /// use crate::EthFilter;
-    /// use reth_rpc_eth_api::EthApiTypes;
+    /// use crate::EthApiTypes;
     /// use reth_tasks::Runtime;
     ///
-    /// fn filters<Eth: EthApiTypes + 'static>(eth_api: Eth, runtime: Runtime) -> EthFilter<Eth> {
+    /// fn filters<BaseEthApi<ApiNode>: EthApiTypes + 'static>(eth_api: BaseEthApi<ApiNode>, runtime: Runtime) -> EthFilter<BaseEthApi<ApiNode>> {
     ///     EthFilter::new(eth_api, Default::default(), runtime)
     /// }
     /// ```
-    pub fn new(eth_api: Eth, config: EthFilterConfig, task_spawner: Runtime) -> Self {
+    pub fn new(
+        eth_api: BaseEthApi<ApiNode>,
+        config: EthFilterConfig,
+        task_spawner: Runtime,
+    ) -> Self {
         let EthFilterConfig { max_blocks_per_filter, max_logs_per_response, stale_filter_ttl } =
             config;
         let inner = EthFilterInner {
@@ -193,21 +188,14 @@ where
     }
 }
 
-impl<Eth> EthFilter<Eth>
-where
-    Eth: FullEthApiTypes<Provider: BlockReader + BlockIdReader>
-        + RpcNodeCoreExt
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
-{
+impl<ApiNode: RpcNodeCore> EthFilter<BaseEthApi<ApiNode>> {
     /// Access the underlying provider.
-    fn provider(&self) -> &Eth::Provider {
+    fn provider(&self) -> &ApiNode::Provider {
         self.inner.eth_api.provider()
     }
 
     /// Access the underlying pool.
-    fn pool(&self) -> &Eth::Pool {
+    fn pool(&self) -> &ApiNode::Pool {
         self.inner.eth_api.pool()
     }
 
@@ -332,9 +320,8 @@ where
 }
 
 #[async_trait]
-impl<Eth> EthFilterApiServer<base_common_rpc_types::Transaction, BaseLogResponse> for EthFilter<Eth>
-where
-    Eth: FullEthApiTypes + RpcNodeCoreExt + LoadReceipt + EthBlocks + 'static,
+impl<ApiNode: RpcNodeCore> EthFilterApiServer<base_common_rpc_types::Transaction, BaseLogResponse>
+    for EthFilter<BaseEthApi<ApiNode>>
 {
     /// Handler for `eth_newFilter`
     async fn new_filter(&self, filter: Filter) -> RpcResult<FilterId> {
@@ -447,16 +434,9 @@ struct EthFilterInner<Eth: EthApiTypes> {
     stale_filter_ttl: Duration,
 }
 
-impl<Eth> EthFilterInner<Eth>
-where
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
-{
+impl<ApiNode: RpcNodeCore> EthFilterInner<BaseEthApi<ApiNode>> {
     /// Access the underlying provider.
-    fn provider(&self) -> &Eth::Provider {
+    fn provider(&self) -> &ApiNode::Provider {
         self.eth_api.provider()
     }
 
@@ -539,7 +519,7 @@ where
                             append_matching_block_logs(
                                 &mut all_logs,
                                 self.eth_api.converter(),
-                                ProviderOrBlock::<Eth::Provider>::Block(pending_block.block),
+                                ProviderOrBlock::<ApiNode::Provider>::Block(pending_block.block),
                                 &filter,
                                 &header,
                                 &pending_block.receipts,
@@ -1056,11 +1036,7 @@ where
 
 /// Represents different modes for processing block ranges when filtering logs
 enum RangeMode<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
+    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + EthApiTypes + 'static,
 > {
     /// Use cache-based processing for recent blocks
     Cached(CachedMode<Eth>),
@@ -1068,17 +1044,10 @@ enum RangeMode<
     Range(RangeBlockMode<Eth>),
 }
 
-impl<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
-> RangeMode<Eth>
-{
+impl<ApiNode: RpcNodeCore> RangeMode<BaseEthApi<ApiNode>> {
     /// Creates a new `RangeMode`.
     fn new(
-        filter_inner: Arc<EthFilterInner<Eth>>,
+        filter_inner: Arc<EthFilterInner<BaseEthApi<ApiNode>>>,
         sealed_headers: Vec<SealedHeader>,
         from_block: u64,
         to_block: u64,
@@ -1135,7 +1104,9 @@ impl<
     }
 
     /// Gets the next (receipts, `maybe_block`, header, `block_hash`) tuple.
-    async fn next(&mut self) -> Result<Option<ReceiptBlockResult<Eth::Provider>>, EthFilterError> {
+    async fn next(
+        &mut self,
+    ) -> Result<Option<ReceiptBlockResult<ApiNode::Provider>>, EthFilterError> {
         match self {
             Self::Cached(cached) => cached.next().await,
             Self::Range(range) => range.next().await,
@@ -1145,25 +1116,16 @@ impl<
 
 /// Mode for processing blocks using cache optimization for recent blocks
 struct CachedMode<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
+    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + EthApiTypes + 'static,
 > {
     filter_inner: Arc<EthFilterInner<Eth>>,
     headers_iter: std::vec::IntoIter<SealedHeader>,
 }
 
-impl<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
-> CachedMode<Eth>
-{
-    async fn next(&mut self) -> Result<Option<ReceiptBlockResult<Eth::Provider>>, EthFilterError> {
+impl<ApiNode: RpcNodeCore> CachedMode<BaseEthApi<ApiNode>> {
+    async fn next(
+        &mut self,
+    ) -> Result<Option<ReceiptBlockResult<ApiNode::Provider>>, EthFilterError> {
         for header in self.headers_iter.by_ref() {
             // Use get_receipts_and_maybe_block which has automatic fallback to provider
             if let Some((receipts, maybe_block)) =
@@ -1187,11 +1149,7 @@ type ReceiptFetchFuture<P> =
 
 /// Mode for processing blocks using range queries for older blocks
 struct RangeBlockMode<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
+    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + EthApiTypes + 'static,
 > {
     filter_inner: Arc<EthFilterInner<Eth>>,
     iter: Peekable<std::vec::IntoIter<SealedHeader>>,
@@ -1201,15 +1159,10 @@ struct RangeBlockMode<
     pending_tasks: FuturesOrdered<ReceiptFetchFuture<Eth::Provider>>,
 }
 
-impl<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes
-        + LoadReceipt
-        + EthBlocks
-        + 'static,
-> RangeBlockMode<Eth>
-{
-    async fn next(&mut self) -> Result<Option<ReceiptBlockResult<Eth::Provider>>, EthFilterError> {
+impl<ApiNode: RpcNodeCore> RangeBlockMode<BaseEthApi<ApiNode>> {
+    async fn next(
+        &mut self,
+    ) -> Result<Option<ReceiptBlockResult<ApiNode::Provider>>, EthFilterError> {
         loop {
             // First, try to return any already processed result from buffer
             if let Some(result) = self.next.pop_front() {
@@ -1274,7 +1227,7 @@ impl<
     async fn process_small_range(
         &mut self,
         range_headers: Vec<SealedHeader>,
-    ) -> Result<Option<ReceiptBlockResult<Eth::Provider>>, EthFilterError> {
+    ) -> Result<Option<ReceiptBlockResult<ApiNode::Provider>>, EthFilterError> {
         // Process each header individually to avoid queuing for all receipts
         for header in range_headers {
             // First check if already cached to avoid unnecessary provider calls
@@ -1378,12 +1331,11 @@ mod tests {
     use rand::Rng;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_rpc_eth_api::node::RpcNodeCoreAdapter;
     use reth_tasks::Runtime;
     use reth_testing_utils::generators;
 
     use super::*;
-    use crate::eth_backend::EthApi;
+    use crate::RpcNodeCoreAdapter;
 
     #[test]
     fn test_block_range_iter() {
@@ -1407,11 +1359,12 @@ mod tests {
         assert_eq!(end, *range.end());
     }
 
-    // Helper function to create a test EthApi instance
+    // Helper function to create a test BaseEthApi instance
     #[expect(clippy::type_complexity)]
     fn build_test_eth_api(
         provider: MockEthProvider,
-    ) -> EthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>> {
+    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
+    {
         crate::test_utils::RpcTestUtils::api_builder(
             provider.clone(),
             crate::test_utils::RpcTestUtils::pool(),

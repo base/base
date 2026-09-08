@@ -1,7 +1,8 @@
 //! Builder support for rpc components.
 
 use std::{
-    fmt::{self, Debug},
+    fmt,
+    fmt::Debug,
     future::Future,
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -11,7 +12,6 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::{
     AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, EthApiTypes,
-    FullEthApiServer,
 };
 pub use jsonrpsee::{
     core::middleware::layer::Either,
@@ -22,7 +22,6 @@ use reth_chain_state::CanonStateSubscriptions;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{AddOnsContext, FullNodeComponents, NodeAddOns, TreeConfig};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
-use reth_rpc_api::eth::helpers::EthTransactions;
 pub use reth_rpc_builder::{
     Identity, Stack,
     middleware::{RethAuthHttpMiddleware, RethRpcMiddleware},
@@ -526,10 +525,6 @@ where
 impl<Node, RpcMiddleware, AuthHttpMiddleware> RpcAddOns<Node, RpcMiddleware, AuthHttpMiddleware>
 where
     Node: FullNodeComponents,
-    BaseNodeEthApi<Node>: FullEthApiServer<
-            Provider = Node::Provider,
-            Pool = reth_node_api::BaseNodePool<Node::Provider>,
-        >,
 {
     /// Creates a new instance of the RPC add-ons.
     pub fn new(
@@ -1020,8 +1015,6 @@ impl<N: FullNodeComponents, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
     for RpcAddOns<N, RpcMiddleware, AuthHttpMiddleware>
 where
     Self: NodeAddOns<N, Handle = RpcHandle<N, BaseNodeEthApi<N>>>,
-    BaseNodeEthApi<N>:
-        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     type EthApi = BaseNodeEthApi<N>;
 

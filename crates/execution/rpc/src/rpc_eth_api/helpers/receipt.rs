@@ -14,21 +14,21 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{ProviderReceipt, ProviderTx};
 
-use crate::{EthApiTypes, RpcNodeCoreExt};
+use crate::{BaseEthApi, EthApiTypes, RpcNodeCore, RpcNodeCoreExt};
 
 /// Assembles transaction receipt data w.r.t to network.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` receipts RPC methods.
-pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Helper method for `eth_getBlockReceipts` and `eth_getTransactionReceipt`.
     ///
     /// If a value is `Some`, skips the corresponding cache lookup entirely.
-    fn build_transaction_receipt(
+    pub fn build_transaction_receipt(
         &self,
-        tx: Recovered<ProviderTx<Self::Provider>>,
+        tx: Recovered<ProviderTx<N::Provider>>,
         meta: TransactionMeta,
-        receipt: ProviderReceipt<Self::Provider>,
-        all_receipts: Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
+        receipt: ProviderReceipt<N::Provider>,
+        all_receipts: Option<Arc<Vec<ProviderReceipt<N::Provider>>>>,
         block: Option<Arc<RecoveredBlock>>,
     ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send {
         async move {

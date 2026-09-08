@@ -6,7 +6,7 @@ use alloy_consensus::{TxReceipt, transaction::TxHashRef};
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
-use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt};
+use base_common_rpc_types::{BaseBlockResponse, BaseTransactionReceipt};
 use base_execution_txpool::{PoolTransaction, TransactionPool};
 use futures::Future;
 use reth_primitives_traits::{
@@ -16,8 +16,7 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::BaseEthApiError;
 use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderTx};
 
-use super::{LoadPendingBlock, LoadReceipt, SpawnBlocking};
-use crate::{FromEthApiError, FullEthApiTypes, node::RpcNodeCoreExt};
+use crate::{BaseEthApi, EthApiTypes, FromEthApiError, RpcNodeCore, RpcNodeCoreExt};
 
 /// Result type of the fetched block receipts.
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
@@ -29,51 +28,11 @@ pub type BlockAndReceiptsResult = Result<
 
 /// Block related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.
-pub trait EthBlocks: LoadBlock {
-    /// Returns the block header for the given block id.
-    fn rpc_block_header(
-        &self,
-        block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<BaseHeaderResponse>, BaseEthApiError>> + Send
-    where
-        Self: FullEthApiTypes,
-    {
-        async move {
-            let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-            let header =
-                self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
-            Ok(Some(header))
-        }
-    }
-
-    /// Returns the populated rpc block object for the given block id.
-    ///
-    /// If `full` is true, the block object will contain all transaction objects, otherwise it will
-    /// only contain the transaction hashes.
-    fn rpc_block(
-        &self,
-        block_id: BlockId,
-        full: bool,
-    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, BaseEthApiError>> + Send
-    where
-        Self: FullEthApiTypes,
-    {
-        async move {
-            let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-
-            let block = block.clone_into_rpc_block(
-                full.into(),
-                |tx, tx_info| self.converter().fill(tx, tx_info),
-                |header, size| self.converter().convert_header(header, size),
-            )?;
-            Ok(Some(block))
-        }
-    }
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the number transactions in the given block.
     ///
     /// Returns `None` if the block does not exist
-    fn block_transaction_count(
+    pub fn block_transaction_count(
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = Result<Option<usize>, BaseEthApiError>> + Send {
@@ -83,13 +42,10 @@ pub trait EthBlocks: LoadBlock {
     /// Helper function for `eth_getBlockReceipts`.
     ///
     /// Returns all transaction receipts in block, or `None` if block wasn't found.
-    fn block_receipts(
+    pub fn block_receipts(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = BlockReceiptsResult<BaseEthApiError>> + Send
-    where
-        Self: LoadReceipt,
-    {
+    ) -> impl Future<Output = BlockReceiptsResult<BaseEthApiError>> + Send {
         async move {
             if let Some((block, receipts)) = self.load_block_and_receipts(block_id).await? {
                 let block_number = block.number();
@@ -144,14 +100,12 @@ pub trait EthBlocks: LoadBlock {
     }
 
     /// Helper method that loads a block and all its receipts.
-    fn load_block_and_receipts(
+    pub fn load_block_and_receipts(
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = BlockAndReceiptsResult> + Send
     where
-        Self: LoadReceipt,
-        Self::Pool:
-            TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<Self::Provider>>>,
+        N::Pool: TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<N::Provider>>>,
     {
         async move {
             if block_id.is_pending() {
@@ -196,7 +150,7 @@ pub trait EthBlocks: LoadBlock {
     ///
     /// Returns an empty vec if there are none.
     #[expect(clippy::type_complexity)]
-    fn ommers(
+    pub fn ommers(
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = Result<Option<Vec<ProviderHeader>>, BaseEthApiError>> + Send {
@@ -212,7 +166,7 @@ pub trait EthBlocks: LoadBlock {
     /// Returns uncle block at given index in given block.
     ///
     /// Returns `None` if index out of range.
-    fn ommer_by_block_and_index(
+    pub fn ommer_by_block_and_index(
         &self,
         block_id: BlockId,
         index: Index,
@@ -249,10 +203,10 @@ pub trait EthBlocks: LoadBlock {
 /// Loads a block from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
-pub trait LoadBlock: LoadPendingBlock + SpawnBlocking + RpcNodeCoreExt {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the block object for the given block id.
     #[expect(clippy::type_complexity)]
-    fn recovered_block(
+    pub fn recovered_block(
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = Result<Option<Arc<RecoveredBlock>>, BaseEthApiError>> + Send {

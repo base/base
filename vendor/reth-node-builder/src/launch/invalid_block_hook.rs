@@ -3,6 +3,7 @@
 use alloy_consensus::TxEnvelope;
 use alloy_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_execution_evm::BaseEvmConfig;
+use base_execution_rpc::EthApiClient;
 use eyre::OptionExt;
 use reth_engine_primitives::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
 use reth_invalid_block_hooks::InvalidBlockWitnessHook;
@@ -11,7 +12,6 @@ use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
 };
-use reth_rpc_api::EthApiClient;
 
 /// Constructs the configured invalid block diagnostics during node startup.
 #[derive(Debug)]

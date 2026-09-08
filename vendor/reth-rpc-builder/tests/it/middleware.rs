@@ -8,13 +8,13 @@ use std::{
 
 use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
+use base_execution_rpc::EthApiClient;
 use jsonrpsee::{
     core::middleware::{Batch, Notification},
     server::middleware::rpc::RpcServiceT,
     types::Request,
 };
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
-use reth_rpc_eth_api::EthApiClient;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tokio_util::EventSender;
 use tower::Layer;

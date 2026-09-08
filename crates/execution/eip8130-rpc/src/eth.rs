@@ -10,13 +10,10 @@ use base_evm_context::BlockEnv;
 use base_evm_handler::EvmFactory;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
+use base_execution_rpc::{BaseEthApi, EthApiTypes, RpcNodeCore};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
-};
-use reth_rpc_eth_api::{
-    EthApiTypes, RpcNodeCore,
-    helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},
 };
 use reth_storage_api::BlockReaderIdExt;
 use tracing::debug;
@@ -70,19 +67,18 @@ pub struct Eip8130EthApiExt<Eth: EthApiTypes> {
     eth_api: Eth,
 }
 
-impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
+impl<ApiNode: RpcNodeCore> Eip8130EthApiExt<BaseEthApi<ApiNode>> {
     /// Creates a new standalone EIP-8130 `eth_getTransactionCount`
-    /// extension over the supplied Eth API.
-    pub const fn new(eth_api: Eth) -> Self {
+    /// extension over the supplied BaseEthApi<ApiNode> API.
+    pub const fn new(eth_api: BaseEthApi<ApiNode>) -> Self {
         Self { eth_api }
     }
 }
 
 #[async_trait]
-impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
+impl<ApiNode: RpcNodeCore> Eip8130EthApiOverrideServer for Eip8130EthApiExt<BaseEthApi<ApiNode>>
 where
-    Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
-    <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
+    <BaseEthApi<ApiNode> as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     TxEnvFor: From<BaseRevm>,
     EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
 {
@@ -115,7 +111,9 @@ where
 
         // Protocol nonce path. Standard reth resolution against
         // `account.nonce` at the requested block.
-        EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
+        BaseEthApi::transaction_count(&self.eth_api, address, block_number)
+            .await
+            .map_err(Into::into)
     }
 
     async fn estimate_gas(
@@ -130,7 +128,7 @@ where
         // `eth_estimateGas`, so the common case must be delegated to the
         // standard reth estimator unchanged.
         if request.as_eip8130().is_none() {
-            return EthCall::estimate_gas_at(
+            return BaseEthApi::estimate_gas_at(
                 &self.eth_api,
                 request,
                 block_id,

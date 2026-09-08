@@ -26,11 +26,10 @@ use revm::{
 };
 use tracing::trace;
 
-use super::{Call, LoadPendingBlock};
-use crate::{AsEthApiError, FromEthApiError, IntoEthApiError};
+use crate::{AsEthApiError, BaseEthApi, FromEthApiError, IntoEthApiError, RpcNodeCore};
 
 /// Gas execution estimates
-pub trait EstimateCall: Call {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Estimates the gas usage of the `request` with the state.
     ///
     /// This will execute the [`RpcTxReq`] and find the best gas limit via binary search.
@@ -43,7 +42,7 @@ pub trait EstimateCall: Call {
     ///  - `disable_base_fee` is set to `true`
     ///  - `disable_fee_charge` is set to `true`
     ///  - `nonce` is set to `None`
-    fn estimate_gas_with<S>(
+    pub fn estimate_gas_with<S>(
         &self,
         mut evm_env: EvmEnvFor,
         mut request: BaseTransactionRequest,
@@ -299,21 +298,18 @@ pub trait EstimateCall: Call {
     }
 
     /// Estimate gas needed for execution of the `request` at the [`BlockId`].
-    fn estimate_gas_at(
+    pub fn estimate_gas_at(
         &self,
         request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send
-    where
-        Self: LoadPendingBlock,
-    {
+    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
         async move {
             let (evm_env, at) = self.evm_env_at(at).await?;
 
             self.spawn_blocking_io_fut(async move |this| {
                 let state = this.state_at_block_id(at).await?;
-                EstimateCall::estimate_gas_with(&this, evm_env, request, state, overrides)
+                BaseEthApi::estimate_gas_with(&this, evm_env, request, state, overrides)
             })
             .await
         }
@@ -322,7 +318,7 @@ pub trait EstimateCall: Call {
     /// Executes the requests again after an out of gas error to check if the error is gas related
     /// or not
     #[inline]
-    fn map_out_of_gas_err<DB>(
+    pub fn map_out_of_gas_err<DB>(
         evm: &mut EvmFor<DB>,
         mut tx_env: TxEnvFor,
         max_gas_limit: u64,

@@ -3,16 +3,12 @@
 use base_common_rpc_types::BaseHeaderResponse;
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_rpc_eth_api::{RpcNodeCore, helpers::EthSubscriptions};
 use tracing::error;
 
-use super::BaseEthApi;
+use crate::{BaseEthApi, RpcNodeCore};
 
-impl<N> EthSubscriptions for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
-    fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
+impl<N: RpcNodeCore> BaseEthApi<N> {
+    pub fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
         let converter = self.inner.converter();
         let base_time = self.base_time_cache().clone();
         self.provider().canonical_state_stream().flat_map(move |new_chain| {

@@ -11,6 +11,7 @@ use alloy_rpc_types_eth::{
     Transaction, TransactionReceipt, transaction::TransactionRequest,
 };
 use alloy_rpc_types_trace::filter::TraceFilter;
+use base_execution_rpc::{EthApiClient, EthCallBundleApiClient, EthFilterApiClient};
 use jsonrpsee::{
     core::{
         client::{ClientT, SubscriptionClientT},
@@ -22,9 +23,8 @@ use jsonrpsee::{
 };
 use reth_network_peers::NodeRecord;
 use reth_rpc_api::{
-    DebugApiClient, EthCallBundleApiClient, EthFilterApiClient, NetApiClient, OtterscanClient,
-    TraceApiClient, Web3ApiClient,
-    clients::{AdminApiClient, EthApiClient},
+    DebugApiClient, NetApiClient, OtterscanClient, TraceApiClient, Web3ApiClient,
+    clients::AdminApiClient,
 };
 use reth_rpc_server_types::RethRpcModule;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};

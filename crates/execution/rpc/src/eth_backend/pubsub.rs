@@ -17,7 +17,6 @@ use jsonrpsee::{
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
-use reth_rpc_eth_api::{RpcNodeCore, helpers::EthSubscriptions, pubsub::EthPubSubApiServer};
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use reth_storage_api::BlockNumReader;
 use reth_tasks::Runtime;
@@ -27,6 +26,8 @@ use tokio_stream::{
     wrappers::{BroadcastStream, ReceiverStream},
 };
 use tracing::error;
+
+use crate::{BaseEthApi, EthApiTypes, EthPubSubApiServer, RpcNodeCore};
 
 /// `Eth` pubsub RPC implementation.
 ///
@@ -39,18 +40,15 @@ pub struct EthPubSub<Eth> {
 
 // === impl EthPubSub ===
 
-impl<Eth> EthPubSub<Eth> {
+impl<ApiNode: RpcNodeCore> EthPubSub<BaseEthApi<ApiNode>> {
     /// Creates a new, shareable instance.
-    pub fn new(eth_api: Eth, subscription_task_spawner: Runtime) -> Self {
+    pub fn new(eth_api: BaseEthApi<ApiNode>, subscription_task_spawner: Runtime) -> Self {
         let inner = EthPubSubInner { eth_api, subscription_task_spawner };
         Self { inner: Arc::new(inner) }
     }
 }
 
-impl<Eth> EthPubSub<Eth>
-where
-    Eth: EthSubscriptions,
-{
+impl<ApiNode: RpcNodeCore> EthPubSub<BaseEthApi<ApiNode>> {
     /// Returns the current sync status for the `syncing` subscription
     pub fn sync_status(&self, is_syncing: bool) -> PubSubSyncStatus {
         self.inner.sync_status(is_syncing)
@@ -64,7 +62,8 @@ where
     /// Returns a stream that yields all transactions emitted by the txpool.
     pub fn full_pending_transaction_stream(
         &self,
-    ) -> impl Stream<Item = NewTransactionEvent<<Eth::Pool as TransactionPool>::Transaction>> {
+    ) -> impl Stream<Item = NewTransactionEvent<<ApiNode::Pool as TransactionPool>::Transaction>>
+    {
         self.inner.full_pending_transaction_stream()
     }
 
@@ -207,9 +206,8 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Eth> EthPubSubApiServer<base_common_rpc_types::Transaction> for EthPubSub<Eth>
-where
-    Eth: EthSubscriptions,
+impl<ApiNode: RpcNodeCore> EthPubSubApiServer<base_common_rpc_types::Transaction>
+    for EthPubSub<BaseEthApi<ApiNode>>
 {
     /// Handler for `eth_subscribe`
     async fn subscribe(
@@ -299,10 +297,7 @@ struct EthPubSubInner<EthApi> {
 
 // == impl EthPubSubInner ===
 
-impl<Eth> EthPubSubInner<Eth>
-where
-    Eth: RpcNodeCore<Provider: BlockNumReader>,
-{
+impl<ApiNode: RpcNodeCore> EthPubSubInner<BaseEthApi<ApiNode>> {
     /// Returns the current sync status for the `syncing` subscription
     fn sync_status(&self, is_syncing: bool) -> PubSubSyncStatus {
         if is_syncing {
@@ -324,10 +319,7 @@ where
     }
 }
 
-impl<Eth> EthPubSubInner<Eth>
-where
-    Eth: RpcNodeCore<Pool: TransactionPool>,
-{
+impl<ApiNode: RpcNodeCore> EthPubSubInner<BaseEthApi<ApiNode>> {
     /// Returns a stream that yields all transaction hashes emitted by the txpool.
     fn pending_transaction_hashes_stream(&self) -> impl Stream<Item = TxHash> {
         ReceiverStream::new(self.eth_api.pool().pending_transactions_listener())
@@ -336,7 +328,8 @@ where
     /// Returns a stream that yields all transactions emitted by the txpool.
     fn full_pending_transaction_stream(
         &self,
-    ) -> impl Stream<Item = NewTransactionEvent<<Eth::Pool as TransactionPool>::Transaction>> {
+    ) -> impl Stream<Item = NewTransactionEvent<<ApiNode::Pool as TransactionPool>::Transaction>>
+    {
         self.eth_api.pool().new_pending_pool_transactions_listener()
     }
 }

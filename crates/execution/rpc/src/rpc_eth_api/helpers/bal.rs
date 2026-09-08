@@ -10,15 +10,12 @@ use reth_rpc_eth_types::{
 use reth_storage_api::StateProviderFactory;
 use revm::database::State;
 
-use crate::{
-    RpcNodeCore, RpcNodeCoreExt,
-    helpers::{Call, LoadBlock, Trace},
-};
+use crate::{BaseEthApi, RpcNodeCore, RpcNodeCoreExt};
 
 /// Helper trait for `eth_blockAccessList` RPC method.
-pub trait GetBlockAccessList: Trace + Call + LoadBlock + RpcNodeCoreExt {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Retrieves the block access list for a block identified by its hash.
-    fn get_block_access_list(
+    pub fn get_block_access_list(
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = Result<Option<BlockAccessList>, BaseEthApiError>> + Send {
@@ -77,7 +74,7 @@ pub trait GetBlockAccessList: Trace + Call + LoadBlock + RpcNodeCoreExt {
     }
 
     /// Retrieves the raw RLP-encoded block access list for a block.
-    fn get_raw_block_access_list(
+    pub fn get_raw_block_access_list(
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = Result<Option<Bytes>, BaseEthApiError>> + Send {

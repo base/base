@@ -46,7 +46,6 @@ reth-rpc-builder = { workspace = true }
 reth-static-file = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
-base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
 base-execution-evm = { workspace = true }
@@ -71,6 +70,7 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-downloaders = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
+base-execution-rpc = { workspace = true, features = ["client"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 reth-tracing = { workspace = true, features = ["default", "std"] }

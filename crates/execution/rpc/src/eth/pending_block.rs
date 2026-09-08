@@ -1,43 +1,32 @@
 //! Loads Base pending block for a RPC response.
 
 use alloy_eips::BlockNumberOrTag;
-use reth_rpc_eth_api::{
-    FromEvmError, RpcNodeCore, RpcNodeCoreExt,
-    helpers::{LoadPendingBlock, SpawnBlocking},
-};
 use reth_rpc_eth_types::{
     EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
     error::FromEthApiError,
 };
 use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
-use crate::{BaseEthApi, BaseEthApiError};
+use crate::{BaseEthApi, BaseEthApiError, RpcNodeCore, RpcNodeCoreExt};
 
-impl<N> LoadPendingBlock for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
+impl<N: RpcNodeCore> BaseEthApi<N> {
     #[inline]
-    fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {
+    pub fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {
         self.inner.pending_block()
     }
 
     #[inline]
-    fn pending_block_kind(&self) -> PendingBlockKind {
+    pub fn pending_block_kind(&self) -> PendingBlockKind {
         self.inner.pending_block_kind()
     }
 
     /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.
-    async fn local_pending_state(&self) -> Result<Option<StateProviderBox>, BaseEthApiError>
-    where
-        Self: SpawnBlocking,
-    {
+    pub async fn local_pending_state(&self) -> Result<Option<StateProviderBox>, BaseEthApiError> {
         Ok(None)
     }
 
     /// Returns the locally built pending block
-    async fn local_pending_block(&self) -> Result<Option<BlockAndReceipts>, BaseEthApiError> {
+    pub async fn local_pending_block(&self) -> Result<Option<BlockAndReceipts>, BaseEthApiError> {
         // See: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/miner/worker.go#L367-L375>
         let latest = self
             .provider()

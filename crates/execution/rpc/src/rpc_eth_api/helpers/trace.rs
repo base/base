@@ -16,14 +16,13 @@ use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::ProviderTx;
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 
-use super::{Call, LoadBlock, LoadState, LoadTransaction};
-use crate::{FromEthApiError, FromEvmError};
+use crate::{BaseEthApi, FromEthApiError, FromEvmError, RpcNodeCore};
 
 /// Executes CPU heavy tasks.
-pub trait Trace: LoadState + Call {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Executes the [`TxEnvFor`] with [`base_execution_evm::EvmEnv`] against the given [`StateCacheDb`]
     /// without committing state changes.
-    fn inspect<'a>(
+    pub fn inspect<'a>(
         &self,
         db: &'a mut StateCacheDb,
         evm_env: EvmEnvFor,
@@ -45,14 +44,13 @@ pub trait Trace: LoadState + Call {
     ///
     /// Note: Implementers should use a threadpool where blocking is allowed, such as
     /// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool).
-    fn spawn_trace_transaction_in_block<F, R>(
+    pub fn spawn_trace_transaction_in_block<F, R>(
         &self,
         hash: B256,
         config: TracingInspectorConfig,
         f: F,
     ) -> impl Future<Output = Result<Option<R>, BaseEthApiError>> + Send
     where
-        Self: LoadTransaction,
         F: FnOnce(
                 TransactionInfo,
                 TracingInspector,
@@ -75,14 +73,13 @@ pub trait Trace: LoadState + Call {
     ///
     /// Note: Implementers should use a threadpool where blocking is allowed, such as
     /// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool).
-    fn spawn_trace_transaction_in_block_with_inspector<Insp, F, R>(
+    pub fn spawn_trace_transaction_in_block_with_inspector<Insp, F, R>(
         &self,
         hash: B256,
         mut inspector: Insp,
         f: F,
     ) -> impl Future<Output = Result<Option<R>, BaseEthApiError>> + Send
     where
-        Self: LoadTransaction,
         F: FnOnce(
                 TransactionInfo,
                 Insp,
@@ -130,7 +127,7 @@ pub trait Trace: LoadState + Call {
     ///
     /// If the target index is greater than or equal to the block's transaction count, all
     /// transactions are replayed.
-    fn replay_block_until(
+    pub fn replay_block_until(
         &self,
         db: &mut StateCacheDb,
         block: &RecoveredBlock,
@@ -150,7 +147,7 @@ pub trait Trace: LoadState + Call {
     /// Replays all transactions before the target transaction without inspection, then executes
     /// the target transaction with the configured inspector, all on the given EVM.
     #[expect(clippy::type_complexity)]
-    fn inspect_transaction_in_block<'a>(
+    pub fn inspect_transaction_in_block<'a>(
         &self,
         block: &RecoveredBlock,
         db: &'a mut StateCacheDb,
@@ -182,7 +179,7 @@ pub trait Trace: LoadState + Call {
     /// transactions, in other words, it will stop executing transactions after the
     /// `highest_index`th transaction. If `highest_index` is `None`, all transactions
     /// are executed.
-    fn trace_block_until<F, R>(
+    pub fn trace_block_until<F, R>(
         &self,
         block_id: BlockId,
         block: Option<Arc<RecoveredBlock>>,
@@ -191,12 +188,11 @@ pub trait Trace: LoadState + Call {
         f: F,
     ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
-        Self: LoadBlock,
         F: Fn(
                 TransactionInfo,
                 TracingCtx<
                     '_,
-                    Recovered<&ProviderTx<Self::Provider>>,
+                    Recovered<&ProviderTx<N::Provider>>,
                     EvmFor<&mut StateCacheDb, TracingInspector>,
                 >,
             ) -> Result<R, BaseEthApiError>
@@ -223,7 +219,7 @@ pub trait Trace: LoadState + Call {
     ///
     /// This accepts a `inspector_setup` closure that returns the inspector to be used for tracing
     /// the transactions.
-    fn trace_block_until_with_inspector<Setup, Insp, F, R>(
+    pub fn trace_block_until_with_inspector<Setup, Insp, F, R>(
         &self,
         block_id: BlockId,
         block: Option<Arc<RecoveredBlock>>,
@@ -232,14 +228,9 @@ pub trait Trace: LoadState + Call {
         f: F,
     ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
-        Self: LoadBlock,
         F: Fn(
                 TransactionInfo,
-                TracingCtx<
-                    '_,
-                    Recovered<&ProviderTx<Self::Provider>>,
-                    EvmFor<&mut StateCacheDb, Insp>,
-                >,
+                TracingCtx<'_, Recovered<&ProviderTx<N::Provider>>, EvmFor<&mut StateCacheDb, Insp>>,
             ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
@@ -318,7 +309,7 @@ pub trait Trace: LoadState + Call {
     /// 4. calls the callback with the transaction info, the execution result, the changed state
     ///    _after_ the transaction [`StateCacheDb`] and the database that points to the state right
     ///    _before_ the transaction.
-    fn trace_block_with<F, R>(
+    pub fn trace_block_with<F, R>(
         &self,
         block_id: BlockId,
         block: Option<Arc<RecoveredBlock>>,
@@ -326,14 +317,11 @@ pub trait Trace: LoadState + Call {
         f: F,
     ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
-        Self: LoadBlock,
-        // This is the callback that's invoked for each transaction with the inspector, the result,
-        // state and db
         F: Fn(
                 TransactionInfo,
                 TracingCtx<
                     '_,
-                    Recovered<&ProviderTx<Self::Provider>>,
+                    Recovered<&ProviderTx<N::Provider>>,
                     EvmFor<&mut StateCacheDb, TracingInspector>,
                 >,
             ) -> Result<R, BaseEthApiError>
@@ -358,7 +346,7 @@ pub trait Trace: LoadState + Call {
     ///
     /// This accepts a `inspector_setup` closure that returns the inspector to be used for tracing
     /// a transaction. This is invoked for each transaction.
-    fn trace_block_inspector<Setup, Insp, F, R>(
+    pub fn trace_block_inspector<Setup, Insp, F, R>(
         &self,
         block_id: BlockId,
         block: Option<Arc<RecoveredBlock>>,
@@ -366,16 +354,9 @@ pub trait Trace: LoadState + Call {
         f: F,
     ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
-        Self: LoadBlock,
-        // This is the callback that's invoked for each transaction with the inspector, the result,
-        // state and db
         F: Fn(
                 TransactionInfo,
-                TracingCtx<
-                    '_,
-                    Recovered<&ProviderTx<Self::Provider>>,
-                    EvmFor<&mut StateCacheDb, Insp>,
-                >,
+                TracingCtx<'_, Recovered<&ProviderTx<N::Provider>>, EvmFor<&mut StateCacheDb, Insp>>,
             ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
@@ -391,7 +372,7 @@ pub trait Trace: LoadState + Call {
     /// Note: This should only be called when tracing an entire block vs individual transactions.
     /// When tracing transactions on top of an already committed block state, those transitions are
     /// already applied.
-    fn apply_pre_execution_changes(
+    pub fn apply_pre_execution_changes(
         &self,
         block: &RecoveredBlock,
         db: &mut StateCacheDb,

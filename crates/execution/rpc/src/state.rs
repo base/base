@@ -5,8 +5,9 @@ use base_execution_trie::{
     BaseProofsStorage, BaseProofsStore, provider::BaseProofsStateProviderRef,
 };
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
-use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
+
+use crate::{BaseEthApi, RpcNodeCore};
 
 /// Creates a factory for state providers using external proofs storage.
 #[derive(Debug)]
@@ -15,16 +16,15 @@ pub struct BaseStateProviderFactory<Eth, P> {
     preimage_store: BaseProofsStorage<P>,
 }
 
-impl<Eth, P> BaseStateProviderFactory<Eth, P> {
+impl<ApiNode: RpcNodeCore, P> BaseStateProviderFactory<BaseEthApi<ApiNode>, P> {
     /// Creates a new state provider factory.
-    pub const fn new(eth_api: Eth, preimage_store: BaseProofsStorage<P>) -> Self {
+    pub const fn new(eth_api: BaseEthApi<ApiNode>, preimage_store: BaseProofsStorage<P>) -> Self {
         Self { eth_api, preimage_store }
     }
 }
 
-impl<'a, Eth, P> BaseStateProviderFactory<Eth, P>
+impl<'a, ApiNode: RpcNodeCore, P> BaseStateProviderFactory<BaseEthApi<ApiNode>, P>
 where
-    Eth: FullEthApi + Send + Sync + 'static,
     P: BaseProofsStore + Clone + 'a,
 {
     /// Creates a state provider for the given block id.

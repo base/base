@@ -23,41 +23,29 @@ use base_execution_txpool::{
     TransactionPool,
 };
 use futures::Future;
-use reth_chain_state::{BlockState, ExecutedBlock};
+use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
-    block::BlockAndReceipts, builder::config::PendingBlockKind,
 };
 use reth_storage_api::{
-    BlockReader, BlockReaderIdExt, ProviderTx, StateProviderBox, StateProviderFactory,
-    noop::NoopProvider,
+    BlockReader, BlockReaderIdExt, ProviderTx, StateProviderFactory, noop::NoopProvider,
 };
 use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::ComputedTrieData;
 use revm::database::State;
-use tokio::sync::Mutex;
 use tracing::debug;
 
-use super::SpawnBlocking;
-use crate::{EthApiTypes, FromEthApiError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError, RpcNodeCore};
 
 /// Loads a pending block from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
-pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
-    /// Returns a handle to the pending block.
-    ///
-    /// Data access in default (L1) trait method implementations.
-    fn pending_block(&self) -> &Mutex<Option<PendingBlock>>;
-
-    /// Returns the pending block kind
-    fn pending_block_kind(&self) -> PendingBlockKind;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Configures the [`PendingBlockEnv`] for the pending block
     ///
     /// If no pending block is available, this will derive it from the `latest` block
-    fn pending_block_env_and_cfg(&self) -> Result<PendingBlockEnv, BaseEthApiError> {
+    pub fn pending_block_env_and_cfg(&self) -> Result<PendingBlockEnv, BaseEthApiError> {
         if let Some((block, receipts)) =
             self.provider().pending_block_and_receipts().map_err(BaseEthApiError::from_eth_err)?
         {
@@ -93,36 +81,10 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
         Ok(PendingBlockEnv::new(evm_env, PendingBlockEnvOrigin::DerivedFromLatest(latest)))
     }
 
-    /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.
-    fn local_pending_state(
-        &self,
-    ) -> impl Future<Output = Result<Option<StateProviderBox>, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
-        async move {
-            let Some(pending_block) = self.pool_pending_block().await? else {
-                return Ok(None);
-            };
-
-            let latest_historical = self
-                .provider()
-                .history_by_block_hash(pending_block.block().parent_hash())
-                .map_err(BaseEthApiError::from_eth_err)?;
-
-            let state = BlockState::from(pending_block);
-
-            Ok(Some(Box::new(state.state_provider(latest_historical)) as StateProviderBox))
-        }
-    }
-
     /// Returns a mem-pool built pending block.
-    fn pool_pending_block(
+    pub fn pool_pending_block(
         &self,
-    ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send {
         async move {
             if self.pending_block_kind().is_none() {
                 return Ok(None);
@@ -141,14 +103,11 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     ///
     /// This is the shared implementation used by both [`Self::pool_pending_block`] and
     /// [`Self::local_pending_block`] to avoid resolving the pending block environment twice.
-    fn build_pool_pending_block(
+    pub fn build_pool_pending_block(
         &self,
         parent: SealedHeader,
         evm_env: EvmEnvFor,
-    ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send {
         async move {
             // we couldn't find the real pending block, so we need to build it ourselves
             let mut lock = self.pending_block().lock().await;
@@ -191,34 +150,6 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
         }
     }
 
-    /// Returns the locally built pending block
-    fn local_pending_block(
-        &self,
-    ) -> impl Future<Output = Result<Option<BlockAndReceipts>, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-        Self::Pool:
-            TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<Self::Provider>>>,
-    {
-        async move {
-            if self.pending_block_kind().is_none() {
-                return Ok(None);
-            }
-
-            let pending = self.pending_block_env_and_cfg()?;
-
-            Ok(match pending.origin {
-                PendingBlockEnvOrigin::ActualPending(block, receipts) => {
-                    Some(BlockAndReceipts { block, receipts })
-                }
-                PendingBlockEnvOrigin::DerivedFromLatest(parent) => self
-                    .build_pool_pending_block(parent, pending.evm_env)
-                    .await?
-                    .map(PendingBlock::into_block_and_receipts),
-            })
-        }
-    }
-
     /// Builds a locally derived pending block using the configured provider and pool.
     ///
     /// This is used when no execution-layer pending block is available and a pending block is
@@ -226,10 +157,9 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     ///
     /// Withdrawals and any fork-specific behavior (such as EIP-4788 pre-block contract calls) are
     /// determined by the EVM environment and chain specification used during construction.
-    fn build_block(&self, parent: &SealedHeader) -> Result<ExecutedBlock, BaseEthApiError>
+    pub fn build_block(&self, parent: &SealedHeader) -> Result<ExecutedBlock, BaseEthApiError>
     where
-        Self::Pool:
-            TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<Self::Provider>>>,
+        N::Pool: TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<N::Provider>>>,
         EthApiError: From<ProviderError>,
     {
         let state_provider = self

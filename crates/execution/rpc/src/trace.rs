@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use alloy_consensus::BlockHeader as _;
 use alloy_eips::BlockId;
-use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{
-    Address, B256, BlockHash, Bytes, U256,
+    Address, B256, BlockHash, Bytes,
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types_eth::{
@@ -19,17 +18,10 @@ use alloy_rpc_types_trace::{
 };
 use async_trait::async_trait;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_evm_handler::{base_block_reward_pre_merge, block_reward, ommer_reward};
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
-use reth_primitives_traits::{BlockBody, BlockHeader};
 use reth_rpc_api::TraceApiServer;
-use reth_rpc_eth_api::{
-    FromEthApiError, RpcNodeCore,
-    helpers::{Call, LoadPendingBlock, LoadTransaction, Trace, TraceExt},
-};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
 };
@@ -43,6 +35,8 @@ use revm_inspectors::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
+
+use crate::{BaseEthApi, FromEthApiError, RpcNodeCore};
 
 /// Maximum number of `trace_filter` blocks replayed concurrently.
 const TRACE_FILTER_BLOCK_BUFFER_SIZE: usize = 4;
@@ -58,10 +52,10 @@ pub struct TraceApi<Eth> {
 
 // === impl TraceApi ===
 
-impl<Eth> TraceApi<Eth> {
+impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
     /// Create a new instance of the [`TraceApi`]
     pub fn new(
-        eth_api: Eth,
+        eth_api: BaseEthApi<ApiNode>,
         blocking_task_guard: BlockingTaskGuard,
         eth_config: EthConfig,
     ) -> Self {
@@ -76,27 +70,22 @@ impl<Eth> TraceApi<Eth> {
         self.inner.blocking_task_guard.clone().acquire_owned().await
     }
 
-    /// Access the underlying `Eth` API.
-    pub fn eth_api(&self) -> &Eth {
+    /// Access the underlying `BaseEthApi<ApiNode>` API.
+    pub fn eth_api(&self) -> &BaseEthApi<ApiNode> {
         &self.inner.eth_api
     }
 }
 
-impl<Eth: RpcNodeCore> TraceApi<Eth> {
+impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
     /// Access the underlying provider.
-    pub fn provider(&self) -> &Eth::Provider {
+    pub fn provider(&self) -> &ApiNode::Provider {
         self.inner.eth_api.provider()
     }
 }
 
 // === impl TraceApi === //
 
-impl<Eth> TraceApi<Eth>
-where
-    // tracing methods do _not_ read from mempool, hence no `LoadBlock` trait
-    // bound
-    Eth: Trace + Call + LoadPendingBlock + LoadTransaction + 'static,
-{
+impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
     /// Executes the given call and returns a number of possible traces for it.
     pub async fn trace_call(
         &self,
@@ -127,8 +116,8 @@ where
         trace_types: HashSet<TraceType>,
         block_id: Option<BlockId>,
     ) -> Result<TraceResults, BaseEthApiError> {
-        let tx = recover_raw_transaction::<PoolPooledTx<Eth::Pool>>(&tx)?
-            .map(<Eth::Pool as TransactionPool>::Transaction::pooled_into_consensus);
+        let tx = recover_raw_transaction::<PoolPooledTx<ApiNode::Pool>>(&tx)?
+            .map(<ApiNode::Pool as TransactionPool>::Transaction::pooled_into_consensus);
 
         let (evm_env, at) = self.eth_api().evm_env_at(block_id.unwrap_or_default()).await?;
 
@@ -281,72 +270,9 @@ where
             )
             .await
     }
-
-    /// Calculates the base block reward for the given block:
-    ///
-    /// - if Paris hardfork is activated, no block rewards are given
-    /// - if Paris hardfork is not activated, calculate block rewards with block number only
-    fn calculate_base_block_reward<H: BlockHeader>(
-        &self,
-        header: &H,
-    ) -> Result<Option<u128>, BaseEthApiError> {
-        let chain_spec = self.provider().chain_spec();
-
-        if chain_spec.is_paris_active_at_block(header.number()) {
-            return Ok(None);
-        }
-
-        Ok(Some(base_block_reward_pre_merge(&chain_spec, header.number())))
-    }
-
-    /// Extracts the reward traces for the given block:
-    ///  - block reward
-    ///  - uncle rewards
-    fn extract_reward_traces<H: BlockHeader>(
-        &self,
-        header: &H,
-        block_hash: BlockHash,
-        ommers: Option<&[H]>,
-        base_block_reward: u128,
-    ) -> Vec<LocalizedTransactionTrace> {
-        let ommers_cnt = ommers.map(|o| o.len()).unwrap_or_default();
-        let mut traces = Vec::with_capacity(ommers_cnt + 1);
-
-        let block_reward = block_reward(base_block_reward, ommers_cnt);
-        traces.push(reward_trace(
-            block_hash,
-            header,
-            RewardAction {
-                author: header.beneficiary(),
-                reward_type: RewardType::Block,
-                value: U256::from(block_reward),
-            },
-        ));
-
-        let Some(ommers) = ommers else { return traces };
-
-        for uncle in ommers {
-            let uncle_reward = ommer_reward(base_block_reward, header.number(), uncle.number());
-            traces.push(reward_trace(
-                block_hash,
-                header,
-                RewardAction {
-                    author: uncle.beneficiary(),
-                    reward_type: RewardType::Uncle,
-                    value: U256::from(uncle_reward),
-                },
-            ));
-        }
-        traces
-    }
 }
 
-impl<Eth> TraceApi<Eth>
-where
-    // tracing methods read from mempool, hence `LoadBlock` trait bound via
-    // `TraceExt`
-    Eth: TraceExt + 'static,
-{
+impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
     /// Returns all transaction traces that match the given filter.
     ///
     /// This is similar to [`Self::trace_block`] but only returns traces for transactions that match
@@ -402,7 +328,6 @@ where
         let mut all_traces = Vec::new();
         let block_buffer_size =
             self.inner.eth_config.max_tracing_requests.clamp(1, TRACE_FILTER_BLOCK_BUFFER_SIZE);
-        let mut include_reward_traces = true;
 
         for chunk_start in (start..=end).step_by(TRACE_FILTER_FETCH_CHUNK_SIZE) {
             let chunk_end = (chunk_start + TRACE_FILTER_FETCH_CHUNK_SIZE as u64 - 1).min(end);
@@ -448,40 +373,16 @@ where
                             )
                             .await?;
 
-                        Ok::<_, BaseEthApiError>((block, traces))
+                        Ok::<_, BaseEthApiError>(traces)
                     }
                 })
                 .buffered(block_buffer_size);
 
             while let Some(block_replay) = block_replays.next().await {
-                let (block, traces) = block_replay?;
-                let reward_traces = if include_reward_traces {
-                    if let Some(base_block_reward) =
-                        self.calculate_base_block_reward(block.header())?
-                    {
-                        self.extract_reward_traces(
-                            block.header(),
-                            block.hash(),
-                            block.body().ommers(),
-                            base_block_reward,
-                        )
-                        .into_iter()
-                        .filter(|trace| matcher.matches(&trace.trace))
-                        .collect::<Vec<_>>()
-                    } else {
-                        // Blocks are processed in ascending order, so once a historical range
-                        // reaches post-Paris blocks, later blocks in the range have no rewards.
-                        include_reward_traces = false;
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                };
-
+                let traces = block_replay?;
                 if let Some(traces) = traces {
                     all_traces.extend(traces.into_iter().flatten().flatten());
                 }
-                all_traces.extend(reward_traces);
 
                 if let Some(traces) =
                     apply_trace_filter_pagination(&mut all_traces, &mut after, count)
@@ -511,7 +412,7 @@ where
             return Err(EthApiError::HeaderNotFound(block_id).into());
         };
 
-        let mut traces = self
+        let traces = self
             .eth_api()
             .trace_block_with(
                 block_id,
@@ -527,17 +428,6 @@ where
             )
             .await?
             .map(|traces| traces.into_iter().flatten().collect::<Vec<_>>());
-
-        if let Some(traces) = traces.as_mut()
-            && let Some(base_block_reward) = self.calculate_base_block_reward(block.header())?
-        {
-            traces.extend(self.extract_reward_traces(
-                block.header(),
-                block.hash(),
-                block.body().ommers(),
-                base_block_reward,
-            ));
-        }
 
         Ok(traces)
     }
@@ -684,9 +574,8 @@ fn apply_trace_filter_pagination(
 }
 
 #[async_trait]
-impl<Eth> TraceApiServer<BaseTransactionRequest> for TraceApi<Eth>
-where
-    Eth: TraceExt + 'static,
+impl<ApiNode: RpcNodeCore> TraceApiServer<BaseTransactionRequest>
+    for TraceApi<BaseEthApi<ApiNode>>
 {
     /// Executes the given call and returns a number of possible traces for it.
     ///
@@ -848,28 +737,6 @@ pub struct BlockStorageAccess {
     pub transactions: Vec<TransactionStorageAccess>,
 }
 
-/// Helper to construct a [`LocalizedTransactionTrace`] that describes a reward to the block
-/// beneficiary.
-fn reward_trace<H: BlockHeader>(
-    block_hash: BlockHash,
-    header: &H,
-    reward: RewardAction,
-) -> LocalizedTransactionTrace {
-    LocalizedTransactionTrace {
-        block_hash: Some(block_hash),
-        block_number: Some(header.number()),
-        transaction_hash: None,
-        transaction_position: None,
-        trace: TransactionTrace {
-            trace_address: vec![],
-            subtraces: 0,
-            action: Action::Reward(reward),
-            error: None,
-            result: None,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -887,26 +754,6 @@ mod tests {
         }
     }
 
-    fn localized_reward_trace(block_number: u64) -> LocalizedTransactionTrace {
-        LocalizedTransactionTrace {
-            block_hash: Some(B256::ZERO),
-            block_number: Some(block_number),
-            transaction_hash: None,
-            transaction_position: None,
-            trace: TransactionTrace {
-                trace_address: vec![],
-                subtraces: 0,
-                action: Action::Reward(RewardAction {
-                    author: Address::ZERO,
-                    reward_type: RewardType::Block,
-                    value: U256::ZERO,
-                }),
-                error: None,
-                result: None,
-            },
-        }
-    }
-
     fn trace_order(traces: &[LocalizedTransactionTrace]) -> Vec<(u64, Option<u64>, bool)> {
         traces
             .iter()
@@ -921,18 +768,18 @@ mod tests {
     }
 
     #[test]
-    fn trace_filter_paginates_after_per_block_reward_order() {
+    fn trace_filter_paginates_in_block_and_transaction_order() {
         let mut all_traces = vec![
             localized_transaction_trace(1, 0),
-            localized_reward_trace(1),
+            localized_transaction_trace(1, 1),
             localized_transaction_trace(2, 0),
-            localized_reward_trace(2),
+            localized_transaction_trace(2, 1),
         ];
 
         let mut after = Some(1);
         let paginated =
             apply_trace_filter_pagination(&mut all_traces, &mut after, Some(1)).unwrap();
 
-        assert_eq!(trace_order(&paginated), vec![(1, None, true)]);
+        assert_eq!(trace_order(&paginated), vec![(1, Some(1), false)]);
     }
 }

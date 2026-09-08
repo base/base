@@ -37,10 +37,6 @@ pub use servers::*;
 
 /// Aggregates all server traits.
 pub mod servers {
-    pub use reth_rpc_eth_api::{
-        self as eth, EthApiServer, EthBundleApiServer, EthCallBundleApiServer, EthConfigApiServer,
-        EthFilterApiServer, EthPubSubApiServer, L2EthApiExtServer,
-    };
 
     pub use crate::{
         admin::AdminApiServer,
@@ -69,10 +65,6 @@ pub use clients::*;
 /// Aggregates all client traits.
 #[cfg(feature = "client")]
 pub mod clients {
-    pub use reth_rpc_eth_api::{
-        EthApiClient, EthBundleApiClient, EthCallBundleApiClient, EthConfigApiClient,
-        EthFilterApiClient, L2EthApiExtClient,
-    };
 
     pub use crate::{
         admin::AdminApiClient,

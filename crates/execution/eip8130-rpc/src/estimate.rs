@@ -8,11 +8,8 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};
 use base_evm_handler::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
+use base_execution_rpc::{BaseEthApi, FromEthApiError, RpcNodeCore};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_rpc_eth_api::{
-    FromEthApiError,
-    helpers::{FullEthApi, LoadPendingBlock},
-};
 use reth_rpc_eth_types::{
     BaseEthApiError,
     error::api::{FromEvmHalt, FromRevert},
@@ -63,17 +60,14 @@ impl Eip8130GasEstimator {
     ///   the simulation halts, matching standard `eth_estimateGas`.
     /// - Any error from environment resolution, state access, override
     ///   application, or simulation propagates as an `ErrorObjectOwned`.
-    pub async fn estimate<Eth>(
-        eth_api: &Eth,
+    pub async fn estimate<ApiNode: RpcNodeCore>(
+        eth_api: &BaseEthApi<ApiNode>,
         request: BaseTransactionRequest,
         block_id: BlockId,
         overrides: EvmOverrides,
     ) -> Result<U256, ErrorObjectOwned>
     where
-        Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
         TxEnvFor: From<BaseRevm>,
-        // Pin the block env to revm's concrete type so block overrides can be
-        // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
         EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
     {
         let (evm_env, at) = eth_api.evm_env_at(block_id).await?;

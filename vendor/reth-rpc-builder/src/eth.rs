@@ -1,5 +1,4 @@
-use base_execution_rpc::{EthFilter, EthPubSub};
-use reth_rpc_eth_api::EthApiTypes;
+use base_execution_rpc::{BaseEthApi, EthApiTypes, EthFilter, EthPubSub, RpcNodeCore};
 use reth_rpc_eth_types::EthConfig;
 use reth_tasks::Runtime;
 
@@ -14,14 +13,11 @@ pub struct EthHandlers<EthApi: EthApiTypes> {
     pub pubsub: EthPubSub<EthApi>,
 }
 
-impl<EthApi> EthHandlers<EthApi>
-where
-    EthApi: EthApiTypes + 'static,
-{
+impl<ApiNode: RpcNodeCore> EthHandlers<BaseEthApi<ApiNode>> {
     /// Returns a new instance with the additional handlers for the `eth` namespace.
     ///
     /// This will spawn all necessary tasks for the additional handlers.
-    pub fn bootstrap(config: EthConfig, executor: Runtime, eth_api: EthApi) -> Self {
+    pub fn bootstrap(config: EthConfig, executor: Runtime, eth_api: BaseEthApi<ApiNode>) -> Self {
         let filter = EthFilter::new(eth_api.clone(), config.filter_config(), executor.clone());
 
         let pubsub = EthPubSub::new(eth_api.clone(), executor);

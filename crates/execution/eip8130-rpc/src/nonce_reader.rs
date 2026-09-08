@@ -6,8 +6,8 @@ use alloy_rpc_types::state::StateOverride;
 use base_common_consensus::Eip8130Constants;
 use base_common_precompiles::NonceManagerStorage;
 use base_common_rpc_types::Eip8130Nonce;
+use base_execution_rpc::{BaseEthApi, RpcNodeCore};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_rpc_eth_api::helpers::{EthState, FullEthApi};
 use reth_rpc_eth_types::EthApiError;
 
 /// Reads 2D channel nonces (`nonces[account][nonce_key]`) from the Nonce Manager
@@ -36,20 +36,17 @@ impl ChannelNonceReader {
     ///   replay protection there relies on `valid_before`, not a sequence number.
     /// - Any error from the underlying `eth_api` (e.g. unknown block, state
     ///   read failure) propagates as an `ErrorObjectOwned`.
-    pub async fn read<Eth>(
-        eth_api: &Eth,
+    pub async fn read<ApiNode: RpcNodeCore>(
+        eth_api: &BaseEthApi<ApiNode>,
         address: Address,
         nonce_key: U256,
         block_id: BlockId,
         state_overrides: Option<&StateOverride>,
-    ) -> Result<U256, ErrorObjectOwned>
-    where
-        Eth: FullEthApi + Send + Sync + 'static,
-    {
+    ) -> Result<U256, ErrorObjectOwned> {
         // Protocol nonce. Lives in account state, not the precompile.
         // Delegate to the standard `eth_getTransactionCount` resolution path.
         if nonce_key == U256::ZERO {
-            return EthState::transaction_count(eth_api, address, Some(block_id))
+            return BaseEthApi::transaction_count(eth_api, address, Some(block_id))
                 .await
                 .map_err(Into::into);
         }
@@ -107,7 +104,7 @@ impl ChannelNonceReader {
     /// bits of an EVM storage slot, returning it widened to [`U256`].
     ///
     /// Widening to `U256` matches the return type of
-    /// [`EthState::transaction_count`] so all three `nonce_key` branches of
+    /// [`BaseEthApi::transaction_count`] so all three `nonce_key` branches of
     /// [`Self::read`] return the same shape.
     pub fn decode_channel_nonce(slot_value: U256) -> U256 {
         Eip8130Nonce::decode_channel_nonce(slot_value)

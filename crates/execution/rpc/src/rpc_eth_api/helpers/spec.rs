@@ -12,21 +12,14 @@ use reth_storage_api::{
     BlockNumReader, PruneCheckpointReader, StageCheckpointReader, TransactionsProvider,
 };
 
-use crate::{
-    EthApiTypes, RpcNodeCore,
-    helpers::{EthSigner, EthState},
-};
+use crate::{BaseEthApi, EthSigner, RpcNodeCore};
 
 /// `Eth` API trait.
 ///
 /// Defines core functionality of the `eth` API implementation.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
-    /// Returns the block node is started on.
-    fn starting_block(&self) -> U256;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the current ethereum protocol version.
-    fn protocol_version(
+    pub fn protocol_version(
         &self,
     ) -> impl Future<Output = Result<U64, reth_network_api::NetworkError>> + Send {
         async move {
@@ -36,12 +29,12 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     }
 
     /// Returns the chain id
-    fn chain_id(&self) -> U64 {
+    pub fn chain_id(&self) -> U64 {
         U64::from(self.network().chain_id())
     }
 
     /// Returns provider chain info
-    fn chain_info(&self) -> reth_storage_errors::provider::ProviderResult<ChainInfo> {
+    pub fn chain_info(&self) -> reth_storage_errors::provider::ProviderResult<ChainInfo> {
         Ok(self.provider().chain_info()?)
     }
 
@@ -49,10 +42,7 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     ///
     /// The response follows the `eth_capabilities` execution API proposal:
     /// <https://github.com/ethereum/execution-apis/pull/755>.
-    fn capabilities(&self) -> reth_storage_errors::provider::ProviderResult<EthCapabilities>
-    where
-        Self: EthState,
-    {
+    pub fn capabilities(&self) -> reth_storage_errors::provider::ProviderResult<EthCapabilities> {
         let chain_info = self.chain_info()?;
         let provider = self.provider();
 
@@ -92,12 +82,12 @@ pub trait EthApiSpec: RpcNodeCore + EthApiTypes {
     }
 
     /// Returns `true` if the network is undergoing sync.
-    fn is_syncing(&self) -> bool {
+    pub fn is_syncing(&self) -> bool {
         self.network().is_syncing()
     }
 
     /// Returns the [`SyncStatus`] of the network
-    fn sync_status(&self) -> reth_storage_errors::provider::ProviderResult<SyncStatus> {
+    pub fn sync_status(&self) -> reth_storage_errors::provider::ProviderResult<SyncStatus> {
         let status = if self.is_syncing() {
             let current_block = U256::from(
                 self.provider().chain_info().map(|info| info.best_number).unwrap_or_default(),

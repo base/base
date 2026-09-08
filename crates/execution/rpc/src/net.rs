@@ -2,7 +2,8 @@ use alloy_primitives::U64;
 use jsonrpsee::core::RpcResult as Result;
 use reth_network_api::PeersInfo;
 use reth_rpc_api::NetApiServer;
-use reth_rpc_eth_api::helpers::EthApiSpec;
+
+use crate::{BaseEthApi, RpcNodeCore};
 
 /// `Net` API implementation.
 ///
@@ -16,18 +17,17 @@ pub struct NetApi<Net, Eth> {
 
 // === impl NetApi ===
 
-impl<Net, Eth> NetApi<Net, Eth> {
+impl<Net, ApiNode: RpcNodeCore> NetApi<Net, BaseEthApi<ApiNode>> {
     /// Returns a new instance with the given network and eth interface implementations
-    pub const fn new(network: Net, eth: Eth) -> Self {
+    pub const fn new(network: Net, eth: BaseEthApi<ApiNode>) -> Self {
         Self { network, eth }
     }
 }
 
 /// Net rpc implementation
-impl<Net, Eth> NetApiServer for NetApi<Net, Eth>
+impl<Net, ApiNode: RpcNodeCore> NetApiServer for NetApi<Net, BaseEthApi<ApiNode>>
 where
     Net: PeersInfo + 'static,
-    Eth: EthApiSpec + 'static,
 {
     /// Handler for `net_version`
     fn version(&self) -> Result<String> {

@@ -38,30 +38,19 @@ use revm::{
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 
-use super::{LoadBlock, LoadPendingBlock, LoadState, LoadTransaction, SpawnBlocking, Trace};
-use crate::{FromEvmError, FullEthApiTypes, RpcNodeCore, helpers::estimate::EstimateCall};
+use crate::{BaseEthApi, EthApiTypes, FromEvmError, RpcNodeCore};
 
 /// Result type for `eth_simulateV1` RPC method.
 pub type SimulatedBlocksResult<E> = Result<Vec<SimulatedBlock<BaseBlockResponse>>, E>;
 
 /// Execution related functions for the [`EthApiServer`](crate::EthApiServer) trait in
 /// the `eth_` namespace.
-pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthApiTypes {
-    /// Estimate gas needed for execution of the `request` at the [`BlockId`].
-    fn estimate_gas_at(
-        &self,
-        request: BaseTransactionRequest,
-        at: BlockId,
-        overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
-        EstimateCall::estimate_gas_at(self, request, at, overrides)
-    }
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// `eth_simulateV1` executes an arbitrary number of transactions on top of the requested state.
     /// The transactions are packed into individual blocks. Overrides can be provided.
     ///
     /// See also: <https://github.com/ethereum/go-ethereum/pull/27720>
-    fn simulate_v1(
+    pub fn simulate_v1(
         &self,
         payload: SimulatePayload<BaseTransactionRequest>,
         block: Option<BlockId>,
@@ -267,7 +256,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     }
 
     /// Executes the call request (`eth_call`) and returns the output
-    fn call(
+    pub fn call(
         &self,
         request: BaseTransactionRequest,
         block_number: Option<BlockId>,
@@ -284,15 +273,12 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 
     /// Simulate arbitrary number of transactions at an arbitrary blockchain index, with the
     /// optionality of state overrides
-    fn call_many(
+    pub fn call_many(
         &self,
         bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         mut state_override: Option<StateOverride>,
-    ) -> impl Future<Output = Result<Vec<Vec<EthCallResponse>>, BaseEthApiError>> + Send
-    where
-        Self: Trace,
-    {
+    ) -> impl Future<Output = Result<Vec<Vec<EthCallResponse>>, BaseEthApiError>> + Send {
         async move {
             // Check if the vector of bundles is empty
             if bundles.is_empty() {
@@ -416,15 +402,12 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 
     /// Creates [`AccessListResult`] for the [`RpcTxReq`] at the given
     /// [`BlockId`], or latest block.
-    fn create_access_list_at(
+    pub fn create_access_list_at(
         &self,
         request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
-    ) -> impl Future<Output = Result<AccessListResult, BaseEthApiError>> + Send
-    where
-        Self: Trace,
-    {
+    ) -> impl Future<Output = Result<AccessListResult, BaseEthApiError>> + Send {
         async move {
             let block_id = block_number.unwrap_or_default();
             let (evm_env, at) = self.evm_env_at(block_id).await?;
@@ -438,16 +421,13 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 
     /// Creates [`AccessListResult`] for the [`RpcTxReq`] at the given
     /// [`BlockId`].
-    fn create_access_list_with(
+    pub fn create_access_list_with(
         &self,
         evm_env: EvmEnvFor,
         at: BlockId,
         request: BaseTransactionRequest,
         state_override: Option<StateOverride>,
-    ) -> impl Future<Output = Result<AccessListResult, BaseEthApiError>> + Send
-    where
-        Self: Trace,
-    {
+    ) -> impl Future<Output = Result<AccessListResult, BaseEthApiError>> + Send {
         self.spawn_with_state_at_block(at, |this, mut db| {
             let initial = request.as_ref().access_list().cloned().unwrap_or_default();
             let (evm_env, mut tx_env) = this.prepare_call_env(
@@ -487,23 +467,9 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 }
 
 /// Executes code on state.
-pub trait Call: LoadState + SpawnBlocking {
-    /// Returns default gas limit to use for `eth_call` and tracing RPC methods.
-    ///
-    /// Data access in default trait method implementations.
-    fn call_gas_limit(&self) -> u64;
-
-    /// Returns the maximum number of blocks accepted for `eth_simulateV1`.
-    fn max_simulate_blocks(&self) -> u64;
-
-    /// Returns whether `eth_simulateV1` should compute state roots.
-    fn compute_state_root_for_eth_simulate(&self) -> bool;
-
-    /// Returns the maximum memory the EVM can allocate per RPC request.
-    fn evm_memory_limit(&self) -> u64;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the max gas limit that the caller can afford given a transaction environment.
-    fn caller_gas_allowance(
+    pub fn caller_gas_allowance(
         &self,
         mut db: impl Database<Error: Into<EthApiError>>,
         _evm_env: &EvmEnvFor,
@@ -515,7 +481,7 @@ pub trait Call: LoadState + SpawnBlocking {
 
     /// Executes the `TxEnv` against the given [Database] without committing state
     /// changes.
-    fn transact<DB>(
+    pub fn transact<DB>(
         &self,
         db: DB,
         evm_env: EvmEnvFor,
@@ -532,7 +498,7 @@ pub trait Call: LoadState + SpawnBlocking {
 
     /// Executes the [`base_execution_evm::EvmEnv`] against the given [Database] without committing state
     /// changes.
-    fn transact_with_inspector<DB, I>(
+    pub fn transact_with_inspector<DB, I>(
         &self,
         db: DB,
         evm_env: EvmEnvFor,
@@ -555,15 +521,12 @@ pub trait Call: LoadState + SpawnBlocking {
     /// the call [`Self::transact`]. If the future is dropped before the (blocking) transact
     /// call is invoked, then the task is cancelled early, (for example if the request is terminated
     /// early client-side).
-    fn transact_call_at(
+    pub fn transact_call_at(
         &self,
         request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor>, BaseEthApiError>> + Send
-    where
-        Self: LoadPendingBlock,
-    {
+    ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor>, BaseEthApiError>> + Send {
         async move {
             let guard = CancelOnDrop::default();
             let cancel = guard.clone();
@@ -584,7 +547,7 @@ pub trait Call: LoadState + SpawnBlocking {
     }
 
     /// Executes the closure with the state that corresponds to the given [`BlockId`] on a new task
-    fn spawn_with_state_at_block<F, R>(
+    pub fn spawn_with_state_at_block<F, R>(
         &self,
         at: impl Into<BlockId>,
         f: F,
@@ -616,7 +579,7 @@ pub trait Call: LoadState + SpawnBlocking {
     /// usually allowed to consume a lot of gas, this also allows a lot of memory operations so
     /// we assume this is not primarily CPU bound and instead spawn the call on a regular tokio task
     /// instead, where blocking IO is less problematic.
-    fn spawn_with_call_at<F, R>(
+    pub fn spawn_with_call_at<F, R>(
         &self,
         request: BaseTransactionRequest,
         at: BlockId,
@@ -624,7 +587,6 @@ pub trait Call: LoadState + SpawnBlocking {
         f: F,
     ) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
     where
-        Self: LoadPendingBlock,
         F: FnOnce(&mut StateCacheDb, EvmEnvFor, TxEnvFor) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
@@ -651,13 +613,12 @@ pub trait Call: LoadState + SpawnBlocking {
     ///
     /// Note: Implementers should use a threadpool where blocking is allowed, such as
     /// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool).
-    fn spawn_replay_transaction<F, R>(
+    pub fn spawn_replay_transaction<F, R>(
         &self,
         hash: B256,
         f: F,
     ) -> impl Future<Output = Result<Option<R>, BaseEthApiError>> + Send
     where
-        Self: LoadBlock + LoadTransaction,
         F: FnOnce(
                 TransactionInfo,
                 ResultAndState<HaltReasonFor>,
@@ -714,11 +675,11 @@ pub trait Call: LoadState + SpawnBlocking {
     /// This executes on a caller provided EVM, so the target transaction can then be run on the
     /// same EVM, keeping any block-scoped EVM state intact. The EVM's inspector configuration is
     /// left untouched; see
-    /// [`Trace::inspect_transaction_in_block`] to replay without inspection and trace the target.
+    /// [`BaseEthApi::inspect_transaction_in_block`] to replay without inspection and trace the target.
     ///
     /// If the target index is greater than or equal to the iterator length, all transactions are
     /// replayed.
-    fn replay_transactions_until_with_evm<'a, DB, I, Txs>(
+    pub fn replay_transactions_until_with_evm<'a, DB, I, Txs>(
         &self,
         evm: &mut EvmFor<DB, I>,
         transactions: Txs,
@@ -727,7 +688,7 @@ pub trait Call: LoadState + SpawnBlocking {
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + DatabaseCommit,
         I: InspectorFor<DB>,
-        Txs: IntoIterator<Item = Recovered<&'a ProviderTx<Self::Provider>>>,
+        Txs: IntoIterator<Item = Recovered<&'a ProviderTx<N::Provider>>>,
     {
         for (index, tx) in transactions.into_iter().enumerate() {
             if index == target_tx_index {
@@ -744,7 +705,7 @@ pub trait Call: LoadState + SpawnBlocking {
     ///
     /// All `TxEnv` fields are derived from the given [`RpcTxReq`], if fields are
     /// `None`, they fall back to the [`base_execution_evm::EvmEnv`]'s settings.
-    fn create_txn_env(
+    pub fn create_txn_env(
         &self,
         evm_env: &EvmEnvFor,
         mut request: BaseTransactionRequest,
@@ -776,7 +737,7 @@ pub trait Call: LoadState + SpawnBlocking {
     ///
     /// In addition, this changes the block's gas limit to the configured [`Self::call_gas_limit`].
     #[expect(clippy::type_complexity)]
-    fn prepare_call_env<DB>(
+    pub fn prepare_call_env<DB>(
         &self,
         mut evm_env: EvmEnvFor,
         mut request: BaseTransactionRequest,

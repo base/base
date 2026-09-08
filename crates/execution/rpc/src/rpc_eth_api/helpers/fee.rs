@@ -7,58 +7,22 @@ use alloy_rpc_types_eth::{BlockNumberOrTag, FeeHistory};
 use base_execution_chainspec::ChainSpecProvider;
 use futures::{Future, StreamExt};
 use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, FeeHistoryCache, FeeHistoryEntry, GasPriceOracle,
-    RpcInvalidTransactionError, fee_history::calculate_reward_percentiles_for_block,
-    utils::checked_blob_gas_used_ratio,
+    BaseEthApiError, EthApiError, FeeHistoryEntry, RpcInvalidTransactionError,
+    fee_history::calculate_reward_percentiles_for_block, utils::checked_blob_gas_used_ratio,
 };
 use reth_storage_api::{BlockIdReader, BlockNumReader, BlockReaderIdExt, HeaderProvider};
 use tracing::debug;
 
-use super::LoadBlock;
-use crate::FromEthApiError;
+use crate::{BaseEthApi, FromEthApiError, RpcNodeCore, RpcNodeCoreExt};
 
 /// Fee related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.
-pub trait EthFees: LoadFee<Provider: ChainSpecProvider> {
-    /// Returns a suggestion for a gas price for legacy transactions.
-    ///
-    /// See also: <https://github.com/ethereum/pm/issues/328#issuecomment-853234014>
-    fn gas_price(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send
-    where
-        Self: LoadBlock,
-    {
-        LoadFee::gas_price(self)
-    }
-
-    /// Returns a suggestion for a base fee for blob transactions.
-    fn blob_base_fee(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send
-    where
-        Self: LoadBlock,
-    {
-        LoadFee::blob_base_fee(self)
-    }
-
-    /// Returns the base fee for the next block, or `None` before London activation.
-    fn base_fee(&self) -> impl Future<Output = Result<Option<U256>, BaseEthApiError>> + Send
-    where
-        Self: LoadBlock,
-    {
-        LoadFee::base_fee(self)
-    }
-
-    /// Returns a suggestion for the priority fee (the tip)
-    fn suggested_priority_fee(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send
-    where
-        Self: 'static,
-    {
-        LoadFee::suggested_priority_fee(self)
-    }
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Reports the fee history, for the given amount of blocks, up until the given newest block.
     ///
     /// If `reward_percentiles` are provided the [`FeeHistory`] will include the _approximated_
     /// rewards for the requested range.
-    fn fee_history(
+    pub fn fee_history(
         &self,
         mut block_count: u64,
         mut newest_block: BlockNumberOrTag,
@@ -273,7 +237,11 @@ pub trait EthFees: LoadFee<Provider: ChainSpecProvider> {
 
     /// Approximates reward at a given percentile for a specific block
     /// Based on the configured resolution
-    fn approximate_percentile(&self, entry: &FeeHistoryEntry, requested_percentile: f64) -> u128 {
+    pub fn approximate_percentile(
+        &self,
+        entry: &FeeHistoryEntry,
+        requested_percentile: f64,
+    ) -> u128 {
         let resolution = self.fee_history_cache().resolution();
         let rounded_percentile =
             (requested_percentile * resolution as f64).round() / resolution as f64;
@@ -289,23 +257,10 @@ pub trait EthFees: LoadFee<Provider: ChainSpecProvider> {
 /// Loads fee from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` fees RPC methods.
-pub trait LoadFee: LoadBlock
-where
-    Self::Provider: BlockReaderIdExt,
-{
-    /// Returns a handle for reading gas price.
-    ///
-    /// Data access in default (L1) trait method implementations.
-    fn gas_oracle(&self) -> &GasPriceOracle<Self::Provider>;
-
-    /// Returns a handle for reading fee history data from memory.
-    ///
-    /// Data access in default (L1) trait method implementations.
-    fn fee_history_cache(&self) -> &FeeHistoryCache;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the gas price if it is set, otherwise fetches a suggested gas price for legacy
     /// transactions.
-    fn legacy_gas_price(
+    pub fn legacy_gas_price(
         &self,
         gas_price: Option<U256>,
     ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
@@ -324,7 +279,7 @@ where
     /// EIP-1559 transactions.
     ///
     /// Returns (`base_fee`, `priority_fee`)
-    fn eip1559_fees(
+    pub fn eip1559_fees(
         &self,
         base_fee: Option<U256>,
         max_priority_fee_per_gas: Option<U256>,
@@ -359,7 +314,7 @@ where
     }
 
     /// Returns the EIP-4844 blob fee if it is set, otherwise fetches a blob fee.
-    fn eip4844_blob_fee(
+    pub fn eip4844_blob_fee(
         &self,
         blob_fee: Option<U256>,
     ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
@@ -374,7 +329,7 @@ where
     /// Returns a suggestion for a gas price for legacy transactions.
     ///
     /// See also: <https://github.com/ethereum/pm/issues/328#issuecomment-853234014>
-    fn gas_price(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
+    pub fn gas_price(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
         async move {
             let header = self.provider().latest_header().map_err(BaseEthApiError::from_eth_err)?;
             let suggested_tip = self.suggested_priority_fee().await?;
@@ -384,7 +339,7 @@ where
     }
 
     /// Returns a suggestion for a base fee for blob transactions.
-    fn blob_base_fee(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
+    pub fn blob_base_fee(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
         async move {
             self.provider()
                 .latest_header()
@@ -400,7 +355,7 @@ where
     }
 
     /// Returns the base fee for the next block, or `None` before London activation.
-    fn base_fee(&self) -> impl Future<Output = Result<Option<U256>, BaseEthApiError>> + Send {
+    pub fn base_fee(&self) -> impl Future<Output = Result<Option<U256>, BaseEthApiError>> + Send {
         async move {
             let header = self
                 .provider()
@@ -413,13 +368,5 @@ where
                 .next_block_base_fee(&header, header.timestamp())
                 .map(U256::from))
         }
-    }
-
-    /// Returns a suggestion for the priority fee (the tip)
-    fn suggested_priority_fee(&self) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send
-    where
-        Self: 'static,
-    {
-        async move { self.gas_oracle().suggest_tip_cap().await.map_err(BaseEthApiError::from_eth_err) }
     }
 }

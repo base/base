@@ -25,7 +25,6 @@ use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
     StateProviderFactory,
 };
-use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_tasks::Runtime;
@@ -35,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
 use crate::{
+    BaseEthApi, EthApiTypes, RpcNodeCore,
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
 };
@@ -70,20 +70,19 @@ pub trait DebugApiOverride<Attributes> {
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
-pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider> {
+pub struct DebugApiExt<Eth: EthApiTypes, Storage, Provider> {
     inner: Arc<DebugApiExtInner<Eth, Storage, Provider>>,
 }
 
-impl<Eth, Storage, Provider> DebugApiExt<Eth, Storage, Provider>
+impl<ApiNode: RpcNodeCore, Storage, Provider> DebugApiExt<BaseEthApi<ApiNode>, Storage, Provider>
 where
-    Eth: FullEthApi + Send + Sync + 'static,
     Storage: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt,
 {
     /// Creates a new instance of the `DebugApiExt`.
     pub fn new(
         provider: Provider,
-        eth_api: Eth,
+        eth_api: BaseEthApi<ApiNode>,
         preimage_store: BaseProofsStorage<Storage>,
         task_spawner: Runtime,
         evm_config: BaseEvmConfig,
@@ -102,7 +101,7 @@ where
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for historical proofs `ExEx`.
-pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider> {
+pub struct DebugApiExtInner<Eth: EthApiTypes, Storage, Provider> {
     provider: Provider,
     eth_api: Eth,
     storage: BaseProofsStorage<Storage>,
@@ -112,14 +111,13 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider> {
     semaphore: Semaphore,
 }
 
-impl<Eth, P, Provider> DebugApiExtInner<Eth, P, Provider>
+impl<ApiNode: RpcNodeCore, P, Provider> DebugApiExtInner<BaseEthApi<ApiNode>, P, Provider>
 where
-    Eth: FullEthApi + Send + Sync + 'static,
     P: BaseProofsStore + Clone + 'static,
 {
     fn new(
         provider: Provider,
-        eth_api: Eth,
+        eth_api: BaseEthApi<ApiNode>,
         storage: BaseProofsStorage<P>,
         task_spawner: Runtime,
         evm_config: BaseEvmConfig,
@@ -136,9 +134,8 @@ where
     }
 }
 
-impl<Eth, P, Provider> DebugApiExt<Eth, P, Provider>
+impl<ApiNode: RpcNodeCore, P, Provider> DebugApiExt<BaseEthApi<ApiNode>, P, Provider>
 where
-    Eth: FullEthApi + Send + Sync + 'static,
     P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt + HeaderProvider,
 {
@@ -151,10 +148,9 @@ where
 }
 
 #[async_trait]
-impl<Eth, P, Provider> DebugApiOverrideServer<BasePayloadAttributes>
-    for DebugApiExt<Eth, P, Provider>
+impl<ApiNode: RpcNodeCore, P, Provider> DebugApiOverrideServer<BasePayloadAttributes>
+    for DebugApiExt<BaseEthApi<ApiNode>, P, Provider>
 where
-    Eth: FullEthApi + Send + Sync + 'static,
     P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt
         + StateProviderFactory

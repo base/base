@@ -75,3 +75,6 @@ pub use reth::*;
 
 mod core_miner;
 pub use core_miner::*;
+
+mod rpc_eth_api;
+pub use rpc_eth_api::*;

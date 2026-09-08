@@ -14,5 +14,4 @@ pub use helpers::*;
 mod pubsub;
 pub use pubsub::*;
 mod sim_bundle;
-pub use reth_rpc_eth_api::{EthApiServer, EthApiTypes, FullEthApiServer, RpcNodeCore};
 pub use sim_bundle::*;

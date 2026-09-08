@@ -11,8 +11,9 @@ use base_common_chains::Upgrades;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::BaseEvmConfig;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_eth_api::helpers::config::{EthConfigApiServer, EthConfigHandler};
 use reth_storage_api::BlockReaderIdExt;
+
+use crate::{EthConfigApiServer, EthConfigHandler};
 
 const fn zero_blob_params() -> BlobParams {
     BlobParams {

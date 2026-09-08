@@ -1,17 +1,11 @@
 //! Spawns a blocking task. CPU heavy tasks are executed with the `rayon` library. IO heavy tasks
 //! are executed on the `tokio` runtime.
 
-use std::sync::Arc;
-
 use futures::Future;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError};
-use reth_tasks::{
-    Runtime,
-    pool::{BlockingTaskGuard, BlockingTaskPool},
-};
-use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, oneshot};
+use tokio::sync::{AcquireError, OwnedSemaphorePermit, oneshot};
 
-use crate::EthApiTypes;
+use crate::{BaseEthApi, RpcNodeCore};
 
 /// Helpers for spawning blocking operations.
 ///
@@ -24,26 +18,7 @@ use crate::EthApiTypes;
 /// This provides access to semaphores that permit how many of those are permitted concurrently.
 /// It's expected that tracing related tasks are configured with a lower threshold, because not only
 /// are they CPU heavy but they can also accumulate more memory for the traces.
-pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
-    /// Returns a handle for spawning IO heavy blocking tasks.
-    ///
-    /// Runtime access in default trait method implementations.
-    fn io_task_spawner(&self) -> &Runtime;
-
-    /// Returns a handle for spawning __CPU heavy__ blocking tasks, such as tracing requests.
-    ///
-    /// Thread pool access in default trait method implementations.
-    fn tracing_task_pool(&self) -> &BlockingTaskPool;
-
-    /// Returns handle to semaphore for pool of CPU heavy blocking tasks.
-    fn tracing_task_guard(&self) -> &BlockingTaskGuard;
-
-    /// Returns handle to semaphore for blocking IO tasks.
-    ///
-    /// This semaphore is used to limit concurrent blocking IO operations like `eth_call`,
-    /// `eth_estimateGas`, and similar methods that require EVM execution.
-    fn blocking_io_task_guard(&self) -> &Arc<Semaphore>;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Acquires a permit from the tracing task semaphore.
     ///
     /// This should be used for __CPU heavy__ operations like `debug_traceTransaction`,
@@ -56,7 +31,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     /// [`acquire_owned_blocking_io`](Self::acquire_owned_blocking_io) instead.
     ///
     /// See also [`Semaphore::acquire_owned`](`tokio::sync::Semaphore::acquire_owned`).
-    fn acquire_owned_tracing(
+    pub fn acquire_owned_tracing(
         &self,
     ) -> impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>> + Send {
         self.tracing_task_guard().clone().acquire_owned()
@@ -72,7 +47,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     /// CPU-intensive tracing tasks, not general blocking IO operations.
     ///
     /// See also [`Semaphore::acquire_many_owned`](`tokio::sync::Semaphore::acquire_many_owned`).
-    fn acquire_many_owned_tracing(
+    pub fn acquire_many_owned_tracing(
         &self,
         n: u32,
     ) -> impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>> + Send {
@@ -85,7 +60,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     /// that require EVM execution and are spawned as blocking tasks.
     ///
     /// See also [`Semaphore::acquire_owned`](`tokio::sync::Semaphore::acquire_owned`).
-    fn acquire_owned_blocking_io(
+    pub fn acquire_owned_blocking_io(
         &self,
     ) -> impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>> + Send {
         self.blocking_io_task_guard().clone().acquire_owned()
@@ -97,7 +72,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     /// allows.
     ///
     /// See also [`Semaphore::acquire_many_owned`](`tokio::sync::Semaphore::acquire_many_owned`).
-    fn acquire_many_owned_blocking_io(
+    pub fn acquire_many_owned_blocking_io(
         &self,
         n: u32,
     ) -> impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>> + Send {
@@ -134,7 +109,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     /// many cheap operations to run in parallel.
     ///
     /// See also [`Semaphore::acquire_many_owned`](`tokio::sync::Semaphore::acquire_many_owned`).
-    fn acquire_weighted_blocking_io(
+    pub fn acquire_weighted_blocking_io(
         &self,
         weight: u32,
     ) -> impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>> + Send {
@@ -157,7 +132,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     ///
     /// Note: This is expected for futures that are dominated by blocking IO operations, for tracing
     /// or CPU bound operations in general use [`spawn_tracing`](Self::spawn_tracing).
-    fn spawn_blocking_io<F, R>(
+    pub fn spawn_blocking_io<F, R>(
         &self,
         f: F,
     ) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
@@ -179,7 +154,7 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     ///
     /// Note: This is expected for futures that are dominated by blocking IO operations, for tracing
     /// or CPU bound operations in general use [`spawn_tracing`](Self::spawn_tracing).
-    fn spawn_blocking_io_fut<F, R, Fut>(
+    pub fn spawn_blocking_io_fut<F, R, Fut>(
         &self,
         f: F,
     ) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
@@ -203,7 +178,10 @@ pub trait SpawnBlocking: EthApiTypes + Clone + Send + Sync + 'static {
     /// Note: This is expected for futures that are predominantly CPU bound, as it uses `rayon`
     /// under the hood, for blocking IO futures use
     /// [`spawn_blocking_task`](Self::spawn_blocking_io). See <https://ryhl.io/blog/async-what-is-blocking/>.
-    fn spawn_tracing<F, R>(&self, f: F) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
+    pub fn spawn_tracing<F, R>(
+        &self,
+        f: F,
+    ) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
     where
         F: FnOnce(Self) -> Result<R, BaseEthApiError> + Send + 'static,
         R: Send + 'static,

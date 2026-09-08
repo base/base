@@ -21,22 +21,15 @@ use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 use reth_storage_api::{BlockIdReader, BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_trie_common::MultiProofTargets;
 
-use super::{EthApiSpec, LoadBlock, LoadPendingBlock, SpawnBlocking};
-use crate::{EthApiTypes, FromEthApiError, RpcNodeCore, RpcNodeCoreExt};
+use crate::{BaseEthApi, FromEthApiError, RpcNodeCore};
 
 /// Helper methods for `eth_` methods relating to state (accounts).
-pub trait EthState: LoadState + SpawnBlocking {
-    /// Returns the maximum number of blocks into the past for generating state proofs.
-    fn max_proof_window(&self) -> u64;
-
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Validates that the given block is within the configured proof window.
     ///
     /// Returns an error if the distance between the chain tip and the requested block exceeds
     /// [`Self::max_proof_window`].
-    fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), BaseEthApiError>
-    where
-        Self: EthApiSpec,
-    {
+    pub fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), BaseEthApiError> {
         let chain_info = self.chain_info().map_err(BaseEthApiError::from_eth_err)?;
         let block_number = self
             .provider()
@@ -49,29 +42,8 @@ pub trait EthState: LoadState + SpawnBlocking {
         Ok(())
     }
 
-    /// Returns the number of transactions sent from an address at the given block identifier.
-    ///
-    /// If this is [`BlockNumberOrTag::Pending`](alloy_eips::BlockNumberOrTag) then this will
-    /// look up the highest transaction in pool and return the next nonce (highest + 1).
-    fn transaction_count(
-        &self,
-        address: Address,
-        block_id: Option<BlockId>,
-    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
-        LoadState::transaction_count(self, address, block_id)
-    }
-
-    /// Returns code of given account, at given blocknumber.
-    fn get_code(
-        &self,
-        address: Address,
-        block_id: Option<BlockId>,
-    ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send {
-        LoadState::get_code(self, address, block_id)
-    }
-
     /// Returns balance of given account, at given blocknumber.
-    fn balance(
+    pub fn balance(
         &self,
         address: Address,
         block_id: Option<BlockId>,
@@ -87,7 +59,7 @@ pub trait EthState: LoadState + SpawnBlocking {
     }
 
     /// Returns values stored of given account, at given blocknumber.
-    fn storage_at(
+    pub fn storage_at(
         &self,
         address: Address,
         index: JsonStorageKey,
@@ -109,7 +81,7 @@ pub trait EthState: LoadState + SpawnBlocking {
     ///
     /// Enforces a cap on total slot count (sum of all slot arrays) and returns an error if
     /// exceeded.
-    fn storage_values(
+    pub fn storage_values(
         &self,
         requests: HashMap<Address, Vec<JsonStorageKey>>,
         block_id: Option<BlockId>,
@@ -150,7 +122,7 @@ pub trait EthState: LoadState + SpawnBlocking {
     }
 
     /// Returns values stored of given account, with Merkle-proof, at given blocknumber.
-    fn get_proof(
+    pub fn get_proof(
         &self,
         address: Address,
         keys: Vec<JsonStorageKey>,
@@ -158,10 +130,7 @@ pub trait EthState: LoadState + SpawnBlocking {
     ) -> Result<
         impl Future<Output = Result<EIP1186AccountProofResponse, BaseEthApiError>> + Send,
         BaseEthApiError,
-    >
-    where
-        Self: EthApiSpec,
-    {
+    > {
         Ok(async move {
             let _permit = self
                 .acquire_owned_tracing()
@@ -184,17 +153,14 @@ pub trait EthState: LoadState + SpawnBlocking {
     }
 
     /// Returns account and storage proofs for multiple targets at the given block number.
-    fn get_multi_proof(
+    pub fn get_multi_proof(
         &self,
         targets: Vec<(Address, Vec<B256>)>,
         block_id: Option<BlockId>,
     ) -> Result<
         impl Future<Output = Result<Vec<EIP1186AccountProofResponse>, BaseEthApiError>> + Send,
         BaseEthApiError,
-    >
-    where
-        Self: EthApiSpec,
-    {
+    > {
         Ok(async move {
             let _permit = self
                 .acquire_owned_tracing()
@@ -238,14 +204,11 @@ pub trait EthState: LoadState + SpawnBlocking {
     }
 
     /// Returns the account at the given address for the provided block identifier.
-    fn get_account(
+    pub fn get_account(
         &self,
         address: Address,
         block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<Account>, BaseEthApiError>> + Send
-    where
-        Self: EthApiSpec,
-    {
+    ) -> impl Future<Output = Result<Option<Account>, BaseEthApiError>> + Send {
         async move {
             self.ensure_within_proof_window(block_id)?;
 
@@ -272,7 +235,7 @@ pub trait EthState: LoadState + SpawnBlocking {
     }
 
     /// Retrieves the account's balance, nonce, and code for a given address.
-    fn get_account_info(
+    pub fn get_account_info(
         &self,
         address: Address,
         block_id: BlockId,
@@ -304,9 +267,9 @@ pub trait EthState: LoadState + SpawnBlocking {
 /// Loads state from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` state RPC methods.
-pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
+impl<N: RpcNodeCore> BaseEthApi<N> {
     /// Returns the state at the given block number
-    fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, BaseEthApiError> {
+    pub fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, BaseEthApiError> {
         self.provider().history_by_block_hash(block_hash).map_err(BaseEthApiError::from_eth_err)
     }
 
@@ -314,13 +277,10 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     ///
     /// Note: if not [`BlockNumberOrTag::Pending`](alloy_eips::BlockNumberOrTag) then this
     /// will only return canonical state. See also <https://github.com/paradigmxyz/reth/issues/4515>
-    fn state_at_block_id(
+    pub fn state_at_block_id(
         &self,
         at: BlockId,
-    ) -> impl Future<Output = Result<StateProviderBox, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<StateProviderBox, BaseEthApiError>> + Send {
         async move {
             if at.is_pending()
                 && let Ok(Some(state)) = self.local_pending_state().await
@@ -333,20 +293,17 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     }
 
     /// Returns the _latest_ state
-    fn latest_state(&self) -> Result<StateProviderBox, BaseEthApiError> {
+    pub fn latest_state(&self) -> Result<StateProviderBox, BaseEthApiError> {
         self.provider().latest().map_err(BaseEthApiError::from_eth_err)
     }
 
     /// Returns the state at the given [`BlockId`] enum or the latest.
     ///
     /// Convenience function to interprets `None` as `BlockId::Number(BlockNumberOrTag::Latest)`
-    fn state_at_block_id_or_latest(
+    pub fn state_at_block_id_or_latest(
         &self,
         block_id: Option<BlockId>,
-    ) -> impl Future<Output = Result<StateProviderBox, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<StateProviderBox, BaseEthApiError>> + Send {
         async move {
             if let Some(block_id) = block_id {
                 self.state_at_block_id(block_id).await
@@ -357,7 +314,7 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     }
 
     /// Returns the EVM environment for the given sealed header.
-    fn evm_env_for_header(
+    pub fn evm_env_for_header(
         &self,
         header: &reth_primitives_traits::SealedHeader,
     ) -> Result<EvmEnvFor, BaseEthApiError> {
@@ -373,13 +330,10 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     /// for.
     /// If the [`BlockId`] is pending, this will return the "Pending" tag, otherwise this returns
     /// the hash of the exact block.
-    fn evm_env_at(
+    pub fn evm_env_at(
         &self,
         at: BlockId,
-    ) -> impl Future<Output = Result<(EvmEnvFor, BlockId), BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<(EvmEnvFor, BlockId), BaseEthApiError>> + Send {
         async move {
             if at.is_pending() {
                 let PendingBlockEnv { evm_env, origin } = self.pending_block_env_and_cfg()?;
@@ -406,12 +360,10 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     /// be the pending tag for an actual pending block or the latest block hash when the pending env
     /// is derived from latest.
     #[expect(clippy::type_complexity)]
-    fn evm_env_and_recovered_block_at(
+    pub fn evm_env_and_recovered_block_at(
         &self,
         at: BlockId,
     ) -> impl Future<Output = Result<(Arc<RecoveredBlock>, EvmEnvFor, BlockId), BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking + LoadBlock,
     {
         async move {
             if at.is_pending() {
@@ -440,13 +392,10 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     /// nonce in the pool + 1
     ///
     /// The provided request must have a from address set.
-    fn next_available_nonce_for(
+    pub fn next_available_nonce_for(
         &self,
         request: &BaseTransactionRequest,
-    ) -> impl Future<Output = Result<u64, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<u64, BaseEthApiError>> + Send {
         let address = request.as_ref().from;
         self.spawn_blocking_io(move |this| {
             let address = match address {
@@ -481,14 +430,11 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     ///
     /// If this is [`BlockNumberOrTag::Pending`](alloy_eips::BlockNumberOrTag) then this will
     /// look up the highest transaction in pool and return the next nonce (highest + 1).
-    fn transaction_count(
+    pub fn transaction_count(
         &self,
         address: Address,
         block_id: Option<BlockId>,
-    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
         self.spawn_blocking_io_fut(async move |this| {
             // first fetch the on chain nonce of the account
             let on_chain_account_nonce = this
@@ -527,14 +473,11 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     }
 
     /// Returns code of given account, at the given identifier.
-    fn get_code(
+    pub fn get_code(
         &self,
         address: Address,
         block_id: Option<BlockId>,
-    ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send
-    where
-        Self: SpawnBlocking,
-    {
+    ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send {
         self.spawn_blocking_io_fut(async move |this| {
             Ok(this
                 .state_at_block_id_or_latest(block_id)
@@ -544,5 +487,88 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
                 .unwrap_or_default()
                 .original_bytes())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{
+        Address, StorageKey, StorageValue, U256,
+        map::{AddressMap, B256Map},
+    };
+    use base_execution_evm::BaseEvmConfig;
+    use reth_network_api::noop::NoopNetwork;
+    use reth_provider::{
+        ChainSpecProvider,
+        test_utils::{ExtendedAccount, MockEthProvider, NoopProvider},
+    };
+
+    use super::*;
+    use crate::RpcNodeCoreAdapter;
+
+    fn noop_eth_api()
+    -> BaseEthApi<RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork>> {
+        let provider = NoopProvider::default();
+        let pool = crate::test_utils::RpcTestUtils::pool();
+        let evm_config = BaseEvmConfig::default();
+
+        crate::test_utils::RpcTestUtils::api_builder(
+            provider,
+            pool,
+            NoopNetwork::default(),
+            evm_config,
+        )
+        .build()
+    }
+
+    fn mock_eth_api(
+        accounts: AddressMap<ExtendedAccount>,
+    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
+    {
+        let pool = crate::test_utils::RpcTestUtils::pool();
+        let mock_provider = MockEthProvider::default();
+
+        let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());
+        mock_provider.extend_accounts(accounts);
+
+        crate::test_utils::RpcTestUtils::api_builder(
+            mock_provider,
+            pool,
+            NoopNetwork::default(),
+            evm_config,
+        )
+        .build()
+    }
+
+    #[tokio::test]
+    async fn test_storage() {
+        // === Noop ===
+        let eth_api = noop_eth_api();
+        let address = Address::random();
+        let storage = eth_api.storage_at(address, U256::ZERO.into(), None).await.unwrap();
+        assert_eq!(storage, U256::ZERO.to_be_bytes());
+
+        // === Mock ===
+        let storage_value = StorageValue::from(1337);
+        let storage_key = StorageKey::random();
+        let storage: B256Map<_> = core::iter::once((storage_key, storage_value)).collect();
+
+        let accounts = AddressMap::from_iter([(
+            address,
+            ExtendedAccount::new(0, U256::ZERO).extend_storage(storage),
+        )]);
+        let eth_api = mock_eth_api(accounts);
+
+        let storage_key: U256 = storage_key.into();
+        let storage = eth_api.storage_at(address, storage_key.into(), None).await.unwrap();
+        assert_eq!(storage, storage_value.to_be_bytes());
+    }
+
+    #[tokio::test]
+    async fn test_get_account_missing() {
+        let eth_api = noop_eth_api();
+        let address = Address::random();
+        let account = eth_api.get_account(address, Default::default()).await.unwrap();
+        assert!(account.is_none());
     }
 }

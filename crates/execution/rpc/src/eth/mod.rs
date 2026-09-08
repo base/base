@@ -3,14 +3,11 @@
 mod proofs;
 
 pub use proofs::*;
-mod receipt;
-pub use receipt::*;
 mod transaction;
-pub use transaction::*;
 
-mod base_time;
 use base_execution_evm::BaseEvmConfig;
-pub use base_time::BaseTimeCache;
+
+use crate::{BaseTimeCache, EthApiTypes, RpcNodeCore};
 
 mod block;
 mod call;
@@ -21,24 +18,16 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::U256;
 use eyre::WrapErr;
-pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_node_api::FullNodeComponents;
 mod context;
 pub use context::EthApiCtx;
-use reth_rpc_eth_api::{
-    BaseRpcConverter, EthApiTypes, FromEvmError, FullEthApiServer, RpcNodeCore, RpcNodeCoreExt,
-    helpers::{
-        EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
-        SpawnBlocking, Trace,
-    },
-};
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
 
-use crate::{BaseEthApiError, BaseEthApiInner, SequencerClient};
+use crate::{BaseEthApiError, BaseEthApiInner, BaseRpcConverter, RpcNodeCoreExt, SequencerClient};
 
 /// Base `Eth` API implementation.
 ///
@@ -92,7 +81,7 @@ impl<N> EthApiTypes for BaseEthApi<N>
 where
     N: RpcNodeCore,
 {
-    fn converter(&self) -> &BaseRpcConverter<Self::Provider> {
+    fn converter(&self) -> &BaseRpcConverter<N::Provider> {
         self.inner.converter()
     }
 }
@@ -107,7 +96,7 @@ where
     type Network = N::Network;
 
     #[inline]
-    fn pool(&self) -> &Self::Pool {
+    fn pool(&self) -> &N::Pool {
         self.inner.pool()
     }
 
@@ -117,12 +106,12 @@ where
     }
 
     #[inline]
-    fn network(&self) -> &Self::Network {
+    fn network(&self) -> &N::Network {
         self.inner.network()
     }
 
     #[inline]
-    fn provider(&self) -> &Self::Provider {
+    fn provider(&self) -> &N::Provider {
         self.inner.provider()
     }
 }
@@ -137,57 +126,47 @@ where
     }
 }
 
-impl<N> EthApiSpec for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
+impl<N: RpcNodeCore> BaseEthApi<N> {
     #[inline]
-    fn starting_block(&self) -> U256 {
+    pub fn starting_block(&self) -> U256 {
         self.inner.starting_block()
     }
 }
 
-impl<N> SpawnBlocking for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
+impl<N: RpcNodeCore> BaseEthApi<N> {
     #[inline]
-    fn io_task_spawner(&self) -> &Runtime {
+    pub fn io_task_spawner(&self) -> &Runtime {
         self.inner.task_spawner()
     }
 
     #[inline]
-    fn tracing_task_pool(&self) -> &BlockingTaskPool {
+    pub fn tracing_task_pool(&self) -> &BlockingTaskPool {
         self.inner.blocking_task_pool()
     }
 
     #[inline]
-    fn tracing_task_guard(&self) -> &BlockingTaskGuard {
+    pub fn tracing_task_guard(&self) -> &BlockingTaskGuard {
         self.inner.blocking_task_guard()
     }
 
     #[inline]
-    fn blocking_io_task_guard(&self) -> &Arc<tokio::sync::Semaphore> {
+    pub fn blocking_io_task_guard(&self) -> &Arc<tokio::sync::Semaphore> {
         self.inner.blocking_io_request_semaphore()
     }
 }
 
-impl<N> LoadFee for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
+impl<N: RpcNodeCore> BaseEthApi<N> {
     #[inline]
-    fn gas_oracle(&self) -> &GasPriceOracle<Self::Provider> {
+    pub fn gas_oracle(&self) -> &GasPriceOracle<N::Provider> {
         self.inner.gas_oracle()
     }
 
     #[inline]
-    fn fee_history_cache(&self) -> &FeeHistoryCache {
+    pub fn fee_history_cache(&self) -> &FeeHistoryCache {
         self.inner.fee_history_cache()
     }
 
-    async fn suggested_priority_fee(&self) -> Result<U256, BaseEthApiError> {
+    pub async fn suggested_priority_fee(&self) -> Result<U256, BaseEthApiError> {
         self.inner
             .gas_oracle()
             .op_suggest_tip_cap(self.inner.min_suggested_priority_fee)
@@ -196,43 +175,11 @@ where
     }
 }
 
-impl<N> LoadState for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    Self: LoadPendingBlock,
-{
-}
-
-impl<N> EthState for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    Self: LoadPendingBlock,
-{
+impl<N: RpcNodeCore> BaseEthApi<N> {
     #[inline]
-    fn max_proof_window(&self) -> u64 {
+    pub fn max_proof_window(&self) -> u64 {
         self.inner.eth_proof_window()
     }
-}
-
-impl<N> EthFees for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
-}
-
-impl<N> Trace for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
-}
-
-impl<N> GetBlockAccessList for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
 }
 
 impl<N: RpcNodeCore> fmt::Debug for BaseEthApi<N> {
@@ -300,10 +247,6 @@ impl BaseEthApiBuilder {
     pub async fn build_eth_api<N>(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<BaseNodeEthApi<N>>
     where
         N: FullNodeComponents,
-        BaseNodeEthApi<N>: FullEthApiServer<
-                Provider = N::Provider,
-                Pool = reth_node_api::BaseNodePool<N::Provider>,
-            >,
     {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let base_time = BaseTimeCache::default();

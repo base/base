@@ -11,23 +11,18 @@ use alloy_rpc_types_trace::{
     parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use async_trait::async_trait;
-use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types::{
-    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
-};
+use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt};
 use base_evm_context::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use reth_rpc_api::{EthApiServer, OtterscanServer};
-use reth_rpc_eth_api::{
-    FullEthApiTypes,
-    helpers::{EthTransactions, TraceExt},
-};
+use reth_rpc_api::OtterscanServer;
 use reth_rpc_eth_types::{EthApiError, utils::binary_search};
 use reth_rpc_server_types::result::internal_rpc_err;
 use revm_inspectors::{
     tracing::{TracingInspectorConfig, types::CallTraceNode},
     transfer::{TransferInspector, TransferKind},
 };
+
+use crate::{BaseEthApi, EthApiServer, RpcNodeCore};
 
 const API_LEVEL: u64 = 8;
 
@@ -37,17 +32,14 @@ pub struct OtterscanApi<Eth> {
     eth: Eth,
 }
 
-impl<Eth> OtterscanApi<Eth> {
+impl<ApiNode: RpcNodeCore> OtterscanApi<BaseEthApi<ApiNode>> {
     /// Creates a new instance of `Otterscan`.
-    pub const fn new(eth: Eth) -> Self {
+    pub const fn new(eth: BaseEthApi<ApiNode>) -> Self {
         Self { eth }
     }
 }
 
-impl<Eth> OtterscanApi<Eth>
-where
-    Eth: FullEthApiTypes,
-{
+impl<ApiNode: RpcNodeCore> OtterscanApi<BaseEthApi<ApiNode>> {
     /// Constructs a `BlockDetails` from a block and its receipts.
     fn block_details(
         &self,
@@ -67,19 +59,8 @@ where
 }
 
 #[async_trait]
-impl<Eth> OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
-    for OtterscanApi<Eth>
-where
-    Eth: EthApiServer<
-            BaseTransactionRequest,
-            base_common_rpc_types::Transaction,
-            BaseBlockResponse,
-            BaseTransactionReceipt,
-            BaseHeaderResponse,
-            BaseTxEnvelope,
-        > + EthTransactions
-        + TraceExt
-        + 'static,
+impl<ApiNode: RpcNodeCore> OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
+    for OtterscanApi<BaseEthApi<ApiNode>>
 {
     /// Handler for `ots_getHeaderByNumber` and `erigon_getHeaderByNumber`
     async fn get_header_by_number(
@@ -181,7 +162,7 @@ where
         let block_number = block_number.into_inner();
         let block = self.eth.block_by_number(block_number, true);
         let block_id = block_number.into();
-        let receipts = self.eth.block_receipts(block_id);
+        let receipts = EthApiServer::block_receipts(&self.eth, block_id);
         let (block, receipts) = futures::try_join!(block, receipts)?;
         self.block_details(
             block.ok_or(EthApiError::HeaderNotFound(block_id))?,
@@ -196,7 +177,7 @@ where
     ) -> RpcResult<BlockDetails<BaseHeaderResponse>> {
         let block = self.eth.block_by_hash(block_hash, true);
         let block_id = block_hash.into();
-        let receipts = self.eth.block_receipts(block_id);
+        let receipts = EthApiServer::block_receipts(&self.eth, block_id);
         let (block, receipts) = futures::try_join!(block, receipts)?;
         self.block_details(
             block.ok_or(EthApiError::HeaderNotFound(block_id))?,
@@ -216,7 +197,7 @@ where
         // retrieve full block and its receipts
         let block = self.eth.block_by_number(block_number, true);
         let block_id = block_number.into();
-        let receipts = self.eth.block_receipts(block_id);
+        let receipts = EthApiServer::block_receipts(&self.eth, block_id);
         let (block, receipts) = futures::try_join!(block, receipts)?;
 
         let mut block = block.ok_or(EthApiError::HeaderNotFound(block_id))?;

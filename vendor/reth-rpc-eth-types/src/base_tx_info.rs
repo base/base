@@ -14,7 +14,7 @@ use crate::BaseTimeCache;
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
 pub struct BaseTxInfoMapper<Provider> {
     provider: Provider,
-    base_time: BaseTimeCache,
+    pub base_time: BaseTimeCache,
 }
 
 impl<Provider: Clone> Clone for BaseTxInfoMapper<Provider> {

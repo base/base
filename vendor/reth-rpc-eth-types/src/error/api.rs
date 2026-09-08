@@ -1,5 +1,5 @@
 //! Helper traits to wrap generic l1 errors, in network specific error type configured in
-//! `reth_rpc_eth_api::EthApiTypes`.
+//! `base_execution_rpc::EthApiTypes`.
 
 use alloy_primitives::Bytes;
 use base_evm_context::{ExecutionResult, HaltReason};

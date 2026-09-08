@@ -381,7 +381,6 @@ reth-chain-state = { path = "vendor/reth-chain-state", default-features = false 
 reth-trie-common = { path = "vendor/reth-trie-common", default-features = false }
 reth-rpc-convert = { path = "vendor/reth-rpc-convert", default-features = false }
 reth-network-api = { path = "vendor/reth-network-api", default-features = false }
-reth-rpc-eth-api = { path = "vendor/reth-rpc-eth-api", default-features = false }
 reth-storage-api = { path = "vendor/reth-storage-api", default-features = false }
 reth-prune-types = { path = "vendor/reth-prune-types", default-features = false }
 reth-static-file = { path = "vendor/reth-static-file", default-features = false }

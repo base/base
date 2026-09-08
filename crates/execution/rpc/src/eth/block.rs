@@ -3,25 +3,14 @@
 use alloy_eips::BlockId;
 use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_rpc_eth_api::{
-    EthApiTypes, FromEvmError, FullEthApiTypes,
-    helpers::{EthBlocks, LoadBlock},
-};
 
-use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
+use crate::{BaseEthApi, BaseEthApiError, EthApiTypes, RpcNodeCore};
 
-impl<N> EthBlocks for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
-    async fn rpc_block_header(
+impl<N: RpcNodeCore> BaseEthApi<N> {
+    pub async fn rpc_block_header(
         &self,
         block_id: BlockId,
-    ) -> Result<Option<BaseHeaderResponse>, BaseEthApiError>
-    where
-        Self: FullEthApiTypes,
-    {
+    ) -> Result<Option<BaseHeaderResponse>, BaseEthApiError> {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
         let timestamp_ms = self.base_time_cache().insert_from_transactions(
             block.hash(),
@@ -35,14 +24,11 @@ where
         Ok(Some(header))
     }
 
-    async fn rpc_block(
+    pub async fn rpc_block(
         &self,
         block_id: BlockId,
         full: bool,
-    ) -> Result<Option<BaseBlockResponse>, BaseEthApiError>
-    where
-        Self: FullEthApiTypes,
-    {
+    ) -> Result<Option<BaseBlockResponse>, BaseEthApiError> {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
         let timestamp_ms = self.base_time_cache().insert_from_transactions(
             block.hash(),
@@ -58,11 +44,4 @@ where
         block.header.timestamp_ms = timestamp_ms;
         Ok(Some(block))
     }
-}
-
-impl<N> LoadBlock for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
 }

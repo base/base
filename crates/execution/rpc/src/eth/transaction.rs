@@ -17,27 +17,21 @@ use base_observability_events::{
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{SignerRecoverable, WithEncoded};
-use reth_rpc_eth_api::{
-    EthApiTypes as _, FromEthApiError, FromEvmError, RpcNodeCore,
-    helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
-};
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{BlockReaderIdExt, ProviderTx, TransactionsProvider};
 use tracing::{debug, instrument, warn};
 
-use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
+use crate::{
+    BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, EthApiTypes as _, FromEthApiError,
+    RpcNodeCore, SequencerClient, SignersForRpc,
+};
 
-impl<N> EthTransactions for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    N::Provider: BlockReaderIdExt + ChainSpecProvider,
-    BaseEthApiError: FromEvmError,
-{
-    fn signers(&self) -> &SignersForRpc<Self::Provider> {
+impl<N: RpcNodeCore> BaseEthApi<N> {
+    pub fn signers(&self) -> &SignersForRpc<N::Provider> {
         self.inner.signers()
     }
 
-    fn send_raw_transaction_sync_timeout(&self) -> Duration {
+    pub fn send_raw_transaction_sync_timeout(&self) -> Duration {
         self.inner.send_raw_transaction_sync_timeout()
     }
 
@@ -46,10 +40,10 @@ where
     // sequencer forwarding. `eth_sendRawTransaction` supplies a `Local` origin, so preserving
     // `origin` here intentionally applies the configured local-transaction pool policy.
     #[instrument(skip_all, fields(tx_hash = %tx.1.hash()))]
-    async fn send_pool_transaction(
+    pub async fn send_pool_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<<Self::Pool as TransactionPool>::Transaction>,
+        tx: WithEncoded<<N::Pool as TransactionPool>::Transaction>,
     ) -> Result<B256, BaseEthApiError> {
         let (tx, pool_transaction) = tx.split();
 
@@ -101,7 +95,7 @@ where
     /// Decodes and recovers the transaction and submits it to the pool.
     ///
     /// And awaits the receipt from canonical blocks.
-    fn send_raw_transaction_sync(
+    pub fn send_raw_transaction_sync(
         &self,
         tx: Bytes,
         timeout_ms: Option<u64>,
@@ -119,7 +113,7 @@ where
         async move {
             // Subscribe before submission so immediate inclusion cannot race the receipt listener.
             let mut canonical_stream = this.provider().canonical_state_stream();
-            let hash = EthTransactions::send_raw_transaction(&this, tx).await?;
+            let hash = BaseEthApi::send_raw_transaction(&this, tx).await?;
 
             tokio::time::timeout(timeout_duration, async {
                 while let Some(notification) = canonical_stream.next().await {
@@ -154,7 +148,7 @@ where
     }
 
     /// Returns the transaction receipt for the given hash.
-    fn transaction_receipt(
+    pub fn transaction_receipt(
         &self,
         hash: B256,
     ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, BaseEthApiError>> + Send {
@@ -170,15 +164,11 @@ where
     }
 }
 
-impl<N> LoadTransaction for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    BaseEthApiError: FromEvmError,
-{
-    async fn transaction_by_hash(
+impl<N: RpcNodeCore> BaseEthApi<N> {
+    pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, BaseEthApiError> {
+    ) -> Result<Option<TransactionSource<ProviderTx<N::Provider>>>, BaseEthApiError> {
         // 1. Try to find the transaction on disk (historical blocks)
         if let Some((tx, meta)) = self
             .spawn_blocking_io(move |this| {
@@ -233,5 +223,3 @@ where
         Ok(self.provider().chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
     }
 }
-
-pub use reth_rpc_eth_api::BaseTxInfoMapper;

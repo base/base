@@ -5,11 +5,11 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
 use base_common_rpc_types::EIP8130_PRE_COBALT_RPC_ERROR;
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_rpc::{BaseEthApi, RpcNodeCore};
 use jsonrpsee_types::{
     ErrorObjectOwned,
     error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
 };
-use reth_rpc_eth_api::{RpcNodeCore, helpers::FullEthApi};
 use reth_storage_api::BlockReaderIdExt;
 use tracing::warn;
 
@@ -32,10 +32,12 @@ impl Eip8130CobaltGate {
     /// Errors with `INVALID_PARAMS` if Cobalt is not active at `block_id`'s
     /// timestamp. Resolves `Pending` and `Latest` block ids to the head
     /// block's timestamp.
-    pub fn check<Eth>(eth_api: &Eth, block_id: BlockId) -> Result<(), ErrorObjectOwned>
+    pub fn check<ApiNode: RpcNodeCore>(
+        eth_api: &BaseEthApi<ApiNode>,
+        block_id: BlockId,
+    ) -> Result<(), ErrorObjectOwned>
     where
-        Eth: FullEthApi,
-        <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
+        <BaseEthApi<ApiNode> as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     {
         let provider = eth_api.provider();
         let timestamp = Self::resolve_timestamp(provider, block_id)?;

@@ -17,15 +17,13 @@ use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use reth_rpc_api::MevSimApiServer;
-use reth_rpc_eth_api::{
-    FromEthApiError, FromEvmError,
-    helpers::{Call, EthTransactions, block::LoadBlock},
-};
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;
 use revm::{DatabaseCommit, DatabaseRef};
 use tracing::trace;
+
+use crate::{BaseEthApi, FromEthApiError, FromEvmError, RpcNodeCore};
 
 /// Maximum bundle depth
 const MAX_NESTED_BUNDLE_DEPTH: usize = 5;
@@ -140,10 +138,7 @@ impl<Eth> EthSimBundle<Eth> {
     }
 }
 
-impl<Eth> EthSimBundle<Eth>
-where
-    Eth: EthTransactions + LoadBlock + Call + 'static,
-{
+impl<ApiNode: RpcNodeCore> EthSimBundle<BaseEthApi<ApiNode>> {
     /// Flattens a potentially nested bundle into a list of individual transactions in a
     /// `FlattenedBundleItem` with their associated metadata. This handles recursive bundle
     /// processing up to `MAX_NESTED_BUNDLE_DEPTH` and `MAX_BUNDLE_BODY_SIZE`, preserving
@@ -151,7 +146,7 @@ where
     fn parse_and_flatten_bundle(
         &self,
         request: &MevSendBundle,
-    ) -> Result<Vec<FlattenedBundleItem<ProviderTx<Eth::Provider>>>, EthApiError> {
+    ) -> Result<Vec<FlattenedBundleItem<ProviderTx<ApiNode::Provider>>>, EthApiError> {
         let mut items = Vec::new();
 
         // Stack for processing bundles
@@ -228,9 +223,10 @@ where
             while idx < body.len() {
                 match &body[idx] {
                     BundleItem::Tx { tx, can_revert } => {
-                        let recovered_tx = recover_raw_transaction::<PoolPooledTx<Eth::Pool>>(tx)?;
+                        let recovered_tx =
+                            recover_raw_transaction::<PoolPooledTx<ApiNode::Pool>>(tx)?;
                         let tx = recovered_tx.map(
-                            <Eth::Pool as TransactionPool>::Transaction::pooled_into_consensus,
+                            <ApiNode::Pool as TransactionPool>::Transaction::pooled_into_consensus,
                         );
 
                         let refund_percent =
@@ -470,10 +466,7 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Eth> MevSimApiServer for EthSimBundle<Eth>
-where
-    Eth: EthTransactions + LoadBlock + Call + 'static,
-{
+impl<ApiNode: RpcNodeCore> MevSimApiServer for EthSimBundle<BaseEthApi<ApiNode>> {
     async fn sim_bundle(
         &self,
         request: MevSendBundle,

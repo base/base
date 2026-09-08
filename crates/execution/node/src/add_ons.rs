@@ -10,7 +10,6 @@ use reth_node_builder::rpc::{
     RpcHandle,
 };
 use reth_rpc_api::DebugApiServer;
-use reth_rpc_eth_api::FullEthApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 
@@ -32,8 +31,6 @@ pub struct BaseAddOns<N: FullNodeComponents, RpcMiddleware = Identity> {
 impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>:
-        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Creates a new instance from components.
     pub const fn new(
@@ -48,8 +45,6 @@ where
 impl<N> Default for BaseAddOns<N>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>:
-        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     fn default() -> Self {
         Self::builder().build()
@@ -59,8 +54,6 @@ where
 impl<N> BaseAddOns<N>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>:
-        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder {
@@ -71,8 +64,6 @@ where
 impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>:
-        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Sets the RPC middleware stack for processing RPC requests.
     ///
@@ -288,10 +279,6 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     pub fn build<N>(self) -> BaseAddOns<N, RpcMiddleware>
     where
         N: FullNodeComponents,
-        BaseNodeEthApi<N>: FullEthApiServer<
-                Provider = N::Provider,
-                Pool = reth_node_api::BaseNodePool<N::Provider>,
-            >,
     {
         let Self {
             sequencer_url,

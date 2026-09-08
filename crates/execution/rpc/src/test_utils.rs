@@ -5,9 +5,8 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
     BasePooledTransaction, CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
 };
-use reth_rpc_eth_api::{RpcNodeCore, node::RpcNodeCoreAdapter};
 
-use crate::EthApiBuilder;
+use crate::{EthApiBuilder, RpcNodeCore, RpcNodeCoreAdapter};
 
 /// Pool accepting Base transactions in RPC tests.
 pub type TestPool = Pool<

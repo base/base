@@ -8,8 +8,9 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::BaseTransactionRequest;
-use reth_rpc_eth_api::helpers::{EthSigner, signer::Result};
 use reth_rpc_eth_types::SignError;
+
+use crate::{EthSigner, Result};
 
 /// Holds developer keys
 #[derive(Debug, Clone)]

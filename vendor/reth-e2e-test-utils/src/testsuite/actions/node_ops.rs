@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
+use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_rpc_api::clients::EthApiClient;
 use tokio::time::{sleep, timeout};
 use tracing::debug;
 

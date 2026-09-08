@@ -1,4 +1,4 @@
-//! Implementation of the [`jsonrpsee`] generated [`EthApiServer`](crate::EthApi) trait
+//! Implementation of the [`jsonrpsee`] generated [`EthApiServer`](crate::BaseEthApi) trait
 //! Handles RPC requests for the `eth_` namespace.
 
 use std::{sync::Arc, time::Duration};
@@ -12,12 +12,6 @@ use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
     TransactionPool,
 };
-use derive_more::Deref;
-use reth_rpc_eth_api::{
-    BaseRpcConverter, EthApiTypes, RpcNodeCore,
-    helpers::{SpawnBlocking, spec::SignersForRpc},
-    node::RpcNodeCoreExt,
-};
 use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind,
@@ -29,120 +23,11 @@ use reth_tasks::{
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
-use crate::{BaseTimeCache, SequencerClient};
+use crate::{BaseRpcConverter, BaseTimeCache, RpcNodeCore, SequencerClient, SignersForRpc};
 
 const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
 
-/// `Eth` API implementation.
-///
-/// This type provides the functionality for handling `eth_` related requests.
-/// These are implemented two-fold: Core functionality is implemented as
-/// [`EthApiSpec`](reth_rpc_eth_api::helpers::EthApiSpec) trait. Additionally, the required server
-/// implementations (e.g. [`EthApiServer`](reth_rpc_eth_api::EthApiServer)) are implemented
-/// separately in submodules. The rpc handler implementation can then delegate to the main impls.
-/// This way [`EthApi`] is not limited to [`jsonrpsee`] and can be used standalone or in other
-/// network handlers (for example ipc).
-///
-/// ## Trait requirements
-///
-/// While this type requires various unrestricted generic components, trait bounds are enforced when
-/// additional traits are implemented for this type.
-#[derive(Deref)]
-pub struct EthApi<N: RpcNodeCore> {
-    /// All nested fields bundled together.
-    #[deref]
-    pub inner: Arc<BaseEthApiInner<N>>,
-}
-
-impl<N> Clone for EthApi<N>
-where
-    N: RpcNodeCore,
-{
-    fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
-    }
-}
-
-impl<N> EthApiTypes for EthApi<N>
-where
-    N: RpcNodeCore,
-{
-    fn converter(&self) -> &BaseRpcConverter<Self::Provider> {
-        &self.converter
-    }
-}
-
-impl<N> RpcNodeCore for EthApi<N>
-where
-    N: RpcNodeCore,
-{
-    type Provider = N::Provider;
-    type Pool = N::Pool;
-
-    type Network = N::Network;
-
-    fn pool(&self) -> &Self::Pool {
-        self.inner.pool()
-    }
-
-    fn evm_config(&self) -> &BaseEvmConfig {
-        self.inner.evm_config()
-    }
-
-    fn network(&self) -> &Self::Network {
-        self.inner.network()
-    }
-
-    fn provider(&self) -> &Self::Provider {
-        self.inner.provider()
-    }
-}
-
-impl<N> RpcNodeCoreExt for EthApi<N>
-where
-    N: RpcNodeCore,
-{
-    #[inline]
-    fn cache(&self) -> &EthStateCache {
-        self.inner.cache()
-    }
-}
-
-impl<N> std::fmt::Debug for EthApi<N>
-where
-    N: RpcNodeCore,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EthApi").finish_non_exhaustive()
-    }
-}
-
-impl<N> SpawnBlocking for EthApi<N>
-where
-    N: RpcNodeCore,
-{
-    #[inline]
-    fn io_task_spawner(&self) -> &Runtime {
-        self.inner.task_spawner()
-    }
-
-    #[inline]
-    fn tracing_task_pool(&self) -> &BlockingTaskPool {
-        self.inner.blocking_task_pool()
-    }
-
-    #[inline]
-    fn tracing_task_guard(&self) -> &BlockingTaskGuard {
-        self.inner.blocking_task_guard()
-    }
-
-    #[inline]
-    fn blocking_io_task_guard(&self) -> &std::sync::Arc<tokio::sync::Semaphore> {
-        self.inner.blocking_io_request_semaphore()
-    }
-}
-
-/// Container type `EthApi`
+/// Container type `BaseEthApi`
 #[expect(missing_debug_implementations)]
 pub struct BaseEthApiInner<N: RpcNodeCore> {
     /// Configured sequencer transaction forwarder.
@@ -265,7 +150,7 @@ where
         Self {
             sequencer_client: None,
             min_suggested_priority_fee: U256::from(1_000_000),
-            base_time: BaseTimeCache::default(),
+            base_time: converter.mapper.base_time.clone(),
             components,
             signers,
             eth_cache,
@@ -509,14 +394,13 @@ mod tests {
         PruneCheckpointReader, StageCheckpointReader,
         test_utils::{MockEthProvider, NoopProvider},
     };
-    use reth_rpc_eth_api::{EthApiServer, node::RpcNodeCoreAdapter};
     use reth_storage_api::{BalProvider, BlockReader, BlockReaderIdExt, StateProviderFactory};
     use reth_testing_utils::generators;
 
-    use crate::EthApi;
+    use crate::{BaseEthApi, EthApiServer, RpcNodeCoreAdapter};
 
     type FakeEthApi<P = MockEthProvider> =
-        EthApi<RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>>;
+        BaseEthApi<RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>>;
 
     fn build_test_eth_api<
         P: BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
@@ -542,7 +426,7 @@ mod tests {
         .build()
     }
 
-    // Function to prepare the EthApi with mock data
+    // Function to prepare the BaseEthApi with mock data
     fn prepare_eth_api(
         newest_block: u64,
         mut oldest_block: Option<B256>,
@@ -634,7 +518,7 @@ mod tests {
     /// Invalid block range
     #[tokio::test]
     async fn test_fee_history_empty() {
-        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &build_test_eth_api(NoopProvider::default()),
             U64::from(1),
             BlockNumberOrTag::Latest,
@@ -656,7 +540,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(newest_block + 1),
             newest_block.into(),
@@ -679,7 +563,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(1),
             (newest_block + 1000).into(),
@@ -700,9 +584,10 @@ mod tests {
             block_override: None,
         }];
 
-        let response =
-            <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(&eth_api, bundles, None, None)
-                .await;
+        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(
+            &eth_api, bundles, None, None,
+        )
+        .await;
 
         let err = response.expect_err("call_many should fail when latest block lookup errors");
         let message = err.message().to_ascii_lowercase();
@@ -724,9 +609,10 @@ mod tests {
             block_override: None,
         }];
 
-        let response =
-            <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(&eth_api, bundles, None, None)
-                .await;
+        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(
+            &eth_api, bundles, None, None,
+        )
+        .await;
 
         let err =
             response.expect_err("call_many should fail when latest block hash is unavailable");
@@ -747,7 +633,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(0),
             newest_block.into(),
@@ -773,7 +659,9 @@ mod tests {
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
         let fee_history =
-            eth_api.fee_history(U64::from(1), newest_block.into(), None).await.unwrap();
+            EthApiServer::fee_history(&eth_api, U64::from(1), newest_block.into(), None)
+                .await
+                .unwrap();
         assert_eq!(
             fee_history.base_fee_per_gas,
             &base_fees_per_gas[base_fees_per_gas.len() - 2..],
@@ -807,7 +695,9 @@ mod tests {
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
         let fee_history =
-            eth_api.fee_history(U64::from(block_count), newest_block.into(), None).await.unwrap();
+            EthApiServer::fee_history(&eth_api, U64::from(block_count), newest_block.into(), None)
+                .await
+                .unwrap();
 
         assert_eq!(
             &fee_history.base_fee_per_gas, &base_fees_per_gas,
