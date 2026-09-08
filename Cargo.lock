@@ -233,7 +233,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-eip2930"
-version = "0.0.0"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9441120fa82df73e8959ae0e4ab8ade03de2aaae61be313fbf5746277847ce25"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -241,7 +243,6 @@ dependencies = [
  "borsh",
  "rand 0.8.7",
  "serde",
- "serde_json",
 ]
 
 [[package]]

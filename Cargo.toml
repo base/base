@@ -296,7 +296,7 @@ alloy-network = { path = "vendor/alloy-network", default-features = false }
 alloy-genesis = { path = "vendor/alloy-genesis", default-features = false }
 alloy-dyn-abi = { path = "vendor/alloy-dyn-abi", default-features = false }
 alloy-eip2124 = { path = "vendor/alloy-eip2124", default-features = false }
-alloy-eip2930 = { path = "vendor/alloy-eip2930", default-features = false }
+alloy-eip2930 = { version = "=0.2.3", default-features = false }
 alloy-eip7702 = { path = "vendor/alloy-eip7702", default-features = false }
 alloy-eip7928 = { path = "vendor/alloy-eip7928", default-features = false }
 alloy-provider = { path = "vendor/alloy-provider", default-features = false }
