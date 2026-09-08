@@ -53,7 +53,6 @@ nanoid = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std"] }
-reth-ipc = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 hex = { workspace = true, features = ["default"] }
@@ -118,7 +117,6 @@ tikv-jemallocator = { workspace = true, optional = true, features = ["default"] 
 [dev-dependencies]
 rlimit = { workspace = true }
 nanoid = { workspace = true }
-reth-ipc = { workspace = true }
 base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-testing-utils = { workspace = true }
@@ -175,7 +173,6 @@ test-utils = [
     "reth-db/test-utils",
     "base-execution-evm/test-utils",
     "reth-execution-cache/test-utils",
-    "reth-ipc",
     "base-node-core/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",

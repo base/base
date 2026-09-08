@@ -7,15 +7,26 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use jsonrpsee::{core::client::ClientT, rpc_params};
+use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 
 /// Access to the separately maintained reference client's execution endpoint.
 #[derive(Debug)]
 pub struct ExternalEngineApi {
-    /// Reference client socket.
-    pub path: String,
+    /// Reference client HTTP endpoint.
+    pub url: String,
+    /// Authentication for the separately maintained reference client.
+    pub secret: JwtSecret,
 }
 
 impl ExternalEngineApi {
+    /// Builds an authenticated HTTP client for the external reference node.
+    pub fn client(&self) -> eyre::Result<impl ClientT> {
+        let middleware = tower::ServiceBuilder::default().layer(AuthClientLayer::new(self.secret));
+        Ok(jsonrpsee::http_client::HttpClientBuilder::default()
+            .set_http_middleware(middleware)
+            .build(&self.url)?)
+    }
+
     /// Submits a payload to the external reference client.
     pub async fn new_payload(
         &self,
@@ -24,7 +35,7 @@ impl ExternalEngineApi {
         root: B256,
         requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
-        let client = reth_ipc::client::IpcClientBuilder::default().build(&self.path).await?;
+        let client = self.client()?;
         Ok(client
             .request("engine_newPayloadV4", rpc_params![payload, hashes, root, requests])
             .await?)
@@ -37,7 +48,7 @@ impl ExternalEngineApi {
         head: B256,
         attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> eyre::Result<ForkchoiceUpdated> {
-        let client = reth_ipc::client::IpcClientBuilder::default().build(&self.path).await?;
+        let client = self.client()?;
         Ok(client
             .request(
                 "engine_forkchoiceUpdatedV3",

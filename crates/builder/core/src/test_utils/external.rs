@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B256, U256, keccak256, private::alloy_rlp::Encodable};
@@ -13,20 +17,17 @@ use futures::{StreamExt, TryStreamExt};
 use testcontainers::bollard::{
     Docker,
     container::LogOutput,
-    exec::{CreateExecOptions, StartExecResults},
-    models::{ContainerCreateBody, ContainerCreateResponse, HostConfig},
+    models::{ContainerCreateBody, ContainerCreateResponse, HostConfig, PortBinding},
     query_parameters::{
         AttachContainerOptionsBuilder, CreateContainerOptionsBuilder, CreateImageOptionsBuilder,
-        RemoveContainerOptionsBuilder, StartContainerOptions, StopContainerOptions,
+        InspectContainerOptions, RemoveContainerOptionsBuilder, StartContainerOptions,
+        StopContainerOptions,
     },
 };
 use tokio::signal;
 use tracing::{debug, warn};
 
-use super::ExternalEngineApi;
-
-const AUTH_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/auth.ipc";
-const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
+use super::{DEFAULT_JWT_TOKEN, ExternalEngineApi};
 
 /// This type represents a Base execution client node that is running inside a
 /// docker container. This node is used to validate the correctness of the blocks built
@@ -57,8 +58,6 @@ impl ExternalNode {
             .unwrap_or_else(|_| std::env::temp_dir());
 
         let tempdir = tempdir.join(format!("reth-shared-{}", nanoid::nanoid!()));
-        let auth_ipc = tempdir.join("auth.ipc").to_string_lossy().to_string();
-        let rpc_ipc = tempdir.join("rpc.ipc").to_string_lossy().to_string();
 
         std::fs::create_dir_all(&tempdir)
             .map_err(|_| eyre::eyre!("Failed to create temporary directory"))?;
@@ -66,24 +65,33 @@ impl ExternalNode {
         std::fs::write(tempdir.join("genesis.json"), include_str!("./artifacts/genesis.json.tmpl"))
             .map_err(|_| eyre::eyre!("Failed to write genesis file"))?;
 
+        std::fs::write(tempdir.join("jwt.hex"), DEFAULT_JWT_TOKEN)?;
         // Create Docker container with reth EL client
         let container = create_container(&tempdir, &docker, version_tag).await?;
 
         docker.start_container(&container.id, None::<StartContainerOptions>).await?;
 
-        // Wait for the container to be ready and IPCs to be created
-        await_ipc_readiness(&docker, &container.id).await?;
-
-        // IPC files created by the container have restrictive permissions,
-        // so we need to relax them to allow the host to access them.
-        relax_permissions(&docker, &container.id, AUTH_CONTAINER_IPC_PATH).await?;
-        relax_permissions(&docker, &container.id, RPC_CONTAINER_IPC_PATH).await?;
-
-        // Connect to the IPCs
-        let engine_api = ExternalEngineApi { path: auth_ipc };
+        // Both endpoints belong to the independent reference client, exposed on random localhost ports.
+        tokio::time::timeout(Duration::from_secs(60), await_http_readiness(&docker, &container.id))
+            .await??;
+        let info = docker.inspect_container(&container.id, None::<InspectContainerOptions>).await?;
+        let ports = info
+            .network_settings
+            .and_then(|settings| settings.ports)
+            .ok_or_else(|| eyre::eyre!("reference client has no published ports"))?;
+        let endpoint = |port: &str| -> eyre::Result<String> {
+            let binding = ports
+                .get(port)
+                .and_then(Option::as_ref)
+                .and_then(|bindings| bindings.first())
+                .and_then(|binding| binding.host_port.as_ref())
+                .ok_or_else(|| eyre::eyre!("reference client did not publish {port}"))?;
+            Ok(format!("http://127.0.0.1:{binding}"))
+        };
+        let engine_api =
+            ExternalEngineApi { url: endpoint("8551/tcp")?, secret: DEFAULT_JWT_TOKEN.parse()? };
         let provider = ProviderBuilder::<Identity, Identity, Base>::default()
-            .connect_ipc(rpc_ipc.into())
-            .await?;
+            .connect_http(endpoint("8545/tcp")?.parse()?);
 
         // spin up a task that will clean up the container on ctrl-c
         tokio::spawn({
@@ -260,6 +268,20 @@ async fn create_container(
 ) -> eyre::Result<ContainerCreateResponse> {
     let host_config = HostConfig {
         binds: Some(vec![format!("{}:/home/op-reth-shared:rw", tempdir.display())]),
+        port_bindings: Some(
+            ["8545/tcp", "8551/tcp"]
+                .into_iter()
+                .map(|port| {
+                    (
+                        port.to_owned(),
+                        Some(vec![PortBinding {
+                            host_ip: Some("127.0.0.1".into()),
+                            host_port: Some("0".into()),
+                        }]),
+                    )
+                })
+                .collect(),
+        ),
         ..Default::default()
     };
 
@@ -279,17 +301,24 @@ async fn create_container(
         debug!(pull_result = ?pull_result, version_tag = %version_tag, "Pulling ghcr.io/paradigmxyz/op-reth locally");
     }
 
-    // Don't expose any ports, as we will only use IPC for communication.
     let container_config = ContainerCreateBody {
         image: Some(format!("ghcr.io/paradigmxyz/op-reth:{version_tag}")),
+        exposed_ports: Some(
+            ["8545/tcp", "8551/tcp"]
+                .into_iter()
+                .map(|port| (port.to_owned(), HashMap::new()))
+                .collect(),
+        ),
         entrypoint: Some(vec!["op-reth".to_string()]),
         cmd: Some(
             vec![
                 "node",
                 "--chain=/home/op-reth-shared/genesis.json",
-                "--auth-ipc",
-                &format!("--auth-ipc.path={AUTH_CONTAINER_IPC_PATH}"),
-                &format!("--ipcpath={RPC_CONTAINER_IPC_PATH}"),
+                "--ipcdisable",
+                "--http",
+                "--http.addr=0.0.0.0",
+                "--authrpc.addr=0.0.0.0",
+                "--authrpc.jwtsecret=/home/op-reth-shared/jwt.hex",
                 "--disable-discovery",
                 "--no-persist-peers",
                 "--max-outbound-peers=0",
@@ -309,40 +338,7 @@ async fn create_container(
         .await?)
 }
 
-async fn relax_permissions(docker: &Docker, container: &str, path: &str) -> eyre::Result<()> {
-    let exec = docker
-        .create_exec(
-            container,
-            CreateExecOptions {
-                cmd: Some(vec!["chmod", "777", path]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            },
-        )
-        .await?;
-
-    let StartExecResults::Attached { mut output, .. } = docker.start_exec(&exec.id, None).await?
-    else {
-        return Err(eyre::eyre!("Failed to start exec for relaxing permissions"));
-    };
-
-    while let Some(Ok(output)) = output.next().await {
-        match output {
-            LogOutput::StdErr { message } => {
-                return Err(eyre::eyre!(
-                    "Failed to relax permissions for {path}: {}",
-                    String::from_utf8_lossy(&message)
-                ));
-            }
-            _ => continue,
-        };
-    }
-
-    Ok(())
-}
-
-async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<()> {
+async fn await_http_readiness(docker: &Docker, container: &str) -> eyre::Result<()> {
     let mut attach_stream = docker
         .attach_container(
             container,
@@ -357,20 +353,20 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
         )
         .await?;
 
-    let mut rpc_ipc_started = false;
-    let mut auth_ipc_started = false;
+    let mut rpc_http_started = false;
+    let mut auth_http_started = false;
 
-    // wait for the node to start and signal that IPCs are ready
+    // wait for the node to start and signal that HTTP servers are ready
     while let Some(Ok(output)) = attach_stream.output.next().await {
         match output {
             LogOutput::StdOut { message } | LogOutput::StdErr { message } => {
                 let message = String::from_utf8_lossy(&message);
-                if message.contains(AUTH_CONTAINER_IPC_PATH) {
-                    auth_ipc_started = true;
+                if message.contains("RPC auth server started") {
+                    auth_http_started = true;
                 }
 
-                if message.contains(RPC_CONTAINER_IPC_PATH) {
-                    rpc_ipc_started = true;
+                if message.contains("RPC HTTP server started") {
+                    rpc_http_started = true;
                 }
 
                 if message.to_lowercase().contains("error") {
@@ -380,13 +376,13 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
             LogOutput::StdIn { .. } | LogOutput::Console { .. } => {}
         }
 
-        if auth_ipc_started && rpc_ipc_started {
+        if auth_http_started && rpc_http_started {
             break;
         }
     }
 
-    if !auth_ipc_started || !rpc_ipc_started {
-        return Err(eyre::eyre!("Failed to start op-reth container: IPCs not ready"));
+    if !auth_http_started || !rpc_http_started {
+        return Err(eyre::eyre!("Failed to start op-reth container: HTTP servers not ready"));
     }
 
     Ok(())
