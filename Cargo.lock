@@ -3239,6 +3239,7 @@ dependencies = [
  "reth-engine-primitives",
  "reth-network",
  "reth-network-api",
+ "reth-primitives-traits",
  "reth-provider",
  "rstest",
  "serde",

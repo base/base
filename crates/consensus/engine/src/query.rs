@@ -89,16 +89,11 @@ impl EngineQueries {
                 trace!(target: "engine", block = ?block, "Querying engine output at block");
                 let output_block = client.l2_block_by_label(block).await?;
                 let output_block = output_block.ok_or(EngineQueriesError::NoL2BlockFound(block))?;
-                // Cloning the l2 block below is cheaper than sending a network request to get the
-                // l2 block info. Querying the `L2BlockInfo` from the client ends up
-                // fetching the full l2 block again.
-                let consensus_block =
-                    output_block.clone().map_header(|header| header.into_inner()).into_consensus();
-                let output_block_info = L2BlockInfo::from_block_and_genesis(
-                    &consensus_block.map_transactions(|tx| tx.inner.inner.into_inner()),
-                    &rollup_config.genesis,
-                )
-                .map_err(|_| EngineQueriesError::NoL2BlockFound(block))?;
+                let block_hash = output_block.hash();
+                let output_block = output_block.into_block();
+                let output_block_info =
+                    L2BlockInfo::from_block_and_genesis(&output_block, &rollup_config.genesis)
+                        .map_err(|_| EngineQueriesError::NoL2BlockFound(block))?;
 
                 let state_root = output_block.header.state_root;
 
@@ -116,17 +111,14 @@ impl EngineQueries {
                         );
                         // Fetch the storage root for the L2 head block.
                         let l2_to_l1_message_passer = client
-                            .storage_root(Predeploys::L2_TO_L1_MESSAGE_PASSER, block.into())
+                            .storage_root(Predeploys::L2_TO_L1_MESSAGE_PASSER, block_hash.into())
                             .await?;
 
                         l2_to_l1_message_passer
                     };
 
-                let output_response_v0 = OutputRoot::from_parts(
-                    state_root,
-                    message_passer_storage_root,
-                    output_block.header.hash,
-                );
+                let output_response_v0 =
+                    OutputRoot::from_parts(state_root, message_passer_storage_root, block_hash);
 
                 trace!(target: "engine", block = ?block, "Sending engine output response");
                 sender

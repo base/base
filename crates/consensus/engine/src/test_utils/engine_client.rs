@@ -345,6 +345,18 @@ pub struct MockEngineClient {
 }
 
 impl MockEngineClient {
+    /// Converts an existing RPC fixture into a native sealed block for execution tests.
+    pub fn native_block(block: L2RpcBlock) -> reth_primitives_traits::SealedBlock {
+        let hash = block.header.hash;
+        reth_primitives_traits::SealedBlock::new_unchecked(
+            block
+                .map_header(|header| header.into_inner())
+                .into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()),
+            hash,
+        )
+    }
+
     /// Creates a new mock engine client with the given config.
     pub fn new(cfg: Arc<RollupConfig>) -> Self {
         Self { cfg, storage: Arc::new(RwLock::new(MockEngineStorage::default())) }
@@ -598,7 +610,7 @@ impl EngineClient for MockEngineClient {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
+    ) -> TransportResult<Option<reth_primitives_traits::SealedBlock>> {
         let block_key = block_id_to_key(&block);
         let storage = self.storage.read().await;
         if let Some(error) = storage.l2_block_errors_by_id.get(&block_key).cloned() {
@@ -609,7 +621,7 @@ impl EngineClient for MockEngineClient {
                 }
             });
         }
-        Ok(storage.l2_blocks_by_id.get(&block_key).cloned())
+        Ok(storage.l2_blocks_by_id.get(&block_key).cloned().map(Self::native_block))
     }
 
     async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256> {
@@ -630,9 +642,9 @@ impl EngineClient for MockEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<L2RpcBlock>, EngineClientError> {
+    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
         let storage = self.storage.read().await;
-        Ok(storage.l2_blocks_by_label.get(&numtag).cloned())
+        Ok(storage.l2_blocks_by_label.get(&numtag).cloned().map(Self::native_block))
     }
 
     async fn l2_block_info_by_label(

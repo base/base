@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
@@ -41,7 +40,7 @@ use base_test_utils::build_test_genesis;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
@@ -62,9 +61,6 @@ pub type TestBlockchainProvider = BlockchainProvider<TestNodeTypes>;
 
 /// Type alias for the noop pool used by the engine client.
 pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
-
-/// Type alias for Base L2 RPC blocks returned by the action engine.
-type ActionL2RpcBlock = <Base as Network>::BlockResponse;
 
 /// Minimal `L2ToL1MessagePasser` stand-in for Isthmus withdrawals-root tests.
 ///
@@ -645,15 +641,8 @@ impl ActionEngineClient {
         }
     }
 
-    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> ActionL2RpcBlock {
-        let sealed = Sealed::new_unchecked(header.clone(), block_hash);
-        let rpc_header = alloy_rpc_types_eth::Header::from_sealed(sealed);
-        Block {
-            header: rpc_header.into(),
-            uncles: vec![],
-            transactions: BlockTransactions::Hashes(vec![]),
-            withdrawals: None,
-        }
+    pub fn header_to_l2_block(header: &Header, block_hash: B256) -> SealedBlock {
+        SealedBlock::new_unchecked(BaseBlock::new(header.clone(), Default::default()), block_hash)
     }
 
     /// Remove a pending payload by ID, returning a transport error if not found.
@@ -760,7 +749,7 @@ impl EngineClient for ActionEngineClient {
         )
     }
 
-    async fn get_l2_block(&self, block: BlockId) -> TransportResult<Option<ActionL2RpcBlock>> {
+    async fn get_l2_block(&self, block: BlockId) -> TransportResult<Option<SealedBlock>> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let header = match block {
             BlockId::Number(BlockNumberOrTag::Number(number)) => {
@@ -773,7 +762,7 @@ impl EngineClient for ActionEngineClient {
                 guard.executed_headers.values().find(|header| header.hash_slow() == hash.block_hash)
             }
         };
-        Ok(header.map(|header| Self::header_to_l2_rpc_block(header, header.hash_slow())))
+        Ok(header.map(|header| Self::header_to_l2_block(header, header.hash_slow())))
     }
 
     async fn storage_root(&self, _address: Address, _block: BlockId) -> TransportResult<B256> {
@@ -783,13 +772,12 @@ impl EngineClient for ActionEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<ActionL2RpcBlock>, EngineClientError> {
+    ) -> Result<Option<SealedBlock>, EngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let block = match numtag {
-            BlockNumberOrTag::Number(n) => guard
-                .executed_headers
-                .get(&n)
-                .map(|h| Self::header_to_l2_rpc_block(h, h.hash_slow())),
+            BlockNumberOrTag::Number(n) => {
+                guard.executed_headers.get(&n).map(|h| Self::header_to_l2_block(h, h.hash_slow()))
+            }
             BlockNumberOrTag::Latest
             | BlockNumberOrTag::Safe
             | BlockNumberOrTag::Finalized
@@ -798,13 +786,13 @@ impl EngineClient for ActionEngineClient {
                 guard
                     .executed_headers
                     .get(&number)
-                    .map(|h| Self::header_to_l2_rpc_block(h, h.hash_slow()))
+                    .map(|h| Self::header_to_l2_block(h, h.hash_slow()))
             }
             BlockNumberOrTag::Earliest => guard
                 .executed_headers
                 .values()
                 .min_by_key(|h| h.number)
-                .map(|h| Self::header_to_l2_rpc_block(h, h.hash_slow())),
+                .map(|h| Self::header_to_l2_block(h, h.hash_slow())),
         };
         Ok(block)
     }

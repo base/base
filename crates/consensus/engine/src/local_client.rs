@@ -9,10 +9,8 @@ use alloy_rpc_types_engine::{
 };
 use alloy_transport::{TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_consensus::{BaseTransactionInfo, transaction::Recovered};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{Base, Transaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     BasePayloadAttributes, ExecutionData,
@@ -22,7 +20,6 @@ use base_execution_payload_builder::{BaseExecutionHandle, BasePayloadBuilderAttr
 use base_protocol::L2BlockInfo;
 use reth_network::NetworkHandle;
 use reth_network_api::NetworkInfo;
-use reth_provider::{BlockReaderIdExt, TransactionVariant};
 
 use crate::{EngineClient, EngineClientError, Metrics};
 
@@ -54,31 +51,11 @@ impl EngineClient for LocalEngineClient {
     async fn get_l2_block(
         &self,
         id: BlockId,
-    ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
-        // Retain the consensus reader's response shape while its callers migrate to native blocks.
+    ) -> TransportResult<Option<reth_primitives_traits::SealedBlock>> {
         self.l2
-            .read(move |provider| {
-                let Some(block) =
-                    provider.block_with_senders_by_id(id, TransactionVariant::WithHash)?
-                else {
-                    return Ok(None);
-                };
-                let (block, senders) = block.split();
-                let mut senders = senders.into_iter();
-                let rpc = alloy_rpc_types_eth::Block::from_consensus(block, None).map_transactions(
-                    |tx| {
-                        Transaction::from_transaction(
-                            Recovered::new_unchecked(
-                                tx,
-                                senders.next().expect("one sender per transaction"),
-                            ),
-                            BaseTransactionInfo::default(),
-                        )
-                    },
-                );
-                Ok(Some(rpc.map_header(Into::into)))
-            })
+            .block(id)
             .await
+            .map(|block| block.map(reth_primitives_traits::SealedBlock::seal_slow))
             .map_err(|error| TransportErrorKind::custom(error).into())
     }
 
@@ -92,7 +69,7 @@ impl EngineClient for LocalEngineClient {
     async fn l2_block_by_label(
         &self,
         tag: BlockNumberOrTag,
-    ) -> Result<Option<<Base as Network>::BlockResponse>, EngineClientError> {
+    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
         Ok(self.get_l2_block(tag.into()).await?)
     }
 

@@ -455,7 +455,13 @@ async fn consolidate_rejects_attribute_transaction_with_trailing_bytes() {
 
     let cfg = RollupConfig::default();
     assert_eq!(
-        AttributesMatch::check(&cfg, &attributes, &unsafe_block),
+        AttributesMatch::check(
+            &cfg,
+            &attributes,
+            &crate::test_utils::MockEngineClient::native_block(
+                unsafe_block.clone().map_header(Into::into)
+            )
+        ),
         AttributesMismatch::MalformedAttributesTransaction.into()
     );
 

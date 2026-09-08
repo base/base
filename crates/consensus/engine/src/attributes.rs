@@ -1,15 +1,13 @@
 //! Contains a utility method to check if attributes match a block.
 
-use alloy_eips::{Decodable2718, eip1559::BaseFeeParams};
+use alloy_eips::{Decodable2718, eip1559::BaseFeeParams, eip4895::Withdrawals};
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
 use base_common_consensus::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
 use base_common_genesis::RollupConfig;
-use base_common_network::TransactionResponse;
-use base_common_rpc_types::Transaction;
 use base_protocol::AttributesWithParent;
+use reth_primitives_traits::SealedBlock;
 
 /// Result of validating payload attributes against an execution layer block.
 ///
@@ -54,13 +52,13 @@ impl AttributesMatch {
     pub fn check_withdrawals(
         config: &RollupConfig,
         attributes: &AttributesWithParent,
-        block: &Block<Transaction>,
+        block: &SealedBlock,
     ) -> Self {
         let attr_withdrawals = attributes.attributes().payload_attributes.withdrawals.as_ref();
         let attr_withdrawals = attr_withdrawals.map(|w| Withdrawals::new(w.clone()));
-        let block_withdrawals = block.withdrawals.as_ref();
+        let block_withdrawals = block.body().withdrawals.as_ref();
 
-        if config.is_canyon_active(block.header.timestamp) {
+        if config.is_canyon_active(block.header().timestamp) {
             // In canyon, the withdrawals list should be some and empty
             if attr_withdrawals.is_none_or(|w| !w.is_empty()) {
                 return Self::Mismatch(AttributesMismatch::CanyonWithdrawalsNotEmpty);
@@ -68,10 +66,10 @@ impl AttributesMatch {
             if block_withdrawals.is_none_or(|w| !w.is_empty()) {
                 return Self::Mismatch(AttributesMismatch::CanyonWithdrawalsNotEmpty);
             }
-            if !config.is_isthmus_active(block.header.timestamp) {
+            if !config.is_isthmus_active(block.header().timestamp) {
                 // In canyon, the withdrawals root should be set to the empty value
                 let empty_hash = base_common_consensus::EMPTY_ROOT_HASH;
-                if block.header.inner.withdrawals_root != Some(empty_hash) {
+                if block.header().withdrawals_root != Some(empty_hash) {
                     return Self::Mismatch(AttributesMismatch::CanyonNotEmptyHash);
                 }
             }
@@ -82,9 +80,9 @@ impl AttributesMatch {
             }
         }
 
-        if config.is_isthmus_active(block.header.timestamp) {
+        if config.is_isthmus_active(block.header().timestamp) {
             // In isthmus, the withdrawals root must be set
-            if block.header.inner.withdrawals_root.is_none() {
+            if block.header().withdrawals_root.is_none() {
                 return Self::Mismatch(AttributesMismatch::IsthmusMissingWithdrawalsRoot);
             }
         }
@@ -95,40 +93,8 @@ impl AttributesMatch {
     /// Checks the attributes and block transaction list for consolidation.
     /// We start by checking that there are the same number of transactions in both the attribute
     /// payload and the block. Then we compare their contents
-    fn check_transactions(attributes_txs: &[Bytes], block: &Block<Transaction>) -> Self {
-        // Before checking the number of transactions, we have to make sure that the block
-        // has the right transactions format. We need to have access to the
-        // full transactions to be able to compare their contents.
-        let block_txs = match block.transactions {
-            BlockTransactions::Hashes(_) | BlockTransactions::Full(_)
-                if attributes_txs.is_empty() && block.transactions.is_empty() =>
-            {
-                // We early return when both attributes and blocks are empty. This is for ergonomics
-                // because the default [`BlockTransactions`] format is
-                // [`BlockTransactions::Hash`], which may cause
-                // the [`BlockTransactions`] format check to fail right below. We may want to be a
-                // bit more flexible and not reject the hash format if both the
-                // attributes and the block are empty.
-                return Self::Match;
-            }
-            BlockTransactions::Uncle => {
-                // This can never be uncle transactions
-                error!(
-                    "Invalid format for the block transactions. The `Uncle` transaction format is not relevant in that context and should not get used here. This is a bug"
-                );
-
-                return AttributesMismatch::MalformedBlockTransactions.into();
-            }
-            BlockTransactions::Hashes(_) => {
-                // We can't have hash transactions with non empty blocks
-                error!(
-                    "Invalid format for the block transactions. The `Hash` transaction format is not relevant in that context and should not get used here. This is a bug."
-                );
-
-                return AttributesMismatch::MalformedBlockTransactions.into();
-            }
-            BlockTransactions::Full(ref block_txs) => block_txs,
-        };
+    fn check_transactions(attributes_txs: &[Bytes], block: &SealedBlock) -> Self {
+        let block_txs = &block.body().transactions;
 
         let attributes_txs_len = attributes_txs.len();
         let block_txs_len = block_txs.len();
@@ -156,7 +122,7 @@ impl AttributesMatch {
                 return AttributesMismatch::MalformedAttributesTransaction.into();
             };
 
-            if &attr_tx != block_tx.inner.inner.inner() {
+            if &attr_tx != block_tx {
                 warn!(target: "engine", ?attr_tx, ?block_tx, "Transaction mismatch in derived attributes");
                 return AttributesMismatch::TransactionContent(
                     attr_tx.tx_hash(),
@@ -173,7 +139,7 @@ impl AttributesMatch {
     fn check_eip1559(
         config: &RollupConfig,
         attributes: &AttributesWithParent,
-        block: &Block<Transaction>,
+        block: &SealedBlock,
     ) -> Self {
         // We can assume that the EIP-1559 params are set iff holocene is active.
         // Note here that we don't need to check for the attributes length because of type-safety.
@@ -182,7 +148,7 @@ impl AttributesMatch {
                 // Holocene is active but the eip1559 are not set. This is a bug!
                 // Note: we checked the timestamp match above, so we can assume that both the
                 // attributes and the block have the same stamps
-                if config.is_holocene_active(block.header.timestamp) {
+                if config.is_holocene_active(block.header().timestamp) {
                     error!(
                         "EIP1559 parameters for attributes not set while holocene is active. This is a bug"
                     );
@@ -213,11 +179,11 @@ impl AttributesMatch {
         // The Jovian extra_data carries an additional `min_base_fee`. The `Option` doubles as
         // a fork signal: `Some` iff Jovian is active.
         let extra_data_decoded: Result<(u32, u32, Option<u64>), EIP1559ParamError> =
-            if config.is_jovian_active(block.header.timestamp) {
-                JovianExtraData::decode(&block.header.extra_data)
+            if config.is_jovian_active(block.header().timestamp) {
+                JovianExtraData::decode(&block.header().extra_data)
                     .map(|(be, bd, mbf)| (be, bd, Some(mbf)))
-            } else if config.is_holocene_active(block.header.timestamp) {
-                HoloceneExtraData::decode(&block.header.extra_data).map(|(be, bd)| (be, bd, None))
+            } else if config.is_holocene_active(block.header().timestamp) {
+                HoloceneExtraData::decode(&block.header().extra_data).map(|(be, bd)| (be, bd, None))
             } else {
                 return AttributesMismatch::MissingBlockEIP1559.into();
             };
@@ -269,31 +235,31 @@ impl AttributesMatch {
         Self::Match
     }
 
-    /// Checks if the specified [`AttributesWithParent`] matches the specified [`Block`].
+    /// Checks if the specified [`AttributesWithParent`] matches the specified [`SealedBlock`].
     /// Returns [`AttributesMatch::Match`] if they match, otherwise returns
     /// [`AttributesMatch::Mismatch`].
     pub fn check(
         config: &RollupConfig,
         attributes: &AttributesWithParent,
-        block: &Block<Transaction>,
+        block: &SealedBlock,
     ) -> Self {
-        if attributes.parent.block_info.hash != block.header.inner.parent_hash {
+        if attributes.parent.block_info.hash != block.header().parent_hash {
             return AttributesMismatch::ParentHash(
                 attributes.parent.block_info.hash,
-                block.header.inner.parent_hash,
+                block.header().parent_hash,
             )
             .into();
         }
 
-        if attributes.attributes().payload_attributes.timestamp != block.header.inner.timestamp {
+        if attributes.attributes().payload_attributes.timestamp != block.header().timestamp {
             return AttributesMismatch::Timestamp(
                 attributes.attributes().payload_attributes.timestamp,
-                block.header.inner.timestamp,
+                block.header().timestamp,
             )
             .into();
         }
 
-        let mix_hash = block.header.inner.mix_hash;
+        let mix_hash = block.header().mix_hash;
         if attributes.attributes().payload_attributes.prev_randao != mix_hash {
             return AttributesMismatch::PrevRandao(
                 attributes.attributes().payload_attributes.prev_randao,
@@ -315,8 +281,8 @@ impl AttributesMatch {
             return AttributesMismatch::MissingAttributesGasLimit.into();
         };
 
-        if gas_limit != block.header.inner.gas_limit {
-            return AttributesMismatch::GasLimit(gas_limit, block.header.inner.gas_limit).into();
+        if gas_limit != block.header().gas_limit {
+            return AttributesMismatch::GasLimit(gas_limit, block.header().gas_limit).into();
         }
 
         if let m @ Self::Mismatch(_) = Self::check_withdrawals(config, attributes, block) {
@@ -324,21 +290,21 @@ impl AttributesMatch {
         }
 
         if attributes.attributes().payload_attributes.parent_beacon_block_root
-            != block.header.inner.parent_beacon_block_root
+            != block.header().parent_beacon_block_root
         {
             return AttributesMismatch::ParentBeaconBlockRoot(
                 attributes.attributes().payload_attributes.parent_beacon_block_root,
-                block.header.inner.parent_beacon_block_root,
+                block.header().parent_beacon_block_root,
             )
             .into();
         }
 
         if attributes.attributes().payload_attributes.suggested_fee_recipient
-            != block.header.inner.beneficiary
+            != block.header().beneficiary
         {
             return AttributesMismatch::FeeRecipient(
                 attributes.attributes().payload_attributes.suggested_fee_recipient,
-                block.header.inner.beneficiary,
+                block.header().beneficiary,
             )
             .into();
         }
@@ -353,7 +319,7 @@ impl AttributesMatch {
 }
 
 /// An enum over the type of mismatch between [`AttributesWithParent`]
-/// and a [`Block`].
+/// and a [`SealedBlock`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttributesMismatch {
     /// The parent hash of the block does not match the parent hash of the attributes.
@@ -362,9 +328,6 @@ pub enum AttributesMismatch {
     Timestamp(u64, u64),
     /// The prev randao of the block does not match the prev randao of the attributes.
     PrevRandao(B256, B256),
-    /// The block contains malformed transactions. This is a bug - the transaction format
-    /// should be checked before the consolidation step.
-    MalformedBlockTransactions,
     /// There is a malformed transaction inside the attributes. This is a bug - the transaction
     /// format should be checked before the consolidation step.
     MalformedAttributesTransaction,
@@ -420,15 +383,24 @@ impl From<AttributesMismatch> for AttributesMatch {
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
-    use alloy_rpc_types_eth::BlockTransactions;
+    use alloy_rpc_types_eth::{Block, BlockTransactions};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_chains::{ChainConfig, rollup_config};
     use base_common_consensus::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
+    use base_common_network::TransactionResponse;
+    use base_common_rpc_types::Transaction;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;
     use crate::AttributesMismatch::EIP1559Parameters;
+
+    fn native_block(block: &Block<Transaction>) -> SealedBlock {
+        SealedBlock::new_unchecked(
+            block.clone().into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            block.header.hash,
+        )
+    }
 
     fn default_attributes() -> AttributesWithParent {
         AttributesWithParent {
@@ -446,7 +418,7 @@ mod tests {
         let mut block = Block::<Transaction>::default();
         block.header.inner.parent_hash =
             b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::ParentHash(
             attributes.parent.block_info.hash,
             block.header.inner.parent_hash,
@@ -462,7 +434,7 @@ mod tests {
         let attributes = default_attributes();
         let mut block = Block::<Transaction>::default();
         block.header.inner.timestamp = 1234567890;
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::Timestamp(
             attributes.attributes().payload_attributes.timestamp,
             block.header.inner.timestamp,
@@ -479,7 +451,7 @@ mod tests {
         let mut block = Block::<Transaction>::default();
         block.header.inner.mix_hash =
             b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::PrevRandao(
             attributes.attributes().payload_attributes.prev_randao,
             block.header.inner.mix_hash,
@@ -495,7 +467,7 @@ mod tests {
         let attributes = default_attributes();
         let mut block = Block::<Transaction>::default();
         block.header.inner.gas_limit = 123456;
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::MissingAttributesGasLimit.into();
         assert_eq!(check, expected);
         assert!(check.is_mismatch());
@@ -508,7 +480,7 @@ mod tests {
         attributes.attributes.gas_limit = Some(123457);
         let mut block = Block::<Transaction>::default();
         block.header.inner.gas_limit = 123456;
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::GasLimit(
             attributes.attributes().gas_limit.unwrap_or_default(),
             block.header.inner.gas_limit,
@@ -526,7 +498,7 @@ mod tests {
         attributes.attributes.payload_attributes.parent_beacon_block_root =
             Some(b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"));
         let block = Block::<Transaction>::default();
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::ParentBeaconBlockRoot(
             attributes.attributes().payload_attributes.parent_beacon_block_root,
             block.header.inner.parent_beacon_block_root,
@@ -543,7 +515,7 @@ mod tests {
         attributes.attributes.gas_limit = Some(0);
         let mut block = Block::<Transaction>::default();
         block.header.inner.beneficiary = address!("1234567890abcdef1234567890abcdef12345678");
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::FeeRecipient(
             attributes.attributes().payload_attributes.suggested_fee_recipient,
             block.header.inner.beneficiary,
@@ -600,7 +572,7 @@ mod tests {
     fn test_attributes_match_check_transactions() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let (attributes, block) = test_transactions_match_helper();
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
     }
 
@@ -621,7 +593,7 @@ mod tests {
         let expected: AttributesMatch =
             AttributesMismatch::TransactionLen(block_txs_len - 1, block_txs_len).into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, expected);
         assert!(check.is_mismatch());
     }
@@ -647,7 +619,7 @@ mod tests {
         let expected: AttributesMatch =
             AttributesMismatch::TransactionContent(last_tx_hash, first_tx_hash).into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, expected);
         assert!(check.is_mismatch());
     }
@@ -664,25 +636,13 @@ mod tests {
 
         let expected: AttributesMatch = AttributesMismatch::TransactionLen(0, block_txs_len).into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, expected);
         assert!(check.is_mismatch());
     }
 
     /// Checks the edge case where the transactions contained in the block have the wrong
     /// format.
-    #[test]
-    fn test_block_transactions_wrong_format() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
-        let (attributes, mut block) = test_transactions_match_helper();
-        block.transactions = BlockTransactions::Uncle;
-
-        let expected: AttributesMatch = AttributesMismatch::MalformedBlockTransactions.into();
-
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
-        assert_eq!(check, expected);
-        assert!(check.is_mismatch());
-    }
 
     /// Checks the edge case where the transactions contained in the attributes have the wrong
     /// format.
@@ -696,7 +656,7 @@ mod tests {
 
         let expected: AttributesMatch = AttributesMismatch::MalformedAttributesTransaction.into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, expected);
         assert!(check.is_mismatch());
     }
@@ -713,7 +673,7 @@ mod tests {
 
         block.transactions = BlockTransactions::Full(vec![]);
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
 
         // Edge case: if the block transactions and the payload attributes are empty, we can also
@@ -722,7 +682,7 @@ mod tests {
             BasePayloadAttributes { transactions: None, ..attributes.attributes };
         block.transactions = BlockTransactions::Hashes(vec![]);
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
     }
 
@@ -738,26 +698,11 @@ mod tests {
 
         block.transactions = BlockTransactions::Hashes(vec![]);
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
     }
 
     // Test that the check fails if the block format is incorrect and the attributes are empty
-    #[test]
-    fn test_attributes_empty_and_block_uncle() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
-        let (mut attributes, mut block) = test_transactions_match_helper();
-
-        attributes.attributes =
-            BasePayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
-
-        block.transactions = BlockTransactions::Uncle;
-
-        let expected: AttributesMatch = AttributesMismatch::MalformedBlockTransactions.into();
-
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
-        assert_eq!(check, expected);
-    }
 
     fn eip1559_test_setup() -> (RollupConfig, AttributesWithParent, Block<Transaction>) {
         let mut cfg = rollup_config!(ChainConfig::MAINNET);
@@ -792,7 +737,7 @@ mod tests {
     fn test_eip1559_parameters_not_specified_holocene() {
         let (cfg, attributes, block) = eip1559_test_setup();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Mismatch(AttributesMismatch::MissingAttributesEIP1559));
         assert!(check.is_mismatch());
     }
@@ -804,7 +749,7 @@ mod tests {
 
         attributes.attributes.eip_1559_params = Some(Default::default());
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
             check,
             AttributesMatch::Mismatch(AttributesMismatch::UnknownExtraDataDecodingError(
@@ -823,7 +768,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(Default::default());
         block.header.extra_data = vec![0; 9].into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
             check,
             AttributesMatch::Mismatch(EIP1559Parameters(
@@ -845,7 +790,7 @@ mod tests {
         )
         .unwrap();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
         assert!(check.is_match());
     }
@@ -865,7 +810,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(eip1559_params);
         block.header.extra_data = eip1559_extra_params;
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
         assert!(check.is_match());
     }
@@ -893,7 +838,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(eip1559_params);
         block.header.extra_data = eip1559_extra_params;
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
             check,
             AttributesMatch::Mismatch(AttributesMismatch::EIP1559Parameters(
@@ -920,7 +865,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(eip1559_params);
         block.header.extra_data = eip1559_extra_params;
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
             check,
             AttributesMatch::Mismatch(AttributesMismatch::InvalidEIP1559ParamsCombination)
@@ -947,7 +892,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(eip1559_params);
         block.header.extra_data = raw_extra_params_bytes.into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Mismatch(AttributesMismatch::InvalidExtraDataVersion));
         assert!(check.is_mismatch());
     }
@@ -972,7 +917,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(eip1559_params);
         block.header.extra_data = raw_extra_params_bytes.into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
             check,
             AttributesMatch::Mismatch(AttributesMismatch::UnknownExtraDataDecodingError(
@@ -992,7 +937,7 @@ mod tests {
         attributes.attributes.eip_1559_params = Some(Default::default());
         block.header.extra_data = vec![0; 9].into();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
 
         // Note that in this case we *always* have a mismatch because there isn't enough bytes in
         // the default representation of the extra params to represent a u128
@@ -1015,7 +960,7 @@ mod tests {
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
         let block = Block::<Transaction>::default();
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
         assert!(check.is_match());
     }
@@ -1050,7 +995,7 @@ mod tests {
         )
         .unwrap();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
         assert!(check.is_match());
     }
@@ -1067,7 +1012,7 @@ mod tests {
         )
         .unwrap();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Mismatch(AttributesMismatch::MinBaseFee(123, 456)));
         assert!(check.is_mismatch());
     }
@@ -1084,7 +1029,7 @@ mod tests {
         )
         .unwrap();
 
-        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
             check,
             AttributesMatch::Mismatch(AttributesMismatch::MissingAttributesMinBaseFee)

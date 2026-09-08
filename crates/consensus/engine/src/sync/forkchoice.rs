@@ -2,12 +2,9 @@
 
 use std::fmt::Display;
 
-use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use alloy_provider::Network;
-use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
 use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
 use tracing::{error, warn};
 
@@ -68,11 +65,9 @@ impl L2ForkchoiceState {
         engine_client: &EngineClient_,
         checkpoint_reader: &CheckpointReader,
     ) -> Result<Self, SyncStartError> {
-        let finalized = match get_block_compat(engine_client, BlockNumberOrTag::Finalized.into())
-            .await
-        {
+        let finalized = match engine_client.get_l2_block(BlockNumberOrTag::Finalized.into()).await {
             Ok(Some(rpc_block)) => {
-                let rpc_block_number = rpc_block.header.number;
+                let rpc_block_number = rpc_block.header().number;
                 match block_info_from_reth_or_checkpoint(
                     cfg,
                     ForkchoiceCheckpointLabel::Finalized,
@@ -98,7 +93,7 @@ impl L2ForkchoiceState {
             Ok(None) => genesis_l2_block_info(cfg),
             Err(e) => return Err(e.into()),
         };
-        let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
+        let safe = match engine_client.get_l2_block(BlockNumberOrTag::Safe.into()).await {
             Ok(Some(block)) => {
                 match block_info_from_reth_or_checkpoint(
                     cfg,
@@ -125,16 +120,11 @@ impl L2ForkchoiceState {
             Err(e) => return Err(e.into()),
         };
         let un_safe = {
-            let rpc_block = get_block_compat(engine_client, BlockNumberOrTag::Latest.into())
+            let rpc_block = engine_client
+                .get_l2_block(BlockNumberOrTag::Latest.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-            L2BlockInfo::from_block_and_genesis(
-                &rpc_block
-                    .map_header(|header| header.into_inner())
-                    .into_consensus()
-                    .map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?
+            L2BlockInfo::from_block_and_genesis(&rpc_block.into_block(), &cfg.genesis)?
         };
 
         Ok(Self { un_safe, safe, finalized })
@@ -160,13 +150,10 @@ async fn block_info_from_reth_or_checkpoint<
 >(
     cfg: &RollupConfig,
     label: ForkchoiceCheckpointLabel,
-    rpc_block: <Base as Network>::BlockResponse,
+    rpc_block: reth_primitives_traits::SealedBlock,
     checkpoint_reader: &CheckpointReader,
 ) -> Result<L2BlockInfo, SyncStartError> {
-    let block = rpc_block
-        .map_header(|header| header.into_inner())
-        .into_consensus()
-        .map_transactions(|tx| tx.inner.inner.into_inner());
+    let block = rpc_block.into_block();
     match L2BlockInfo::from_block_and_genesis(&block, &cfg.genesis) {
         Ok(block_info) => Ok(block_info),
         Err(err @ FromBlockError::MissingL1InfoDeposit(_)) => {
@@ -233,14 +220,12 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     // Probing once up front lets us return a precise error instead of crashing with a stale
     // `MissingL1InfoDeposit`, and also gives us a known-good `L2BlockInfo` we can return
     // immediately when the search range collapses.
-    let latest = get_block_compat(engine_client, BlockNumberOrTag::Latest.into())
+    let latest = engine_client
+        .get_l2_block(BlockNumberOrTag::Latest.into())
         .await?
         .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-    let latest_number = latest.header.number;
-    let latest_consensus = latest
-        .map_header(|header| header.into_inner())
-        .into_consensus()
-        .map_transactions(|tx| tx.inner.inner.into_inner());
+    let latest_number = latest.header().number;
+    let latest_consensus = latest.into_block();
 
     let mut last_known_unpruned =
         match L2BlockInfo::from_block_and_genesis(&latest_consensus, &cfg.genesis) {
@@ -290,10 +275,7 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
             .get_l2_block(mid.into())
             .await?
             .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
-        let consensus_block = block
-            .map_header(|header| header.into_inner())
-            .into_consensus()
-            .map_transactions(|tx| tx.inner.inner.into_inner());
+        let consensus_block = block.into_block();
 
         match L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis) {
             Ok(info) => {
@@ -315,95 +297,4 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     );
 
     Ok(last_known_unpruned)
-}
-
-/// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with clients.
-/// When serving a block-by-number request, these clients will return non-standard errors for the safe
-/// and finalized heads when the chain has just started and nothing is marked as safe or finalized yet.
-async fn get_block_compat<EngineClient_: EngineClient>(
-    engine_client: &EngineClient_,
-    block_id: BlockId,
-) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
-    match engine_client.get_l2_block(block_id).await {
-        Err(e) => {
-            let err_str = e.to_string();
-            // EIP-4444 error code for pruned state unavailable, or known string-based
-            // "not found" responses from geth/erigon for safe/finalized when the chain
-            // has just started and nothing is marked safe or finalized yet.
-            if e.as_error_resp().is_some_and(|err| err.code == 4444)
-                || err_str.contains("block not found")
-                || err_str.contains("Unknown block")
-            {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        }
-        r => r,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_eips::BlockNumberOrTag;
-    use alloy_json_rpc::ErrorPayload;
-
-    use super::get_block_compat;
-    use crate::test_utils::{MockL2BlockError, test_engine_client_builder};
-
-    #[tokio::test]
-    async fn get_block_compat_eip4444_error_code_returns_none() {
-        let client = test_engine_client_builder()
-            .with_l2_block_error(
-                BlockNumberOrTag::Finalized.into(),
-                MockL2BlockError::ErrorResp(ErrorPayload {
-                    code: 4444,
-                    message: "history unavailable".into(),
-                    data: None,
-                }),
-            )
-            .build();
-
-        let result = get_block_compat(&client, BlockNumberOrTag::Finalized.into()).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn get_block_compat_block_not_found_string_returns_none() {
-        let client = test_engine_client_builder()
-            .with_l2_block_error(
-                BlockNumberOrTag::Safe.into(),
-                MockL2BlockError::Custom("block not found".into()),
-            )
-            .build();
-
-        let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn get_block_compat_unknown_block_string_returns_none() {
-        let client = test_engine_client_builder()
-            .with_l2_block_error(
-                BlockNumberOrTag::Safe.into(),
-                MockL2BlockError::Custom("Unknown block".into()),
-            )
-            .build();
-
-        let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn get_block_compat_unrecognized_error_propagates() {
-        let client = test_engine_client_builder()
-            .with_l2_block_error(
-                BlockNumberOrTag::Latest.into(),
-                MockL2BlockError::Custom("connection refused".into()),
-            )
-            .build();
-
-        let err = get_block_compat(&client, BlockNumberOrTag::Latest.into()).await.unwrap_err();
-        assert!(err.to_string().contains("connection refused"));
-    }
 }

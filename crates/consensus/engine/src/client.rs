@@ -8,12 +8,9 @@ use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
 use base_protocol::{FromBlockError, L2BlockInfo};
 use thiserror::Error;
-
-type L2RpcBlock = <Base as Network>::BlockResponse;
 
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
@@ -98,16 +95,16 @@ pub trait EngineClient: Send + Sync {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> TransportResult<Option<<Base as Network>::BlockResponse>>;
+    ) -> TransportResult<Option<reth_primitives_traits::SealedBlock>>;
 
     /// Reads the account storage root at a specific L2 block.
     async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256>;
 
-    /// Fetches the L2 RPC block for the given [`BlockNumberOrTag`].
+    /// Fetches the native L2 block for the given [`BlockNumberOrTag`].
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<L2RpcBlock>, EngineClientError>;
+    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError>;
 
     /// Fetches the [`L2BlockInfo`] by [`BlockNumberOrTag`].
     async fn l2_block_info_by_label(

@@ -20,7 +20,7 @@ use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{Base, BaseBlockResponse, Transaction as BaseTransaction};
+use base_common_rpc_types::{BaseBlockResponse, Transaction as BaseTransaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
@@ -322,11 +322,15 @@ impl EngineClient for FakeEngineClient {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
+    ) -> TransportResult<Option<base_consensus_engine::SealedBlock>> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         let BlockId::Number(tag) = block else { return Ok(None) };
         state.calls.push(EngineClientCall::L2BlockByLabel(tag));
-        Ok(state.l2_blocks_by_label.get(&tag).cloned())
+        Ok(state
+            .l2_blocks_by_label
+            .get(&tag)
+            .cloned()
+            .map(base_consensus_engine::test_utils::MockEngineClient::native_block))
     }
 
     async fn storage_root(&self, _address: Address, _block: BlockId) -> TransportResult<B256> {
@@ -337,10 +341,14 @@ impl EngineClient for FakeEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<BaseBlockResponse<BaseTransaction>>, EngineClientError> {
+    ) -> Result<Option<base_consensus_engine::SealedBlock>, EngineClientError> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockByLabel(numtag));
-        Ok(state.l2_blocks_by_label.get(&numtag).cloned())
+        Ok(state
+            .l2_blocks_by_label
+            .get(&numtag)
+            .cloned()
+            .map(base_consensus_engine::test_utils::MockEngineClient::native_block))
     }
 
     async fn l2_block_info_by_label(

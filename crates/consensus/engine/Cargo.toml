@@ -22,6 +22,7 @@ alloy-primitives = { workspace = true }
 base-execution-trie = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-network = { workspace = true }
+reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }

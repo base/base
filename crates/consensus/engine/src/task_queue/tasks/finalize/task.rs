@@ -57,13 +57,9 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             .await
             .map_err(FinalizeTaskError::TransportError)?
             .ok_or(FinalizeTaskError::BlockNotFound(self.block_number))?
-            .map_header(|header| header.into_inner())
-            .into_consensus();
-        let block_info = L2BlockInfo::from_block_and_genesis(
-            &block.map_transactions(|tx| tx.inner.inner.into_inner()),
-            &self.client.cfg().genesis,
-        )
-        .map_err(FinalizeTaskError::FromBlock)?;
+            .into_block();
+        let block_info = L2BlockInfo::from_block_and_genesis(&block, &self.client.cfg().genesis)
+            .map_err(FinalizeTaskError::FromBlock)?;
         let block_fetch_duration = block_fetch_start.elapsed();
 
         // Dispatch a forkchoice update.

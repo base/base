@@ -2,10 +2,8 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_rpc_types_eth::Block;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Transaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{
@@ -44,12 +42,16 @@ impl ConsolidateInput {
     }
 
     /// Checks if the block is consistent with this consolidation input.
-    fn is_consistent_with_block(&self, cfg: &RollupConfig, block: &Block<Transaction>) -> bool {
+    fn is_consistent_with_block(
+        &self,
+        cfg: &RollupConfig,
+        block: &reth_primitives_traits::SealedBlock,
+    ) -> bool {
         match self {
             Self::Attributes(attributes) => {
                 crate::AttributesMatch::check(cfg, attributes, block).is_match()
             }
-            Self::BlockInfo(info) => block.header.hash == info.block_info.hash,
+            Self::BlockInfo(info) => block.hash() == info.block_info.hash,
         }
     }
 
@@ -215,8 +217,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             }
         };
         let block_fetch_duration = fetch_start.elapsed();
-        let block_hash = block.header.hash;
-        let block = block.map_header(|header| header.into_inner());
+        let block_hash = block.hash();
 
         if !self.input.is_consistent_with_block(&self.cfg, &block) {
             debug!(
@@ -229,7 +230,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         }
 
         let block_info = match L2BlockInfo::from_block_and_genesis(
-            &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            &block.into_block(),
             &self.cfg.genesis,
         ) {
             Ok(block_info) => block_info,
@@ -271,8 +272,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             }
         };
         let block_fetch_duration = fetch_start.elapsed();
-        let block_hash = block.header.hash;
-        let block = block.map_header(|header| header.into_inner());
+        let block_hash = block.hash();
 
         if self.input.is_consistent_with_block(&self.cfg, &block) {
             trace!(
@@ -281,10 +281,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 block_hash = %block_hash,
                 "Consolidating engine state",
             );
-            match L2BlockInfo::from_block_and_genesis(
-                &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
-                &self.cfg.genesis,
-            ) {
+            match L2BlockInfo::from_block_and_genesis(&block.into_block(), &self.cfg.genesis) {
                 // Only issue a forkchoice update if the attributes are the last in the span
                 // batch. This is an optimization to avoid sending a FCU
                 // call for every block in the span batch.

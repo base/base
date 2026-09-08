@@ -9,6 +9,8 @@
 #[macro_use]
 extern crate tracing;
 
+pub use reth_primitives_traits::SealedBlock;
+
 mod task_queue;
 pub use task_queue::{
     BuildTaskError, ConsolidateInput, ConsolidateTask, ConsolidateTaskError, Engine,

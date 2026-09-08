@@ -105,7 +105,7 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
             );
 
             let origin_is_plausible = match canonical_l1 {
-                Some(block) => block.header.hash == origin.hash,
+                Some(block) => block.hash() == origin.hash,
                 None => {
                     // A missing block by number is only plausible when the L2 origin is ahead of
                     // the L1 view. A missing block at or below the visible L1 head is
@@ -151,13 +151,8 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
 
-            current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
-                &l2_parent
-                    .map_header(|header| header.into_inner())
-                    .into_consensus()
-                    .map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?;
+            current_fc.un_safe =
+                L2BlockInfo::from_block_and_genesis(&l2_parent.into_block(), &cfg.genesis)?;
             unsafe_walked_blocks = unsafe_walked_blocks.saturating_add(1);
         }
     }
@@ -214,13 +209,7 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 .get_l2_block(safe_cursor.block_info.parent_hash.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
-            safe_cursor = L2BlockInfo::from_block_and_genesis(
-                &block
-                    .map_header(|header| header.into_inner())
-                    .into_consensus()
-                    .map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?;
+            safe_cursor = L2BlockInfo::from_block_and_genesis(&block.into_block(), &cfg.genesis)?;
             safe_walked_blocks = safe_walked_blocks.saturating_add(1);
         }
     }
