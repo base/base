@@ -5153,33 +5153,6 @@ name = "base-ring-buffer"
 version = "0.0.0"
 
 [[package]]
-name = "base-roxy"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "axum",
- "base-health",
- "clap",
- "reqwest",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "base-roxy-bin"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-cli-utils",
- "base-roxy",
- "clap",
- "dotenvy",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
 name = "base-runtime"
 version = "0.0.0"
 dependencies = [
@@ -7606,24 +7579,6 @@ dependencies = [
  "data-encoding",
  "syn 2.0.119",
 ]
-
-[[package]]
-name = "deadpool"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0be2b1d1d6ec8d846f05e137292d0b89133caf95ef33695424c09568bdd39b1b"
-dependencies = [
- "deadpool-runtime",
- "lazy_static",
- "num_cpus",
- "tokio",
-]
-
-[[package]]
-name = "deadpool-runtime"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
 name = "debug-helper"
@@ -10254,63 +10209,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "ingress-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-provider",
- "anyhow",
- "audit-archiver-lib",
- "base-bundles",
- "base-cli-utils",
- "base-common-rpc-types",
- "base-observability-events",
- "clap",
- "dotenvy",
- "ingress-rpc-lib",
- "jsonrpsee",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ingress-rpc-lib"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth",
- "alloy-signer",
- "anyhow",
- "async-trait",
- "audit-archiver-lib",
- "axum",
- "base-bundles",
- "base-common-chains",
- "base-common-consensus",
- "base-common-evm",
- "base-common-network",
- "base-common-rpc-types",
- "base-execution-evm",
- "base-metrics",
- "base-observability-events",
- "clap",
- "jsonrpsee",
- "metrics",
- "moka",
- "reth-rpc-eth-types",
- "reth-rpc-server-types",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "wiremock",
 ]
 
 [[package]]
@@ -20658,29 +20556,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "wiremock"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08db1edfb05d9b3c1542e521aea074442088292f00b5f28e435c714a98f85031"
-dependencies = [
- "assert-json-diff",
- "base64 0.22.1",
- "deadpool",
- "futures",
- "http 1.4.2",
- "http-body-util",
- "hyper 1.11.0",
- "hyper-util",
- "log",
- "once_cell",
- "regex",
- "serde",
- "serde_json",
- "tokio",
- "url",
 ]
 
 [[package]]

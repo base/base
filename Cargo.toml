@@ -211,12 +211,10 @@ base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db", default-
 base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node", default-features = false }
 
 # Infra
-base-roxy = { path = "crates/infra/roxy", default-features = false }
 basectl-cli = { path = "crates/infra/basectl", default-features = false }
 base-sidecrush = { path = "crates/infra/sidecrush", default-features = false }
 audit-archiver-lib = { path = "crates/infra/audit", default-features = false }
 base-load-tests = { path = "crates/infra/load-tests", default-features = false }
-ingress-rpc-lib = { path = "crates/infra/ingress-rpc", default-features = false }
 base-snapshotter = { path = "crates/infra/snapshotter", default-features = false }
 websocket-proxy = { path = "crates/infra/websocket-proxy", default-features = false }
 base-telemetry-service = { path = "crates/infra/telemetry", default-features = false }

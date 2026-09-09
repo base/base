@@ -87,15 +87,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/websocket-proxy /app/websocket-proxy
 
-FROM source AS ingress-rpc-builder
-ARG PROFILE=release
-ARG SCCACHE_CACHE_ID=rust-services-sccache
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
-    cargo build --profile $PROFILE --package ingress-rpc --bin ingress-rpc && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/ingress-rpc /app/ingress-rpc
-
 FROM source AS audit-archiver-builder
 ARG PROFILE=release
 ARG SCCACHE_CACHE_ID=rust-services-sccache
@@ -153,10 +144,6 @@ ENTRYPOINT ["./base-proposer"]
 FROM runtime-base AS websocket-proxy
 COPY --from=websocket-proxy-builder /app/websocket-proxy ./websocket-proxy
 ENTRYPOINT ["./websocket-proxy"]
-
-FROM runtime-base AS ingress-rpc
-COPY --from=ingress-rpc-builder /app/ingress-rpc ./ingress-rpc
-ENTRYPOINT ["./ingress-rpc"]
 
 FROM runtime-base AS audit-archiver
 COPY --from=audit-archiver-builder /app/audit-archiver ./audit-archiver

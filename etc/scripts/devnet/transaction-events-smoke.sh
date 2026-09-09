@@ -43,8 +43,7 @@ for attempt in $(seq 1 60); do
           and .producer == $producer
           and (.event_type as $event_type | $event_types | index($event_type)));
 
-      has_event("ingress-rpc"; ["INGRESS_RECEIVED"])
-      and has_event("base-routing/proxyd"; ["PROXY_RECEIVED"])
+      has_event("base-routing/proxyd"; ["PROXY_RECEIVED"])
       and has_event("base-reth-node"; [
         "TXPOOL_PENDING",
         "TXPOOL_QUEUED",
@@ -64,7 +63,7 @@ for attempt in $(seq 1 60); do
   fi
 
   if [ "$attempt" = 60 ]; then
-    echo "Timed out waiting for ingress, proxyd, txpool, and builder transaction events for ${tx_hash}" >&2
+    echo "Timed out waiting for proxyd, txpool, and builder transaction events for ${tx_hash}" >&2
     if [ -n "$last_response" ]; then
       echo "$last_response" | jq . >&2 || echo "$last_response" >&2
     fi

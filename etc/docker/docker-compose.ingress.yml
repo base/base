@@ -41,43 +41,6 @@ services:
       echo 'Bucket tips created'
       "
 
-  ingress-rpc:
-    image: ingress-rpc:local
-    build:
-      <<: *rust-service-build
-      target: ingress-rpc
-    container_name: ingress-rpc
-    depends_on:
-      base-builder:
-        condition: service_healthy
-      base-client:
-        condition: service_healthy
-    ports:
-      - "${L2_INGRESS_HEALTH_PORT}:${L2_INGRESS_HEALTH_PORT}"
-      - "${L2_INGRESS_METRICS_PORT}:${L2_INGRESS_METRICS_PORT}"
-    volumes:
-      - ../../.devnet/transaction-events:/var/log/transaction-events
-    environment:
-      - TIPS_INGRESS_PORT=${L2_INGRESS_HTTP_PORT}
-      - TIPS_INGRESS_HEALTH_CHECK_ADDR=0.0.0.0:${L2_INGRESS_HEALTH_PORT}
-      - TIPS_INGRESS_METRICS_ADDR=0.0.0.0
-      - TIPS_INGRESS_METRICS_PORT=${L2_INGRESS_METRICS_PORT}
-      - TIPS_INGRESS_AUDIT_RPC_URL=http://audit-archiver:${AUDIT_RPC_PORT}
-      - TIPS_INGRESS_RPC_SIMULATION=http://base-client:${L2_CLIENT_HTTP_PORT}
-      # Fan out metering data to both builder and client; both expose
-      # `base_setMeteringInformation` for trusted ingestion.
-      - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT},http://base-client:${L2_CLIENT_HTTP_PORT}
-      - TIPS_INGRESS_SEND_TO_BUILDER=true
-      - TIPS_INGRESS_CHAIN_ID=${L2_CHAIN_ID}
-      - TIPS_INGRESS_BLOCK_TIME_MILLISECONDS=2000
-      - TIPS_INGRESS_TRANSACTION_EVENTS_ENABLED=true
-      - TIPS_INGRESS_TRANSACTION_EVENTS_FILE_PATH=/var/log/transaction-events/ingress-rpc/events.jsonl
-      - TIPS_INGRESS_TRANSACTION_EVENTS_NETWORK=base-devnet
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${L2_INGRESS_HEALTH_PORT}/health"]
-      <<: *ingress-healthcheck
-    restart: unless-stopped
-
   proxyd:
     build:
       context: .
@@ -86,8 +49,6 @@ services:
         base-routing: ${BASE_ROUTING_CONTEXT:-https://github.com/base/infra-routing.git#release-rb}
     container_name: proxyd
     depends_on:
-      ingress-rpc:
-        condition: service_healthy
       base-builder:
         condition: service_healthy
       base-client:
