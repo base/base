@@ -1,9 +1,11 @@
 //! BN254 precompiles added in [`EIP-1962`](https://eips.ethereum.org/EIPS/eip-1962)
+use base_execution_evm_primitives::Address;
+
 use std::vec::Vec;
 
 use crate::{
-    Address, EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId,
-    crypto, eth_precompile_fn,
+    EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId, crypto,
+    eth_precompile_fn,
     utilities::{bool_to_bytes32, right_pad},
 };
 

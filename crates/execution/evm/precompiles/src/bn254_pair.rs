@@ -1,10 +1,10 @@
-use revm_precompile::Precompile;
-use revm_precompile::PrecompileHalt;
-use revm_precompile::PrecompileId;
-use revm_precompile::PrecompileOutput;
-use revm_precompile::PrecompileResult;
-use revm_precompile::bn254;
-use revm_precompile::call_eth_precompile;
+use base_execution_evm_crypto::Precompile;
+use base_execution_evm_crypto::PrecompileHalt;
+use base_execution_evm_crypto::PrecompileId;
+use base_execution_evm_crypto::PrecompileOutput;
+use base_execution_evm_crypto::PrecompileResult;
+use base_execution_evm_crypto::bn254;
+use base_execution_evm_crypto::call_eth_precompile;
 
 /// Max input size for the bn254 pair precompile after the Granite upgrade.
 pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
@@ -61,7 +61,7 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> Precompi
 #[cfg(test)]
 mod tests {
     use base_execution_evm_primitives::hex;
-    use revm_precompile::bn254;
+    use base_execution_evm_crypto::bn254;
 
     use crate::{JOVIAN_MAX_INPUT_SIZE, run_pair_granite, run_pair_jovian};
 

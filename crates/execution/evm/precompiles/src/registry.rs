@@ -20,10 +20,10 @@ use base_execution_evm_machine::CallInputs;
 use base_execution_evm_machine::Context;
 use base_execution_evm_machine::ContextTr;
 use base_execution_evm_machine::InterpreterResult;
-use revm_precompile::PrecompileFn;
-use revm_precompile::PrecompileId;
-use revm_precompile::PrecompileResult;
-use revm_precompile::Precompiles;
+use base_execution_evm_crypto::PrecompileFn;
+use base_execution_evm_crypto::PrecompileId;
+use base_execution_evm_crypto::PrecompileResult;
+use base_execution_evm_crypto::Precompiles;
 
 use crate::EvmInternals;
 use base_execution_state_memory::Database;
@@ -771,7 +771,7 @@ pub trait Precompile {
     /// out-of-gas), distinguished by [`PrecompileOutput::status`]. `Err(PrecompileError)` is
     /// reserved for fatal errors that abort EVM execution.
     ///
-    /// [`PrecompileOutput::status`]: revm_precompile::PrecompileOutput::status
+    /// [`PrecompileOutput::status`]: base_execution_evm_crypto::PrecompileOutput::status
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult;
 
     /// Returns whether this precompile's results should be cached.
@@ -843,7 +843,7 @@ where
     }
 }
 
-impl Precompile for revm_precompile::Precompile {
+impl Precompile for base_execution_evm_crypto::Precompile {
     fn precompile_id(&self) -> &PrecompileId {
         self.id()
     }
@@ -993,8 +993,8 @@ mod tests {
     use base_execution_evm_machine::BlockEnv;
     use base_execution_evm_primitives::hardfork::SpecId;
     use base_execution_state_memory::EmptyDB;
-    use revm_precompile::PrecompileId;
-    use revm_precompile::PrecompileOutput;
+    use base_execution_evm_crypto::PrecompileId;
+    use base_execution_evm_crypto::PrecompileOutput;
 
     use super::*;
     use base_execution_evm_machine::EthEvmContext;
@@ -1147,11 +1147,11 @@ mod tests {
         assert!(either_right.supports_caching(), "Either::Right with cacheable should return true");
 
         // Identity precompile should not support caching
-        let identity = revm_precompile::identity::FUN;
+        let identity = base_execution_evm_crypto::identity::FUN;
         assert!(!identity.supports_caching(), "identity precompile should not support caching");
 
         // Other builtin precompiles should support caching
-        let sha256 = revm_precompile::hash::SHA256;
+        let sha256 = base_execution_evm_crypto::hash::SHA256;
         assert!(sha256.supports_caching(), "sha256 precompile should support caching");
     }
 

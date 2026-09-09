@@ -81,8 +81,8 @@ pub use base_execution_evm_primitives as primitives;
 pub use base_execution_state_memory as database;
 pub use base_execution_state_memory as state;
 pub use base_execution_state_memory::{DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
-pub use revm_precompile as precompile;
-pub use revm_precompile::install_crypto;
+pub use base_execution_evm_crypto as precompile;
+pub use base_execution_evm_crypto::install_crypto;
 
 mod execution_api;
 pub use execution_api::*;

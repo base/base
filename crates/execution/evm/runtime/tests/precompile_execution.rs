@@ -17,7 +17,7 @@ use base_execution_evm_precompiles::{
 };
 use base_execution_evm_primitives::{Address, AddressSet, Bytes};
 use base_execution_evm_runtime::{EthInstructions, ExecuteEvm, MainContext};
-use revm_precompile::{PrecompileOutput, PrecompileStatus};
+use base_execution_evm_crypto::{PrecompileOutput, PrecompileStatus};
 
 /// Test-only address that hosts an over-spending precompile.
 const OVERSPEND_PRECOMPILE: Address = address!("0000000000000000000000000000000000000100");

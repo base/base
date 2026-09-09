@@ -1,84 +1,21 @@
-//! # revm-precompile
-//!
-//! Implementations of EVM precompiled contracts.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(not(feature = "std"), no_std)]
+//! Crypto precompile sets, dispatch, addresses, and gas-cost helpers.
 
-#[macro_use]
-#[cfg(not(feature = "std"))]
-extern crate alloc as std;
-
-#[cfg_attr(
-    all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"),
-    expect(unreachable_code)
-)]
-pub mod blake2;
-pub mod bls12_381;
-pub mod bls12_381_const;
-pub mod bls12_381_utils;
-pub mod bn254;
-pub mod hash;
-mod id;
-pub mod identity;
-pub mod interface;
-pub mod kzg_point_evaluation;
-pub mod modexp;
-pub mod secp256k1;
-pub mod secp256r1;
-pub mod utilities;
-
-use core::fmt::{self, Debug};
-
-pub use base_execution_evm_primitives as primitives;
-pub use id::PrecompileId;
-pub use interface::*;
-
-// silence arkworks lint as bn impl will be used as default if both are enabled.
-cfg_if::cfg_if! {
-    if #[cfg(feature = "bn")]{
-        use ark_bn254_0_6_0 as _;
-        use ark_ff as _;
-        use ark_ec as _;
-        use ark_serialize as _;
-    }
-}
-
-use arrayref as _;
-
-// silence arkworks-bls12-381 lint as blst will be used as default if both are enabled.
-cfg_if::cfg_if! {
-    if #[cfg(feature = "blst")]{
-        use ark_bls12_381 as _;
-        use ark_ff as _;
-        use ark_ec as _;
-        use ark_serialize as _;
-    }
-}
-
-// silence aurora-engine-modexp if gmp is enabled
-use core::hash::Hash;
-use std::boxed::Box;
-
-#[cfg(feature = "gmp")]
-use aurora_engine_modexp as _;
-// silence p256 lint as aws-lc-rs will be used if both are enabled.
+use crate::{
+    PrecompileFn, PrecompileId, PrecompileResult, blake2, bls12_381, bn254, hash, identity,
+    kzg_point_evaluation, modexp, secp256k1, secp256r1,
+};
+use PrecompileSpecId::*;
 use base_execution_evm_primitives::{
     Address, AddressMap, AddressSet, HashMap, OnceLock, SHORT_ADDRESS_CAP, hardfork::SpecId,
     short_address,
 };
-#[cfg(feature = "p256-aws-lc-rs")]
-use p256 as _;
+use core::fmt::{self, Debug};
+use std::boxed::Box;
 
 /// Calculate the linear cost of a precompile.
 #[inline]
 pub const fn calc_linear_cost(len: usize, base: u64, word: u64) -> u64 {
     (len as u64).div_ceil(32) * word + base
-}
-
-/// Calculate the linear cost of a precompile.
-#[deprecated(note = "please use `calc_linear_cost` instead")]
-pub const fn calc_linear_cost_u32(len: usize, base: u64, word: u64) -> u64 {
-    calc_linear_cost(len, base, word)
 }
 
 /// Precompiles contain map of precompile addresses to functions and AddressSet of precompile addresses.
@@ -263,9 +200,8 @@ impl Precompiles {
     }
 }
 
-fn init_precompiles(spec: PrecompileSpecId) -> Precompiles {
-    use PrecompileSpecId::*;
-
+/// Constructs the crypto precompile set for an execution fork.
+pub fn init_precompiles(spec: PrecompileSpecId) -> Precompiles {
     let mut precompiles = Precompiles::default();
 
     // Homestead
@@ -464,6 +400,7 @@ pub const fn u64_to_address(x: u64) -> Address {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{PrecompileHalt, PrecompileOutput, PrecompileStatus};
 
     fn temp_precompile(_input: &[u8], _gas_limit: u64, reservoir: u64) -> PrecompileResult {
         Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, reservoir))

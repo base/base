@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, BenchmarkId, Throughput};
-use revm_precompile::{Precompiles, u64_to_address};
+use base_execution_evm_crypto::{Precompiles, u64_to_address};
 
 const MODEXP_ADDRESS: u64 = 5;
 const GAS_LIMIT: u64 = u64::MAX;

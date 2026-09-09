@@ -1,8 +1,10 @@
 //! KZG point evaluation precompile added in [`EIP-4844`](https://eips.ethereum.org/EIPS/eip-4844)
 //! For more details check [`run`] function.
+use base_execution_evm_primitives::Address;
+
 use crate::{
-    Address, EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId,
-    crypto, eth_precompile_fn,
+    EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId, crypto,
+    eth_precompile_fn,
 };
 pub mod arkworks;
 

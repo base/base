@@ -1,7 +1,7 @@
 //! Benchmarks for the BN254 precompiles
 use base_execution_evm_primitives::{Bytes, hex};
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, measurement::Measurement};
-use revm_precompile::bn254::{
+use base_execution_evm_crypto::bn254::{
     add::ISTANBUL_ADD_GAS_COST,
     mul::ISTANBUL_MUL_GAS_COST,
     pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},

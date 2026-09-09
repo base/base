@@ -18,10 +18,10 @@ use core::result;
 use alloy_primitives::{B256, Bytes, U256};
 use base_execution_evm_primitives::KECCAK_EMPTY;
 use base_execution_state_memory::AccountInfo as RevmAccountInfo;
-use revm_precompile::PrecompileError as RevmPrecompileError;
-use revm_precompile::PrecompileHalt as RevmPrecompileHalt;
-use revm_precompile::PrecompileOutput as RevmPrecompileOutput;
-use revm_precompile::PrecompileStatus as RevmPrecompileStatus;
+use base_execution_evm_crypto::PrecompileError as RevmPrecompileError;
+use base_execution_evm_crypto::PrecompileHalt as RevmPrecompileHalt;
+use base_execution_evm_crypto::PrecompileOutput as RevmPrecompileOutput;
+use base_execution_evm_crypto::PrecompileStatus as RevmPrecompileStatus;
 
 /// Engine-neutral account information.
 ///
@@ -221,11 +221,11 @@ pub type PrecompileResult = result::Result<PrecompileOutput, PrecompileError>;
 /// macro) where a native precompile hands its result back to the engine.
 pub trait IntoEnginePrecompileResult {
     /// Converts a base precompile result into the `revm` precompile result.
-    fn into_revm(self) -> revm_precompile::PrecompileResult;
+    fn into_revm(self) -> base_execution_evm_crypto::PrecompileResult;
 }
 
 impl IntoEnginePrecompileResult for PrecompileResult {
-    fn into_revm(self) -> revm_precompile::PrecompileResult {
+    fn into_revm(self) -> base_execution_evm_crypto::PrecompileResult {
         self.map(Into::into).map_err(Into::into)
     }
 }

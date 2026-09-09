@@ -21,7 +21,7 @@ alloy-eips = {workspace = true}
 alloy-primitives = {workspace = true}
 alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
-revm-precompile = { workspace = true }
+base-execution-evm-crypto = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-types-rpc = { workspace = true}
 base-execution-evm-machine = {workspace = true}
@@ -76,7 +76,7 @@ std = [
     "derive_more/std",
     "either/std",
     "base-execution-evm-primitives/std",
-    "revm-precompile/std",
+    "base-execution-evm-crypto/std",
     "serde?/std",
     "serde_json?/preserve_order",
     "serde_json?/std",
@@ -100,11 +100,11 @@ metrics = [
     "dep:metrics",
     "std",
 ]
-bn = ["base-execution-evm-precompiles/bn", "revm-precompile/bn"]
-blst = ["base-execution-evm-precompiles/blst", "revm-precompile/blst"]
-c-kzg = ["base-execution-evm-precompiles/c-kzg", "revm-precompile/c-kzg"]
-portable = ["base-execution-evm-precompiles/portable", "revm-precompile/portable"]
-secp256k1 = ["base-execution-evm-precompiles/secp256k1", "revm-precompile/secp256k1"]
+bn = ["base-execution-evm-precompiles/bn", "base-execution-evm-crypto/bn"]
+blst = ["base-execution-evm-precompiles/blst", "base-execution-evm-crypto/blst"]
+c-kzg = ["base-execution-evm-precompiles/c-kzg", "base-execution-evm-crypto/c-kzg"]
+portable = ["base-execution-evm-precompiles/portable", "base-execution-evm-crypto/portable"]
+secp256k1 = ["base-execution-evm-precompiles/secp256k1", "base-execution-evm-crypto/secp256k1"]
 memory_limit = ["base-execution-evm-precompiles/memory_limit", "base-execution-evm-machine/memory_limit"]
 optional_no_base_fee = ["base-execution-evm-precompiles/optional_no_base_fee", "base-execution-evm-machine/optional_no_base_fee"]
 optional_eip3541 = ["base-execution-evm-precompiles/optional_eip3541", "base-execution-evm-machine/optional_eip3541"]
@@ -121,7 +121,7 @@ tracer = [
 ]
 asm-keccak = ["alloy-primitives/asm-keccak", "base-execution-evm-primitives/asm-keccak"]
 call-util = ["overrides"]
-gmp = ["revm-precompile/gmp"]
+gmp = ["base-execution-evm-crypto/gmp"]
 overrides = []
 arbitrary = ["base-execution-evm-primitives/arbitrary"]
 dev = [
@@ -133,10 +133,10 @@ dev = [
     "optional_eip7623",
     "optional_no_base_fee",
 ]
-hashbrown = ["base-execution-evm-machine/hashbrown", "revm-precompile/hashbrown"]
+hashbrown = ["base-execution-evm-machine/hashbrown", "base-execution-evm-crypto/hashbrown"]
 map-foldhash = ["base-execution-evm-primitives/map-foldhash"]
 optional_eip7623 = ["base-execution-evm-machine/optional_eip7623"]
 optional_priority_fee_check = ["base-execution-evm-machine/optional_priority_fee_check"]
-p256-aws-lc-rs = ["revm-precompile/p256-aws-lc-rs"]
+p256-aws-lc-rs = ["base-execution-evm-crypto/p256-aws-lc-rs"]
 parse = ["base-execution-evm-primitives/parse"]
 sha3-keccak = ["base-execution-evm-primitives/sha3-keccak"]

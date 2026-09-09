@@ -1,13 +1,13 @@
-use revm_precompile as precompile;
-use revm_precompile::Precompile;
-use revm_precompile::PrecompileHalt;
-use revm_precompile::PrecompileId;
-use revm_precompile::PrecompileOutput;
-use revm_precompile::PrecompileResult;
-use revm_precompile::bls12_381_const::G1_MSM_ADDRESS;
-use revm_precompile::bls12_381_const::G2_MSM_ADDRESS;
-use revm_precompile::bls12_381_const::PAIRING_ADDRESS;
-use revm_precompile::call_eth_precompile;
+use base_execution_evm_crypto as precompile;
+use base_execution_evm_crypto::Precompile;
+use base_execution_evm_crypto::PrecompileHalt;
+use base_execution_evm_crypto::PrecompileId;
+use base_execution_evm_crypto::PrecompileOutput;
+use base_execution_evm_crypto::PrecompileResult;
+use base_execution_evm_crypto::bls12_381_const::G1_MSM_ADDRESS;
+use base_execution_evm_crypto::bls12_381_const::G2_MSM_ADDRESS;
+use base_execution_evm_crypto::bls12_381_const::PAIRING_ADDRESS;
+use base_execution_evm_crypto::call_eth_precompile;
 
 /// Max input size for the BLS12-381 G1 MSM precompile after the Isthmus upgrade.
 pub const ISTHMUS_G1_MSM_MAX_INPUT_SIZE: usize = 513760;
@@ -99,7 +99,7 @@ pub fn run_jovian_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> Preco
 #[cfg(test)]
 mod tests {
     use base_execution_evm_primitives::Bytes;
-    use revm_precompile::Precompile;
+    use base_execution_evm_crypto::Precompile;
     use rstest::rstest;
 
     use crate::{

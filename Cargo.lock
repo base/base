@@ -3338,6 +3338,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-evm-crypto"
+version = "0.0.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "ark-std 0.6.0",
+ "arrayref",
+ "aurora-engine-modexp",
+ "aws-lc-rs",
+ "base-execution-evm-machine",
+ "base-execution-evm-primitives",
+ "blst",
+ "c-kzg",
+ "cfg-if",
+ "codspeed-criterion-compat 5.0.1",
+ "gmp-mpfr-sys",
+ "k256",
+ "p256",
+ "rand 0.10.2",
+ "ripemd 0.2.0",
+ "rstest",
+ "secp256k1 0.31.1",
+ "sha2 0.11.0",
+ "substrate-bn",
+]
+
+[[package]]
 name = "base-execution-evm-machine"
 version = "0.0.0"
 dependencies = [
@@ -3373,6 +3403,7 @@ dependencies = [
  "auto_impl",
  "base-common-chain-config",
  "base-common-types-chain",
+ "base-execution-evm-crypto",
  "base-execution-evm-machine",
  "base-execution-evm-macros",
  "base-execution-evm-primitives",
@@ -3383,7 +3414,6 @@ dependencies = [
  "k256",
  "p256",
  "proptest",
- "revm-precompile",
  "rstest",
  "sha2 0.10.9",
  "thiserror 2.0.19",
@@ -3421,6 +3451,7 @@ dependencies = [
  "base-common-network",
  "base-common-types-chain",
  "base-common-types-rpc",
+ "base-execution-evm-crypto",
  "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-primitives",
@@ -3430,7 +3461,6 @@ dependencies = [
  "either",
  "k256",
  "metrics",
- "revm-precompile",
  "rstest",
  "serde",
  "serde_json",
@@ -15446,36 +15476,6 @@ dependencies = [
  "serde_json",
  "snapbox",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "revm-precompile"
-version = "0.0.0"
-dependencies = [
- "ark-bls12-381",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
- "arrayref",
- "aurora-engine-modexp",
- "aws-lc-rs",
- "base-execution-evm-machine",
- "base-execution-evm-primitives",
- "blst",
- "c-kzg",
- "cfg-if",
- "codspeed-criterion-compat 5.0.1",
- "gmp-mpfr-sys",
- "k256",
- "p256",
- "rand 0.10.2",
- "ripemd 0.2.0",
- "rstest",
- "secp256k1 0.31.1",
- "sha2 0.11.0",
- "substrate-bn",
 ]
 
 [[package]]

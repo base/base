@@ -42,7 +42,7 @@ impl TxContext {
 mod tests {
     use crate::PrecompilesMap;
     use base_common_chain_config::BaseUpgrade;
-    use revm_precompile::Precompiles;
+    use base_execution_evm_crypto::Precompiles;
 
     use crate::{TxContext, TxContextStorage};
 

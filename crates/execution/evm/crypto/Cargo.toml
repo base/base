@@ -1,5 +1,5 @@
 [package]
-name = "revm-precompile"
+name = "base-execution-evm-crypto"
 description = "Revm Precompiles - Ethereum compatible precompiled contracts"
 version.workspace = true
 edition.workspace = true
@@ -27,7 +27,7 @@ rustdoc-args = [
 ]
 
 [lib]
-name = "revm_precompile"
+name = "base_execution_evm_crypto"
 path = "src/lib.rs"
 
 [dependencies]
