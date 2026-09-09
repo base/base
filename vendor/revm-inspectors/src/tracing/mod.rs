@@ -278,7 +278,7 @@ impl TracingInspector {
     ///
     /// Returns true if the `to` address is a precompile contract and the value is zero.
     #[inline]
-    fn is_precompile_call<CTX: ContextTr<Journal: JournalExt>>(
+    fn is_precompile_call<CTX: ContextTr>(
         &self,
         context: &CTX,
         to: &Address,
@@ -418,11 +418,7 @@ impl TracingInspector {
     /// This expects an existing [CallTrace], in other words, this panics if not within the context
     /// of a call.
     #[cold]
-    fn start_step<CTX: ContextTr<Journal: JournalExt>>(
-        &mut self,
-        interp: &mut Interpreter,
-        context: &mut CTX,
-    ) {
+    fn start_step<CTX: ContextTr>(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         // We always want an OpCode, even it is unknown because it could be an additional opcode
         // that not a known constant.
         let op = OpCode::new_or_unknown(interp.bytecode.opcode());
@@ -512,7 +508,7 @@ impl TracingInspector {
     ///
     /// Invoked on [Inspector::step_end].
     #[cold]
-    fn fill_step_on_step_end<CTX: ContextTr<Journal: JournalExt>>(
+    fn fill_step_on_step_end<CTX: ContextTr>(
         &mut self,
         interp: &mut Interpreter,
         context: &mut CTX,
@@ -599,7 +595,7 @@ impl TracingInspector {
 
 impl<CTX> Inspector<CTX> for TracingInspector
 where
-    CTX: ContextTr<Journal: JournalExt>,
+    CTX: ContextTr,
 {
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {

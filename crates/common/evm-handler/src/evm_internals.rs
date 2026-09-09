@@ -497,7 +497,7 @@ impl<'a> EvmInternals<'a> {
     /// Creates a new [`EvmInternals`] instance from a [`ContextTr`].
     pub fn from_context<CTX>(ctx: &'a mut CTX) -> Self
     where
-        CTX: ContextTr<Block: BlockEnvironment, Journal: JournalTr<Database: Database>>,
+        CTX: ContextTr,
     {
         let (block, tx, cfg, journaled_state, ..) = ctx.all_mut();
         Self::new(journaled_state, block, cfg, tx)

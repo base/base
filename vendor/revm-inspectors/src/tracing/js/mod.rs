@@ -467,7 +467,7 @@ impl JsInspector {
     }
 
     /// Registers the precompiles in the JS context
-    fn register_precompiles<CTX: ContextTr<Journal: JournalExt>>(&mut self, context: &mut CTX) {
+    fn register_precompiles<CTX: ContextTr>(&mut self, context: &mut CTX) {
         if self.precompiles_registered {
             return;
         }
@@ -482,7 +482,7 @@ impl JsInspector {
 
 impl<CTX> Inspector<CTX> for JsInspector
 where
-    CTX: ContextTr<Journal: JournalExt>,
+    CTX: ContextTr,
 {
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         if self.step_fn.is_none() {

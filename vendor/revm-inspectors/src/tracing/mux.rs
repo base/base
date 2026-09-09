@@ -6,7 +6,7 @@ use base_common_rpc_types::{
     MuxConfig, MuxFrame, NoopFrame, PreStateConfig, TransactionInfo,
 };
 use base_evm_context::{ContextTr, HaltReasonTr, ResultAndState};
-use base_evm_handler::{FrameResult, JournalExt};
+use base_evm_handler::FrameResult;
 use revm::{
     DatabaseRef, Inspector,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
@@ -165,7 +165,7 @@ impl MuxInspector {
 
 impl<CTX> Inspector<CTX> for MuxInspector
 where
-    CTX: ContextTr<Journal: JournalExt>,
+    CTX: ContextTr,
 {
     #[inline]
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {

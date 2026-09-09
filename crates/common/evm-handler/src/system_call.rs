@@ -19,12 +19,11 @@
 //! ```
 //!
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
-use base_evm_context::{ContextSetters, ContextTr, ExecResultAndState, JournalTr, TxEnv};
+use base_evm_context::{ContextSetters, ContextTr, ExecResultAndState, TxEnv};
 use base_evm_handler::EvmMachine;
 use base_state::DatabaseCommit;
 use revm_interpreter::InterpreterResult;
 use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
-use revm_state::EvmState;
 
 use crate::{
     ExecuteCommitEvm, ExecuteEvm, Handler, MainnetHandler, PrecompileProvider, frame::EthFrame,
@@ -230,7 +229,7 @@ pub trait SystemCallCommitEvm: SystemCallEvm + ExecuteCommitEvm {
 
 impl<CTX, INSP, PRECOMPILES> SystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextTr<Journal: JournalTr<State = EvmState>, Tx: SystemCallTx> + ContextSetters,
+    CTX: ContextTr<Tx: SystemCallTx> + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     fn system_call_one_with_caller(
@@ -248,8 +247,7 @@ where
 
 impl<CTX, INSP, PRECOMPILES> SystemCallCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextTr<Journal: JournalTr<State = EvmState>, Db: DatabaseCommit, Tx: SystemCallTx>
-        + ContextSetters,
+    CTX: ContextTr<Db: DatabaseCommit, Tx: SystemCallTx> + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     fn system_call_with_caller_commit(

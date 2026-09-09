@@ -18,12 +18,12 @@ use base_evm_handler::{
     EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
 };
 use revm::{
-    Context, Journal,
+    Context,
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileFn, PrecompileId, PrecompileResult, Precompiles},
 };
 
-use crate::{Database, EvmInternals, env::BlockEnvironment};
+use crate::{Database, EvmInternals};
 
 /// Returns whether the given [`PrecompileId`] supports caching.
 ///
@@ -551,10 +551,9 @@ impl core::fmt::Debug for PrecompilesMap {
     }
 }
 
-impl<BlockEnv, TxEnv, CfgEnv, DB, Chain>
-    PrecompileProvider<Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB>, Chain>> for PrecompilesMap
+impl<TxEnv, CfgEnv, DB, Chain> PrecompileProvider<Context<TxEnv, CfgEnv, DB, Chain>>
+    for PrecompilesMap
 where
-    BlockEnv: BlockEnvironment,
     TxEnv: base_evm_context::Transaction,
     CfgEnv: base_evm_context::Cfg,
     DB: Database,
@@ -567,7 +566,7 @@ where
 
     fn run(
         &mut self,
-        context: &mut Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB>, Chain>,
+        context: &mut Context<TxEnv, CfgEnv, DB, Chain>,
         inputs: &CallInputs,
     ) -> Result<Option<InterpreterResult>, String> {
         // Get the precompile at the address

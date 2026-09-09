@@ -6,7 +6,6 @@ use alloy_primitives::{
 };
 use base_common_rpc_types::{AccessList, AccessListItem};
 use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
-use base_evm_handler::JournalExt;
 use revm::{Inspector, bytecode::opcode, interpreter::Interpreter};
 
 /// An [Inspector] that collects touched accounts and storage slots.
@@ -81,7 +80,7 @@ impl AccessListInspector {
     /// top-level call.
     ///
     /// Those include caller, callee and precompiles.
-    fn collect_excluded_addresses<CTX: ContextTr<Journal: JournalExt>>(&mut self, context: &CTX) {
+    fn collect_excluded_addresses<CTX: ContextTr>(&mut self, context: &CTX) {
         let from = context.tx().caller();
         let to = if let TxKind::Call(to) = context.tx().kind() {
             to
@@ -103,7 +102,7 @@ impl AccessListInspector {
 
 impl<CTX> Inspector<CTX> for AccessListInspector
 where
-    CTX: ContextTr<Journal: JournalExt>,
+    CTX: ContextTr,
 {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         match interp.bytecode.opcode() {

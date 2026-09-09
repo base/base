@@ -46,7 +46,7 @@ use revm_state::Bytecode;
 pub fn create_init_frame<CTX: ContextTr>(
     ctx: &mut CTX,
     gas: &mut GasTracker,
-) -> Result<Option<FrameInput>, <<CTX::Journal as JournalTr>::Database as Database>::Error> {
+) -> Result<Option<FrameInput>, <CTX::Db as Database>::Error> {
     let is_eip2780 = ctx.cfg().is_amsterdam_eip2780_enabled();
     let params = ctx.cfg().gas_params();
     let new_account_state_gas = params.new_account_state_gas();
@@ -160,7 +160,7 @@ pub fn create_init_frame<CTX: ContextTr>(
 pub fn runtime_oog_unwind<CTX: ContextTr>(
     ctx: &mut CTX,
     checkpoint: JournalCheckpoint,
-) -> Result<(), <<CTX::Journal as JournalTr>::Database as Database>::Error> {
+) -> Result<(), <CTX::Db as Database>::Error> {
     let (tx, journal) = ctx.tx_journal_mut();
     journal.checkpoint_revert(checkpoint);
     if tx.kind().is_create() {

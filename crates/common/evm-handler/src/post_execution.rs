@@ -120,7 +120,7 @@ pub fn reward_beneficiary<CTX: ContextTr>(
 /// Calculate last gas spent and transform internal reason to external.
 ///
 /// TODO make Journal FinalOutput more generic.
-pub fn output<CTX: ContextTr<Journal: JournalTr>, HALTREASON: HaltReasonTr>(
+pub fn output<CTX: ContextTr, HALTREASON: HaltReasonTr>(
     context: &mut CTX,
     // TODO, make this more generic and nice.
     // FrameResult should be a generic that returns gas and interpreter result.

@@ -7,7 +7,7 @@ use base_evm_handler::{
 use revm_interpreter::{CallOutcome, FrameInput, interpreter_action::FrameInit};
 
 use crate::{
-    Inspector, JournalExt, inspect_instructions,
+    Inspector, inspect_instructions,
     inspector_handler::{frame_end, frame_start, inspect_logs},
 };
 
@@ -16,9 +16,7 @@ use crate::{
 /// It contains execution of interpreter with [`crate::Inspector`] calls [`crate::Inspector::step`] and [`crate::Inspector::step_end`] calls.
 ///
 /// It is used inside [`crate::InspectorHandler`] to extend evm with support for inspection.
-pub trait InspectorEvmTr:
-    EvmTr<Frame: InspectorFrame, Context: ContextTr<Journal: JournalExt>>
-{
+pub trait InspectorEvmTr: EvmTr<Frame: InspectorFrame, Context: ContextTr> {
     /// The inspector type used for EVM execution inspection.
     type Inspector: Inspector<Self::Context, FrameInput, FrameResult>;
 

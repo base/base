@@ -6,7 +6,8 @@ use auto_impl::auto_impl;
 use revm_primitives::StorageValue;
 
 use crate::{
-    Block, Cfg, Database, Host, JournalTr, LocalContextTr, Transaction, result::FromStringError,
+    BlockEnv, Cfg, Database, Host, Journal, JournalTr, LocalContext, Transaction,
+    result::FromStringError,
 };
 
 /// Trait that defines the context of the EVM execution.
@@ -18,30 +19,39 @@ use crate::{
 /// All functions have a `*_mut` variant except the function for [`ContextTr::tx`] and [`ContextTr::block`].
 #[auto_impl(&mut, Box)]
 pub trait ContextTr: Host {
-    /// Block type
-    type Block: Block;
     /// Transaction type
     type Tx: Transaction;
     /// Configuration type
     type Cfg: Cfg;
     /// Database type
     type Db: Database;
-    /// Journal type
-    type Journal: JournalTr<Database = Self::Db>;
     /// Chain type
     type Chain;
-    /// Local context type
-    type Local: LocalContextTr;
 
     /// Get all contexts
     fn all(
         &self,
-    ) -> (&Self::Block, &Self::Tx, &Self::Cfg, &Self::Db, &Self::Journal, &Self::Chain, &Self::Local);
+    ) -> (
+        &BlockEnv,
+        &Self::Tx,
+        &Self::Cfg,
+        &Self::Db,
+        &Journal<Self::Db>,
+        &Self::Chain,
+        &LocalContext,
+    );
 
     /// Get all contexts mutably
     fn all_mut(
         &mut self,
-    ) -> (&Self::Block, &Self::Tx, &Self::Cfg, &mut Self::Journal, &mut Self::Chain, &mut Self::Local);
+    ) -> (
+        &BlockEnv,
+        &Self::Tx,
+        &Self::Cfg,
+        &mut Journal<Self::Db>,
+        &mut Self::Chain,
+        &mut LocalContext,
+    );
 
     /// Get the transaction
     fn tx(&self) -> &Self::Tx {
@@ -49,7 +59,7 @@ pub trait ContextTr: Host {
         tx
     }
     /// Get the block
-    fn block(&self) -> &Self::Block {
+    fn block(&self) -> &BlockEnv {
         let (block, _, _, _, _, _, _) = self.all();
         block
     }
@@ -59,17 +69,17 @@ pub trait ContextTr: Host {
         cfg
     }
     /// Get the journal
-    fn journal(&self) -> &Self::Journal {
+    fn journal(&self) -> &Journal<Self::Db> {
         let (_, _, _, _, journal, _, _) = self.all();
         journal
     }
     /// Get the journal mutably
-    fn journal_mut(&mut self) -> &mut Self::Journal {
+    fn journal_mut(&mut self) -> &mut Journal<Self::Db> {
         let (_, _, _, journal, _, _) = self.all_mut();
         journal
     }
     /// Get the journal reference
-    fn journal_ref(&self) -> &Self::Journal {
+    fn journal_ref(&self) -> &Journal<Self::Db> {
         self.journal()
     }
     /// Get the database
@@ -101,17 +111,17 @@ pub trait ContextTr: Host {
         self.chain()
     }
     /// Get the local context
-    fn local(&self) -> &Self::Local {
+    fn local(&self) -> &LocalContext {
         let (_, _, _, _, _, _, local) = self.all();
         local
     }
     /// Get the local context mutably
-    fn local_mut(&mut self) -> &mut Self::Local {
+    fn local_mut(&mut self) -> &mut LocalContext {
         let (_, _, _, _, _, local) = self.all_mut();
         local
     }
     /// Get the local context reference
-    fn local_ref(&self) -> &Self::Local {
+    fn local_ref(&self) -> &LocalContext {
         self.local()
     }
     /// Get the error
@@ -119,7 +129,7 @@ pub trait ContextTr: Host {
 
     /// Get the transaction and journal. It is used to efficiently load access list
     /// into journal without copying them from transaction.
-    fn tx_journal_mut(&mut self) -> (&Self::Tx, &mut Self::Journal) {
+    fn tx_journal_mut(&mut self) -> (&Self::Tx, &mut Journal<Self::Db>) {
         let (_, tx, _, journal, _, _) = self.all_mut();
         (tx, journal)
     }
@@ -127,21 +137,21 @@ pub trait ContextTr: Host {
     /// Get the transaction, configuration and mutable journal.
     fn tx_block_cfg_journal_mut(
         &mut self,
-    ) -> (&Self::Tx, &Self::Block, &Self::Cfg, &mut Self::Journal) {
+    ) -> (&Self::Tx, &BlockEnv, &Self::Cfg, &mut Journal<Self::Db>) {
         let (block, tx, cfg, journal, _, _) = self.all_mut();
         (tx, block, cfg, journal)
     }
 
     /// Get the transaction and local context. It is used to efficiently load initcode
     /// into local context without copying them from transaction.
-    fn tx_local_mut(&mut self) -> (&Self::Tx, &mut Self::Local) {
+    fn tx_local_mut(&mut self) -> (&Self::Tx, &mut LocalContext) {
         let (_, tx, _, _, _, local) = self.all_mut();
         (tx, local)
     }
 
     /// Get the configuration and journal mutably
     #[inline]
-    fn cfg_journal_mut(&mut self) -> (&Self::Cfg, &mut Self::Journal) {
+    fn cfg_journal_mut(&mut self) -> (&Self::Cfg, &mut Journal<Self::Db>) {
         let (_, _, cfg, journal, _, _) = self.all_mut();
         (cfg, journal)
     }
@@ -266,5 +276,5 @@ pub trait ContextSetters: ContextTr {
     /// Set the transaction
     fn set_tx(&mut self, tx: Self::Tx);
     /// Set the block
-    fn set_block(&mut self, block: Self::Block);
+    fn set_block(&mut self, block: BlockEnv);
 }

@@ -71,10 +71,7 @@ impl<
 /// To finalize the execution and obtain changed state, call [`JournalTr::finalize`] function.
 pub trait Handler {
     /// The EVM type containing Context, Instruction, and Precompiles implementations.
-    type Evm: EvmTr<
-            Context: ContextTr<Journal: JournalTr, Local: LocalContextTr>,
-            Frame: FrameTr<FrameInit = FrameInit, FrameResult = FrameResult>,
-        >;
+    type Evm: EvmTr<Context: ContextTr, Frame: FrameTr<FrameInit = FrameInit, FrameResult = FrameResult>>;
     /// The error type returned by this handler.
     type Error: EvmTrError<Self::Evm>;
     /// The halt reason type included in the output

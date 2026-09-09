@@ -7,7 +7,7 @@ use base_common_rpc_types::{
     PreStateConfig, TransactionInfo,
 };
 use base_evm_context::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
-use base_evm_handler::{FrameResult, JournalExt};
+use base_evm_handler::FrameResult;
 use revm::{
     DatabaseRef, Inspector,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
@@ -299,7 +299,7 @@ macro_rules! delegate {
 
 impl<CTX> Inspector<CTX> for DebugInspector
 where
-    CTX: ContextTr<Journal: JournalExt>,
+    CTX: ContextTr,
 {
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         delegate!(self => inspector.initialize_interp(interp, context))

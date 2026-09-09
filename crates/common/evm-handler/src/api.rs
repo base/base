@@ -179,14 +179,14 @@ pub trait ExecuteCommitEvm: ExecuteEvm {
 
 impl<CTX, INSP, PRECOMPILES> ExecuteEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextTr<Journal: JournalTr<State = EvmState>> + ContextSetters,
+    CTX: ContextTr + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type ExecutionResult = ExecutionResult<HaltReason>;
     type State = EvmState;
     type Error = EVMError<<CTX::Db as Database>::Error, InvalidTransaction>;
     type Tx = <CTX as ContextTr>::Tx;
-    type Block = <CTX as ContextTr>::Block;
+    type Block = base_evm_context::BlockEnv;
 
     #[inline]
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
@@ -222,7 +222,7 @@ where
 
 impl<CTX, INSP, PRECOMPILES> ExecuteCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextTr<Journal: JournalTr<State = EvmState>, Db: DatabaseCommit> + ContextSetters,
+    CTX: ContextTr<Db: DatabaseCommit> + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     #[inline]

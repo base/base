@@ -24,7 +24,7 @@ mod tx_result;
 pub use tx_result::*;
 
 /// The Ethereum EVM context type.
-pub type EthEvmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
+pub type EthEvmContext<DB> = Context<TxEnv, CfgEnv, DB>;
 
 /// Helper builder to construct `EthEvm` instances in a unified way.
 #[derive(Debug)]
@@ -238,7 +238,7 @@ pub struct EthEvmFactory;
 
 impl EvmFactory for EthEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = EthEvm<DB, I, Self::Precompiles>;
-    type Context<DB: Database> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
+    type Context<DB: Database> = Context<TxEnv, CfgEnv, DB>;
     type Tx = TxEnv;
     type Error<DBError: DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;

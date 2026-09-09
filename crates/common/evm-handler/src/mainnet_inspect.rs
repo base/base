@@ -1,4 +1,4 @@
-use base_evm_context::{ContextSetters, ContextTr, FrameStack, JournalTr};
+use base_evm_context::{ContextSetters, ContextTr, FrameStack};
 use base_evm_handler::EthInstructions;
 use base_evm_handler::EvmMachine;
 use base_evm_handler::{
@@ -7,10 +7,9 @@ use base_evm_handler::{
 use base_state::DatabaseCommit;
 use revm_interpreter::InterpreterResult;
 use revm_primitives::{Address, Bytes};
-use revm_state::EvmState;
 
 use crate::{
-    Inspector, InspectorEvmTr, InspectorHandler, JournalExt,
+    Inspector, InspectorEvmTr, InspectorHandler,
     inspect::{InspectCommitEvm, InspectEvm, InspectSystemCallEvm},
 };
 
@@ -18,7 +17,7 @@ use crate::{
 impl<EVM, ERROR> InspectorHandler for MainnetHandler<EVM, ERROR, EthFrame>
 where
     EVM: InspectorEvmTr<
-            Context: ContextTr<Journal: JournalTr<State = EvmState>>,
+            Context: ContextTr,
             Frame = EthFrame,
             Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context>,
         >,
@@ -29,7 +28,7 @@ where
 // Implementing InspectEvm for EvmMachine
 impl<CTX, INSP, PRECOMPILES> InspectEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextSetters + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt>,
+    CTX: ContextSetters + ContextTr,
     INSP: Inspector<CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
@@ -48,8 +47,7 @@ where
 // Implementing InspectCommitEvm for EvmMachine
 impl<CTX, INSP, PRECOMPILES> InspectCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextSetters
-        + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt, Db: DatabaseCommit>,
+    CTX: ContextSetters + ContextTr<Db: DatabaseCommit>,
     INSP: Inspector<CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
@@ -58,8 +56,7 @@ where
 // Implementing InspectSystemCallEvm for EvmMachine
 impl<CTX, INSP, PRECOMPILES> InspectSystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
-    CTX: ContextSetters
-        + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt, Tx: SystemCallTx>,
+    CTX: ContextSetters + ContextTr<Tx: SystemCallTx>,
     INSP: Inspector<CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
@@ -79,7 +76,7 @@ where
 // Implementing InspectorEvmTr for EvmMachine
 impl<CTX, INSP, P> InspectorEvmTr for EvmMachine<CTX, INSP, P, EthFrame>
 where
-    CTX: ContextTr<Journal: JournalExt> + ContextSetters,
+    CTX: ContextTr + ContextSetters,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
     INSP: Inspector<CTX>,
 {

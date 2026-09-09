@@ -237,7 +237,7 @@ impl<DB: Database> JournalExt for Journal<DB> {
 #[cfg(test)]
 mod tests {
     use ::base_evm_handler::{InspectEvm, MainBuilder, MainContext};
-    use base_evm_context::{BlockEnv, CfgEnv, Context, Journal, TxEnv};
+    use base_evm_context::{CfgEnv, Context, TxEnv};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_interpreter::InstructionResult;
     use revm_primitives::TxKind;
@@ -261,9 +261,7 @@ mod tests {
 
     fn run(
         bytecode: &[u8],
-        inspector: impl Inspector<
-            Context<BlockEnv, TxEnv, CfgEnv, BenchmarkDB, Journal<BenchmarkDB>, ()>,
-        >,
+        inspector: impl Inspector<Context<TxEnv, CfgEnv, BenchmarkDB, ()>>,
     ) -> base_evm_context::ExecutionResult {
         let bytecode = Bytecode::new_raw(bytecode.to_vec().into());
         let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));

@@ -1,7 +1,4 @@
-use base_evm_context::{
-    Block, BlockEnv, Cfg, CfgEnv, Context, Database, FrameStack, Journal, JournalTr, Transaction,
-    TxEnv,
-};
+use base_evm_context::{Cfg, CfgEnv, Context, Database, FrameStack, Transaction, TxEnv};
 use base_evm_handler::EvmMachine;
 use base_state::EmptyDB;
 
@@ -13,7 +10,7 @@ use crate::{EthPrecompiles, frame::EthFrame, instructions::EthInstructions};
 pub type MainnetEvm<CTX, INSP = ()> = EvmMachine<CTX, INSP, EthPrecompiles, EthFrame>;
 
 /// Type alias for a mainnet context with standard Ethereum environment types.
-pub type MainnetContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB>, ()>;
+pub type MainnetContext<DB> = Context<TxEnv, CfgEnv, DB, ()>;
 
 /// Trait for building mainnet EVM instances from contexts.
 pub trait MainBuilder: Sized {
@@ -28,13 +25,11 @@ pub trait MainBuilder: Sized {
     -> MainnetEvm<Self::Context, INSP>;
 }
 
-impl<BLOCK, TX, CFG, DB, JOURNAL, CHAIN> MainBuilder for Context<BLOCK, TX, CFG, DB, JOURNAL, CHAIN>
+impl<TX, CFG, DB, CHAIN> MainBuilder for Context<TX, CFG, DB, CHAIN>
 where
-    BLOCK: Block,
     TX: Transaction,
     CFG: Cfg,
     DB: Database,
-    JOURNAL: JournalTr<Database = DB>,
 {
     type Context = Self;
 
@@ -70,7 +65,7 @@ pub trait MainContext {
     fn mainnet() -> Self;
 }
 
-impl MainContext for Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<EmptyDB>, ()> {
+impl MainContext for Context<TxEnv, CfgEnv, EmptyDB, ()> {
     fn mainnet() -> Self {
         Context::new(EmptyDB::new(), SpecId::default())
     }

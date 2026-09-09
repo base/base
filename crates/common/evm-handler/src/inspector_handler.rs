@@ -247,7 +247,7 @@ pub fn inspect_instructions<CTX>(
     gas_table: &GasTable,
 ) -> InterpreterAction
 where
-    CTX: ContextTr<Journal: JournalExt> + Host,
+    CTX: ContextTr + Host,
 {
     let mut instruction_journal_i = None;
     loop {
@@ -310,7 +310,7 @@ pub fn inspect_logs<CTX>(
     inspector: &mut impl Inspector<CTX>,
     logs_i: usize,
 ) where
-    CTX: ContextTr<Journal: JournalExt>,
+    CTX: ContextTr,
 {
     let logs = context.journal_mut().logs()[logs_i..].to_vec();
     match interpreter {
@@ -334,7 +334,7 @@ fn inspect_selfdestruct<CTX>(
     inspector: &mut impl Inspector<CTX>,
     journal_i: usize,
 ) where
-    CTX: ContextTr<Journal: JournalExt> + Host,
+    CTX: ContextTr + Host,
 {
     let entry = context.journal_mut().journal().get(journal_i..).and_then(|entries| entries.last());
 

@@ -1,7 +1,7 @@
 //! This module contains [`Context`] struct and implements [`ContextTr`] trait for it.
 use base_evm_context::{
     AccountInfoLoad, Block, Cfg, ContextError, ContextSetters, ContextTr, GasParams, Host,
-    JournalTr, LoadError, LocalContextTr, SStoreResult, SelfDestructResult, StateLoad, Transaction,
+    JournalTr, LoadError, SStoreResult, SelfDestructResult, StateLoad, Transaction,
     TransactionType,
 };
 use base_state::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
@@ -13,61 +13,48 @@ use revm_primitives::{
 use crate::{BlockEnv, CfgEnv, LocalContext, journal::Journal, tx::TxEnv};
 
 /// EVM context contains data that EVM needs for execution.
-#[derive_where(Clone, Debug; BLOCK, CFG, CHAIN, TX, DB, JOURNAL, <DB as Database>::Error, LOCAL)]
-pub struct Context<
-    BLOCK = BlockEnv,
-    TX = TxEnv,
-    CFG = CfgEnv,
-    DB: Database = EmptyDB,
-    JOURNAL: JournalTr<Database = DB> = Journal<DB>,
-    CHAIN = (),
-    LOCAL: LocalContextTr = LocalContext,
-> {
+#[derive_where(Clone, Debug; CFG, CHAIN, TX, DB, <DB as Database>::Error)]
+pub struct Context<TX = TxEnv, CFG = CfgEnv, DB: Database = EmptyDB, CHAIN = ()> {
     /// Block information.
-    pub block: BLOCK,
+    pub block: BlockEnv,
     /// Transaction information.
     pub tx: TX,
     /// Configurations.
     pub cfg: CFG,
     /// EVM State with journaling support and database.
-    pub journaled_state: JOURNAL,
+    pub journaled_state: Journal<DB>,
     /// Inner context.
     pub chain: CHAIN,
     /// Local context that is filled by execution.
-    pub local: LOCAL,
+    pub local: LocalContext,
     /// Error that happened during execution.
     pub error: Result<(), ContextError<DB::Error>>,
 }
 
 #[inline]
-fn sync_cfg_to_journal<CFG: Cfg, JOURNAL: JournalTr>(cfg: &CFG, journal: &mut JOURNAL) {
+fn sync_cfg_to_journal<CFG: Cfg, DB: Database>(cfg: &CFG, journal: &mut Journal<DB>) {
     journal.set_spec_id(cfg.spec().into());
     journal.set_eip7708_config(cfg.is_eip7708_disabled(), cfg.is_eip8246_delayed_clear_disabled());
 }
 
-impl<
-    BLOCK: Block,
-    TX: Transaction,
-    DB: Database,
-    CFG: Cfg,
-    JOURNAL: JournalTr<Database = DB>,
-    CHAIN,
-    LOCAL: LocalContextTr,
-> ContextTr for Context<BLOCK, TX, CFG, DB, JOURNAL, CHAIN, LOCAL>
-{
-    type Block = BLOCK;
+impl<TX: Transaction, DB: Database, CFG: Cfg, CHAIN> ContextTr for Context<TX, CFG, DB, CHAIN> {
     type Tx = TX;
     type Cfg = CFG;
     type Db = DB;
-    type Journal = JOURNAL;
     type Chain = CHAIN;
-    type Local = LOCAL;
 
     #[inline]
     fn all(
         &self,
-    ) -> (&Self::Block, &Self::Tx, &Self::Cfg, &Self::Db, &Self::Journal, &Self::Chain, &Self::Local)
-    {
+    ) -> (
+        &BlockEnv,
+        &Self::Tx,
+        &Self::Cfg,
+        &Self::Db,
+        &Journal<Self::Db>,
+        &Self::Chain,
+        &LocalContext,
+    ) {
         let block = &self.block;
         let tx = &self.tx;
         let cfg = &self.cfg;
@@ -82,8 +69,14 @@ impl<
     #[inline]
     fn all_mut(
         &mut self,
-    ) -> (&Self::Block, &Self::Tx, &Self::Cfg, &mut Self::Journal, &mut Self::Chain, &mut Self::Local)
-    {
+    ) -> (
+        &BlockEnv,
+        &Self::Tx,
+        &Self::Cfg,
+        &mut Journal<Self::Db>,
+        &mut Self::Chain,
+        &mut LocalContext,
+    ) {
         let block = &self.block;
         let tx = &self.tx;
         let cfg = &self.cfg;
@@ -100,47 +93,33 @@ impl<
     }
 }
 
-impl<
-    BLOCK: Block,
-    TX: Transaction,
-    DB: Database,
-    CFG: Cfg,
-    JOURNAL: JournalTr<Database = DB>,
-    CHAIN,
-    LOCAL: LocalContextTr,
-> ContextSetters for Context<BLOCK, TX, CFG, DB, JOURNAL, CHAIN, LOCAL>
+impl<TX: Transaction, DB: Database, CFG: Cfg, CHAIN> ContextSetters
+    for Context<TX, CFG, DB, CHAIN>
 {
     fn set_tx(&mut self, tx: Self::Tx) {
         self.tx = tx;
     }
 
-    fn set_block(&mut self, block: Self::Block) {
+    fn set_block(&mut self, block: BlockEnv) {
         self.block = block;
     }
 }
 
-impl<
-    BLOCK: Block + Default,
-    TX: Transaction + Default,
-    DB: Database,
-    JOURNAL: JournalTr<Database = DB>,
-    CHAIN: Default,
-    LOCAL: LocalContextTr + Default,
-    SPEC: Default + Into<SpecId> + Clone,
-> Context<BLOCK, TX, CfgEnv<SPEC>, DB, JOURNAL, CHAIN, LOCAL>
+impl<TX: Transaction + Default, DB: Database, CHAIN: Default, SPEC: Default + Into<SpecId> + Clone>
+    Context<TX, CfgEnv<SPEC>, DB, CHAIN>
 {
     /// Creates a new context with a new database type.
     ///
     /// This will create a new [`Journal`] object.
     pub fn new(db: DB, spec: SPEC) -> Self {
         let cfg = CfgEnv::new_with_spec(spec);
-        let mut journaled_state = JOURNAL::new(db);
+        let mut journaled_state = Journal::new(db);
         sync_cfg_to_journal(&cfg, &mut journaled_state);
         Self {
             tx: TX::default(),
-            block: BLOCK::default(),
+            block: BlockEnv::default(),
             cfg,
-            local: LOCAL::default(),
+            local: LocalContext::default(),
             journaled_state,
             chain: Default::default(),
             error: Ok(()),
@@ -148,39 +127,16 @@ impl<
     }
 }
 
-impl<BLOCK, TX, CFG, DB, JOURNAL, CHAIN, LOCAL> Context<BLOCK, TX, CFG, DB, JOURNAL, CHAIN, LOCAL>
+impl<TX, CFG, DB, CHAIN> Context<TX, CFG, DB, CHAIN>
 where
-    BLOCK: Block,
     TX: Transaction,
     CFG: Cfg,
     DB: Database,
-    JOURNAL: JournalTr<Database = DB>,
-    LOCAL: LocalContextTr,
 {
-    /// Creates a new context with a new journal type. New journal needs to have the same database type.
-    pub fn with_new_journal<OJOURNAL: JournalTr<Database = DB>>(
-        self,
-        mut journal: OJOURNAL,
-    ) -> Context<BLOCK, TX, CFG, DB, OJOURNAL, CHAIN, LOCAL> {
-        sync_cfg_to_journal(&self.cfg, &mut journal);
-        Context {
-            tx: self.tx,
-            block: self.block,
-            cfg: self.cfg,
-            journaled_state: journal,
-            local: self.local,
-            chain: self.chain,
-            error: Ok(()),
-        }
-    }
-
     /// Creates a new context with a new database type.
     ///
     /// This will create a new [`Journal`] object.
-    pub fn with_db<ODB: Database>(
-        self,
-        db: ODB,
-    ) -> Context<BLOCK, TX, CFG, ODB, Journal<ODB>, CHAIN, LOCAL> {
+    pub fn with_db<ODB: Database>(self, db: ODB) -> Context<TX, CFG, ODB, CHAIN> {
         let mut journaled_state = Journal::new(db);
         sync_cfg_to_journal(&self.cfg, &mut journaled_state);
         Context {
@@ -198,8 +154,7 @@ where
     pub fn with_ref_db<ODB: DatabaseRef>(
         self,
         db: ODB,
-    ) -> Context<BLOCK, TX, CFG, WrapDatabaseRef<ODB>, Journal<WrapDatabaseRef<ODB>>, CHAIN, LOCAL>
-    {
+    ) -> Context<TX, CFG, WrapDatabaseRef<ODB>, CHAIN> {
         let mut journaled_state = Journal::new(WrapDatabaseRef(db));
         sync_cfg_to_journal(&self.cfg, &mut journaled_state);
         Context {
@@ -214,10 +169,7 @@ where
     }
 
     /// Creates a new context with a new block type.
-    pub fn with_block<OB: Block>(
-        self,
-        block: OB,
-    ) -> Context<OB, TX, CFG, DB, JOURNAL, CHAIN, LOCAL> {
+    pub fn with_block(self, block: BlockEnv) -> Context<TX, CFG, DB, CHAIN> {
         Context {
             tx: self.tx,
             block,
@@ -229,10 +181,7 @@ where
         }
     }
     /// Creates a new context with a new transaction type.
-    pub fn with_tx<OTX: Transaction>(
-        self,
-        tx: OTX,
-    ) -> Context<BLOCK, OTX, CFG, DB, JOURNAL, CHAIN, LOCAL> {
+    pub fn with_tx<OTX: Transaction>(self, tx: OTX) -> Context<OTX, CFG, DB, CHAIN> {
         Context {
             tx,
             block: self.block,
@@ -245,7 +194,7 @@ where
     }
 
     /// Creates a new context with a new chain type.
-    pub fn with_chain<OC>(self, chain: OC) -> Context<BLOCK, TX, CFG, DB, JOURNAL, OC, LOCAL> {
+    pub fn with_chain<OC>(self, chain: OC) -> Context<TX, CFG, DB, OC> {
         Context {
             tx: self.tx,
             block: self.block,
@@ -258,10 +207,7 @@ where
     }
 
     /// Creates a new context with a new chain type.
-    pub fn with_cfg<OCFG: Cfg>(
-        mut self,
-        cfg: OCFG,
-    ) -> Context<BLOCK, TX, OCFG, DB, JOURNAL, CHAIN, LOCAL> {
+    pub fn with_cfg<OCFG: Cfg>(mut self, cfg: OCFG) -> Context<TX, OCFG, DB, CHAIN> {
         sync_cfg_to_journal(&cfg, &mut self.journaled_state);
         Context {
             tx: self.tx,
@@ -269,22 +215,6 @@ where
             cfg,
             journaled_state: self.journaled_state,
             local: self.local,
-            chain: self.chain,
-            error: Ok(()),
-        }
-    }
-
-    /// Creates a new context with a new local context type.
-    pub fn with_local<OL: LocalContextTr>(
-        self,
-        local: OL,
-    ) -> Context<BLOCK, TX, CFG, DB, JOURNAL, CHAIN, OL> {
-        Context {
-            tx: self.tx,
-            block: self.block,
-            cfg: self.cfg,
-            journaled_state: self.journaled_state,
-            local,
             chain: self.chain,
             error: Ok(()),
         }
@@ -305,7 +235,7 @@ where
     #[must_use]
     pub fn modify_block_chained<F>(mut self, f: F) -> Self
     where
-        F: FnOnce(&mut BLOCK),
+        F: FnOnce(&mut BlockEnv),
     {
         self.modify_block(f);
         self
@@ -345,7 +275,7 @@ where
     #[must_use]
     pub fn modify_journal_chained<F>(mut self, f: F) -> Self
     where
-        F: FnOnce(&mut JOURNAL),
+        F: FnOnce(&mut Journal<DB>),
     {
         self.modify_journal(f);
         self
@@ -354,7 +284,7 @@ where
     /// Modifies the context block.
     pub fn modify_block<F>(&mut self, f: F)
     where
-        F: FnOnce(&mut BLOCK),
+        F: FnOnce(&mut BlockEnv),
     {
         f(&mut self.block);
     }
@@ -395,7 +325,7 @@ where
     /// Modifies the context journal.
     pub fn modify_journal<F>(&mut self, f: F)
     where
-        F: FnOnce(&mut JOURNAL),
+        F: FnOnce(&mut Journal<DB>),
     {
         f(&mut self.journaled_state);
     }
@@ -403,22 +333,13 @@ where
     /// Modifies the local context.
     pub fn modify_local<F>(&mut self, f: F)
     where
-        F: FnOnce(&mut LOCAL),
+        F: FnOnce(&mut LocalContext),
     {
         f(&mut self.local);
     }
 }
 
-impl<
-    BLOCK: Block,
-    TX: Transaction,
-    CFG: Cfg,
-    DB: Database,
-    JOURNAL: JournalTr<Database = DB>,
-    CHAIN,
-    LOCAL: LocalContextTr,
-> Host for Context<BLOCK, TX, CFG, DB, JOURNAL, CHAIN, LOCAL>
-{
+impl<TX: Transaction, CFG: Cfg, DB: Database, CHAIN> Host for Context<TX, CFG, DB, CHAIN> {
     /* Block */
 
     fn basefee(&self) -> U256 {

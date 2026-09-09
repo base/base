@@ -1,6 +1,5 @@
-use base_evm_context::{ContextTr, HaltReason, JournalTr};
+use base_evm_context::{ContextTr, HaltReason};
 use revm_interpreter::interpreter_action::FrameInit;
-use revm_state::EvmState;
 
 use super::{EvmTrError, Handler};
 use crate::{EvmTr, FrameResult, evm::FrameTr};
@@ -14,7 +13,7 @@ pub struct MainnetHandler<CTX, ERROR, FRAME> {
 
 impl<EVM, ERROR, FRAME> Handler for MainnetHandler<EVM, ERROR, FRAME>
 where
-    EVM: EvmTr<Context: ContextTr<Journal: JournalTr<State = EvmState>>, Frame = FRAME>,
+    EVM: EvmTr<Context: ContextTr, Frame = FRAME>,
     ERROR: EvmTrError<EVM>,
     // TODO `FrameResult` should be a generic trait.
     // TODO `FrameInit` should be a generic.

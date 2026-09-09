@@ -7,7 +7,7 @@ use base_common_consensus::transaction::TxHashRef;
 use base_evm_context::{
     CfgEnv, ContextTr, DBErrorMarker, ExecutionResult, HaltReasonTr, ResultAndState,
 };
-use base_evm_handler::{JournalExt, NoOpInspector};
+use base_evm_handler::NoOpInspector;
 pub use base_state::Database;
 use revm::{DatabaseCommit, Inspector};
 
@@ -268,7 +268,7 @@ pub trait EvmFactory {
     ///
     /// The context may use a database adapter around `DB`, while the EVM continues to expose and
     /// return the original database as [`Evm::DB`].
-    type Context<DB: Database>: ContextTr<Journal: JournalExt>;
+    type Context<DB: Database>: ContextTr;
     /// Transaction environment.
     type Tx: IntoTxEnv<Self::Tx>;
     /// EVM error. See [`Evm::Error`].

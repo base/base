@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_create2_state_diff_inspect_bug() {
         use alloy_primitives::{Bytes, TxKind};
-        use base_evm_context::{Context, ContextTr, Journal, JournalTr, TxEnv};
+        use base_evm_context::{Context, ContextTr, JournalTr, TxEnv};
         use base_evm_handler::Inspector;
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
@@ -382,13 +382,7 @@ mod tests {
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
-        type TestCtx = Context<
-            base_evm_context::BlockEnv,
-            TxEnv,
-            base_evm_context::CfgEnv,
-            TestDb,
-            Journal<TestDb>,
-        >;
+        type TestCtx = Context<TxEnv, base_evm_context::CfgEnv, TestDb>;
 
         // --- Bytecode construction ---
 
@@ -778,7 +772,7 @@ mod tests {
     #[test]
     fn test_create2_delegatecall_state_diff_inspect() {
         use alloy_primitives::{Bytes, TxKind};
-        use base_evm_context::{Context, ContextTr, Journal, JournalTr, TxEnv};
+        use base_evm_context::{Context, ContextTr, JournalTr, TxEnv};
         use base_evm_handler::Inspector;
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
@@ -789,13 +783,7 @@ mod tests {
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
-        type TestCtx = Context<
-            base_evm_context::BlockEnv,
-            TxEnv,
-            base_evm_context::CfgEnv,
-            TestDb,
-            Journal<TestDb>,
-        >;
+        type TestCtx = Context<TxEnv, base_evm_context::CfgEnv, TestDb>;
 
         // Implementation contract code: SSTORE(0, 0xBEEF), STOP
         // When DELEGATECALLed, this writes 0xBEEF to slot 0 of the caller's storage.
