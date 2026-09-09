@@ -1,14 +1,4 @@
-//! Collection of traits and trait implementations for common database operations.
-//!
-//! ## Feature Flags
-//!
-//! - `test-utils`: Export utilities for testing
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -65,24 +55,13 @@ pub use base_execution_state_types as static_file;
 pub use base_execution_state_types::{ProviderError, ProviderResult};
 pub use static_file::StaticFileSegment;
 
-/// Converts a [`RangeBounds`](std::ops::RangeBounds) into a concrete [`Range`](std::ops::Range)
-pub fn to_range<R: std::ops::RangeBounds<u64>>(bounds: R) -> std::ops::Range<u64> {
-    let start = match bounds.start_bound() {
-        std::ops::Bound::Included(&v) => v,
-        std::ops::Bound::Excluded(&v) => v + 1,
-        std::ops::Bound::Unbounded => 0,
-    };
-
-    let end = match bounds.end_bound() {
-        std::ops::Bound::Included(&v) => v + 1,
-        std::ops::Bound::Excluded(&v) => v,
-        std::ops::Bound::Unbounded => u64::MAX,
-    };
-
-    start..end
-}
+mod range;
+pub use range::ProviderRange;
 
 #[cfg(unix)]
 mod changeset_offsets;
 #[cfg(unix)]
 pub use changeset_offsets::{ChangesetOffsetReader, ChangesetOffsetWriter};
+
+mod overlay;
+pub use overlay::*;

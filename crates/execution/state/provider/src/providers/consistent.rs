@@ -30,11 +30,10 @@ use reth_primitives_traits::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRe
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource,
-    ChainSpecProvider, ChangeSetReader, HeaderProvider, ProviderError, PruneCheckpointReader,
-    ReceiptProvider, ReceiptProviderIdExt, StageCheckpointReader, StateReader,
-    StaticFileProviderFactory, TransactionVariant, TransactionsProvider,
+    ChainSpecProvider, ChangeSetReader, HeaderProvider, ProviderError, ProviderRange,
+    PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt, StageCheckpointReader,
+    StateReader, StaticFileProviderFactory, TransactionVariant, TransactionsProvider,
     providers::{StaticFileProvider, StaticFileProviderRWRefMut},
-    to_range,
 };
 
 /// Type that interacts with a snapshot view of the blockchain (storage and in-memory) at time of
@@ -1237,7 +1236,7 @@ impl StorageChangeSetReader for ConsistentProvider {
         &self,
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<(BlockNumberAddress, StorageEntry)>> {
-        let range = to_range(range);
+        let range = ProviderRange::from_bounds(range);
         let mut changesets = Vec::new();
         let database_start = range.start;
         let mut database_end = range.end;
@@ -1387,7 +1386,7 @@ impl ChangeSetReader for ConsistentProvider {
         &self,
         range: impl core::ops::RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<(BlockNumber, AccountBeforeTx)>> {
-        let range = to_range(range);
+        let range = ProviderRange::from_bounds(range);
         let mut changesets = Vec::new();
         let database_start = range.start;
         let mut database_end = range.end;

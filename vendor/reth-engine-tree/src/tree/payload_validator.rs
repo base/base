@@ -128,21 +128,21 @@ use base_execution_payload_types::{
     BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
     NewPayloadError,
 };
-use base_execution_state_types::ProviderResult;
-use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
-use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
-use base_execution_state_tasks::{CacheFillMode, CacheStats};
-use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
-    SealedHeader, SignerRecoverable,
-};
 use base_execution_state_provider::{
     BlockExecutionOutput, BlockReader, ChangeSetReader, DatabaseProviderFactory,
     DatabaseProviderROFactory, ProviderError, PruneCheckpointReader, StageCheckpointReader,
     StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
+use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
+use base_execution_state_tasks::{CacheFillMode, CacheStats};
+use base_execution_state_types::ProviderResult;
+use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
+use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
+use reth_primitives_traits::{
+    AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
+    SealedHeader, SignerRecoverable,
+};
 use reth_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,

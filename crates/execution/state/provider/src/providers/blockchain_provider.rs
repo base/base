@@ -5,6 +5,9 @@ use std::{
     time::Instant,
 };
 
+use crate::{
+    AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
+};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
@@ -32,9 +35,6 @@ use reth_chain_state::{
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
-use reth_storage_overlay::{
-    AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
-};
 use reth_trie::{
     MultiProofTargets, StorageRoot, TrieInput, TrieInputSorted, TrieType,
     hashed_cursor::{HashedCursor, HashedCursorFactory},

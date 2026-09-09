@@ -1,5 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
+use crate::{Overlay, OverlayManager};
 use alloy_eips::merge::EPOCH_SLOTS;
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageValue};
 use base_execution_state_api::{
@@ -11,7 +12,6 @@ use base_execution_state_database::{
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ProviderResult;
-use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
@@ -870,6 +870,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::OverlayManager;
     use alloy_primitives::{Address, B256, U256, address, b256, keccak256};
     use base_execution_state_api::{
         BlockHashReader, BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
@@ -883,7 +884,6 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::StorageEntry;
-    use reth_storage_overlay::OverlayManager;
 
     use super::needs_prev_shard_check;
     use crate::{

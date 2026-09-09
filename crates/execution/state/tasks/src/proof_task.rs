@@ -44,10 +44,10 @@ use alloy_primitives::{
     map::{B256Map, B256Set},
 };
 use base_common_runtime_tasks::Runtime;
+use base_execution_state_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
 use base_execution_state_types::{DatabaseError, StateProofError};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use reth_primitives_traits::{FastInstant as Instant, dashmap::DashMap};
-use base_execution_state_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
 use reth_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
     hashed_cursor::{
@@ -1240,9 +1240,9 @@ mod tests {
         let chain_spec = Arc::new(BaseChainSpec::default());
         let anchor_hash = chain_spec.genesis_hash();
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec);
-        let factory = reth_storage_overlay::OverlayStateProviderFactory::new(
+        let factory = base_execution_state_provider::OverlayStateProviderFactory::new(
             provider_factory,
-            reth_storage_overlay::OverlayManager::default().overlay_builder(anchor_hash),
+            base_execution_state_provider::OverlayManager::default().overlay_builder(anchor_hash),
         );
         let ctx = test_ctx(factory);
 

@@ -19,7 +19,7 @@ use reth_trie::{
 };
 use tracing::instrument;
 
-use crate::{Overlay, OverlayBuilder, database_state_frontiers};
+use crate::overlay::{Overlay, OverlayBuilder, database_state_frontiers};
 
 /// Metrics for overlay state provider factory operations.
 #[derive(Clone, Metrics)]
@@ -235,14 +235,14 @@ where
 
 #[cfg(all(test, feature = "partial-persistence"))]
 mod tests {
+    use crate::{
+        BlockWriter, ProviderFactory,
+        test_utils::{MockNodeDatabase, create_test_provider_factory},
+    };
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
-    use base_execution_state_provider::{
-        BlockWriter, ProviderFactory,
-        test_utils::{MockNodeDatabase, create_test_provider_factory},
-    };
 
     use reth_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,
@@ -250,7 +250,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::OverlayManager;
+    use crate::overlay::OverlayManager;
 
     fn with_unique_trie_data(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
         let hashed_address = B256::with_last_byte(id);

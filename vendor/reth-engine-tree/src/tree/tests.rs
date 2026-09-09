@@ -27,12 +27,14 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadServiceCommand;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_execution_state_provider::OverlayManager;
+use base_execution_state_provider::{
+    BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider,
+};
+use base_execution_state_types::ComputedTrieData;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_engine_primitives::{ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_primitives_traits::Block as _;
-use base_execution_state_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
-use reth_storage_overlay::OverlayManager;
-use base_execution_state_types::ComputedTrieData;
 use tokio::sync::oneshot;
 
 use super::*;

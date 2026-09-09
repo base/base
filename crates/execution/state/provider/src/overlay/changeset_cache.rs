@@ -37,7 +37,7 @@ use reth_trie::{
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
 use tracing::{debug, warn};
 
-use crate::{OverlayManager, OverlayStateProvider, database_state_frontiers};
+use crate::overlay::{OverlayManager, OverlayStateProvider, database_state_frontiers};
 
 /// Computes block trie updates using the changeset cache.
 ///
@@ -171,7 +171,7 @@ where
 /// This type wraps a shared, mutable reference to the cache inner.
 /// The `RwLock` enables concurrent reads while ensuring exclusive access for writes.
 #[derive(Debug, Clone)]
-pub(crate) struct ChangesetCache {
+pub struct ChangesetCache {
     inner: Arc<RwLock<ChangesetCacheInner>>,
 }
 
@@ -613,6 +613,10 @@ impl ChangesetCacheInner {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
+        test_utils::create_test_provider_factory,
+    };
     use alloy_primitives::{
         Address, U256, keccak256,
         map::{B256Map, HashMap},
@@ -625,14 +629,10 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
-    use base_execution_state_provider::{
-        StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
-        test_utils::create_test_provider_factory,
-    };
     use reth_trie::{BranchNodeCompact, Nibbles, StateRoot};
 
     use super::*;
-    use crate::Overlay;
+    use crate::overlay::Overlay;
 
     // Helper function to create empty TrieUpdatesSorted for testing
     fn create_test_changesets() -> Arc<TrieUpdatesSorted> {
@@ -858,7 +858,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut changesets = base_execution_state_provider::test_utils::TestChangesets::default();
+        let mut changesets = crate::test_utils::TestChangesets::default();
         changesets.accounts.entry(1).or_default().push(AccountBeforeTx { address, info: None });
         changesets
             .accounts

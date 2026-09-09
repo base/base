@@ -19,7 +19,6 @@ reth-network = { workspace = true }
 base-metering = { workspace = true }
 base-reth-cli = { workspace = true }
 reth-cli-util = { workspace = true }
-base-execution-state-provider = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-node-core = { workspace = true }
 base-txpool-rpc = { workspace = true }
@@ -35,6 +34,7 @@ tar = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }

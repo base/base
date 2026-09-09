@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::OverlayManager;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
@@ -46,7 +47,6 @@ use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::{
     Block as _, BlockBody as _, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
-use reth_storage_overlay::OverlayManager;
 use reth_trie::{
     ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
@@ -61,8 +61,8 @@ use crate::{
     EitherReader, EitherWriter, HashingWriter, HeaderProvider, HeaderSyncGapProvider,
     HistoricalStateProvider, HistoricalStateProviderRef, HistoryWriter, LatestStateProvider,
     LatestStateProviderRef, OriginalValuesKnown, PersistenceFrontiers, ProviderError,
-    PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch, RevertsInit, RocksBatchArg,
-    RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateWriter,
+    ProviderRange, PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch, RevertsInit,
+    RocksBatchArg, RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateWriter,
     StaticFileProviderFactory, StatsReader, StorageReader, StorageTrieWriter, TransactionVariant,
     TransactionsProvider, TransactionsProviderExt, TrieWriter,
     prepare_history_shard_writes_parallel,
@@ -72,7 +72,6 @@ use crate::{
         rocksdb::{PendingRocksDBBatches, RocksDBProvider, RocksDBWriteCtx},
         static_file::{StaticFileWriteCtx, StaticFileWriter},
     },
-    to_range,
     traits::{AccountExtReader, BlockSource, ChangeSetReader, ReceiptProvider},
 };
 
@@ -1889,7 +1888,7 @@ impl<TX: DbTx + 'static> TransactionsProvider for DatabaseProvider<TX> {
         &self,
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<Vec<Self::Transaction>>> {
-        let range = to_range(range);
+        let range = ProviderRange::from_bounds(range);
 
         self.block_body_indices_range(range.start..=range.end.saturating_sub(1))?
             .into_iter()
@@ -1966,7 +1965,7 @@ impl<TX: DbTx + 'static> ReceiptProvider for DatabaseProvider<TX> {
     ) -> ProviderResult<Vec<BaseReceipt>> {
         self.static_file_provider.get_range_with_static_file_or_database(
             StaticFileSegment::Receipts,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |static_file, range, _| static_file.receipts_by_tx_range(range),
             |range, _| self.cursor_read_collect::<tables::Receipts<BaseReceipt>>(range),
             |_| true,

@@ -11,6 +11,7 @@ use std::{
     },
 };
 
+use crate::OverlayManager;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
@@ -32,20 +33,18 @@ use base_execution_state_types::{PipelineTarget, StageCheckpoint, StageId};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_storage_overlay::OverlayManager;
 use tracing::{info, instrument, trace, warn};
 
 use crate::{
     BalProvider, BalStoreHandle, BlockHashReader, BlockNumReader, BlockReader, ChainSpecProvider,
     DatabaseProviderFactory, HeaderProvider, HeaderSyncGapProvider, InMemoryBalStore,
-    MetadataProvider, ProviderError, PruneCheckpointReader, RocksDBProviderFactory,
+    MetadataProvider, ProviderError, ProviderRange, PruneCheckpointReader, RocksDBProviderFactory,
     StageCheckpointReader, StateProviderBox, StaticFileProviderFactory, StaticFileWriter,
     TransactionVariant, TransactionsProvider,
     providers::{
         RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut,
         state::latest::LatestStateProvider,
     },
-    to_range,
     traits::{BlockSource, ReceiptProvider},
 };
 
@@ -884,7 +883,7 @@ impl ReceiptProvider for ProviderFactory {
     ) -> ProviderResult<Vec<BaseReceipt>> {
         self.caught_up_static_file_provider()?.get_range_with_static_file_or_database(
             StaticFileSegment::Receipts,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |static_file, range, _| static_file.receipts_by_tx_range(range),
             |range, _| self.provider()?.receipts_by_tx_range(range),
             |_| true,

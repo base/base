@@ -12,8 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-base-execution-state-provider = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }

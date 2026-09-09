@@ -10,11 +10,11 @@ use alloy_rlp::{Decodable, Encodable};
 use base_common_observability_metrics::Metrics;
 use base_common_runtime_tasks::Runtime;
 use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
 use base_execution_state_tasks::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
     ProofWorkerHandle, StateRootTaskError,
 };
+use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -1118,10 +1118,10 @@ enum SparseTrieTaskMessage {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
     use base_execution_state_tasks::ProofTaskCtx;
     use reth_db_common::init::init_genesis;
-    use base_execution_state_provider::test_utils::create_test_provider_factory;
-    use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
     use reth_trie_sparse::ArenaParallelSparseTrie;
 
     use super::*;

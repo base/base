@@ -19,7 +19,7 @@ use reth_primitives_traits::AlloyBlockHeader;
 use reth_trie::{DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, debug_span, instrument};
 
-use crate::OverlayManager;
+use crate::overlay::OverlayManager;
 
 /// Contains the trie and hashed-state data required to initialize an overlay state provider.
 #[derive(Debug, Clone)]
@@ -601,17 +601,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "partial-persistence")]
+    use crate::{
+        BlockWriter, ProviderFactory,
+        test_utils::{MockNodeDatabase, create_test_provider_factory},
+    };
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
     #[cfg(feature = "partial-persistence")]
     #[cfg(feature = "partial-persistence")]
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
-    #[cfg(feature = "partial-persistence")]
-    use base_execution_state_provider::{
-        BlockWriter, ProviderFactory,
-        test_utils::{MockNodeDatabase, create_test_provider_factory},
-    };
     use reth_trie::{BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles};
 
     use super::*;
@@ -754,6 +754,13 @@ mod tests {
         let (factory, blocks) = setup_frontiers(2, 3);
         let manager = OverlayManager::default();
         manager.insert_block(blocks[1].clone());
+        // This test computes real reverts, so the empty execution suffix needs valid empty
+        // trie data rather than the synthetic branch markers used by merge-only tests.
+        manager.insert_block(ExecutedBlock::new(
+            Arc::clone(&blocks[3].recovered_block),
+            Arc::clone(&blocks[3].execution_output),
+            ComputedTrieData::default(),
+        ));
         let provider = factory.provider().unwrap();
         let builder = manager.overlay_builder(blocks[1].recovered_block().hash());
         match builder.anchor_at_parent(&provider).unwrap() {

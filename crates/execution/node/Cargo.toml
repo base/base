@@ -24,7 +24,6 @@ alloy-chains = { workspace = true }
 reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
-base-execution-state-provider = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 base-txpool-rpc = { workspace = true }
@@ -66,12 +65,12 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-downloaders = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-state-provider = {workspace = true, features = ["rayon"]}
 base-execution-state-tasks = { workspace = true, features = ["metrics"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
@@ -104,11 +103,11 @@ rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "std", "test-utils"] }

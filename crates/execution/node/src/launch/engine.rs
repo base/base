@@ -1,7 +1,11 @@
 //! Engine node related functionality.
 
+use base_common_observability_tracing::tracing::{debug, error, info};
+use base_common_runtime_tasks::EventSender;
 use base_common_types_chain::BlockHeader;
 use base_execution_payload_builder::{BaseEngineValidator, BaseExecutionHandle};
+use base_execution_state_provider::OverlayManager;
+use base_execution_state_provider::{BlockNumReader, StorageSettingsCache};
 use base_node_context::AddOnsContext;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
 use reth_engine_primitives::ConsensusEngineHandle;
@@ -16,10 +20,6 @@ use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
 use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::Head};
 use reth_node_events::node;
-use base_execution_state_provider::{BlockNumReader, StorageSettingsCache};
-use reth_storage_overlay::OverlayManager;
-use base_common_runtime_tasks::EventSender;
-use base_common_observability_tracing::tracing::{debug, error, info};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

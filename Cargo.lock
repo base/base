@@ -3941,7 +3941,6 @@ dependencies = [
  "rayon",
  "reth-chain-state",
  "reth-primitives-traits",
- "reth-storage-overlay",
  "reth-testing-utils",
  "reth-trie",
  "rocksdb",
@@ -3991,7 +3990,6 @@ dependencies = [
  "rand 0.9.5",
  "reth-db-common",
  "reth-primitives-traits",
- "reth-storage-overlay",
  "reth-trie",
  "reth-trie-sparse",
  "rocksdb",
@@ -4302,7 +4300,6 @@ dependencies = [
  "reth-rpc-server-types",
  "reth-stages",
  "reth-static-file",
- "reth-storage-overlay",
  "reth-trie",
  "rstest",
  "secp256k1 0.30.0",
@@ -14011,7 +14008,6 @@ dependencies = [
  "reth-stages",
  "reth-stages-api",
  "reth-static-file",
- "reth-storage-overlay",
  "reth-testing-utils",
  "reth-trie",
  "reth-trie-sparse",
@@ -14706,29 +14702,6 @@ dependencies = [
  "reth-stages",
  "reth-testing-utils",
  "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "reth-storage-overlay"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-observability-metrics",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-execution-state-api",
- "base-execution-state-database",
- "base-execution-state-memory",
- "base-execution-state-provider",
- "base-execution-state-types",
- "metrics",
- "parking_lot",
- "rayon",
- "reth-chain-state",
- "reth-primitives-traits",
- "reth-trie",
  "tracing",
 ]
 

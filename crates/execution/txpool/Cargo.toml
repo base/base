@@ -22,7 +22,6 @@ rustc-hash = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 futures-util = { workspace = true }
-base-execution-state-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -35,6 +34,7 @@ base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
+base-execution-state-provider = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"]}
 base-common-observability-events = { workspace = true }
@@ -73,12 +73,12 @@ futures = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-execution-txpool = {workspace = true, features = ["test-utils"]}
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "time", "rt-multi-thread", "macros"] }
 

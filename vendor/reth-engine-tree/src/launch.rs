@@ -11,13 +11,13 @@ use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
+use base_execution_state_provider::OverlayManager;
+use base_execution_state_provider::{ProviderFactory, providers::BlockchainProvider};
 use futures::Stream;
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_network_p2p::BlockClient;
-use base_execution_state_provider::{ProviderFactory, providers::BlockchainProvider};
 use reth_prune::PrunerWithFactory;
 use reth_stages_api::{MetricEventsSender, Pipeline};
-use reth_storage_overlay::OverlayManager;
 
 use crate::{
     backfill::PipelineSync,

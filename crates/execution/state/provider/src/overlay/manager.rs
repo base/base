@@ -33,7 +33,7 @@ use reth_primitives_traits::{
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, trace};
 
-use crate::{
+use crate::overlay::{
     ChangesetCache, OverlayBuilder, changeset_cache::compute_block_trie_updates,
     database_state_frontiers,
 };

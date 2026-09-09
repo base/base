@@ -29,7 +29,6 @@ reth-prune = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
-base-execution-state-provider = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
@@ -51,6 +50,7 @@ socket2 = { workspace = true, features = ["all"] }
 tar = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
 blake3 = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
@@ -85,8 +85,8 @@ secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"]
 
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 
 [features]
 arbitrary = [

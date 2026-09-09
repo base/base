@@ -16,9 +16,9 @@ tracing = { workspace = true }
 reth-exex = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
-base-execution-state-provider = { workspace = true }
 base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["default"] }

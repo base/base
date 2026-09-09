@@ -9,14 +9,15 @@ use base_execution_state_database::{
     models::sharded_key::NUM_OF_INDICES_IN_SHARD, models::storage_sharded_key::StorageShardedKey,
     tables,
 };
+use base_execution_state_provider::{
+    BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
+    ProviderRange, ProviderResult, RocksDBProviderFactory, ShardedHistoryTable,
+    StaticFileProviderFactory, prepare_history_shard_writes_parallel_vec,
+    providers::StaticFileProvider,
+};
 use base_execution_state_types::StaticFileSegment;
 use reth_config::config::EtlConfig;
 use reth_etl::Collector;
-use base_execution_state_provider::{
-    BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
-    ProviderResult, RocksDBProviderFactory, ShardedHistoryTable, StaticFileProviderFactory,
-    prepare_history_shard_writes_parallel_vec, providers::StaticFileProvider, to_range,
-};
 use reth_stages_api::StageError;
 use tracing::info;
 
@@ -82,7 +83,7 @@ where
     };
 
     // Convert range bounds to concrete range
-    let range = to_range(range);
+    let range = ProviderRange::from_bounds(range);
     let start_block = range.start;
 
     // Use the new walker for lazy iteration over static file changesets
@@ -145,7 +146,7 @@ where
         Ok::<(), StageError>(())
     };
 
-    let range = to_range(range);
+    let range = ProviderRange::from_bounds(range);
     let start_block = range.start;
     let static_file_provider = provider.static_file_provider();
 

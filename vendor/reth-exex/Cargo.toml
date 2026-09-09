@@ -23,7 +23,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-config = { workspace = true }
 reth-network = { workspace = true }
-base-execution-state-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -35,6 +34,7 @@ base-execution-evm-blocks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 itertools = { workspace = true, features = ["use_std"] }
@@ -55,11 +55,11 @@ reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-state-memory = {workspace = true, features = ["test-utils"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-execution-state-types = { workspace = true, features = ["serde-bincode-compat"] }
 
 [features]

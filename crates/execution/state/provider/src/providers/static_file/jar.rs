@@ -24,8 +24,8 @@ use super::{
     metrics::{StaticFileProviderMetrics, StaticFileProviderOperation},
 };
 use crate::{
-    BlockHashReader, BlockNumReader, HeaderProvider, ReceiptProvider, TransactionsProvider,
-    to_range,
+    BlockHashReader, BlockNumReader, HeaderProvider, ProviderRange, ReceiptProvider,
+    TransactionsProvider,
 };
 /// Provider over a specific `NippyJar` and range.
 #[derive(Debug)]
@@ -164,7 +164,7 @@ impl HeaderProvider for StaticFileJarProvider<'_> {
         let mut cursor = self.cursor()?;
         let mut headers = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
-        for num in to_range(range) {
+        for num in ProviderRange::from_bounds(range) {
             if let Some(header) =
                 cursor.get_one::<HeaderMask<base_common_types_chain::Header>>(num.into())?
             {
@@ -190,7 +190,7 @@ impl HeaderProvider for StaticFileJarProvider<'_> {
         let mut cursor = self.cursor()?;
         let mut headers = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
-        for number in to_range(range) {
+        for number in ProviderRange::from_bounds(range) {
             if let Some((header, hash)) = cursor
                 .get_two::<HeaderWithHashMask<base_common_types_chain::Header>>(number.into())?
             {
@@ -311,7 +311,7 @@ impl TransactionsProvider for StaticFileJarProvider<'_> {
         let mut cursor = self.cursor()?;
         let mut txs = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
-        for num in to_range(range) {
+        for num in ProviderRange::from_bounds(range) {
             if let Some(tx) = cursor.get_one::<TransactionMask<Self::Transaction>>(num.into())? {
                 txs.push(tx)
             }
@@ -326,7 +326,7 @@ impl TransactionsProvider for StaticFileJarProvider<'_> {
         let mut cursor = self.cursor()?;
         let mut senders = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
-        for num in to_range(range) {
+        for num in ProviderRange::from_bounds(range) {
             if let Some(tx) = cursor.get_one::<TransactionSenderMask>(num.into())? {
                 senders.push(tx)
             }
@@ -369,7 +369,7 @@ impl ReceiptProvider for StaticFileJarProvider<'_> {
         let mut cursor = self.cursor()?;
         let mut receipts = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
-        for num in to_range(range) {
+        for num in ProviderRange::from_bounds(range) {
             if let Some(tx) = cursor.get_one::<ReceiptMask<BaseReceipt>>(num.into())? {
                 receipts.push(tx)
             }

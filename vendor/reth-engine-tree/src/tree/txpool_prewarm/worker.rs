@@ -8,11 +8,11 @@ use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_runtime::Evm;
 use base_execution_evm_runtime::database::State;
 use base_execution_state_memory::CachedReads;
-use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use base_execution_state_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
+use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use tracing::{debug, trace};
 
 use super::{
@@ -318,9 +318,9 @@ mod tests {
 
     use alloy_primitives::{Address, Signature, TxKind, U256};
     use base_common_types_chain::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
-    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_stages_api::{StageCheckpoint, StageId};
 
     use super::{super::Transaction as PoolTransaction, *};
@@ -374,7 +374,7 @@ mod tests {
                 provider_builder: StateProviderBuilder::new(
                     provider,
                     parent_hash,
-                    reth_storage_overlay::OverlayManager::default(),
+                    base_execution_state_provider::OverlayManager::default(),
                 ),
             };
             self.commands.send(Command::Start { parent_hash, job }).unwrap();

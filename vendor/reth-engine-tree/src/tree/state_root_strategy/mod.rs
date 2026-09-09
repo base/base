@@ -67,24 +67,24 @@ use std::{
 use alloy_primitives::B256;
 use base_common_runtime_tasks::utils::increase_thread_priority;
 use base_execution_evm_blocks::OnStateHook;
-use base_execution_state_types::ProviderResult;
+use base_execution_state_provider::{
+    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
+    HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
+    StateRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
+};
+use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
 pub use base_execution_state_tasks::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
 };
 use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
+use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
-use base_execution_state_provider::{
-    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
-    HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
-    StateRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
-};
-use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
 use reth_trie::{
     HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
     updates::TrieUpdates,
@@ -1305,15 +1305,15 @@ mod tests {
         AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, TransactionId,
     };
     use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_types::StorageEntry;
-    use rand::Rng;
-    use reth_chain_state::test_utils::TestBlockBuilder;
-    use reth_db_common::init::init_genesis;
     use base_execution_state_provider::{
         HashingWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,
     };
-    use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
+    use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
+    use base_execution_state_types::StorageEntry;
+    use rand::Rng;
+    use reth_chain_state::test_utils::TestBlockBuilder;
+    use reth_db_common::init::init_genesis;
     use reth_testing_utils::generators;
     use reth_trie::test_utils::state_root;
 

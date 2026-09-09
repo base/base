@@ -20,6 +20,14 @@ use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm_runtime::interpreter::debug_unreachable;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use base_execution_payload_types::{BasePayloadBuilderAttributes, NewPayloadError};
+use base_execution_state_provider::OverlayManager;
+use base_execution_state_provider::{
+    BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader,
+    ChangeSetReader, DatabaseProviderFactory, LatestStateProvider, ProviderError,
+    PruneCheckpointReader, SaveBlocksInput, StageCheckpointReader, StateProviderBox,
+    StateProviderFactory, StateReader, StorageChangeSetReader, StorageSettingsCache,
+    TransactionVariant, TryIntoHistoricalStateProvider,
+};
 use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
@@ -32,15 +40,7 @@ use reth_engine_primitives::{
     ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
 };
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
-use base_execution_state_provider::{
-    BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader,
-    ChangeSetReader, DatabaseProviderFactory, LatestStateProvider, ProviderError,
-    PruneCheckpointReader, SaveBlocksInput, StageCheckpointReader, StateProviderBox,
-    StateProviderFactory, StateReader, StorageChangeSetReader, StorageSettingsCache,
-    TransactionVariant, TryIntoHistoricalStateProvider,
-};
 use reth_stages_api::ControlFlow;
-use reth_storage_overlay::OverlayManager;
 use reth_trie::ComputedTrieData;
 use state::TreeState;
 use tokio::sync::{
@@ -74,6 +74,10 @@ mod trie_updates;
 mod txpool_prewarm;
 pub mod types;
 
+pub use base_execution_state_tasks::{
+    CachedStateCacheMetrics, CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
+    ExecutionCache, PayloadExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot,
+};
 pub use block_buffer::BlockBuffer;
 pub use invalid_headers::InvalidHeaderCache;
 pub use metrics::EngineApiMetrics;
@@ -81,10 +85,6 @@ pub use payload_processor::*;
 pub use payload_validator::BasicEngineValidator;
 pub use persistence_state::PersistenceState;
 pub use reth_engine_primitives::TreeConfig;
-pub use base_execution_state_tasks::{
-    CachedStateCacheMetrics, CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
-    ExecutionCache, PayloadExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot,
-};
 pub use txpool_prewarm::{
     Source as TxPoolPrewarmSource, Transaction as TxPoolPrewarmTransaction,
     Transactions as TxPoolPrewarmTransactions,
@@ -150,7 +150,7 @@ where
         let provider = self.provider_factory.database_provider_ro()?;
         let anchor = overlay_builder.anchor_at_parent(&provider)?;
         let (provider, overlay): (StateProviderBox, _) = match anchor {
-            reth_storage_overlay::AnchorForParent::NoReverts { anchor, overlay } => {
+            base_execution_state_provider::AnchorForParent::NoReverts { anchor, overlay } => {
                 debug!(
                     target: "engine::tree",
                     parent_hash = %self.parent_hash,
@@ -159,7 +159,11 @@ where
                 );
                 (Box::new(LatestStateProvider::new(provider)), overlay)
             }
-            reth_storage_overlay::AnchorForParent::RevertsRequired { anchor, overlay, .. } => {
+            base_execution_state_provider::AnchorForParent::RevertsRequired {
+                anchor,
+                overlay,
+                ..
+            } => {
                 debug!(
                     target: "engine::tree",
                     parent_hash = %self.parent_hash,
@@ -435,7 +439,7 @@ where
         + TryIntoHistoricalStateProvider
         + 'static,
     P: ChangeSetReader,
-    reth_storage_overlay::OverlayStateProviderFactory<P>:
+    base_execution_state_provider::OverlayStateProviderFactory<P>:
         base_execution_state_api::DatabaseProviderROFactory<
                 Provider: reth_trie::trie_cursor::TrieCursorFactory
                               + reth_trie::hashed_cursor::HashedCursorFactory,

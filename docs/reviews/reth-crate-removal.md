@@ -176,7 +176,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-api](../../crates/execution/state/api/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
-| [reth-storage-overlay](../../vendor/reth-storage-overlay/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |
 | [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
 | [reth-testing-utils](../../vendor/reth-testing-utils/Cargo.toml) | Test support; retain or migrate |
 | [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |

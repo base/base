@@ -45,6 +45,14 @@ use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::{DatabaseMetrics, models::PartialStateTrieUnwindMarker};
+use base_execution_state_provider::OverlayManager;
+use base_execution_state_provider::{
+    BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
+    InMemoryBalStore, MetadataProvider, ProviderError, ProviderFactory, ProviderResult,
+    RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
+    StaticFileProviderFactory, StorageSettingsCache,
+    providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
+};
 use base_execution_txpool::TransactionPool;
 use base_node_context::BaseNodeContext;
 use eyre::Context;
@@ -74,20 +82,12 @@ use reth_node_metrics::{
     storage::StorageSettingsInfo,
     version::VersionInfo,
 };
-use base_execution_state_provider::{
-    BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
-    InMemoryBalStore, MetadataProvider, ProviderError, ProviderFactory, ProviderResult,
-    RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
-    StaticFileProviderFactory, StorageSettingsCache,
-    providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
-};
 use reth_prune::{PruneMode, PruneModes, PrunerBuilder};
 use reth_stages::{
     MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet, sets::DefaultStages,
     stages::MerkleStage,
 };
 use reth_static_file::{StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance};
-use reth_storage_overlay::OverlayManager;
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,
@@ -1238,7 +1238,9 @@ fn get_partial_trie_unwind_marker(
 const PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY: &str = "partial_state_trie_unwind";
 
 fn write_partial_trie_unwind_marker(
-    provider: &base_execution_state_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
+    provider: &base_execution_state_provider::DatabaseProvider<
+        impl base_execution_state_database::DbTxMut,
+    >,
     marker: PartialStateTrieUnwindMarker,
 ) -> ProviderResult<()> {
     provider.write_metadata(
@@ -1248,7 +1250,9 @@ fn write_partial_trie_unwind_marker(
 }
 
 fn delete_partial_trie_unwind_marker(
-    provider: &base_execution_state_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
+    provider: &base_execution_state_provider::DatabaseProvider<
+        impl base_execution_state_database::DbTxMut,
+    >,
 ) -> ProviderResult<()> {
     provider.delete_metadata(PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY)
 }
@@ -1256,9 +1260,9 @@ fn delete_partial_trie_unwind_marker(
 #[cfg(test)]
 mod tests {
     use base_execution_state_database::models::PartialStateTrieUnwindMarker;
+    use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
     use reth_config::Config;
     use reth_node_core::args::PruningArgs;
-    use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
     use reth_stages::{FinishCheckpoint, StageCheckpoint, StageId};
 
     use super::{LaunchContext, NodeConfig, get_partial_trie_unwind_marker};

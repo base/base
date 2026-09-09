@@ -50,10 +50,9 @@ use super::{
 };
 use crate::{
     BlockHashReader, BlockNumReader, BlockReader, BlockSource, EitherWriter, HeaderProvider,
-    ReceiptProvider, StageCheckpointReader, StatsReader, TransactionVariant, TransactionsProvider,
-    TransactionsProviderExt,
+    ProviderRange, ReceiptProvider, StageCheckpointReader, StatsReader, TransactionVariant,
+    TransactionsProvider, TransactionsProviderExt,
     changeset_walker::{StaticFileAccountChangesetWalker, StaticFileStorageChangesetWalker},
-    to_range,
 };
 
 /// Alias type for a map that can be queried for block or transaction ranges. It uses `u64` to
@@ -2582,7 +2581,7 @@ impl HeaderProvider for StaticFileProvider {
     ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Headers,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |cursor, number| {
                 cursor.get_one::<HeaderMask<base_common_types_chain::Header>>(number.into())
             },
@@ -2609,7 +2608,7 @@ impl HeaderProvider for StaticFileProvider {
     ) -> ProviderResult<Vec<SealedHeader>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Headers,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |cursor, number| {
                 Ok(cursor
                     .get_two::<HeaderWithHashMask<base_common_types_chain::Header>>(number.into())?
@@ -2676,7 +2675,7 @@ impl ReceiptProvider for StaticFileProvider {
     ) -> ProviderResult<Vec<BaseReceipt>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Receipts,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |cursor, number| cursor.get_one::<ReceiptMask<BaseReceipt>>(number.into()),
             |_| true,
         )
@@ -2823,7 +2822,7 @@ impl TransactionsProvider for StaticFileProvider {
     ) -> ProviderResult<Vec<Self::Transaction>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Transactions,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |cursor, number| cursor.get_one::<TransactionMask<Self::Transaction>>(number.into()),
             |_| true,
         )
@@ -2835,7 +2834,7 @@ impl TransactionsProvider for StaticFileProvider {
     ) -> ProviderResult<Vec<Address>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::TransactionSenders,
-            to_range(range),
+            ProviderRange::from_bounds(range),
             |cursor, number| cursor.get_one::<TransactionSenderMask>(number.into()),
             |_| true,
         )

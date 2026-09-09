@@ -21,7 +21,6 @@ reth-trie = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
-base-execution-state-provider = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
 base-execution-state-api = { workspace = true }
@@ -45,7 +44,6 @@ reth-network-p2p = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
-reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
@@ -53,6 +51,7 @@ base-execution-state-types = {features = ["rayon"], workspace = true}
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
 base-execution-state-tasks = {features = ["default"], workspace = true}
+base-execution-state-provider = {workspace = true, features = ["rayon"]}
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
