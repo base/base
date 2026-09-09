@@ -12,6 +12,7 @@ use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::Discv4ConfigBuilder;
 use base_execution_network_discovery::DnsDiscoveryConfig;
 use base_execution_network_discovery::NatResolver;
+use base_execution_network_discovery::NetworkStackId;
 use base_execution_network_types::PeersConfig;
 use base_execution_network_types::SessionsConfig;
 use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
@@ -25,7 +26,6 @@ use base_execution_state_api::{
     BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
 };
-use reth_discv5::NetworkStackId;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
@@ -62,7 +62,7 @@ pub struct NetworkConfig<C> {
     /// How to set up discovery.
     pub discovery_v4_config: Option<Discv4Config>,
     /// How to set up discovery version 5.
-    pub discovery_v5_config: Option<reth_discv5::Config>,
+    pub discovery_v5_config: Option<base_execution_network_discovery::Discv5Config>,
     /// Address to listen for incoming connections
     pub listener_addr: SocketAddr,
     /// How to instantiate peer manager.
@@ -192,7 +192,7 @@ pub struct NetworkConfigBuilder {
     /// How to set up discovery version 4.
     discovery_v4_builder: Option<Discv4ConfigBuilder>,
     /// How to set up discovery version 5.
-    discovery_v5_builder: Option<reth_discv5::ConfigBuilder>,
+    discovery_v5_builder: Option<base_execution_network_discovery::Discv5ConfigBuilder>,
     /// All boot nodes to start network discovery with.
     boot_nodes: HashSet<TrustedPeer>,
     /// Address to use for discovery
@@ -449,7 +449,10 @@ impl NetworkConfigBuilder {
     }
 
     /// Sets the discv5 config to use.
-    pub fn discovery_v5(mut self, builder: reth_discv5::ConfigBuilder) -> Self {
+    pub fn discovery_v5(
+        mut self,
+        builder: base_execution_network_discovery::Discv5ConfigBuilder,
+    ) -> Self {
         self.discovery_v5_builder = Some(builder);
         self
     }
@@ -755,9 +758,9 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::U256;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_execution_network_discovery::build_local_enr;
     use base_execution_state_api::NoopProvider;
     use rand::Rng;
-    use reth_discv5::build_local_enr;
 
     use super::*;
 
@@ -871,7 +874,9 @@ mod tests {
         // enforce that the fork_id set in local enr
         let fork_key = NetworkStackId::OPEL;
         let config = builder()
-            .discovery_v5(reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into()))
+            .discovery_v5(base_execution_network_discovery::Discv5Config::builder(
+                (Ipv4Addr::LOCALHOST, 30303).into(),
+            ))
             .build_with_noop_provider(Arc::new(chain_spec));
 
         let (local_enr, _, _, _) = build_local_enr(
@@ -914,7 +919,9 @@ mod tests {
         });
 
         let config = builder()
-            .discovery_v5(reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into()))
+            .discovery_v5(base_execution_network_discovery::Discv5Config::builder(
+                (Ipv4Addr::LOCALHOST, 30303).into(),
+            ))
             .build_with_noop_provider(Arc::new(chain_spec));
 
         let (local_enr, _, _, _) = build_local_enr(

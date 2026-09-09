@@ -37,3 +37,17 @@ pub use discv4::{
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use discv4::test_utils as discv4_test_utils;
+
+mod discv5;
+pub use discv5::{
+    AdvertisedChainMetrics, BootNode, Config as Discv5Config, ConfigBuilder as Discv5ConfigBuilder,
+    DEFAULT_COUNT_BOOTSTRAP_LOOKUPS, DEFAULT_DISCOVERY_V5_ADDR, DEFAULT_DISCOVERY_V5_ADDR_IPV6,
+    DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, DEFAULT_DISCOVERY_V5_PORT,
+    DEFAULT_MIN_TARGET_KBUCKET_INDEX, DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL,
+    DEFAULT_SECONDS_LOOKUP_INTERVAL, DiscoveredPeer, DiscoveredPeersMetrics, Discv5, Discv5Metrics,
+    EnrCombinedKeyWrapper, Error as Discv5Error, FilterOutcome, MAX_KBUCKET_INDEX, MustIncludeKey,
+    MustNotIncludeKeys, NetworkStackId, amend_listen_config_wrt_rlpx, bootstrap, build_local_enr,
+    discv4_id_to_discv5_id, discv4_id_to_multiaddr_id, discv5_sockets_wrt_rlpx_addr,
+    enr_to_discv4_id, get_lookup_target, ipv4 as discv5_ipv4, ipv6 as discv5_ipv6, lookup,
+    spawn_populate_kbuckets_bg,
+};

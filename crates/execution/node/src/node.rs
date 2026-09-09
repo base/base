@@ -10,9 +10,11 @@ use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
+use base_common_observability_tracing::tracing::{debug, info};
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_network_types::NodeRecord;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
@@ -22,14 +24,13 @@ use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
+use discv5_reth::enr::IP_ENR_KEY;
+use discv5_reth::enr::IP6_ENR_KEY;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
-use base_execution_network_types::NodeRecord;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
-use base_common_observability_tracing::tracing::{debug, info};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
@@ -385,7 +386,7 @@ impl BaseDiscoveryConfig {
         args: &RethNetworkArgs,
         boot_nodes: impl IntoIterator<Item = NodeRecord>,
         external_addr: Option<IpAddr>,
-    ) -> reth_discv5::ConfigBuilder {
+    ) -> base_execution_network_discovery::Discv5ConfigBuilder {
         let rlpx_socket = Self::rlpx_socket(args);
         let mut builder = args
             .discovery
@@ -400,10 +401,10 @@ impl BaseDiscoveryConfig {
     }
 
     /// Creates the inner discv5 config with the Base protocol identity.
-    pub fn discv5_config(&self, args: &RethNetworkArgs) -> reth_discv5::discv5::Config {
-        let mut builder = reth_discv5::discv5::ConfigBuilder::new(Self::discv5_listen_config(args));
+    pub fn discv5_config(&self, args: &RethNetworkArgs) -> discv5_reth::Config {
+        let mut builder = discv5_reth::ConfigBuilder::new(Self::discv5_listen_config(args));
 
-        builder.protocol_identity(reth_discv5::discv5::ProtocolIdentity {
+        builder.protocol_identity(discv5_reth::ProtocolIdentity {
             protocol_id: BASE_V0_PROTOCOL_VERSION,
             ..Default::default()
         });
@@ -417,7 +418,7 @@ impl BaseDiscoveryConfig {
     /// address, because ENR has no mechanism to advertise different addresses for `RLPx` and
     /// discv5. As a result, `discv5_addr` only influences the UDP listen port, not the
     /// advertised IP.
-    pub fn discv5_listen_config(args: &RethNetworkArgs) -> reth_discv5::discv5::ListenConfig {
+    pub fn discv5_listen_config(args: &RethNetworkArgs) -> discv5_reth::ListenConfig {
         let rlpx_socket = Self::rlpx_socket(args);
         let discv5_addr_ipv4 = args.discovery.discv5_addr.or_else(|| match rlpx_socket {
             SocketAddr::V4(addr) => Some(*addr.ip()),
@@ -428,7 +429,7 @@ impl BaseDiscoveryConfig {
             SocketAddr::V6(addr) => Some(*addr.ip()),
         });
 
-        reth_discv5::discv5::ListenConfig::from_two_sockets(
+        discv5_reth::ListenConfig::from_two_sockets(
             discv5_addr_ipv4.map(|addr| {
                 SocketAddrV4::new(
                     addr,
@@ -537,7 +538,8 @@ mod tests {
         sync::Arc,
     };
 
-    use reth_discv5::{build_local_enr, discv5::ListenConfig};
+    use base_execution_network_discovery::build_local_enr;
+    use discv5_reth::ListenConfig;
     use reth_network::{NetworkConfigBuilder, config::rng_secret_key};
     use rstest::rstest;
 

@@ -21,9 +21,9 @@ fn is_addr_in_use_kind(err: &NetworkError, kind: ServiceKind) -> bool {
         NetworkError::AddressAlreadyInUse { kind: k, error } => {
             *k == kind && error.kind() == io::ErrorKind::AddrInUse
         }
-        NetworkError::Discv5Error(reth_discv5::Error::Discv5Error(discv5_reth::Error::Io(err))) => {
-            err.kind() == io::ErrorKind::AddrInUse
-        }
+        NetworkError::Discv5Error(base_execution_network_discovery::Discv5Error::Discv5Error(
+            discv5_reth::Error::Io(err),
+        )) => err.kind() == io::ErrorKind::AddrInUse,
         _ => false,
     }
 }
@@ -88,7 +88,10 @@ async fn test_discv5_and_discv4_same_socket_ok() {
         .listener_port(test_port)
         .discovery_port(test_port)
         .discovery_v5(
-            reth_discv5::Config::builder((DEFAULT_DISCOVERY_ADDR, test_port).into()).discv5_config(
+            base_execution_network_discovery::Discv5Config::builder(
+                (DEFAULT_DISCOVERY_ADDR, test_port).into(),
+            )
+            .discv5_config(
                 discv5_reth::ConfigBuilder::new(discv5_reth::ListenConfig::from_ip(
                     DEFAULT_DISCOVERY_ADDR,
                     test_port,
@@ -115,7 +118,10 @@ async fn test_discv5_and_rlpx_same_socket_ok_without_discv4() {
         .listener_port(test_port)
         .disable_discv4_discovery()
         .discovery_v5(
-            reth_discv5::Config::builder((DEFAULT_DISCOVERY_ADDR, test_port).into()).discv5_config(
+            base_execution_network_discovery::Discv5Config::builder(
+                (DEFAULT_DISCOVERY_ADDR, test_port).into(),
+            )
+            .discv5_config(
                 discv5_reth::ConfigBuilder::new(discv5_reth::ListenConfig::from_ip(
                     DEFAULT_DISCOVERY_ADDR,
                     test_port,

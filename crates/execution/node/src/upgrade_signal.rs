@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use alloy_eip2124::{EnrForkIdEntry, ForkFilter, ForkId, Head};
-use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::BlockHeader;
 use base_common_chain_activation::{
     PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
     UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
+use base_common_chain_config::BaseChainSpec;
+use base_common_types_chain::BlockHeader;
+use base_execution_network_discovery::NetworkStackId;
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_discv5::NetworkStackId;
 use reth_network::NetworkHandle;
 use reth_network_p2p::sync::NetworkSyncUpdater;
 use reth_provider::{BlockNumReader, HeaderProvider};
@@ -486,9 +486,9 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_hardforks::{EthereumHardfork, ForkCondition};
     use alloy_primitives::Address;
+    use base_common_chain_activation::UpgradeSignalDefaults;
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
-    use base_common_chain_activation::UpgradeSignalDefaults;
 
     use super::*;
 
@@ -517,10 +517,12 @@ mod tests {
             1,
             signals
                 .iter()
-                .map(|(upgrade_id, activation_timestamp)| base_common_chain_activation::UpgradeSignal {
-                    upgrade_id: *upgrade_id,
-                    activation_timestamp: *activation_timestamp,
-                    protocol_version: Default::default(),
+                .map(|(upgrade_id, activation_timestamp)| {
+                    base_common_chain_activation::UpgradeSignal {
+                        upgrade_id: *upgrade_id,
+                        activation_timestamp: *activation_timestamp,
+                        protocol_version: Default::default(),
+                    }
                 })
                 .collect(),
         )
@@ -855,7 +857,8 @@ mod tests {
 
         use base_common_chain_config::BaseChainSpecBuilder;
         use base_common_runtime_tasks::Runtime;
-        use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
+        use discv5_reth::ConfigBuilder as Discv5ConfigBuilder;
+        use discv5_reth::ListenConfig;
         use reth_network::{NetworkConfigBuilder, NetworkManager};
 
         // Use a scheduled fork so startup and the later runtime update advertise different IDs.
@@ -879,7 +882,10 @@ mod tests {
             .disable_discv4_discovery()
             .disable_dns_discovery()
             .discovery_v5(
-                reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into()).discv5_config(
+                base_execution_network_discovery::Discv5Config::builder(
+                    (Ipv4Addr::LOCALHOST, 0).into(),
+                )
+                .discv5_config(
                     Discv5ConfigBuilder::new(ListenConfig::Ipv4 {
                         ip: Ipv4Addr::LOCALHOST,
                         port: 0,

@@ -18,10 +18,10 @@ workspace = true
 url = { workspace = true }
 serde = { workspace = true }
 dirs-next = { workspace = true }
+discv5-reth = {workspace = true}
 humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-discv5 = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-cli-util = { workspace = true }
@@ -50,7 +50,7 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-primitives-traits = { workspace = true, features = ["rayon"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
-base-execution-network-discovery = {workspace = true, features = ["default"]}
+base-execution-network-discovery = {features = ["default"], workspace = true}
 base-execution-state-api = { workspace = true, features = ["std", "db-api"] }
 clap = { workspace = true, features = ["default", "derive", "env", "string"] }
 base-execution-network-types = {features = ["secp256k1", "std"], workspace = true}

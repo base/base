@@ -27,7 +27,6 @@ aquamarine = { workspace = true }
 rustc-hash = { workspace = true }
 discv5-reth = { workspace = true }
 pin-project = { workspace = true }
-reth-discv5 = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-network-api = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -53,7 +52,7 @@ tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
-base-execution-network-discovery = {workspace = true, features = ["default"]}
+base-execution-network-discovery = {features = ["default"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
 base-execution-network-wire = {workspace = true, features = ["default", "transport"]}

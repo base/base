@@ -1,9 +1,9 @@
 //! Interface between node identification on protocol version 5 and 4. Specifically, between types
 //! [`discv5_reth::enr::NodeId`] and [`PeerId`].
 
+use base_execution_network_types::{PeerId, id2pk, pk2id};
 use discv5_reth::enr::{CombinedPublicKey, EnrPublicKey, NodeId};
 use enr::Enr;
-use base_execution_network_types::{PeerId, id2pk, pk2id};
 use secp256k1::{PublicKey, SecretKey};
 
 /// Extracts a [`CombinedPublicKey::Secp256k1`] from a [`discv5_reth::Enr`] and converts it to a
@@ -57,8 +57,8 @@ impl From<EnrCombinedKeyWrapper> for Enr<SecretKey> {
 mod tests {
     use alloy_hardforks::EthereumHardfork;
     use alloy_rlp::Encodable;
-    use discv5_reth::enr::{CombinedKey, EnrKey};
     use base_execution_network_types::NodeRecord;
+    use discv5_reth::enr::{CombinedKey, EnrKey};
 
     use super::*;
 

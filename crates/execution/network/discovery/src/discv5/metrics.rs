@@ -1,10 +1,10 @@
-//! Tracks peer discovery for [`Discv5`](crate::Discv5).
+//! Tracks peer discovery for [`Discv5`](crate::discv5::Discv5).
 use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Gauge};
 
-use crate::NetworkStackId;
+use crate::discv5::NetworkStackId;
 
-/// Information tracked by [`Discv5`](crate::Discv5).
+/// Information tracked by [`Discv5`](crate::discv5::Discv5).
 #[derive(Debug, Default, Clone)]
 pub struct Discv5Metrics {
     /// Frequency of networks advertised in discovered peers' node records.
@@ -46,7 +46,7 @@ pub struct DiscoveredPeersMetrics {
     /// requests).
     established_sessions_unreachable_enr_total: Counter,
     /// Total number of sessions established by [`discv5_reth::Discv5`], that pass configured
-    /// [`filter`](crate::filter) rules.
+    /// [`filter`](crate::discv5::filter) rules.
     established_sessions_custom_filtered_total: Counter,
     /// Total number of unverifiable ENRs discovered by [`discv5_reth::Discv5`].
     ///
@@ -85,7 +85,7 @@ impl DiscoveredPeersMetrics {
     }
 
     /// Increments number of sessions established by [`discv5_reth::Discv5`], that pass configured
-    /// [`filter`](crate::filter) rules.
+    /// [`filter`](crate::discv5::filter) rules.
     pub fn increment_established_sessions_filtered(&self, num: u64) {
         self.established_sessions_custom_filtered_total.increment(num)
     }

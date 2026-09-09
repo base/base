@@ -1,12 +1,4 @@
-//! Wrapper around [`discv5_reth::Discv5`].
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+//! Execution networking integration for the discovery v5 protocol.
 
 use std::{
     collections::HashSet,
@@ -20,7 +12,6 @@ use ::enr::Enr;
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::bytes::Bytes;
 use base_execution_network_types::{NodeRecord, PeerId};
-use enr::{EnrCombinedKeyWrapper, discv4_id_to_discv5_id};
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{Rng, RngCore};
@@ -28,24 +19,20 @@ use secp256k1::SecretKey;
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, trace};
 
-pub mod config;
-pub mod enr;
-pub mod error;
-pub mod filter;
-pub mod metrics;
-pub mod network_stack_id;
+mod config;
+pub use config::*;
+mod enr;
+pub use enr::*;
+mod error;
+pub use error::*;
+mod filter;
+pub use filter::*;
+mod metrics;
+pub use metrics::*;
+mod network_stack_id;
+pub use network_stack_id::*;
 
-pub use config::{
-    BootNode, Config, ConfigBuilder, DEFAULT_COUNT_BOOTSTRAP_LOOKUPS, DEFAULT_DISCOVERY_V5_ADDR,
-    DEFAULT_DISCOVERY_V5_ADDR_IPV6, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, DEFAULT_DISCOVERY_V5_PORT,
-    DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL, DEFAULT_SECONDS_LOOKUP_INTERVAL,
-};
-pub use discv5_reth::{self as discv5, IpMode};
-pub use enr::enr_to_discv4_id;
-pub use error::Error;
-pub use filter::{FilterOutcome, MustNotIncludeKeys};
-use metrics::{DiscoveredPeersMetrics, Discv5Metrics};
-pub use network_stack_id::NetworkStackId;
+use discv5_reth::IpMode;
 
 /// Max kbucket index is 255.
 ///
@@ -481,8 +468,8 @@ pub fn build_local_enr(
     } = config;
 
     let socket = {
-        let v4 = crate::config::ipv4(&discv5_config.listen_config);
-        let v6 = crate::config::ipv6(&discv5_config.listen_config);
+        let v4 = crate::discv5::config::ipv4(&discv5_config.listen_config);
+        let v6 = crate::discv5::config::ipv6(&discv5_config.listen_config);
 
         // Prefer an explicit advertised IP for ENR IP fields. Listen sockets still supply UDP
         // ports and determine which address-family fields are emitted.
@@ -987,7 +974,7 @@ mod test {
 
         /// A distance between two `Key`s.
         #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Debug)]
-        pub struct Distance(pub(super) U256);
+        pub struct Distance(pub U256);
     }
 
     #[test]

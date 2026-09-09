@@ -14,13 +14,13 @@ workspace = true
 rayon = { workspace = true }
 fdlimit = { workspace = true }
 alloy-rlp = { workspace = true }
+discv5-reth = {workspace = true}
 humantime = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-exex = { workspace = true }
 reth-prune = { workspace = true }
 reth-config = { workspace = true }
 reth-db-api = { workspace = true }
-reth-discv5 = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-network = { workspace = true }
@@ -60,6 +60,7 @@ clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }
+base-execution-network-discovery = { workspace = true }
 serde_json = { workspace = true,  features = ["alloc"]}
 tracing = { workspace = true, features = ["attributes"]}
 parking_lot = { workspace = true, features = ["default"] }

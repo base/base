@@ -13,6 +13,10 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_discovery::DEFAULT_COUNT_BOOTSTRAP_LOOKUPS;
+use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_PORT;
+use base_execution_network_discovery::DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL;
+use base_execution_network_discovery::DEFAULT_SECONDS_LOOKUP_INTERVAL;
 use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR;
 use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT as DEFAULT_DISCOVERY_PORT;
 use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
@@ -23,13 +27,9 @@ use clap::{
     Args,
     builder::{OsStr, Resettable},
 };
+use discv5_reth::ListenConfig;
 use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
 use reth_config::Config;
-use reth_discv5::{
-    DEFAULT_COUNT_BOOTSTRAP_LOOKUPS, DEFAULT_DISCOVERY_V5_PORT,
-    DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL, DEFAULT_SECONDS_LOOKUP_INTERVAL,
-    discv5::ListenConfig,
-};
 use reth_network::{
     HelloMessageWithProtocols, NetworkConfigBuilder,
     transactions::{
@@ -1028,12 +1028,12 @@ impl DiscoveryArgs {
         network_config_builder
     }
 
-    /// Creates a [`reth_discv5::ConfigBuilder`] filling it with the values from this struct.
+    /// Creates a [`base_execution_network_discovery::Discv5ConfigBuilder`] filling it with the values from this struct.
     pub fn discovery_v5_builder(
         &self,
         rlpx_tcp_socket: SocketAddr,
         boot_nodes: impl IntoIterator<Item = NodeRecord>,
-    ) -> reth_discv5::ConfigBuilder {
+    ) -> base_execution_network_discovery::Discv5ConfigBuilder {
         let Self {
             discv5_addr,
             discv5_addr_ipv6,
@@ -1059,7 +1059,7 @@ impl DiscoveryArgs {
         });
 
         let mut discv5_config_builder =
-            reth_discv5::discv5::ConfigBuilder::new(ListenConfig::from_two_sockets(
+            discv5_reth::ConfigBuilder::new(ListenConfig::from_two_sockets(
                 discv5_addr_ipv4.map(|addr| SocketAddrV4::new(addr, discv5_port.unwrap_or(*port))),
                 discv5_addr_ipv6
                     .map(|addr| SocketAddrV6::new(addr, discv5_port_ipv6.unwrap_or(*port), 0, 0)),
@@ -1069,7 +1069,7 @@ impl DiscoveryArgs {
             // disable native enr update if addresses manually set or nat disabled
             discv5_config_builder.disable_enr_update();
         }
-        reth_discv5::Config::builder(rlpx_tcp_socket)
+        base_execution_network_discovery::Discv5Config::builder(rlpx_tcp_socket)
             .discv5_config(discv5_config_builder.build())
             .add_unsigned_boot_nodes(boot_nodes)
             .lookup_interval(*discv5_lookup_interval)

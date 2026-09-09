@@ -9,14 +9,14 @@ use std::{
 use base_execution_network_discovery::Discv4;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
+use base_execution_network_discovery::Discv5;
+use base_execution_network_discovery::Discv5Config as Config;
 use base_execution_network_discovery::NatResolver;
 use base_execution_network_types::NodeRecord;
 use clap::Parser;
+use discv5_reth::Event;
+use discv5_reth::ListenConfig;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
-use reth_discv5::{
-    Config, Discv5,
-    discv5::{self, Event, ListenConfig},
-};
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};
 use tokio_stream::StreamExt;
@@ -82,13 +82,17 @@ impl Command {
             let (mut ipv4, mut ipv6) = (None, None);
             if self.addr.is_ipv4() {
                 ipv4 = Some(shared_socket);
-                if let Some(mut addr) = reth_discv5::config::ipv6(&discv5_cfg.listen_config) {
+                if let Some(mut addr) =
+                    base_execution_network_discovery::discv5_ipv6(&discv5_cfg.listen_config)
+                {
                     addr.set_port(shared_port);
                     ipv6 = Some(bind_socket(SocketAddr::V6(addr)).await?);
                 }
             } else {
                 ipv6 = Some(shared_socket);
-                if let Some(mut addr) = reth_discv5::config::ipv4(&discv5_cfg.listen_config) {
+                if let Some(mut addr) =
+                    base_execution_network_discovery::discv5_ipv4(&discv5_cfg.listen_config)
+                {
                     addr.set_port(shared_port);
                     ipv4 = Some(bind_socket(SocketAddr::V4(addr)).await?);
                 }
@@ -240,7 +244,7 @@ impl Command {
         } else {
             ListenConfig::Ipv4 { ip: Ipv4Addr::UNSPECIFIED, port }
         };
-        builder = builder.discv5_config(discv5::ConfigBuilder::new(listen).build());
+        builder = builder.discv5_config(discv5_reth::ConfigBuilder::new(listen).build());
 
         for ip in &nat.advertised_ips {
             builder = builder.advertised_ip(*ip);
@@ -314,7 +318,7 @@ fn log_discv5_enr(discv5: &Discv5) {
 
 #[cfg(test)]
 mod tests {
-    use reth_discv5::build_local_enr;
+    use base_execution_network_discovery::build_local_enr;
 
     use super::*;
 

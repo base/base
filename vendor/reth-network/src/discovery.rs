@@ -9,9 +9,11 @@ use std::{
 };
 
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
+use base_execution_network_discovery::DiscoveredPeer;
 use base_execution_network_discovery::Discv4;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
+use base_execution_network_discovery::Discv5;
 use base_execution_network_discovery::DnsDiscoveryConfig;
 use base_execution_network_discovery::DnsDiscoveryHandle;
 use base_execution_network_discovery::DnsDiscoveryService;
@@ -21,7 +23,6 @@ use base_execution_network_types::PeerAddr;
 use base_execution_network_types::{NodeRecord, PeerId};
 use enr::Enr;
 use futures::StreamExt;
-use reth_discv5::{DiscoveredPeer, Discv5};
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent};
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
@@ -85,7 +86,7 @@ impl Discovery {
         discovery_v4_addr: SocketAddr,
         sk: SecretKey,
         discv4_config: Option<Discv4Config>,
-        mut discv5_config: Option<reth_discv5::Config>, // contains discv5 listen address
+        mut discv5_config: Option<base_execution_network_discovery::Discv5Config>, // contains discv5 listen address
         dns_discovery_config: Option<DnsDiscoveryConfig>,
     ) -> Result<Self, NetworkError> {
         // setup discv4 with the discovery address and tcp port
@@ -178,12 +179,16 @@ impl Discovery {
                 let (mut ipv4, mut ipv6) = (None, None);
                 if discovery_v4_addr.is_ipv4() {
                     ipv4 = Some(socket);
-                    if let Some(addr) = reth_discv5::config::ipv6(&discv5_cfg.listen_config) {
+                    if let Some(addr) =
+                        base_execution_network_discovery::discv5_ipv6(&discv5_cfg.listen_config)
+                    {
                         ipv6 = Some(bind_socket(SocketAddr::V6(addr)).await?);
                     }
                 } else {
                     ipv6 = Some(socket);
-                    if let Some(addr) = reth_discv5::config::ipv4(&discv5_cfg.listen_config) {
+                    if let Some(addr) =
+                        base_execution_network_discovery::discv5_ipv4(&discv5_cfg.listen_config)
+                    {
                         ipv4 = Some(bind_socket(SocketAddr::V4(addr)).await?);
                     }
                 }
@@ -413,7 +418,10 @@ impl Discovery {
     }
 }
 
-const fn set_bound_rlpx_port_if_unset(config: &mut reth_discv5::Config, port: u16) {
+const fn set_bound_rlpx_port_if_unset(
+    config: &mut base_execution_network_discovery::Discv5Config,
+    port: u16,
+) {
     if config.rlpx_socket().port() == 0 {
         config.set_rlpx_port(port);
     }
@@ -502,7 +510,8 @@ mod tests {
     }
 
     use base_execution_network_discovery::Discv4ConfigBuilder;
-    use reth_discv5::{enr::EnrCombinedKeyWrapper, enr_to_discv4_id};
+    use base_execution_network_discovery::EnrCombinedKeyWrapper;
+    use base_execution_network_discovery::enr_to_discv4_id;
     use tracing::trace;
 
     async fn start_discovery_node(udp_port_discv4: u16, udp_port_discv5: u16) -> Discovery {
@@ -515,7 +524,7 @@ mod tests {
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
         let discv5_listen_config = discv5_reth::ListenConfig::from(discv5_addr);
-        let discv5_config = reth_discv5::Config::builder(discv5_addr)
+        let discv5_config = base_execution_network_discovery::Discv5Config::builder(discv5_addr)
             .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
             .build();
 
@@ -537,13 +546,16 @@ mod tests {
 
         let bound_rlpx_port = 30307;
         let discv5_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let mut discv5_config = reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into())
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_addr.into()).build())
-            .build();
+        let mut discv5_config = base_execution_network_discovery::Discv5Config::builder(
+            (Ipv4Addr::LOCALHOST, 0).into(),
+        )
+        .discv5_config(discv5_reth::ConfigBuilder::new(discv5_addr.into()).build())
+        .build();
 
         set_bound_rlpx_port_if_unset(&mut discv5_config, bound_rlpx_port);
 
-        let (enr, _, _, _) = reth_discv5::build_local_enr(&secret_key, &discv5_config);
+        let (enr, _, _, _) =
+            base_execution_network_discovery::build_local_enr(&secret_key, &discv5_config);
         assert_eq!(enr.tcp4(), Some(bound_rlpx_port));
     }
 
@@ -553,13 +565,15 @@ mod tests {
 
         let advertised_addr: SocketAddr = "127.0.0.1:30308".parse().unwrap();
         let discv5_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let mut discv5_config = reth_discv5::Config::builder(advertised_addr)
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_addr.into()).build())
-            .build();
+        let mut discv5_config =
+            base_execution_network_discovery::Discv5Config::builder(advertised_addr)
+                .discv5_config(discv5_reth::ConfigBuilder::new(discv5_addr.into()).build())
+                .build();
 
         set_bound_rlpx_port_if_unset(&mut discv5_config, 30307);
 
-        let (enr, _, _, _) = reth_discv5::build_local_enr(&secret_key, &discv5_config);
+        let (enr, _, _, _) =
+            base_execution_network_discovery::build_local_enr(&secret_key, &discv5_config);
         assert_eq!(enr.tcp4(), Some(advertised_addr.port()));
     }
 
@@ -661,7 +675,7 @@ mod tests {
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
         let discv5_listen_config = discv5_reth::ListenConfig::from(disc_addr);
-        let discv5_config = reth_discv5::Config::builder(tcp_addr)
+        let discv5_config = base_execution_network_discovery::Discv5Config::builder(tcp_addr)
             .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
             .build();
 
@@ -812,7 +826,7 @@ mod tests {
             ipv6: std::net::Ipv6Addr::UNSPECIFIED,
             ipv6_port: port,
         };
-        let discv5_config = reth_discv5::Config::builder(tcp_addr)
+        let discv5_config = base_execution_network_discovery::Discv5Config::builder(tcp_addr)
             .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
             .build();
 

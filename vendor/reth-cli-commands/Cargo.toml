@@ -21,13 +21,13 @@ rayon = { workspace = true }
 serde = { workspace = true }
 fdlimit = { workspace = true }
 metrics = { workspace = true }
+discv5-reth = {workspace = true}
 humantime = { workspace = true }
 itertools = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
 reth-db-api = { workspace = true }
-reth-discv5 = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
@@ -76,7 +76,7 @@ proptest = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-wire = {workspace = true, features = ["transport"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
-base-execution-network-discovery = {workspace = true, features = ["default"]}
+base-execution-network-discovery = {features = ["default"], workspace = true}
 base-execution-network-types = { workspace = true, features = ["secp256k1"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }

@@ -93,7 +93,7 @@ mod tests {
     use discv5_reth::enr::{CombinedKey, Enr};
 
     use super::*;
-    use crate::NetworkStackId;
+    use crate::discv5::NetworkStackId;
 
     #[test]
     fn must_not_include_key_filter() {

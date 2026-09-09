@@ -2,18 +2,20 @@
 
 use std::{net::SocketAddr, path::PathBuf};
 
+use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_LISTEN_CONFIG;
 use base_execution_network_discovery::Discv4;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
+use base_execution_network_discovery::Discv5;
+use base_execution_network_discovery::Discv5Config as Config;
 use base_execution_network_discovery::NatResolver;
 use base_execution_network_types::NodeRecord;
 use base_node_core::BASE_V0_PROTOCOL_VERSION;
 use clap::Parser;
+use discv5_reth::ConfigBuilder as Discv5ConfigBuilder;
+use discv5_reth::Event;
+use discv5_reth::ProtocolIdentity;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
-use reth_discv5::{
-    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
-    discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
-};
 use secp256k1::SecretKey;
 use tokio::select;
 use tokio_stream::StreamExt;
@@ -160,7 +162,7 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
-    use reth_discv5::DEFAULT_DISCOVERY_V5_PORT;
+    use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_PORT;
     use rstest::rstest;
 
     use super::*;

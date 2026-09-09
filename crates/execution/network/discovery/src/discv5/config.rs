@@ -8,15 +8,15 @@ use std::{
 
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::Bytes;
+use base_execution_network_types::NodeRecord;
 use derive_more::Display;
 use discv5_reth::{
     ListenConfig,
     multiaddr::{Multiaddr, Protocol},
 };
-use base_execution_network_types::NodeRecord;
 use tracing::debug;
 
-use crate::{NetworkStackId, enr::discv4_id_to_multiaddr_id, filter::MustNotIncludeKeys};
+use crate::discv5::{NetworkStackId, enr::discv4_id_to_multiaddr_id, filter::MustNotIncludeKeys};
 
 /// The default address for discv5 via UDP is IPv4.
 ///
@@ -313,34 +313,34 @@ impl ConfigBuilder {
 pub struct Config {
     /// Config used by [`discv5_reth::Discv5`]. Contains the [`ListenConfig`], with the discovery listen
     /// socket.
-    pub(super) discv5_config: discv5_reth::Config,
+    pub discv5_config: discv5_reth::Config,
     /// Nodes to boot from.
-    pub(super) bootstrap_nodes: HashSet<BootNode>,
+    pub bootstrap_nodes: HashSet<BootNode>,
     /// Fork kv-pair to set in local node record. Identifies which network/chain/fork the node
     /// belongs, e.g. `(b"opstack", ChainId)` or `(b"eth", [ForkId])`.
-    pub(super) fork: Option<(&'static [u8], EnrForkIdEntry)>,
+    pub fork: Option<(&'static [u8], EnrForkIdEntry)>,
     /// `RLPx` TCP socket to advertise.
     ///
     /// NOTE: IP address of `RLPx` socket overwrites IP address of same IP version in
     /// [`discv5_reth::ListenConfig`].
-    pub(super) tcp_socket: SocketAddr,
+    pub tcp_socket: SocketAddr,
     /// IPv4 address to advertise in the local ENR instead of the listen socket address.
-    pub(super) advertised_ipv4: Option<Ipv4Addr>,
+    pub advertised_ipv4: Option<Ipv4Addr>,
     /// IPv6 address to advertise in the local ENR instead of the listen socket address.
-    pub(super) advertised_ipv6: Option<Ipv6Addr>,
+    pub advertised_ipv6: Option<Ipv6Addr>,
     /// Additional kv-pairs (besides tcp port, udp port and fork) that should be advertised to
     /// peers by including in local node record.
-    pub(super) other_enr_kv_pairs: Vec<(&'static [u8], Bytes)>,
+    pub other_enr_kv_pairs: Vec<(&'static [u8], Bytes)>,
     /// Interval in seconds at which to run a lookup up query with to populate kbuckets.
-    pub(super) lookup_interval: u64,
+    pub lookup_interval: u64,
     /// Interval in seconds at which to run pulse lookup queries at bootstrap to boost kbucket
     /// population.
-    pub(super) bootstrap_lookup_interval: u64,
+    pub bootstrap_lookup_interval: u64,
     /// Number of times to run boost lookup queries at start up.
-    pub(super) bootstrap_lookup_countdown: u64,
+    pub bootstrap_lookup_countdown: u64,
     /// Custom filter rules to apply to a discovered peer in order to determine if it should be
     /// passed up to rlpx or dropped.
-    pub(super) discovered_peer_filter: MustNotIncludeKeys,
+    pub discovered_peer_filter: MustNotIncludeKeys,
 }
 
 impl Config {
