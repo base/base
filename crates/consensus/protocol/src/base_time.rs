@@ -106,18 +106,18 @@ impl BaseTimeUpdateTx {
         Ok(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(base_time.timestamp_millis_part())))
     }
 
-    /// Validates a Cobalt block's timestamp against the absolute rollup schedule.
+    /// Validates a Denim block's timestamp against the absolute rollup schedule.
     pub fn validate_block_timestamp<T: BaseTransaction>(
         rollup_config: &RollupConfig,
         transactions: &[T],
         block_number: u64,
         timestamp: u64,
     ) -> Result<(), BaseTimeScheduleError> {
-        let Some(cobalt_activation_block) = rollup_config.cobalt_activation_block_number() else {
+        let Some(denim_activation_block) = rollup_config.denim_activation_block_number() else {
             return Ok(());
         };
         let blocks_since_genesis = block_number.saturating_sub(rollup_config.genesis.l2.number);
-        if blocks_since_genesis < cobalt_activation_block {
+        if blocks_since_genesis < denim_activation_block {
             return Ok(());
         }
 
@@ -261,7 +261,7 @@ pub enum BaseTimeMetadataError {
     InvalidCalldata(BaseTimeUpdateDecodeError),
 }
 
-/// An error validating a Cobalt block timestamp against the rollup schedule.
+/// An error validating a Denim block timestamp against the rollup schedule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum BaseTimeScheduleError {
     /// The whole-second timestamp does not match the scheduled timestamp.
@@ -399,12 +399,12 @@ mod tests {
     }
 
     #[test]
-    fn validates_cobalt_block_timestamp_against_absolute_schedule() {
+    fn validates_denim_block_timestamp_against_absolute_schedule() {
         let config = RollupConfig {
             genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             block_time: 2,
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { cobalt: Some(14), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(14), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -443,12 +443,12 @@ mod tests {
     }
 
     #[test]
-    fn skips_schedule_validation_before_cobalt() {
+    fn skips_schedule_validation_before_denim() {
         let config = RollupConfig {
             genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             block_time: 2,
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { cobalt: Some(14), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(14), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()

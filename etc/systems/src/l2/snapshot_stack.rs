@@ -268,7 +268,7 @@ impl SnapshotL2Stack {
             .checked_sub(legacy_elapsed)
             .ok_or_else(|| eyre::eyre!("snapshot is too far ahead to anchor locally"))?;
         if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
-            config.set_upgrade_activation_timestamp(BaseUpgrade::Cobalt, first_block_timestamp);
+            config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, first_block_timestamp);
         }
         let (planned_timestamp, planned_millis) =
             config.l2_block_timestamp_parts(first_block_number);
@@ -287,7 +287,7 @@ impl SnapshotL2Stack {
     ) -> BaseChainSpec {
         if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
             chain_spec
-                .set_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(first_block_timestamp));
+                .set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(first_block_timestamp));
         }
         chain_spec
     }
@@ -473,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn subsecond_cl_and_el_activate_cobalt_at_same_timestamp() {
+    fn subsecond_cl_and_el_activate_denim_at_same_timestamp() {
         let activation = 2_000_000_000;
         let rollup = SnapshotL2Stack::anchored_rollup_config(
             ChainConfig::mainnet().rollup_config(),
@@ -488,11 +488,11 @@ mod tests {
             DevnetBlockInterval::TwoHundredMilliseconds,
         );
 
-        assert!(!rollup.is_cobalt_active(activation - 1));
-        assert!(rollup.is_cobalt_active(activation));
-        assert!(!chain_spec.is_cobalt_active_at_timestamp(activation - 1));
-        assert!(chain_spec.is_cobalt_active_at_timestamp(activation));
-        assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(activation));
+        assert!(!rollup.is_denim_active(activation - 1));
+        assert!(rollup.is_denim_active(activation));
+        assert!(!chain_spec.is_denim_active_at_timestamp(activation - 1));
+        assert!(chain_spec.is_denim_active_at_timestamp(activation));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(activation));
     }
 
     #[test]

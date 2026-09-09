@@ -167,7 +167,7 @@ mod tests {
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
 
     #[test]
-    fn cobalt_schedules_are_checked_before_gossip_acceptance() {
+    fn denim_schedules_are_checked_before_gossip_acceptance() {
         let template = v4_valid_block();
         let activation = template.header.timestamp;
         let config = RollupConfig {
@@ -176,7 +176,7 @@ mod tests {
             genesis: ChainGenesis { l2_time: activation - 2, ..Default::default() },
             upgrades: UpgradeConfig {
                 isthmus_time: Some(0),
-                base: BaseUpgradeConfig { cobalt: Some(activation), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(activation), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
