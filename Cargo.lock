@@ -7728,7 +7728,9 @@ dependencies = [
 
 [[package]]
 name = "discv5"
-version = "0.0.0"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c7999df38d0bd8f688212e1a4fae31fd2fea6d218649b9cd7c40bf3ec1318fc"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -7742,22 +7744,16 @@ dependencies = [
  "hashlink 0.11.1",
  "hex",
  "hkdf",
- "if-addrs 0.13.4",
  "lazy_static",
  "libp2p-identity",
  "more-asserts",
  "multiaddr",
  "parking_lot",
- "quickcheck",
- "rand 0.7.3",
  "rand 0.8.7",
- "rand_core 0.6.4",
- "rand_xorshift 0.3.0",
  "smallvec",
  "socket2 0.6.5",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uint 0.10.0",
  "zeroize",
 ]
