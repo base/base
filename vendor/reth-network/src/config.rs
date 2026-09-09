@@ -31,10 +31,7 @@ use crate::{
     transactions::TransactionsManagerConfig,
 };
 // re-export for convenience
-use crate::{
-    protocol::{IntoRlpxSubProtocol, RlpxSubProtocols},
-    transactions::TransactionPropagationMode,
-};
+use crate::transactions::TransactionPropagationMode;
 
 /// Convenience function to create a new random [`SecretKey`]
 pub fn rng_secret_key() -> SecretKey {
@@ -86,11 +83,6 @@ pub struct NetworkConfig<C> {
     pub status: UnifiedStatus,
     /// Sets the hello message for the p2p handshake in `RLPx`
     pub hello_message: HelloMessageWithProtocols,
-    /// Additional `RLPx` sub-protocols to announce and handle alongside `eth`.
-    ///
-    /// Does not cover `snap/2`, which is supported natively (see
-    /// [`NetworkConfigBuilder::with_snap`]).
-    pub extra_protocols: RlpxSubProtocols,
     /// Whether to disable transaction gossip
     pub tx_gossip_disabled: bool,
     /// How to instantiate transactions manager.
@@ -212,9 +204,6 @@ pub struct NetworkConfigBuilder {
     executor: Runtime,
     /// Sets the hello message for the p2p handshake in `RLPx`
     hello_message: Option<HelloMessageWithProtocols>,
-    /// Additional `RLPx` sub-protocols to announce and handle alongside `eth`. Does not cover
-    /// `snap/2`, which is supported natively (see [`NetworkConfigBuilder::with_snap`]).
-    extra_protocols: RlpxSubProtocols,
     /// Head used to start set for the fork filter and status.
     head: Option<Head>,
     /// Whether tx gossip is disabled
@@ -262,7 +251,6 @@ impl NetworkConfigBuilder {
             network_mode: Default::default(),
             executor,
             hello_message: None,
-            extra_protocols: Default::default(),
             head: None,
             tx_gossip_disabled: false,
             block_import: None,
@@ -527,14 +515,6 @@ impl NetworkConfigBuilder {
         if disable { self.disable_discv5_discovery() } else { self }
     }
 
-    /// Adds a new additional protocol to the `RLPx` sub-protocol list.
-    ///
-    /// Not for `snap/2`, which is supported natively (see [`Self::with_snap`]).
-    pub fn add_rlpx_sub_protocol(mut self, protocol: impl IntoRlpxSubProtocol) -> Self {
-        self.extra_protocols.push(protocol);
-        self
-    }
-
     /// Toggles advertisement of the `snap/2` satellite protocol (EIP-8189).
     ///
     /// Default off: snap/2 is only negotiated with peers when explicitly enabled.
@@ -633,7 +613,6 @@ impl NetworkConfigBuilder {
             network_mode,
             executor,
             hello_message,
-            extra_protocols,
             head,
             tx_gossip_disabled,
             block_import,
@@ -715,7 +694,6 @@ impl NetworkConfigBuilder {
             executor,
             status,
             hello_message,
-            extra_protocols,
             fork_filter,
             tx_gossip_disabled,
             transactions_manager_config,

@@ -1,102 +1,21 @@
-//! A minimal, inert `RLPx` satellite sub-protocol for tests that need a peer to negotiate an
-//! extra capability without any real protocol behavior.
+//! Native SNAP transport ignores unsupported satellite capabilities.
 
-use std::{
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::{B256, bytes::BytesMut};
-use futures::Stream;
-use reth_eth_wire::{
-    Capability, EthVersion, capability::SharedCapabilities, multiplex::ProtocolConnection,
-    protocol::Protocol, snap::GetAccountRangeMessage,
-};
+use alloy_primitives::B256;
+use reth_eth_wire::{Capability, EthVersion, protocol::Protocol, snap::GetAccountRangeMessage};
 use reth_network::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,
-    protocol::{ConnectionHandler, OnNotSupported, ProtocolHandler},
     test_utils::{PeerConfig, TestPool, Testnet},
 };
-use reth_network_api::{Direction, PeerId};
-use reth_network_p2p::{error::RequestError, snap::client::SnapClient};
+use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
 use reth_provider::test_utils::MockEthProvider;
 
-/// A [`ProtocolHandler`] that negotiates `protocol` but never sends or expects any messages.
-#[derive(Debug, Clone)]
-pub(super) struct InertProtocolHandler(Protocol);
-
-impl InertProtocolHandler {
-    /// Creates a handler for `protocol`.
-    pub(super) const fn new(protocol: Protocol) -> Self {
-        Self(protocol)
-    }
-}
-
-impl ProtocolHandler for InertProtocolHandler {
-    type ConnectionHandler = Self;
-
-    fn on_incoming(&self, _socket_addr: SocketAddr) -> Option<Self::ConnectionHandler> {
-        Some(self.clone())
-    }
-
-    fn on_outgoing(
-        &self,
-        _socket_addr: SocketAddr,
-        _peer_id: PeerId,
-    ) -> Option<Self::ConnectionHandler> {
-        Some(self.clone())
-    }
-}
-
-impl ConnectionHandler for InertProtocolHandler {
-    type Connection = InertConnection;
-
-    fn protocol(&self) -> Protocol {
-        self.0.clone()
-    }
-
-    fn on_unsupported_by_peer(
-        self,
-        _supported: &SharedCapabilities,
-        _direction: Direction,
-        _peer_id: PeerId,
-    ) -> OnNotSupported {
-        OnNotSupported::KeepAlive
-    }
-
-    fn into_connection(
-        self,
-        _direction: Direction,
-        _peer_id: PeerId,
-        conn: ProtocolConnection,
-    ) -> Self::Connection {
-        InertConnection(conn)
-    }
-}
-
-/// The connection for [`InertProtocolHandler`]. Just forwards whatever the remote sends.
-pub(super) struct InertConnection(ProtocolConnection);
-
-impl Stream for InertConnection {
-    type Item = BytesMut;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.get_mut().0).poll_next(cx)
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn eth_snap_and_third_satellite_protocol_fails_fast_on_snap_request() {
+async fn unsupported_satellite_does_not_disable_native_snap_requests() {
     reth_tracing::init_test_tracing();
 
-    // Snap is only wired up for the dedicated eth+snap/2 connection; a third negotiated
-    // capability forces the satellite multiplexer instead, which does not serve snap. A snap
-    // request over such a session must fail fast with a typed error rather than hang waiting for
-    // a response that will never come.
     let les_protocol = Protocol::new(Capability::new_static("les", 1), 1);
     let protocols = vec![EthVersion::Eth71.into(), Protocol::snap_2(), les_protocol.clone()];
 
@@ -108,7 +27,6 @@ async fn eth_snap_and_third_satellite_protocol_fails_fast_on_snap_request() {
     }
     net.for_each_mut(|peer| {
         peer.install_request_handler();
-        peer.add_rlpx_sub_protocol(InertProtocolHandler::new(les_protocol.clone()));
     });
     let net = net.spawn();
     net.connect_peers().await;
@@ -127,5 +45,5 @@ async fn eth_snap_and_third_satellite_protocol_fails_fast_on_snap_request() {
     .await
     .expect("request should not hang");
 
-    assert_eq!(result.unwrap_err(), RequestError::UnsupportedCapability);
+    assert!(matches!(result.unwrap().into_data(), SnapResponse::AccountRange(_)));
 }

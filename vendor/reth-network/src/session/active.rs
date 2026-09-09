@@ -1410,7 +1410,6 @@ mod tests {
                 self.hello.clone(),
                 self.status,
                 self.fork_filter.clone(),
-                Default::default(),
             ));
 
             let mut stream = ReceiverStream::new(pending_sessions_rx);

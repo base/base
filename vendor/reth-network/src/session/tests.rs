@@ -1,12 +1,8 @@
 //! Tests for the session handshake.
 
-use std::sync::Mutex;
-
-use alloy_primitives::bytes::BytesMut;
-use futures::{StreamExt, stream::Pending};
+use futures::StreamExt;
 use reth_eth_wire::{
-    Capability, StatusBuilder, UnauthedEthStream, capability::SharedCapabilities,
-    handshake::EthHandshake, multiplex::ProtocolConnection, protocol::Protocol,
+    Capability, StatusBuilder, UnauthedEthStream, handshake::EthHandshake, protocol::Protocol,
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
 use reth_network_peers::pk2id;
@@ -14,69 +10,7 @@ use secp256k1::SECP256K1;
 use tokio::net::TcpListener;
 
 use super::*;
-use crate::{
-    error::SessionError,
-    protocol::{ConnectionHandler, DynConnectionHandler},
-};
-
-/// Extra `RLPx` protocol that records which identity the session hands to it.
-#[derive(Clone, Debug, Default)]
-struct ProtocolSpy {
-    seen: Arc<Mutex<SeenPeers>>,
-}
-
-/// The peers a [`ProtocolSpy`] was told about, per callback.
-#[derive(Debug, Default)]
-struct SeenPeers {
-    connected: Vec<PeerId>,
-    unsupported: Vec<PeerId>,
-}
-
-impl ProtocolSpy {
-    /// The peers passed to [`ConnectionHandler::into_connection`].
-    fn connected(&self) -> Vec<PeerId> {
-        self.seen.lock().unwrap().connected.clone()
-    }
-
-    /// Whether the session named a peer to this protocol through either callback.
-    fn saw_any_peer(&self) -> bool {
-        let seen = self.seen.lock().unwrap();
-        !seen.connected.is_empty() || !seen.unsupported.is_empty()
-    }
-}
-
-/// The name sorts after `eth` so that `eth` keeps the first message id offset on both ends.
-fn spy_protocol() -> Protocol {
-    Protocol::new(Capability::new_static("tst", 1), 1)
-}
-
-impl ConnectionHandler for ProtocolSpy {
-    type Connection = Pending<BytesMut>;
-
-    fn protocol(&self) -> Protocol {
-        spy_protocol()
-    }
-
-    fn on_unsupported_by_peer(
-        self,
-        _supported: &SharedCapabilities,
-        _direction: Direction,
-        peer_id: PeerId,
-    ) -> OnNotSupported {
-        self.seen.lock().unwrap().unsupported.push(peer_id);
-        OnNotSupported::KeepAlive
-    }
-
-    fn into_connection(
-        self,
-        _direction: Direction,
-        peer_id: PeerId,
-        _conn: ProtocolConnection,
-    ) -> Self::Connection {
-        self.seen.lock().unwrap().connected.push(peer_id);
-        futures::stream::pending()
-    }
-}
+use crate::error::SessionError;
 
 fn new_peer() -> (SecretKey, PeerId) {
     let (key, pk) = SECP256K1.generate_keypair(&mut rand_08::thread_rng());
@@ -95,12 +29,8 @@ fn fork_filter() -> ForkFilter {
 /// The hello a remote sends us, announcing `id` and the spy protocol.
 fn remote_hello(id: PeerId) -> HelloMessageWithProtocols {
     let mut hello = HelloMessageWithProtocols::builder(id).build();
-    hello.try_add_protocol(spy_protocol()).unwrap();
+    hello.try_add_protocol(Protocol::new(Capability::new_static("tst", 1), 1)).unwrap();
     hello
-}
-
-fn spy_handlers(spy: &ProtocolSpy) -> RlpxSubProtocolHandlers {
-    RlpxSubProtocolHandlers(vec![Box::new(spy.clone()) as Box<dyn DynConnectionHandler>])
 }
 
 /// Asserts the event reports an identity mismatch of `got` against `expected` and that the
@@ -119,7 +49,7 @@ fn assert_identity_mismatch(event: PendingSessionEvent, got: PeerId, expected: P
 }
 
 /// An ECIES-authenticated peer that announces a different node id in its `Hello` must not be
-/// able to make the session, or any extra protocol installed on it, act on that identity.
+/// able to make the session act on that identity.
 #[tokio::test(flavor = "multi_thread")]
 async fn incoming_hello_with_spoofed_identity_is_rejected() {
     let (local_key, local_id) = new_peer();
@@ -128,8 +58,6 @@ async fn incoming_hello_with_spoofed_identity_is_rejected() {
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();
-    let spy = ProtocolSpy::default();
-    let handlers = spy_handlers(&spy);
 
     let (events_tx, mut events_rx) = mpsc::channel(1);
     let (_disconnect_tx, disconnect_rx) = oneshot::channel();
@@ -148,7 +76,6 @@ async fn incoming_hello_with_spoofed_identity_is_rejected() {
             HelloMessageWithProtocols::builder(local_id).build(),
             status(),
             fork_filter(),
-            handlers,
         )
         .await
     });
@@ -164,8 +91,6 @@ async fn incoming_hello_with_spoofed_identity_is_rejected() {
     assert_identity_mismatch(events_rx.recv().await.unwrap(), victim_id, attacker_id);
     assert!(events_rx.recv().await.is_none(), "no session may be established");
     assert_eq!(attacker.await.unwrap(), Some(DisconnectReason::UnexpectedHandshakeIdentity));
-
-    assert!(!spy.saw_any_peer(), "the spoofed identity must not reach an extra protocol");
 }
 
 /// The same binding applies when we dial out: the remote proved possession of the key we
@@ -178,8 +103,6 @@ async fn outgoing_hello_with_spoofed_identity_is_rejected() {
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let remote_addr = listener.local_addr().unwrap();
-    let spy = ProtocolSpy::default();
-    let handlers = spy_handlers(&spy);
 
     let (events_tx, mut events_rx) = mpsc::channel(1);
     let (_disconnect_tx, disconnect_rx) = oneshot::channel();
@@ -205,7 +128,6 @@ async fn outgoing_hello_with_spoofed_identity_is_rejected() {
             HelloMessageWithProtocols::builder(local_id).build(),
             status(),
             fork_filter(),
-            handlers,
         )
         .await
     });
@@ -213,12 +135,9 @@ async fn outgoing_hello_with_spoofed_identity_is_rejected() {
     assert_identity_mismatch(events_rx.recv().await.unwrap(), victim_id, remote_id);
     assert!(events_rx.recv().await.is_none(), "no session may be established");
     assert_eq!(remote.await.unwrap(), Some(DisconnectReason::UnexpectedHandshakeIdentity));
-
-    assert!(!spy.saw_any_peer(), "the spoofed identity must not reach an extra protocol");
 }
 
-/// A remote whose `Hello` agrees with its ECIES identity gets a session, and the extra
-/// protocol is handed that same identity.
+/// A remote whose `Hello` agrees with its ECIES identity gets a session.
 #[tokio::test(flavor = "multi_thread")]
 async fn matching_identity_establishes_session() {
     let (local_key, local_id) = new_peer();
@@ -226,8 +145,6 @@ async fn matching_identity_establishes_session() {
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();
-    let spy = ProtocolSpy::default();
-    let handlers = spy_handlers(&spy);
 
     let (events_tx, mut events_rx) = mpsc::channel(1);
     let (_disconnect_tx, disconnect_rx) = oneshot::channel();
@@ -246,7 +163,6 @@ async fn matching_identity_establishes_session() {
             HelloMessageWithProtocols::builder(local_id).build(),
             status(),
             fork_filter(),
-            handlers,
         )
         .await
     });
@@ -271,7 +187,6 @@ async fn matching_identity_establishes_session() {
         event => panic!("unexpected event {event:?}"),
     };
     assert_eq!(peer_id, remote_id);
-    assert_eq!(spy.connected(), vec![remote_id]);
 
     // From here on a real session owns and polls the connection. Without that the status we queued
     // for the remote never reaches the socket and its handshake times out.

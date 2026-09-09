@@ -37,8 +37,8 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    FetchClient, config::NetworkMode, message::PeerMessage, protocol::RlpxSubProtocol,
-    swarm::NetworkConnectionState, transactions::TransactionsHandle,
+    FetchClient, config::NetworkMode, message::PeerMessage, swarm::NetworkConnectionState,
+    transactions::TransactionsHandle,
 };
 
 /// A _shareable_ network frontend. Used to interact with the network.
@@ -270,12 +270,6 @@ impl NetworkEventListenerProvider for NetworkHandle {
         let (tx, rx) = mpsc::unbounded_channel();
         let _ = self.manager().send(NetworkHandleMessage::DiscoveryListener(tx));
         UnboundedReceiverStream::new(rx)
-    }
-}
-
-impl NetworkProtocols for NetworkHandle {
-    fn add_rlpx_sub_protocol(&self, protocol: RlpxSubProtocol) {
-        self.send_message(NetworkHandleMessage::AddRlpxSubProtocol(protocol))
     }
 }
 
@@ -584,12 +578,6 @@ struct NetworkInner {
     nat: Option<NatResolver>,
 }
 
-/// Provides access to modify the network's additional protocol handlers.
-pub trait NetworkProtocols: Send + Sync {
-    /// Adds an additional protocol handler to the `RLPx` sub-protocol list.
-    fn add_rlpx_sub_protocol(&self, protocol: RlpxSubProtocol);
-}
-
 /// Internal messages that can be passed to the  [`NetworkManager`](crate::NetworkManager).
 #[derive(Debug)]
 pub(crate) enum NetworkHandleMessage {
@@ -678,8 +666,6 @@ pub(crate) enum NetworkHandleMessage {
     SetNetworkState(NetworkConnectionState),
     /// Adds a new listener for `DiscoveryEvent`.
     DiscoveryListener(UnboundedSender<DiscoveryEvent>),
-    /// Adds an additional `RlpxSubProtocol`.
-    AddRlpxSubProtocol(RlpxSubProtocol),
     /// Connect to the given peer.
     ConnectPeer(PeerId, PeerKind, PeerAddr),
     /// Message to update the node's advertised block range information.

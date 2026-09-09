@@ -256,7 +256,7 @@ impl SessionError for PendingSessionHandshakeError {
             // A peer that announces someone else's node id is broken or hostile, and its discovery
             // record cannot be trusted to point at a usable peer.
             Self::UnexpectedHandshakeIdentity(_) => true,
-            Self::Timeout | Self::UnsupportedExtraCapability => false,
+            Self::Timeout => false,
         }
     }
 
@@ -275,7 +275,7 @@ impl SessionError for PendingSessionHandshakeError {
                     | ECIESErrorImpl::InvalidHandshake { .. }
             ),
             Self::Timeout => false,
-            Self::UnsupportedExtraCapability | Self::UnexpectedHandshakeIdentity(_) => true,
+            Self::UnexpectedHandshakeIdentity(_) => true,
         }
     }
 
@@ -284,9 +284,7 @@ impl SessionError for PendingSessionHandshakeError {
             Self::Eth(eth) => eth.should_backoff(),
             Self::Ecies(_) => Some(BackoffKind::Low),
             Self::Timeout => Some(BackoffKind::Medium),
-            Self::UnsupportedExtraCapability | Self::UnexpectedHandshakeIdentity(_) => {
-                Some(BackoffKind::High)
-            }
+            Self::UnexpectedHandshakeIdentity(_) => Some(BackoffKind::High),
         }
     }
 }

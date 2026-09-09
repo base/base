@@ -66,7 +66,6 @@ use crate::{
     network::{NetworkHandle, NetworkHandleMessage},
     peers::{BackoffReason, PeersManager},
     poll_nested_stream_with_budget,
-    protocol::IntoRlpxSubProtocol,
     required_block_filter::RequiredBlockFilter,
     session::SessionManager,
     state::NetworkState,
@@ -200,11 +199,6 @@ impl NetworkManager {
         self.to_eth_request_handler = Some(tx);
     }
 
-    /// Adds an additional protocol handler to the `RLPx` sub-protocol list.
-    pub fn add_rlpx_sub_protocol(&mut self, protocol: impl IntoRlpxSubProtocol) {
-        self.swarm.add_rlpx_sub_protocol(protocol)
-    }
-
     /// Returns the [`NetworkHandle`] that can be cloned and shared.
     ///
     /// The [`NetworkHandle`] can be used to interact with this [`NetworkManager`]
@@ -255,7 +249,6 @@ impl NetworkManager {
             status,
             fork_filter,
             dns_discovery_config,
-            extra_protocols,
             tx_gossip_disabled,
             transactions_manager_config: _,
             nat,
@@ -314,7 +307,6 @@ impl NetworkManager {
             status,
             hello_message,
             fork_filter,
-            extra_protocols,
             handshake,
             eth_max_message_size,
             network_mode.is_stake(),
@@ -796,7 +788,6 @@ impl NetworkManager {
                 let peer_ids = self.swarm.peers().peers_by_kind(kind);
                 let _ = tx.send(self.get_peer_infos_by_ids(peer_ids));
             }
-            NetworkHandleMessage::AddRlpxSubProtocol(proto) => self.add_rlpx_sub_protocol(proto),
             NetworkHandleMessage::GetTransactionsHandle(tx) => {
                 if let Some(ref tx_inner) = self.to_transactions_manager {
                     let _ = tx_inner.try_send(NetworkTransactionEvent::GetTransactionsHandle(tx));

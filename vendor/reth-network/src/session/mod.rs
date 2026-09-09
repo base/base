@@ -30,7 +30,7 @@ use reth_ecies::{ECIESError, stream::ECIESStream};
 use reth_eth_wire::{
     BlockRangeUpdate, Capabilities, DisconnectReason, EthSnapStream, EthStream, EthVersion,
     HANDSHAKE_TIMEOUT, HelloMessageWithProtocols, UnauthedP2PStream, UnifiedStatus,
-    errors::EthStreamError, handshake::EthRlpxHandshake, multiplex::RlpxProtocolMultiplexer,
+    errors::EthStreamError, handshake::EthRlpxHandshake,
 };
 use reth_metrics::common::mpsc::MeteredPollSender;
 pub use reth_network_api::{Direction, PeerInfo};
@@ -54,7 +54,6 @@ pub use types::BlockRangeInfo;
 use crate::{
     message::PeerMessage,
     metrics::SessionManagerMetrics,
-    protocol::{IntoRlpxSubProtocol, OnNotSupported, RlpxSubProtocolHandlers, RlpxSubProtocols},
     session::active::{
         ActiveSession, BroadcastItemCounter, RANGE_UPDATE_INTERVAL, request_timeout_interval,
     },
@@ -113,8 +112,6 @@ pub struct SessionManager {
     active_session_tx: MeteredPollSender<ActiveSessionMessage>,
     /// Receiver half that listens for [`ActiveSessionMessage`] produced by pending sessions.
     active_session_rx: ReceiverStream<ActiveSessionMessage>,
-    /// Additional `RLPx` sub-protocols to be used by the session manager.
-    extra_protocols: RlpxSubProtocols,
     /// Tracks the ongoing graceful disconnections attempts for incoming connections.
     disconnections_counter: DisconnectionsCounter,
     /// Metrics for the session manager.
@@ -143,7 +140,6 @@ impl SessionManager {
         status: UnifiedStatus,
         hello_message: HelloMessageWithProtocols,
         fork_filter: ForkFilter,
-        extra_protocols: RlpxSubProtocols,
         handshake: Arc<dyn EthRlpxHandshake>,
         eth_max_message_size: usize,
         reject_block_announcements: bool,
@@ -177,7 +173,6 @@ impl SessionManager {
             pending_session_rx: ReceiverStream::new(pending_sessions_rx),
             active_session_tx: MeteredPollSender::new(active_session_tx, "network_active_session"),
             active_session_rx: ReceiverStream::new(active_session_rx),
-            extra_protocols,
             disconnections_counter: Default::default(),
             metrics: Default::default(),
             handshake,
@@ -225,11 +220,6 @@ impl SessionManager {
     /// Returns the session hello message.
     pub fn hello_message(&self) -> HelloMessageWithProtocols {
         self.hello_message.clone()
-    }
-
-    /// Adds an additional protocol handler to the `RLPx` sub-protocol list.
-    pub(crate) fn add_rlpx_sub_protocol(&mut self, protocol: impl IntoRlpxSubProtocol) {
-        self.extra_protocols.push(protocol)
     }
 
     /// Returns the number of currently pending connections.
@@ -304,7 +294,6 @@ impl SessionManager {
         let hello_message = self.hello_message.clone();
         let status = self.status;
         let fork_filter = self.fork_filter.clone();
-        let extra_handlers = self.extra_protocols.on_incoming(remote_addr);
         self.spawn(pending_session_with_timeout(
             self.pending_session_timeout,
             session_id,
@@ -323,7 +312,6 @@ impl SessionManager {
                 hello_message,
                 status,
                 fork_filter,
-                extra_handlers,
             ),
         ));
 
@@ -347,7 +335,6 @@ impl SessionManager {
             let hello_message = self.hello_message.clone();
             let fork_filter = self.fork_filter.clone();
             let status = self.status;
-            let extra_handlers = self.extra_protocols.on_outgoing(remote_addr, remote_peer_id);
             self.spawn(pending_session_with_timeout(
                 self.pending_session_timeout,
                 session_id,
@@ -366,7 +353,6 @@ impl SessionManager {
                     hello_message,
                     status,
                     fork_filter,
-                    extra_handlers,
                 ),
             ));
 
@@ -883,9 +869,6 @@ pub enum PendingSessionHandshakeError {
     /// Thrown when the authentication timed out
     #[error("authentication timed out")]
     Timeout,
-    /// Thrown when the remote lacks the required capability
-    #[error("Mandatory extra capability unsupported")]
-    UnsupportedExtraCapability,
     /// Thrown when the node id in the remote's `Hello` message differs from the identity that the
     /// ECIES handshake authenticated.
     #[error("unexpected identity in hello message: {0}")]
@@ -951,7 +934,6 @@ pub(crate) async fn start_pending_incoming_session(
     hello: HelloMessageWithProtocols,
     status: UnifiedStatus,
     fork_filter: ForkFilter,
-    extra_handlers: RlpxSubProtocolHandlers,
 ) {
     authenticate(
         handshake,
@@ -966,7 +948,6 @@ pub(crate) async fn start_pending_incoming_session(
         hello,
         status,
         fork_filter,
-        extra_handlers,
     )
     .await
 }
@@ -986,7 +967,6 @@ async fn start_pending_outbound_session(
     hello: HelloMessageWithProtocols,
     status: UnifiedStatus,
     fork_filter: ForkFilter,
-    extra_handlers: RlpxSubProtocolHandlers,
 ) {
     let stream = match TcpStream::connect(remote_addr).await {
         Ok(stream) => {
@@ -1020,7 +1000,6 @@ async fn start_pending_outbound_session(
         hello,
         status,
         fork_filter,
-        extra_handlers,
     )
     .await
 }
@@ -1040,7 +1019,6 @@ async fn authenticate(
     hello: HelloMessageWithProtocols,
     status: UnifiedStatus,
     fork_filter: ForkFilter,
-    extra_handlers: RlpxSubProtocolHandlers,
 ) {
     let local_addr = stream.local_addr().ok();
     let stream = match get_ecies_stream(stream, secret_key, direction).await {
@@ -1071,7 +1049,6 @@ async fn authenticate(
         hello,
         status,
         fork_filter,
-        extra_handlers,
     )
     .boxed();
 
@@ -1111,8 +1088,6 @@ async fn get_ecies_stream<Io: AsyncRead + AsyncWrite + Unpin>(
 ///
 /// On Success return the authenticated stream as [`PendingSessionEvent`].
 ///
-/// If additional [`RlpxSubProtocolHandlers`] are provided, the hello message will be updated to
-/// also negotiate the additional protocols.
 #[expect(clippy::too_many_arguments)]
 async fn authenticate_stream(
     handshake: Arc<dyn EthRlpxHandshake>,
@@ -1125,10 +1100,11 @@ async fn authenticate_stream(
     mut hello: HelloMessageWithProtocols,
     mut status: UnifiedStatus,
     fork_filter: ForkFilter,
-    mut extra_handlers: RlpxSubProtocolHandlers,
 ) -> PendingSessionEvent {
-    // Add extra protocols to the hello message
-    extra_handlers.retain(|handler| hello.try_add_protocol(handler.protocol()).is_ok());
+    // Base serves only ETH and the native SNAP/2 protocol.
+    hello.protocols.retain(|protocol| {
+        protocol.cap.is_eth() || protocol.cap == reth_eth_wire::Capability::snap_2()
+    });
 
     let authenticated_peer_id = stream.inner().remote_id();
 
@@ -1150,7 +1126,7 @@ async fn authenticate_stream(
     //
     // Bind the session to the authenticated identity before anything else observes the peer. A
     // peer that announces a different node id could otherwise act on behalf of that node, for
-    // example by making an extra protocol report reputation changes against it.
+    // example by attributing network reputation changes to it.
     if their_hello.id != authenticated_peer_id {
         let _ = p2p_stream.disconnect(DisconnectReason::UnexpectedHandshakeIdentity).await;
 
@@ -1162,32 +1138,6 @@ async fn authenticate_stream(
                 GotExpected { got: their_hello.id, expected: authenticated_peer_id }.into(),
             )),
         };
-    }
-
-    // if we have extra handlers, check if it must be supported by the remote
-    if !extra_handlers.is_empty() {
-        // ensure that no extra handlers that aren't supported are not mandatory
-        while let Some(pos) = extra_handlers.iter().position(|handler| {
-            p2p_stream
-                .shared_capabilities()
-                .ensure_matching_capability(&handler.protocol().cap)
-                .is_err()
-        }) {
-            let handler = extra_handlers.remove(pos);
-            if handler.on_unsupported_by_peer(
-                p2p_stream.shared_capabilities(),
-                direction,
-                authenticated_peer_id,
-            ) == OnNotSupported::Disconnect
-            {
-                return PendingSessionEvent::Disconnected {
-                    remote_addr,
-                    session_id,
-                    direction,
-                    error: Some(PendingSessionHandshakeError::UnsupportedExtraCapability),
-                };
-            }
-        }
     }
 
     // Ensure we negotiated mandatory eth protocol
@@ -1229,11 +1179,7 @@ async fn authenticate_stream(
                 };
             }
         }
-    } else if p2p_stream.shared_capabilities().is_exact_eth_snap_v2() {
-        // Exactly `eth` + `snap/2` (no other extras): use the dedicated stream instead of the
-        // general-purpose satellite multiplexer. If `snap/2` is negotiated alongside other extra
-        // capabilities, fall through to the satellite path — the dedicated stream only composes
-        // `eth` and `snap/2`.
+    } else {
         match EthSnapStream::handshake(
             p2p_stream,
             status,
@@ -1253,38 +1199,6 @@ async fn authenticate_stream(
                 };
             }
         }
-    } else {
-        // Multiplex the stream with the extra protocols
-        let mut multiplex_stream = RlpxProtocolMultiplexer::new(p2p_stream);
-
-        // install additional handlers
-        for handler in extra_handlers.into_iter() {
-            let cap = handler.protocol().cap;
-            let remote_peer_id = authenticated_peer_id;
-
-            multiplex_stream
-                .install_protocol(&cap, move |conn| {
-                    handler.into_connection(direction, remote_peer_id, conn)
-                })
-                .ok();
-        }
-
-        let (multiplex_stream, their_status) = match multiplex_stream
-            .into_eth_satellite_stream(status, fork_filter, handshake, eth_max_message_size)
-            .await
-        {
-            Ok((multiplex_stream, their_status)) => (multiplex_stream, their_status),
-            Err(err) => {
-                return PendingSessionEvent::Disconnected {
-                    remote_addr,
-                    session_id,
-                    direction,
-                    error: Some(PendingSessionHandshakeError::Eth(err)),
-                };
-            }
-        };
-
-        (multiplex_stream.into(), their_status)
     };
 
     // `port` field is effectively deprecated, so we treat 0 value as a missing port.

@@ -19,7 +19,6 @@ pub mod errors;
 pub mod eth_snap;
 mod ethstream;
 mod hello;
-pub mod multiplex;
 mod p2pstream;
 mod pinger;
 pub mod protocol;

@@ -18,7 +18,6 @@ use crate::{
     listener::{ConnectionListener, ListenerEvent},
     message::PeerMessage,
     peers::{InboundConnectionError, PeersManager},
-    protocol::IntoRlpxSubProtocol,
     session::{Direction, PendingSessionHandshakeError, SessionEvent, SessionId, SessionManager},
     state::{NetworkState, SessionActivation, StateAction},
 };
@@ -68,11 +67,6 @@ impl Swarm {
         state: NetworkState,
     ) -> Self {
         Self { incoming, sessions, state }
-    }
-
-    /// Adds a protocol handler to the `RLPx` sub-protocol list.
-    pub(crate) fn add_rlpx_sub_protocol(&mut self, protocol: impl IntoRlpxSubProtocol) {
-        self.sessions_mut().add_rlpx_sub_protocol(protocol);
     }
 
     /// Access to the state.

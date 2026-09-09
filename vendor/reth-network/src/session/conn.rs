@@ -11,7 +11,6 @@ use reth_eth_wire::{
     EthMessage, EthSnapMessage, EthSnapStream, EthStream, EthVersion, P2PStream,
     errors::{EthStreamError, P2PStreamError},
     message::EthBroadcastMessage,
-    multiplex::{ProtocolProxy, RlpxSatelliteStream},
     snap::SnapProtocolMessage,
 };
 use reth_eth_wire_types::RawCapabilityMessage;
@@ -20,19 +19,10 @@ use tokio::net::TcpStream;
 /// The type of the underlying peer network connection.
 pub type EthPeerConnection = EthStream<P2PStream<ECIESStream<TcpStream>>>;
 
-/// Various connection types that at least support the ETH protocol.
-pub type EthSatelliteConnection =
-    RlpxSatelliteStream<ECIESStream<TcpStream>, EthStream<ProtocolProxy>>;
-
 /// A dedicated `eth` + `snap/2` connection.
 pub type EthSnapConnection = EthSnapStream<ECIESStream<TcpStream>>;
 
-/// Connection types that support the ETH protocol.
-///
-/// This can be either:
-/// - A connection that only supports the ETH protocol
-/// - A connection that supports the ETH protocol and `snap/2` ([`EthSnapStream`])
-/// - A connection that supports the ETH protocol and at least one other `RLPx` protocol
+/// Native ETH or ETH/SNAP connection used by a Base peer.
 // This type is boxed because the underlying stream is ~6KB,
 // mostly coming from `P2PStream`'s `snap::Encoder` (2072), and `ECIESStream` (3600).
 #[derive(Debug)]
@@ -41,8 +31,6 @@ pub enum EthRlpxConnection {
     EthOnly(Box<EthPeerConnection>),
     /// A dedicated connection that supports the ETH protocol and `snap/2` (EIP-8189).
     EthSnap(Box<EthSnapConnection>),
-    /// A connection that supports the ETH protocol and __at least one other__ `RLPx` protocol.
-    Satellite(Box<EthSatelliteConnection>),
 }
 
 impl EthRlpxConnection {
@@ -52,7 +40,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.version(),
             Self::EthSnap(conn) => conn.version(),
-            Self::Satellite(conn) => conn.primary().version(),
         }
     }
 
@@ -68,7 +55,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.into_inner(),
             Self::EthSnap(conn) => conn.into_inner(),
-            Self::Satellite(conn) => conn.into_inner(),
         }
     }
 
@@ -78,7 +64,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.inner_mut(),
             Self::EthSnap(conn) => conn.inner_mut(),
-            Self::Satellite(conn) => conn.inner_mut(),
         }
     }
 
@@ -88,7 +73,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.inner(),
             Self::EthSnap(conn) => conn.inner(),
-            Self::Satellite(conn) => conn.inner(),
         }
     }
 
@@ -101,7 +85,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.start_send_broadcast(item),
             Self::EthSnap(conn) => conn.start_send_broadcast(item),
-            Self::Satellite(conn) => conn.primary_mut().start_send_broadcast(item),
         }
     }
 
@@ -110,7 +93,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.start_send_raw(msg),
             Self::EthSnap(conn) => conn.start_send_raw(msg),
-            Self::Satellite(conn) => conn.primary_mut().start_send_raw(msg),
         }
     }
 
@@ -121,9 +103,7 @@ impl EthRlpxConnection {
     pub fn start_send_snap(&mut self, msg: SnapProtocolMessage) -> Result<(), EthStreamError> {
         match self {
             Self::EthSnap(conn) => conn.start_send_unpin(EthSnapMessage::Snap(msg)),
-            Self::EthOnly(_) | Self::Satellite(_) => {
-                Err(P2PStreamError::CapabilityNotShared.into())
-            }
+            Self::EthOnly(_) => Err(P2PStreamError::CapabilityNotShared.into()),
         }
     }
 
@@ -133,7 +113,6 @@ impl EthRlpxConnection {
         match self {
             Self::EthOnly(conn) => conn.set_reject_block_announcements(reject),
             Self::EthSnap(conn) => conn.set_reject_block_announcements(reject),
-            Self::Satellite(conn) => conn.primary_mut().set_reject_block_announcements(reject),
         }
     }
 }
@@ -152,13 +131,6 @@ impl From<EthSnapConnection> for EthRlpxConnection {
     }
 }
 
-impl From<EthSatelliteConnection> for EthRlpxConnection {
-    #[inline]
-    fn from(conn: EthSatelliteConnection) -> Self {
-        Self::Satellite(Box::new(conn))
-    }
-}
-
 /// Delegates a call to the active variant's boxed stream (every variant is `Unpin`).
 ///
 /// The second form runs `$adapt` on the eth-only variants to lift their result into the shared
@@ -168,13 +140,11 @@ macro_rules! delegate_call {
         match $self.get_mut() {
             Self::EthOnly(l) => l.$method($($args),+),
             Self::EthSnap(s) => s.$method($($args),+),
-            Self::Satellite(r) => r.$method($($args),+),
         }
     };
     ($self:ident.$method:ident($($args:ident),+) => $adapt:expr) => {
         match $self.get_mut() {
             Self::EthOnly(l) => $adapt(l.$method($($args),+)),
-            Self::Satellite(r) => $adapt(r.$method($($args),+)),
             Self::EthSnap(s) => s.$method($($args),+),
         }
     };
@@ -198,7 +168,6 @@ impl Sink<EthMessage> for EthRlpxConnection {
     fn start_send(self: Pin<&mut Self>, item: EthMessage) -> Result<(), Self::Error> {
         match self.get_mut() {
             Self::EthOnly(l) => l.start_send_unpin(item),
-            Self::Satellite(r) => r.start_send_unpin(item),
             Self::EthSnap(s) => s.start_send_unpin(EthSnapMessage::Eth(item)),
         }
     }
@@ -238,7 +207,7 @@ mod tests {
 
     #[test]
     const fn test_eth_stream_variants() {
-        assert_eth_stream::<EthSatelliteConnection>();
+        assert_eth_stream::<EthPeerConnection>();
         assert_eth_snap_stream::<EthRlpxConnection>();
     }
 }

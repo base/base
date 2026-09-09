@@ -130,7 +130,6 @@ pub mod eth_requests;
 pub mod import;
 pub mod message;
 pub mod peers;
-pub mod protocol;
 pub mod transactions;
 
 mod budget;
@@ -156,7 +155,7 @@ pub use fetch::FetchClient;
 pub use flattened_response::FlattenedResponse;
 pub use manager::NetworkManager;
 pub use metrics::TxTypesCounter;
-pub use network::{NetworkHandle, NetworkProtocols};
+pub use network::NetworkHandle;
 pub use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols};
 pub use reth_network_api::{
     BlockDownloaderProvider, DiscoveredEvent, DiscoveryEvent, NetworkEvent,
