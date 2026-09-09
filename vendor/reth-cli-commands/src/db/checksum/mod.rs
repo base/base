@@ -7,7 +7,7 @@ use alloy_primitives::map::foldhash::fast::FixedState;
 use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 use clap::Parser;
 use itertools::Itertools;
-use reth_db::static_file::iter_static_files;
+use base_execution_state_database::static_file::iter_static_files;
 use reth_db_api::{
     RawKey, RawTable, RawValue, TableViewer, Tables, cursor::DbCursorRO, table::Table,
     transaction::DbTx,
@@ -367,7 +367,7 @@ struct ChangeBasedChecksumInput<'a> {
 fn checksum_change_based_segment<H: Hasher>(
     checksummer: &mut Checksummer<H>,
     input: ChangeBasedChecksumInput<'_>,
-    cursor: &mut reth_db::static_file::StaticFileCursor<'_>,
+    cursor: &mut base_execution_state_database::static_file::StaticFileCursor<'_>,
 ) -> eyre::Result<bool> {
     let ChangeBasedChecksumInput { segment, block_range_start, start_block, end_block, offsets } =
         input;

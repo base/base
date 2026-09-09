@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-db = { workspace = true }
 reth-etl = { workspace = true }
 page_size = { workspace = true }
 reth-exex = { workspace = true }
@@ -38,6 +37,7 @@ base-execution-state-memory = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
+base-execution-state-database = { workspace = true }
 reth-trie = { workspace = true, features = ["metrics"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 num-traits = { workspace = true, features = ["default"] }
@@ -65,19 +65,19 @@ rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
+base-execution-state-database = { workspace = true, features = ["test-utils", "mdbx"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
 
 [features]
 test-utils = [
     "reth-network-p2p/test-utils",
-    "reth-db/test-utils",
+    "base-execution-state-database/test-utils",
     "reth-provider/test-utils",
     "reth-stages-api/test-utils",
     "dep:reth-testing-utils",

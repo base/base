@@ -31,7 +31,6 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 tokio = { workspace = true, features = ["default", "sync"] }
 crossbeam-utils = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["default", "mdbx"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true, features = ["default"] }
 fixed-cache = { workspace = true, features = ["alloc", "stats"] }
@@ -44,6 +43,7 @@ base-common-runtime-tasks = { workspace = true, features = ["rayon"]}
 reth-primitives-traits = {features = ["dashmap", "std"], workspace = true}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
 reth-trie-sparse = { workspace = true, features = ["trie-debug"], optional = true }
+base-execution-state-database = { workspace = true, features = ["default", "mdbx"] }
 base-execution-state-types = {features = ["default", "serde", "std"], workspace = true}
 base-common-observability-metrics = {features = ["common", "metrics"], workspace = true}
 
@@ -68,11 +68,11 @@ serial_test = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = {features = ["test-utils"], workspace = true}
-reth-db = { workspace = true, features = ["default", "test-utils"] }
 secp256k1 = { workspace = true, features = ["default", "rand", "std"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 tokio = { workspace = true, features = ["default", "test-util", "rt-multi-thread", "macros", "rt"] }
 base-common-types-chain = { workspace = true, features = ["reth", "alloy", "test-utils", "serde", "std"] }
 

@@ -5,7 +5,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
 use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactionHashes};
-use reth_db::{
+use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
     test_utils::{ERROR_DB_CREATION, TempDatabase},
@@ -180,7 +180,7 @@ impl AsTxs for Vec<TxHash> {
 /// Creates a temporary MDBX database suitable for tests.
 pub fn create_test_db(config: NodeConfig) -> Arc<TempDatabase<DatabaseEnv>> {
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
-        reth_db::test_utils::tempdir_path(),
+        base_execution_state_database::test_utils::tempdir_path(),
     );
     let db_config =
         config.with_datadir_args(DatadirArgs { datadir: path.clone(), ..Default::default() });
@@ -205,7 +205,7 @@ pub fn create_test_db(config: NodeConfig) -> Arc<TempDatabase<DatabaseEnv>> {
 /// against the concrete node types. The returned [`PathBuf`] is the temporary directory backing the
 /// database; the caller is responsible for removing it once the database has been dropped.
 pub fn create_test_db_env(config: NodeConfig) -> eyre::Result<(DatabaseEnv, PathBuf)> {
-    let root = reth_db::test_utils::tempdir_path();
+    let root = base_execution_state_database::test_utils::tempdir_path();
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(root.clone());
     let db_config =
         config.with_datadir_args(DatadirArgs { datadir: path.clone(), ..Default::default() });

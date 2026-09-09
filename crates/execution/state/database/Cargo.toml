@@ -1,5 +1,5 @@
 [package]
-name = "reth-db"
+name = "base-execution-state-database"
 description = "Database primitives used in reth."
 version.workspace = true
 edition.workspace = true

@@ -424,7 +424,7 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     }
 }
 
-impl LaunchContextWith<Attached<WithConfigs, reth_db::DatabaseEnv>> {
+impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::DatabaseEnv>> {
     /// Returns the [`ProviderFactory`] for the attached storage after executing a consistent check
     /// between the database and static files. **It may execute a pipeline unwind if it fails this
     /// check.**
@@ -627,7 +627,7 @@ impl LaunchContextWith<Attached<WithConfigs, reth_db::DatabaseEnv>> {
 
 impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
     /// Returns access to the underlying database.
-    pub const fn database(&self) -> &reth_db::DatabaseEnv {
+    pub const fn database(&self) -> &base_execution_state_database::DatabaseEnv {
         self.right().db_ref()
     }
 
@@ -769,7 +769,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProvider>> {
 
 impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
     /// Returns access to the underlying database.
-    pub const fn database(&self) -> &reth_db::DatabaseEnv {
+    pub const fn database(&self) -> &base_execution_state_database::DatabaseEnv {
         self.provider_factory().db_ref()
     }
 

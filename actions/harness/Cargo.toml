@@ -40,7 +40,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-batch-types = { workspace = true, features = ["std"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 base-common-client-ethereum = {workspace = true, features = ["default"]}
@@ -52,6 +51,7 @@ base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-derive-pipeline = { workspace = true, features = ["test-utils"] }
+base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 
 [dev-dependencies]
 base-execution-evm-precompiles = {workspace = true}

@@ -1020,7 +1020,7 @@ mod tests {
 
     use alloy_genesis::Genesis;
     use base_common_chain_config::BaseChainSpec;
-    use reth_db::DatabaseEnv;
+    use base_execution_state_database::DatabaseEnv;
     use reth_db_api::{
         Database,
         cursor::DbCursorRO,

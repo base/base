@@ -33,7 +33,7 @@ use proptest::{
     prelude::{ProptestConfig, RngCore},
     test_runner::{TestRng, TestRunner},
 };
-use reth_db::{
+use base_execution_state_database::{
     ClientVersion,
     models::{
         AccountBeforeTx, StaticFileBlockWithdrawals, StoredBlockBodyIndices, StoredBlockOmmers,

@@ -5,7 +5,7 @@ use alloy_primitives::{B256, U256};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, Nibbles};
 use derive_more::Constructor;
-use reth_db::DatabaseError;
+use base_execution_state_database::DatabaseError;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},

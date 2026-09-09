@@ -9,7 +9,7 @@ use base_execution_state_types::{
     BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
 use parking_lot::RwLock;
-use reth_db::DatabaseError;
+use base_execution_state_database::DatabaseError;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},

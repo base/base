@@ -13,7 +13,7 @@ use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioCon
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};
-use reth_db::{
+use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
 };

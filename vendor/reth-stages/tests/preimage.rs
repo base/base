@@ -17,7 +17,7 @@ use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
 use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
-use reth_db::tables;
+use base_execution_state_database::tables;
 use reth_db_api::{
     cursor::{DbCursorRO, DbDupCursorRO},
     transaction::DbTx,

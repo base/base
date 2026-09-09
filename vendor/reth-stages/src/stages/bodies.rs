@@ -484,7 +484,7 @@ mod tests {
         };
         use base_execution_state_types::StaticFileSegment;
         use futures_util::Stream;
-        use reth_db::{static_file::HeaderWithHashMask, tables};
+        use base_execution_state_database::{static_file::HeaderWithHashMask, tables};
         use reth_db_api::{
             cursor::DbCursorRO,
             models::{StoredBlockBodyIndices, StoredBlockOmmers},

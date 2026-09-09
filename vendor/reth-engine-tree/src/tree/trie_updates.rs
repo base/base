@@ -4,7 +4,7 @@ use alloy_primitives::{
     B256,
     map::{B256Map, HashMap},
 };
-use reth_db::DatabaseError;
+use base_execution_state_database::DatabaseError;
 use reth_trie::{
     BranchNodeCompact, Nibbles,
     trie_cursor::{TrieCursor, TrieCursorFactory},

@@ -65,7 +65,6 @@ serde_json = { workspace = true,  features = ["alloc"]}
 tracing = { workspace = true, features = ["attributes"]}
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["default", "mdbx"] }
 reth-downloaders = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
@@ -84,6 +83,7 @@ base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-execution-state-database = { workspace = true, features = ["default", "mdbx"] }
 base-common-observability-tracing = { workspace = true, features = ["default", "std"] }
 tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt-multi-thread"] }
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256-aws-lc-rs", "secp256k1"], workspace = true}
@@ -106,12 +106,12 @@ jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
+base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "std", "test-utils"] }
 base-common-types-chain = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }
 
@@ -150,7 +150,7 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-codec",
     "reth-db-api/test-utils",
-    "reth-db/test-utils",
+    "base-execution-state-database/test-utils",
     "reth-network/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",

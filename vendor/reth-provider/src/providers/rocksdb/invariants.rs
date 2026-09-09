@@ -15,7 +15,7 @@ use base_execution_state_api::{
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StageId;
 use base_execution_state_types::StaticFileSegment;
-use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
+use base_execution_state_database::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
 use reth_db_api::tables;
 
 use super::RocksDBProvider;
@@ -468,7 +468,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_execution_state_types::StageCheckpoint;
-    use reth_db::cursor::{DbCursorRO, DbCursorRW};
+    use base_execution_state_database::cursor::{DbCursorRO, DbCursorRW};
     use reth_db_api::{
         models::{StorageSettings, storage_sharded_key::StorageShardedKey},
         tables::{self, BlockNumberList},
@@ -1130,7 +1130,7 @@ mod tests {
     #[test]
     fn test_check_consistency_accounts_history_sf_tip_equals_checkpoint_no_action() {
         use base_execution_state_types::StaticFileSegment;
-        use reth_db::models::AccountBeforeTx;
+        use base_execution_state_database::models::AccountBeforeTx;
         use reth_db_api::models::ShardedKey;
 
         let temp_dir = TempDir::new().unwrap();
@@ -1444,7 +1444,7 @@ mod tests {
     #[test]
     fn test_check_consistency_accounts_history_heals_via_changesets_large_range() {
         use base_execution_state_types::StaticFileSegment;
-        use reth_db::models::AccountBeforeTx;
+        use base_execution_state_database::models::AccountBeforeTx;
         use reth_db_api::models::ShardedKey;
 
         let temp_dir = TempDir::new().unwrap();
@@ -1556,7 +1556,7 @@ mod tests {
     /// Tests that accounts history healing preserves entries at exactly the checkpoint block.
     #[test]
     fn test_check_consistency_accounts_history_preserves_checkpoint_block() {
-        use reth_db::models::AccountBeforeTx;
+        use base_execution_state_database::models::AccountBeforeTx;
         use reth_db_api::models::ShardedKey;
 
         const CHECKPOINT_BLOCK: u64 = 100;
@@ -1630,7 +1630,7 @@ mod tests {
     fn test_check_consistency_storages_history_sf_tip_equals_checkpoint_no_action() {
         use alloy_primitives::U256;
         use base_execution_state_types::StaticFileSegment;
-        use reth_db::models::StorageBeforeTx;
+        use base_execution_state_database::models::StorageBeforeTx;
 
         let temp_dir = TempDir::new().unwrap();
         let rocksdb = RocksDBBuilder::new(temp_dir.path()).with_default_tables().build().unwrap();

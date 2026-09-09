@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base_common_types_chain::BaseTxEnvelope;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
-use reth_db::DatabaseEnv;
+use base_execution_state_database::DatabaseEnv;
 use reth_db_api::{
     cursor::DbCursorRO, database::Database, table::TableImporter, tables, transaction::DbTx,
 };

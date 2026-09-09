@@ -6,7 +6,7 @@ use base_execution_state_types::StageId;
 use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
 use clap::Parser;
 use eyre::{ContextCompat, Result, WrapErr};
-use reth_db::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
+use base_execution_state_database::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
 use reth_db_api::transaction::DbTx;
 use tracing::{info, warn};
 

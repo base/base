@@ -7,7 +7,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_node_core::{NodeHandle, NodeLaunch};
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
-use reth_db::init_db;
+use base_execution_state_database::init_db;
 use reth_node_core::{
     args::{
         DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs,

@@ -7,7 +7,7 @@ use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StorageEntry;
-use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
+use base_execution_state_database::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_trie::{DatabaseStateRoot, StateRoot};
 
 use crate::{
@@ -62,7 +62,7 @@ fn create_test_provider_factory_with_genesis(
 ) -> ProviderFactory {
     // Create a single temp directory that contains all data dirs (db, static_files, rocksdb).
     // TempDatabase will clean up the entire directory on drop.
-    let datadir_path = reth_db::test_utils::tempdir_path();
+    let datadir_path = base_execution_state_database::test_utils::tempdir_path();
 
     let static_files_path = datadir_path.join("static_files");
     let rocksdb_path = datadir_path.join("rocksdb");
@@ -71,7 +71,7 @@ fn create_test_provider_factory_with_genesis(
     std::fs::create_dir_all(&static_files_path).expect("failed to create static_files dir");
 
     // Create database with the datadir path so TempDatabase cleans up everything on drop
-    let db = reth_db::test_utils::create_test_rw_db_with_datadir(&datadir_path);
+    let db = base_execution_state_database::test_utils::create_test_rw_db_with_datadir(&datadir_path);
 
     ProviderFactory::new(
         db,
@@ -97,7 +97,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
     chain_spec: Arc<BaseChainSpec>,
     db_args: DatabaseArguments,
 ) -> ProviderFactory {
-    let datadir_path = reth_db::test_utils::tempdir_path();
+    let datadir_path = base_execution_state_database::test_utils::tempdir_path();
 
     let db_path = datadir_path.join("db");
     let static_files_path = datadir_path.join("static_files");
@@ -105,7 +105,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
 
     std::fs::create_dir_all(&static_files_path).expect("failed to create static_files dir");
 
-    let db = reth_db::init_db(&db_path, db_args).expect("failed to init db");
+    let db = base_execution_state_database::init_db(&db_path, db_args).expect("failed to init db");
     let db = Arc::new(TempDatabase::new(db, datadir_path));
 
     ProviderFactory::new(

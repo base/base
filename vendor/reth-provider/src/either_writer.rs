@@ -14,7 +14,7 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use rayon::slice::ParallelSliceMut;
-use reth_db::{
+use base_execution_state_database::{
     cursor::{DbCursorRO, DbDupCursorRW},
     models::{AccountBeforeTx, StorageBeforeTx},
     static_file::TransactionSenderMask,
@@ -840,7 +840,7 @@ mod tests {
         DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
     };
     use base_execution_state_types::StaticFileSegment;
-    use reth_db::models::AccountBeforeTx;
+    use base_execution_state_database::models::AccountBeforeTx;
 
     use super::*;
     use crate::{StaticFileWriter, test_utils::create_test_provider_factory};
@@ -1196,13 +1196,13 @@ mod rocksdb_tests {
 
     // Type aliases for cursor types (needed for EitherWriter/EitherReader type inference)
     type AccountsHistoryWriteCursor =
-        reth_db::mdbx::cursor::Cursor<reth_db::mdbx::RW, tables::AccountsHistory>;
+        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RW, tables::AccountsHistory>;
     type StoragesHistoryWriteCursor =
-        reth_db::mdbx::cursor::Cursor<reth_db::mdbx::RW, tables::StoragesHistory>;
+        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RW, tables::StoragesHistory>;
     type AccountsHistoryReadCursor =
-        reth_db::mdbx::cursor::Cursor<reth_db::mdbx::RO, tables::AccountsHistory>;
+        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RO, tables::AccountsHistory>;
     type StoragesHistoryReadCursor =
-        reth_db::mdbx::cursor::Cursor<reth_db::mdbx::RO, tables::StoragesHistory>;
+        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RO, tables::StoragesHistory>;
 
     /// Runs the same account history queries against both MDBX and `RocksDB` backends,
     /// asserting they produce identical results.

@@ -1,7 +1,7 @@
 //! Concrete inputs for launching a Base execution node.
 
 use base_common_runtime_tasks::TaskExecutor;
-use reth_db::DatabaseEnv;
+use base_execution_state_database::DatabaseEnv;
 use reth_engine_primitives::TreeConfig;
 
 use crate::{BaseNode, BasePayloadServiceConfig, BaseRpcServices, NodeConfig, NodeServices};
@@ -50,9 +50,9 @@ impl NodeLaunch {
     /// Opens an ephemeral node database owned by the launched test node.
     #[cfg(feature = "test-utils")]
     pub fn testing(mut config: NodeConfig, task_executor: TaskExecutor) -> Self {
-        let path = reth_db::test_utils::tempdir_path();
+        let path = base_execution_state_database::test_utils::tempdir_path();
         config.datadir.datadir = path.into();
-        let db = reth_db::test_utils::create_test_rw_db_with_datadir(config.datadir().data_dir());
+        let db = base_execution_state_database::test_utils::create_test_rw_db_with_datadir(config.datadir().data_dir());
         Self::new(config, db, task_executor)
     }
 }

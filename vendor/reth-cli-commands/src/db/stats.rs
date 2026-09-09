@@ -7,7 +7,7 @@ use comfy_table::{Cell, Row, Table as ComfyTable};
 use eyre::WrapErr;
 use human_bytes::human_bytes;
 use itertools::Itertools;
-use reth_db::{mdbx, static_file::iter_static_files};
+use base_execution_state_database::{mdbx, static_file::iter_static_files};
 use reth_db_api::{TableViewer, Tables, database::Database};
 use reth_db_common::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};

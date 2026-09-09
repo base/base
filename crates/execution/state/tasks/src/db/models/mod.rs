@@ -1,7 +1,7 @@
 //! MDBX implementation of [`BaseProofsStore`](crate::BaseProofsStore).
 //!
 //! This module provides a complete MDBX implementation of the
-//! [`BaseProofsStore`](crate::BaseProofsStore) trait. It uses the [`reth_db`] crate for
+//! [`BaseProofsStore`](crate::BaseProofsStore) trait. It uses the [`base_execution_state_database`] crate for
 //! database interactions and defines the necessary tables and models for storing trie branches,
 //! accounts, and storage leaves.
 
@@ -20,7 +20,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, StoredNibbles};
 pub use change_set::*;
 pub use kv::*;
-use reth_db::{
+use base_execution_state_database::{
     TableSet, TableType, TableViewer,
     table::{DupSort, TableInfo},
     tables,

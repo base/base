@@ -7,7 +7,7 @@
 //! transaction.
 
 use alloy_primitives::B256;
-use reth_db::DatabaseError;
+use base_execution_state_database::DatabaseError;
 use reth_trie::{hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory};
 
 use crate::{

@@ -4,7 +4,7 @@ use base_execution_state_api::StorageChangeSetReader;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::ValueWithSubKey;
 use clap::Parser;
-use reth_db::{
+use base_execution_state_database::{
     RawDupSort,
     static_file::{
         AccountChangesetMask, ColumnSelectorOne, ColumnSelectorTwo, HeaderWithHashMask,

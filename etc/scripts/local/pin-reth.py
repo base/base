@@ -544,7 +544,7 @@ def main(argv: list[str] | None = None) -> int:
 SAMPLE_CARGO = """[workspace.dependencies]
 # reth
 base-common-codec-storage = { version = "0.6.0", default-features = false }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
+base-execution-state-database = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 base-execution-state-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1", default-features = false }
 """
@@ -568,7 +568,7 @@ class PinRethTests(unittest.TestCase):
 
     def test_parse_git_deps_skips_crates_io(self) -> None:
         deps = parse_git_deps(SAMPLE_CARGO)
-        self.assertEqual([dep.name for dep in deps], ["reth-db", "reth-cli", "base-execution-state-types"])
+        self.assertEqual([dep.name for dep in deps], ["base-execution-state-database", "reth-cli", "base-execution-state-types"])
         self.assertEqual({dep.kind for dep in deps}, {"tag"})
 
     def test_rewrite_preserves_default_features_and_retargets(self) -> None:
@@ -580,7 +580,7 @@ class PinRethTests(unittest.TestCase):
         )
         rewritten = rewrite_git_deps(SAMPLE_CARGO, pin)
         self.assertIn(
-            'reth-db = { git = "https://github.com/base/reth", tag = "v2.5.1-base.1" }',
+            'base-execution-state-database = { git = "https://github.com/base/reth", tag = "v2.5.1-base.1" }',
             rewritten,
         )
         self.assertIn(
@@ -604,7 +604,7 @@ class PinRethTests(unittest.TestCase):
         )
         rewritten = rewrite_git_deps(SAMPLE_CARGO, pin)
         self.assertIn(
-            f'reth-db = {{ git = "https://github.com/niran/reth", rev = "{sha}" }}',
+            f'base-execution-state-database = {{ git = "https://github.com/niran/reth", rev = "{sha}" }}',
             rewritten,
         )
         self.assertNotIn('tag = "v2.5.1"', rewritten)

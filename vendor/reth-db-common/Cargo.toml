@@ -35,8 +35,8 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-reth-db = { workspace = true, features = ["mdbx"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-database = { workspace = true, features = ["mdbx"] }
 
 [lints]
 workspace = true

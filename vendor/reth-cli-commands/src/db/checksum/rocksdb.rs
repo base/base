@@ -3,7 +3,7 @@
 use std::hash::Hasher;
 
 use clap::ValueEnum;
-use reth_db::tables;
+use base_execution_state_database::tables;
 use reth_db_api::table::Table;
 use reth_db_common::DbTool;
 use reth_primitives_traits::FastInstant as Instant;

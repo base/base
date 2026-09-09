@@ -5,7 +5,7 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use eyre::Result;
 use reth_config::config::EtlConfig;
-use reth_db::DatabaseEnv;
+use base_execution_state_database::DatabaseEnv;
 use reth_db_api::{database::Database, models::BlockNumberAddress, table::TableImporter, tables};
 use reth_db_common::DbTool;
 use reth_exex::ExExManagerHandle;

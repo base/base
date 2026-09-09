@@ -15,7 +15,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
-    use reth_db::{models::AccountBeforeTx, test_utils::create_test_static_files_dir};
+    use base_execution_state_database::{models::AccountBeforeTx, test_utils::create_test_static_files_dir};
 
     use crate::providers::{
         StaticFileProvider,

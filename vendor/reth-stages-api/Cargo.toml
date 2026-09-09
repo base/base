@@ -42,15 +42,15 @@ assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-reth-db = { workspace = true, features = ["test-utils"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
+base-execution-state-database = { workspace = true, features = ["test-utils"] }
 
 [features]
 test-utils = [
     "base-execution-evm-blocks/test-utils",
-    "reth-db/test-utils",
+    "base-execution-state-database/test-utils",
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",

@@ -6,7 +6,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
-use reth_db::{
+use base_execution_state_database::{
     DatabaseEnv,
     test_utils::{
         create_test_rocksdb_dir, create_test_rw_db, create_test_rw_db_with_path,

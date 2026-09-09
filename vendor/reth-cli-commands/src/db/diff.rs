@@ -8,7 +8,7 @@ use std::{
 };
 
 use clap::Parser;
-use reth_db::{open_db_read_only, tables_to_generic};
+use base_execution_state_database::{open_db_read_only, tables_to_generic};
 use reth_db_api::{
     Tables, cursor::DbCursorRO, database::Database, table::Table, transaction::DbTx,
 };

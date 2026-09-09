@@ -31,7 +31,7 @@ impl<P> BackfillJobFactory<P> {
                 // 60 seconds, so we limit the backfill job to the half of it to be sure we finish
                 // before the warning is logged.
                 //
-                // See `reth_db::implementation::mdbx::tx::LONG_TRANSACTION_DURATION`.
+                // See `base_execution_state_database::implementation::mdbx::tx::LONG_TRANSACTION_DURATION`.
                 max_duration: Some(Duration::from_secs(30)),
                 ..Default::default()
             },

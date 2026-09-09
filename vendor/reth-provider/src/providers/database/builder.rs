@@ -6,7 +6,7 @@ use std::{
 };
 
 use base_common_chain_config::BaseChainSpec;
-use reth_db::{
+use base_execution_state_database::{
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
     open_db_read_only,
 };

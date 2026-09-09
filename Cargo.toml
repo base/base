@@ -123,7 +123,7 @@ members = [
   "crates/common/codec/macros",
   "vendor/reth-config",
   "vendor/reth-consensus-debug-client",
-  "vendor/reth-db",
+  "crates/execution/state/database",
   "vendor/reth-db-api",
   "vendor/reth-db-common",
   "vendor/reth-downloaders",
@@ -437,7 +437,7 @@ alloy-node-bindings = { path = "vendor/alloy-node-bindings", default-features = 
 alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }
 
 # reth
-reth-db = { path = "vendor/reth-db", default-features = false }
+base-execution-state-database = { path = "crates/execution/state/database", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }

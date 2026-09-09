@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 use base_common_types_chain::DecompressError;
-use reth_db::{
+use base_execution_state_database::{
     DatabaseError,
     table::{self, Decode, Encode},
 };
@@ -57,7 +57,7 @@ impl table::Decompress for ChangeSet {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_db::table::{Compress, Decompress};
+    use base_execution_state_database::table::{Compress, Decompress};
 
     use super::*;
 

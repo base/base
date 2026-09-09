@@ -34,7 +34,7 @@ use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
-use reth_db::transaction::{DbTx, DbTxMut};
+use base_execution_state_database::transaction::{DbTx, DbTxMut};
 use reth_db_api::{
     mock::TxMock,
     models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},

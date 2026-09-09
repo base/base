@@ -102,7 +102,7 @@ mod tests {
         DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentRangeInclusive, find_fixed_range,
     };
     use rand::seq::SliceRandom;
-    use reth_db::{
+    use base_execution_state_database::{
         models::{AccountBeforeTx, StorageBeforeTx},
         test_utils::create_test_static_files_dir,
     };

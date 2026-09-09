@@ -30,8 +30,8 @@ reth-primitives-traits = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
-reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde", "std"] }
+base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 
 [package.metadata.cargo-udeps.ignore]
 development = [
@@ -44,7 +44,7 @@ development = [
 [features]
 test-utils = [
     "base-node-core/test-utils",
-    "reth-db/test-utils",
+    "base-execution-state-database/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "reth-trie/test-utils",

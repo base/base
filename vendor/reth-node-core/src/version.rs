@@ -2,7 +2,7 @@
 use std::{borrow::Cow, sync::OnceLock};
 
 use alloy_primitives::Bytes;
-use reth_db::ClientVersion;
+use base_execution_state_database::ClientVersion;
 
 /// Global static version metadata
 static VERSION_METADATA: OnceLock<RethCliVersionConsts> = OnceLock::new();

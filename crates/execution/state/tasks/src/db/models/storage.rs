@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use base_common_types_chain::DecompressError;
 use derive_more::{Constructor, From, Into};
-use reth_db::{
+use base_execution_state_database::{
     DatabaseError,
     table::{Compress, Decode, Decompress, Encode},
 };

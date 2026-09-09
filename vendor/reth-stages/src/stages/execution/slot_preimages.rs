@@ -4,7 +4,7 @@ use alloy_primitives::{B256, keccak256, map::HashSet};
 use base_execution_evm_runtime::database::RevertToSlot;
 use eyre::Context;
 use rayon::slice::ParallelSliceMut;
-use reth_db::tables;
+use base_execution_state_database::tables;
 use reth_db_api::{
     cursor::{DbCursorRO, DbDupCursorRO},
     transaction::DbTx,

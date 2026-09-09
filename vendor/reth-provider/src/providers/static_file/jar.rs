@@ -12,7 +12,7 @@ use base_common_types_chain::{
 use base_execution_state_api::range_size_hint;
 use base_execution_state_types::ChangesetOffset;
 use base_execution_state_types::{ProviderError, ProviderResult};
-use reth_db::static_file::{
+use base_execution_state_database::static_file::{
     BlockHashMask, HeaderMask, HeaderWithHashMask, ReceiptMask, StaticFileCursor, TransactionMask,
     TransactionSenderMask,
 };

@@ -598,7 +598,7 @@ mod tests {
     /// first, then runs the pruner against committed state in a separate provider.
     #[test]
     fn test_save_blocks_then_prune_preserves_new_history() {
-        use reth_db::{BlockNumberList, models::ShardedKey, tables};
+        use base_execution_state_database::{BlockNumberList, models::ShardedKey, tables};
         use reth_provider::RocksDBProviderFactory;
 
         base_common_observability_tracing::init_test_tracing();

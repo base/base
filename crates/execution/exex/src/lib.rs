@@ -638,7 +638,7 @@ mod tests {
     use base_execution_state_tasks::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
-    use reth_db::test_utils::tempdir_path;
+    use base_execution_state_database::test_utils::tempdir_path;
     use reth_primitives_traits::RecoveredBlock;
     use reth_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,

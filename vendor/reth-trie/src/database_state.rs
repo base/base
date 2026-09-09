@@ -100,7 +100,7 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     ///
     /// ```
     /// use alloy_primitives::U256;
-    /// use reth_db::test_utils::create_test_rw_db;
+    /// use base_execution_state_database::test_utils::create_test_rw_db;
     /// use reth_db_api::database::Database;
     /// use base_execution_state_memory::StoredAccount;
     /// use crate::{updates::TrieUpdates, HashedPostState, StateRoot};

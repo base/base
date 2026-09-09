@@ -6,7 +6,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use base_execution_state_types::StaticFileSegment;
 use clap::Parser;
-use reth_db::{DatabaseError, mdbx::tx::Tx};
+use base_execution_state_database::{DatabaseError, mdbx::tx::Tx};
 use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},
@@ -229,7 +229,7 @@ impl<C: ChainSpecParser> Command<C> {
 }
 
 fn reset_prune_checkpoint(
-    tx: &Tx<reth_db::mdbx::RW>,
+    tx: &Tx<base_execution_state_database::mdbx::RW>,
     prune_segment: PruneSegment,
 ) -> Result<(), DatabaseError> {
     if let Some(mut prune_checkpoint) = tx.get::<tables::PruneCheckpoints>(prune_segment)? {
@@ -242,7 +242,7 @@ fn reset_prune_checkpoint(
 }
 
 fn reset_stage_checkpoint(
-    tx: &Tx<reth_db::mdbx::RW>,
+    tx: &Tx<base_execution_state_database::mdbx::RW>,
     stage_id: StageId,
 ) -> Result<(), DatabaseError> {
     tx.put::<tables::StageCheckpoints>(stage_id.to_string(), Default::default())?;

@@ -19,7 +19,7 @@ use base_execution_state_types::{
 #[cfg(feature = "metrics")]
 use metrics::Label;
 use parking_lot::{Mutex, RwLock};
-use reth_db::{
+use base_execution_state_database::{
     DatabaseError,
     table::{Compress, Decompress, DupSort, Encode, Table},
 };
@@ -2310,7 +2310,7 @@ impl BaseProofsBatchStore for RocksdbProofsStorage {
 }
 
 #[cfg(feature = "metrics")]
-impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
+impl base_execution_state_database::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
     fn gauge_metrics(&self) -> Vec<(&'static str, f64, Vec<Label>)> {
         let mut metrics = Vec::new();
 
@@ -2389,7 +2389,7 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
 }
 
 #[cfg(not(feature = "metrics"))]
-impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
+impl base_execution_state_database::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
 impl<'db, T, V> RocksdbVersionedCursor<'db, T>
 where

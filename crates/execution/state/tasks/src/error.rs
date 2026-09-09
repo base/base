@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_common_types_chain::DecompressError;
 use base_execution_evm_runtime::BlockExecutionError;
-use reth_db::DatabaseError;
+use base_execution_state_database::DatabaseError;
 use reth_provider::ProviderError;
 use base_execution_state_types::Nibbles;
 use thiserror::Error;

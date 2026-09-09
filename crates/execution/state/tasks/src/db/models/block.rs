@@ -3,7 +3,7 @@ use alloy_primitives::B256;
 use base_common_types_chain::DecompressError;
 use bytes::BufMut;
 use derive_more::{From, Into};
-use reth_db::{
+use base_execution_state_database::{
     DatabaseError,
     table::{Compress, Decompress},
 };

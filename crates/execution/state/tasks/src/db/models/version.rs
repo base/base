@@ -1,7 +1,7 @@
 use base_common_types_chain::DecompressError;
 use base_execution_state_types::ValueWithSubKey;
 use bytes::{Buf, BufMut};
-use reth_db::{
+use base_execution_state_database::{
     DatabaseError,
     table::{Compress, Decompress},
 };
@@ -64,15 +64,15 @@ impl<T: Decompress> Decompress for MaybeDeleted<T> {
 /// This wrapper combines a [`block_number`] (the [`DupSort::SubKey`]) with
 /// the actual value.
 ///
-/// [`DupSort`]: reth_db::table::DupSort
-/// [`DupSort::SubKey`]: reth_db::table::DupSort::SubKey
+/// [`DupSort`]: base_execution_state_database::table::DupSort
+/// [`DupSort::SubKey`]: base_execution_state_database::table::DupSort::SubKey
 /// [`block_number`]: Self::block_number
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionedValue<T> {
     /// Block number ([`DupSort::SubKey`] for [`DupSort`])
     ///
-    /// [`DupSort`]: reth_db::table::DupSort
-    /// [`DupSort::SubKey`]: reth_db::table::DupSort::SubKey
+    /// [`DupSort`]: base_execution_state_database::table::DupSort
+    /// [`DupSort::SubKey`]: base_execution_state_database::table::DupSort::SubKey
     pub block_number: u64,
     /// The actual value (may be deleted)
     pub value: MaybeDeleted<T>,

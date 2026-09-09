@@ -6,7 +6,7 @@ use std::ops::{Bound, RangeBounds};
 use alloy_primitives::BlockNumber;
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader};
 use base_execution_state_types::StorageEntry;
-use reth_db::models::AccountBeforeTx;
+use base_execution_state_database::models::AccountBeforeTx;
 use reth_db_api::models::BlockNumberAddress;
 
 use crate::ProviderResult;

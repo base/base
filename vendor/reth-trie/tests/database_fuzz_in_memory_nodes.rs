@@ -6,7 +6,7 @@ use alloy_primitives::{B256, U256};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use proptest::prelude::*;
-use reth_db::{
+use base_execution_state_database::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRW},
     tables,
     transaction::DbTxMut,

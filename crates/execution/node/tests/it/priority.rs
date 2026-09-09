@@ -10,7 +10,7 @@ use base_common_client_ethereum::TxSignerSync;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_node_core::NodeConfig;
-use reth_db::test_utils::create_test_rw_db_with_path;
+use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
@@ -33,7 +33,7 @@ async fn test_queued_transaction_included_after_nonce_gap_closes() {
     // Configure and launch the node.
     let mut config =
         NodeConfig::new(chain_spec).with_unused_ports().with_datadir_args(DatadirArgs {
-            datadir: reth_db::test_utils::tempdir_path().into(),
+            datadir: base_execution_state_database::test_utils::tempdir_path().into(),
             ..Default::default()
         });
     config.network.discovery.discv5_port = Some(0);

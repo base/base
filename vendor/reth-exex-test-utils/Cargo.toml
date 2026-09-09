@@ -31,10 +31,10 @@ base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
+base-execution-state-database = { workspace = true, features = ["test-utils"] }
 
 [dependencies.base-node-context]
 workspace = true

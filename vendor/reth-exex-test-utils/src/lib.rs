@@ -24,7 +24,7 @@ use base_execution_state_types::Chain;
 use base_execution_txpool::Pool;
 use base_node_context::BaseNodeContext;
 use futures_util::FutureExt;
-use reth_db::{
+use base_execution_state_database::{
     DatabaseEnv,
     test_utils::{
         TempDatabase, create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,

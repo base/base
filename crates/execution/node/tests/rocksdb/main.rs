@@ -19,7 +19,7 @@ use base_common_types_rpc::{
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;
-use reth_db::tables;
+use base_execution_state_database::tables;
 use reth_e2e_test_utils::{E2ETestSetupBuilder, transaction::TransactionTestContext, wallet};
 use reth_provider::RocksDBProviderFactory;
 

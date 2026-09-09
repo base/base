@@ -11,7 +11,7 @@ use base_execution_state_types::{
 use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
-use reth_db::{
+use base_execution_state_database::{
     Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
     mdbx::{DatabaseArguments, MaxReadTransactionDuration, init_db_for},
@@ -195,7 +195,7 @@ impl MdbxProofsStorage {
     /// The cost of pruning is the cost of (append + deleting tombstones + deleting old block 0).
     /// The tombstones deletion is expensive as it requires a seek for each (key + subkey).
     ///
-    /// Uses [`reth_db::mdbx::cursor::Cursor::upsert`] for upsert operation.
+    /// Uses [`base_execution_state_database::mdbx::cursor::Cursor::upsert`] for upsert operation.
     fn persist_history_batch<T, I, V>(
         &self,
         tx: &(impl DbTxMut + DbTx),
@@ -1220,10 +1220,10 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
 }
 
 /// This implementation is copied from the
-/// [`DatabaseMetrics`](reth_db::database_metrics::DatabaseMetrics) implementation for
+/// [`DatabaseMetrics`](base_execution_state_database::database_metrics::DatabaseMetrics) implementation for
 /// [`DatabaseEnv`]. As the implementation hard-coded the table name, we need to reimplement it.
 #[cfg(feature = "metrics")]
-impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
+impl base_execution_state_database::database_metrics::DatabaseMetrics for MdbxProofsStorage {
     fn report_metrics(&self) {
         for (name, value, labels) in self.gauge_metrics() {
             gauge!(name, labels).set(value);
@@ -1309,7 +1309,7 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
 mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::B256;
-    use reth_db::{
+    use base_execution_state_database::{
         DatabaseError,
         cursor::DbDupCursorRO,
         transaction::{DbTx, DbTxMut},

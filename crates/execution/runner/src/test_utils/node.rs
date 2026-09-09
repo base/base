@@ -9,7 +9,7 @@ use base_common_client_ethereum::RootProvider;
 use base_common_runtime_tasks::Runtime;
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
-use reth_db::{
+use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
 use reth_node_core::{

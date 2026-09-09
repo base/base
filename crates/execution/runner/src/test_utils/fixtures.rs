@@ -6,7 +6,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
 use base_common_chain_config::BaseChainSpec;
 use base_testing_support::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
-use reth_db::{
+use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
     test_utils::{

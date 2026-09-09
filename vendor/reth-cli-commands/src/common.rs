@@ -9,7 +9,7 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use clap::Parser;
 use reth_config::{Config, config::EtlConfig};
-use reth_db::{DatabaseEnv, init_db, open_db_read_only};
+use base_execution_state_database::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_node_core::{

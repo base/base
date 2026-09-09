@@ -48,7 +48,7 @@ base-node-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
-reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-testing-support = { workspace = true, features = ["contracts"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
+base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }

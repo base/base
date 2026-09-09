@@ -29,7 +29,7 @@ use base_execution_state_types::{
 use base_execution_state_types::{PipelineTarget, StageCheckpoint, StageId};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use reth_db::{init_db, mdbx::DatabaseArguments};
+use base_execution_state_database::{init_db, mdbx::DatabaseArguments};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_storage_overlay::OverlayManager;
@@ -74,7 +74,7 @@ struct ReadOnlySyncState {
 /// This provider implements most provider or provider factory traits.
 pub struct ProviderFactory {
     /// Database instance
-    db: reth_db::DatabaseEnv,
+    db: base_execution_state_database::DatabaseEnv,
     /// Chain spec
     chain_spec: Arc<BaseChainSpec>,
     /// Static File Provider
@@ -119,7 +119,7 @@ impl ProviderFactory {
     /// If the function returns unwind targets, the caller MUST unwind the
     /// inner database to the minimum of the two targets to ensure consistency.
     pub fn new(
-        db: impl Into<reth_db::DatabaseEnv>,
+        db: impl Into<base_execution_state_database::DatabaseEnv>,
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
@@ -179,7 +179,7 @@ impl ProviderFactory {
     /// return any [`ProviderError`] that [`Self::new`] may return, or that are
     /// encountered during consistency checks.
     pub fn new_checked(
-        db: reth_db::DatabaseEnv,
+        db: base_execution_state_database::DatabaseEnv,
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
@@ -314,13 +314,13 @@ impl ProviderFactory {
     }
 
     /// Returns reference to the underlying database.
-    pub const fn db_ref(&self) -> &reth_db::DatabaseEnv {
+    pub const fn db_ref(&self) -> &base_execution_state_database::DatabaseEnv {
         &self.db
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     /// Consumes Self and returns DB
-    pub fn into_db(self) -> reth_db::DatabaseEnv {
+    pub fn into_db(self) -> base_execution_state_database::DatabaseEnv {
         self.db
     }
 }
@@ -440,7 +440,7 @@ impl ProviderFactory {
     #[track_caller]
     pub fn unwind_provider_rw(
         &self,
-    ) -> ProviderResult<DatabaseProvider<<reth_db::DatabaseEnv as Database>::TXMut>> {
+    ) -> ProviderResult<DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TXMut>> {
         Ok(DatabaseProvider::new_unwind_rw(
             self.db.tx_mut()?,
             self.chain_spec.clone(),
@@ -552,7 +552,7 @@ impl ProviderFactory {
     /// header, resets it to the highest header.
     fn heal_chain_state_block_numbers(
         &self,
-        provider_ro: &DatabaseProvider<<reth_db::DatabaseEnv as Database>::TX>,
+        provider_ro: &DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TX>,
     ) -> ProviderResult<()> {
         let highest_header = self.last_block_number()?;
 
@@ -606,7 +606,7 @@ impl BalProvider for ProviderFactory {
 }
 
 impl DatabaseProviderROFactory for ProviderFactory {
-    type Provider = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TX>;
+    type Provider = DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TX>;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         self.provider()
@@ -614,7 +614,7 @@ impl DatabaseProviderROFactory for ProviderFactory {
 }
 
 impl DatabaseProviderFactory for ProviderFactory {
-    type ProviderRW = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TXMut>;
+    type ProviderRW = DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TXMut>;
 
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW> {
         self.provider_rw().map(|provider| provider.0)
@@ -1013,7 +1013,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::{PruneMode, PruneModes};
-    use reth_db::{
+    use base_execution_state_database::{
         mdbx::DatabaseArguments,
         test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},
     };

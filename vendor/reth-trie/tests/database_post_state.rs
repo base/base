@@ -7,7 +7,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use proptest::prelude::*;
 use proptest_arbitrary_interop::arb;
-use reth_db::{tables, test_utils::create_test_rw_db};
+use base_execution_state_database::{tables, test_utils::create_test_rw_db};
 use reth_db_api::{database::Database, transaction::DbTxMut};
 use reth_trie::{
     DatabaseHashedCursorFactory, HashedPostState, HashedStorage,

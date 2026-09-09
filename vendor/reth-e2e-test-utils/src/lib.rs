@@ -6,7 +6,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_context::BaseNodeContext;
 use node::NodeTestContext;
-use reth_db::{DatabaseEnv, test_utils::TempDatabase};
+use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 

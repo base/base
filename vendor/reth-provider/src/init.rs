@@ -1,7 +1,7 @@
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::Address;
 use base_common_types_chain::BlockHeader;
-use reth_db::{
+use base_execution_state_database::{
     BlockNumberList,
     models::{ShardedKey, storage_sharded_key::StorageShardedKey},
     transaction::DbTxMut,

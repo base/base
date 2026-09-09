@@ -11,7 +11,7 @@ use base_execution_state_types::{
     BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };
 use derive_more::Constructor;
-use reth_db::{
+use base_execution_state_database::{
     DatabaseError,
     cursor::{DbCursorRO, DbDupCursorRO},
     tables,
@@ -547,7 +547,7 @@ mod tests {
 
                 use alloy_primitives::{Address, U256, keccak256};
                 use base_execution_state_memory::StoredAccount as Account;
-                use reth_db::{
+                use base_execution_state_database::{
                     Database,
                     cursor::DbCursorRW,
                     table::{Decode, Encode},

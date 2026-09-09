@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use alloy_primitives::{B256, U256};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
-use reth_db::{
+use base_execution_state_database::{
     Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbDupCursorRO},
     table::{DupSort, Table},
@@ -407,7 +407,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use reth_db::{
+    use base_execution_state_database::{
         DatabaseEnv,
         mdbx::{DatabaseArguments, init_db_for},
     };

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use reth_db::mdbx::{self, ffi};
+use base_execution_state_database::mdbx::{self, ffi};
 
 /// Copies the MDBX database to a new location.
 ///

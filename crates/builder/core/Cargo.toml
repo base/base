@@ -61,7 +61,6 @@ chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["default"] }
 testcontainers = { workspace = true, optional = true }
 base-common-observability-events = { workspace = true }
 base-common-observability-metrics = { workspace = true }
@@ -97,6 +96,7 @@ hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
+base-execution-state-database = { workspace = true, features = ["default"] }
 base-common-observability-tracing = { workspace = true, features = ["otlp"] }
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
@@ -160,7 +160,7 @@ test-utils = [
     "hyper-util",
     "nanoid",
     "reth-chain-state/test-utils",
-    "reth-db/test-utils",
+    "base-execution-state-database/test-utils",
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-tasks/test-utils",
     "base-execution-payload-builder/test-utils",

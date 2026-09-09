@@ -16,7 +16,6 @@ reth-provider = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
-reth-db = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
 base-txpool-rpc = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
@@ -33,6 +32,7 @@ tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
 base-common-client-ethereum = {workspace = true,  features = ["default"]}
+base-execution-state-database = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {optional = true, features = ["std"], workspace = true}
@@ -74,7 +74,7 @@ test-utils = [
     "dep:reth-node-core",
     "dep:base-common-runtime-tasks",
     "dep:tracing-subscriber",
-    "reth-db/test-utils",
+    "base-execution-state-database/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "base-common-runtime-tasks?/test-utils",

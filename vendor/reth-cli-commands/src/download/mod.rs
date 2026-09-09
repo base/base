@@ -113,7 +113,7 @@ pub use planning::{DownloadPlan, DownloadPlanArchive};
 use planning::{PlannedDownloads, collect_planned_archives, summarize_download_startup};
 use progress::{DownloadProgress, DownloadRequestLimiter};
 use reth_cli_util::cancellation::CancellationToken;
-use reth_db::{Database, init_db};
+use base_execution_state_database::{Database, init_db};
 use reth_db_api::transaction::DbTx;
 use reth_node_core::args::DefaultPruningValues;
 use source::{

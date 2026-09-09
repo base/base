@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 c-kzg = { workspace = true }
 tower = { workspace = true }
-reth-db = { workspace = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true }
 alloy-signer = { workspace = true }
@@ -33,6 +32,7 @@ base-consensus-batch-types = { workspace = true }
 base-execution-state-types = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 thiserror = {workspace = true, features = ["std"]}
+base-execution-state-database = { workspace = true }
 base-consensus-derive-pipeline = { workspace = true }
 notify = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default"] }

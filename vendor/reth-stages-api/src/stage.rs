@@ -327,7 +327,7 @@ impl<Provider, S: Stage<Provider> + ?Sized> StageExt<Provider> for S {}
 mod tests {
 
     use base_execution_state_types::StageCheckpoint;
-    use reth_db::test_utils::{
+    use base_execution_state_database::test_utils::{
         create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
     };
     use reth_db_api::{models::StoredBlockBodyIndices, tables, transaction::DbTxMut};

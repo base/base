@@ -9,7 +9,7 @@ use clap::{
     error::ErrorKind,
     value_parser,
 };
-use reth_db::{
+use base_execution_state_database::{
     ClientVersion,
     mdbx::{MaxReadTransactionDuration, SyncMode},
 };
@@ -79,7 +79,7 @@ pub struct DatabaseArgs {
 
 impl DatabaseArgs {
     /// Returns default database arguments with configured log level and client version.
-    pub fn database_args(&self) -> reth_db::mdbx::DatabaseArguments {
+    pub fn database_args(&self) -> base_execution_state_database::mdbx::DatabaseArguments {
         self.get_database_args(default_client_version())
     }
 
@@ -88,14 +88,14 @@ impl DatabaseArgs {
     pub fn get_database_args(
         &self,
         client_version: ClientVersion,
-    ) -> reth_db::mdbx::DatabaseArguments {
+    ) -> base_execution_state_database::mdbx::DatabaseArguments {
         let max_read_transaction_duration = match self.read_transaction_timeout {
             None => None, // if not specified, use default value
             Some(0) => Some(MaxReadTransactionDuration::Unbounded), // if 0, disable timeout
             Some(secs) => Some(MaxReadTransactionDuration::Set(Duration::from_secs(secs))),
         };
 
-        reth_db::mdbx::DatabaseArguments::new(client_version)
+        base_execution_state_database::mdbx::DatabaseArguments::new(client_version)
             .with_log_level(self.log_level)
             .with_exclusive(self.exclusive)
             .with_max_read_transaction_duration(max_read_transaction_duration)
@@ -228,7 +228,7 @@ fn parse_byte_size(s: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use reth_db::mdbx::{GIGABYTE, KILOBYTE, MEGABYTE, TERABYTE};
+    use base_execution_state_database::mdbx::{GIGABYTE, KILOBYTE, MEGABYTE, TERABYTE};
 
     use super::*;
 

@@ -14,7 +14,7 @@ use base_execution_state_types::{
 };
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
-use reth_db::models::{AccountBeforeTx, StorageBeforeTx};
+use base_execution_state_database::models::{AccountBeforeTx, StorageBeforeTx};
 use reth_db_api::models::CompactU256;
 use reth_nippy_jar::{NippyJar, NippyJarError, NippyJarWriter};
 use reth_primitives_traits::FastInstant as Instant;

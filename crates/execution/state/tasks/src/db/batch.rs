@@ -5,7 +5,7 @@
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
-use reth_db::{
+use base_execution_state_database::{
     Database, DatabaseEnv,
     table::{DupSort, Table},
     transaction::DbTx,

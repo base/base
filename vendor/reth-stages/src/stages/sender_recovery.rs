@@ -6,7 +6,7 @@ use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::SenderRecoveryConfig;
-use reth_db::static_file::TransactionMask;
+use base_execution_state_database::static_file::TransactionMask;
 use reth_db_api::{
     RawValue,
     cursor::DbCursorRW,

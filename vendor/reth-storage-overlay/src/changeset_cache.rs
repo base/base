@@ -622,7 +622,7 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
-    use reth_db::{
+    use base_execution_state_database::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,
         transaction::DbTxMut,

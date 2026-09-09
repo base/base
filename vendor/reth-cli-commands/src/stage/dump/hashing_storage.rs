@@ -1,5 +1,5 @@
 use eyre::Result;
-use reth_db::DatabaseEnv;
+use base_execution_state_database::DatabaseEnv;
 use reth_db_api::{database::Database, table::TableImporter, tables};
 use reth_db_common::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};

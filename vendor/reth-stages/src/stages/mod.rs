@@ -55,7 +55,7 @@ mod tests {
     use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
-    use reth_db::mdbx::{RW, cursor::Cursor};
+    use base_execution_state_database::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
         AccountsHistory,
         cursor::{DbCursorRO, DbCursorRW},
