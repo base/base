@@ -13,8 +13,7 @@ use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
 /// Represents a single batch: a single encoded L2 block
 #[derive(Debug, Default, RlpDecodable, RlpEncodable, Clone, PartialEq, Eq)]
 pub struct SingleBatch {
-    /// Block hash of the previous L2 block. `B256::ZERO` if a span-derived batch has not yet been
-    /// assigned its parent by the derivation pipeline.
+    /// Block hash of the previous L2 block.
     pub parent_hash: BlockHash,
     /// The batch epoch number. Same as the first L1 block number in the epoch.
     pub epoch_num: u64,
@@ -45,12 +44,11 @@ impl SingleBatch {
         &self,
         cfg: &RollupConfig,
         l2_safe_head: L2BlockInfo,
-        _inclusion_block: &BlockInfo,
     ) -> BatchValidity {
         let next_timestamp =
             cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
         if self.timestamp > next_timestamp {
-            return BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene);
+            return BatchValidity::Drop(BatchDropReason::FutureTimestamp);
         }
         if self.timestamp < next_timestamp {
             return BatchValidity::Past;
@@ -78,7 +76,7 @@ impl SingleBatch {
         let epoch = l1_blocks[0];
 
         // If the batch is not accepted by the timestamp check, return the result.
-        let timestamp_check = self.check_batch_timestamp(cfg, l2_safe_head, inclusion_block);
+        let timestamp_check = self.check_batch_timestamp(cfg, l2_safe_head);
         if !timestamp_check.is_accept() {
             return timestamp_check;
         }
@@ -157,9 +155,6 @@ impl SingleBatch {
             }
         }
 
-        // If this is the first block in the jovian upgrade, and the batch contains any
-        // transactions, it must be dropped.
-
         // We can do this check earlier, but it's intensive so we do it last for the sad-path.
         for tx in &self.transactions {
             if tx.is_empty() {
@@ -168,8 +163,6 @@ impl SingleBatch {
             if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
-            // If isthmus is not active yet and the transaction is a 7702, drop the batch.
-
             // If Zenith is not active yet and the transaction is an 8130, drop the batch.
             if !cfg.is_zenith_active(self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
@@ -221,7 +214,7 @@ mod tests {
         let batch = SingleBatch { timestamp: 2, ..Default::default() };
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene)
+            BatchValidity::Drop(BatchDropReason::FutureTimestamp)
         );
     }
 
@@ -251,11 +244,11 @@ mod tests {
             block_info: BlockInfo { timestamp: 1, ..Default::default() },
             ..Default::default()
         };
-        let inclusion_block = BlockInfo { timestamp: 1, ..Default::default() };
+
         let batch = SingleBatch { epoch_num: 1, timestamp: 2, ..Default::default() };
         assert_eq!(
-            batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene)
+            batch.check_batch_timestamp(&cfg, l2_safe_head),
+            BatchValidity::Drop(BatchDropReason::FutureTimestamp)
         );
     }
 
@@ -271,12 +264,9 @@ mod tests {
             block_info: BlockInfo { timestamp: 2, ..Default::default() },
             ..Default::default()
         };
-        let inclusion_block = BlockInfo { timestamp: 1, ..Default::default() };
+
         let batch = SingleBatch { epoch_num: 1, timestamp: 1, ..Default::default() };
-        assert_eq!(
-            batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Past
-        );
+        assert_eq!(batch.check_batch_timestamp(&cfg, l2_safe_head), BatchValidity::Past);
     }
 
     #[test]
@@ -290,12 +280,9 @@ mod tests {
             block_info: BlockInfo { timestamp: 2, ..Default::default() },
             ..Default::default()
         };
-        let inclusion_block = BlockInfo::default();
+
         let batch = SingleBatch { timestamp: 2, ..Default::default() };
-        assert_eq!(
-            batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Accept
-        );
+        assert_eq!(batch.check_batch_timestamp(&cfg, l2_safe_head), BatchValidity::Accept);
     }
 
     #[test]
@@ -313,12 +300,9 @@ mod tests {
             block_info: BlockInfo { number: 2, timestamp: 102, ..Default::default() },
             ..Default::default()
         };
-        let inclusion_block = BlockInfo { timestamp: 102, ..Default::default() };
+
         let batch = SingleBatch { epoch_num: 1, timestamp: 102, ..Default::default() };
-        assert_eq!(
-            batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Accept
-        );
+        assert_eq!(batch.check_batch_timestamp(&cfg, l2_safe_head), BatchValidity::Accept);
     }
 
     #[test]
@@ -332,24 +316,17 @@ mod tests {
             block_info: BlockInfo { number: 1, timestamp: 100, ..Default::default() },
             ..Default::default()
         };
-        let inclusion_block = BlockInfo { timestamp: 100, ..Default::default() };
 
         let accept = SingleBatch { epoch_num: 1, timestamp: 102, ..Default::default() };
-        assert_eq!(
-            accept.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Accept
-        );
+        assert_eq!(accept.check_batch_timestamp(&cfg, l2_safe_head), BatchValidity::Accept);
 
         let past = SingleBatch { epoch_num: 1, timestamp: 101, ..Default::default() };
-        assert_eq!(
-            past.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Past
-        );
+        assert_eq!(past.check_batch_timestamp(&cfg, l2_safe_head), BatchValidity::Past);
 
         let future = SingleBatch { epoch_num: 1, timestamp: 103, ..Default::default() };
         assert_eq!(
-            future.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene)
+            future.check_batch_timestamp(&cfg, l2_safe_head),
+            BatchValidity::Drop(BatchDropReason::FutureTimestamp)
         );
     }
 

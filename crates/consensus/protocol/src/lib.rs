@@ -15,13 +15,8 @@ pub(crate) const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
 
 mod batch;
 pub use batch::{
-    Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchReaderError,
-    BatchTransaction, BatchType, BatchValidationProvider, BatchValidity, BatchWithInclusionBlock,
-    DecompressionError, RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits,
-    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
-    SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData, SpanBatchElement,
-    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
-    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError,
+    BatchDecodingError, BatchDropReason, BatchReader, BatchReaderError, BatchTransaction,
+    BatchValidationProvider, BatchValidity, DecompressionError, SingleBatch,
 };
 
 mod brotli;
@@ -43,7 +38,7 @@ pub use frame::{
 };
 
 mod utils;
-pub use utils::{read_tx_data, to_system_config, to_system_config_from_payload};
+pub use utils::{to_system_config, to_system_config_from_payload};
 
 mod channel;
 pub use channel::{Channel, ChannelError, ChannelId};

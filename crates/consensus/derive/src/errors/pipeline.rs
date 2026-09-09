@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use base_common_genesis::SystemConfigUpdateError;
-use base_protocol::{DepositDecodeError, SpanBatchError};
+use base_protocol::DepositDecodeError;
 use thiserror::Error;
 
 use crate::BuilderError;
@@ -113,8 +113,6 @@ pub enum PipelineErrorKind {
 /// - [`Self::ChannelReaderEmpty`]: Channel reader has no data
 ///
 /// ## Validation Errors
-/// - [`Self::InvalidBatchType`]: Unsupported or malformed batch type
-/// - [`Self::InvalidBatchValidity`]: Batch failed validation checks
 /// - [`Self::BadEncoding`]: Data decoding/encoding failures
 ///
 /// ## System Errors
@@ -144,7 +142,7 @@ pub enum PipelineError {
     /// # Common Scenarios
     /// - Partial frame received, waiting for completion
     /// - Channel assembly requires more frames
-    /// - Batch construction needs additional channel data
+    /// - SingleBatch construction needs additional channel data
     ///
     /// # Recovery
     /// Retry the operation after more L1 data becomes available or after
@@ -196,20 +194,6 @@ pub enum PipelineError {
     /// [`L1Retrieval`]: crate::stages::L1Retrieval
     #[error("L1 Retrieval missing data")]
     MissingL1Data,
-    /// Invalid or unsupported batch type encountered during processing.
-    ///
-    /// This error occurs when a pipeline stage receives a batch type that
-    /// it cannot process or that violates the expected batch format. It
-    /// indicates either malformed L1 data or unsupported batch versions.
-    #[error("Invalid batch type passed to stage")]
-    InvalidBatchType,
-    /// Batch failed validation checks during processing.
-    ///
-    /// This error indicates that a batch contains invalid data that fails
-    /// validation rules such as timestamp constraints, parent hash checks,
-    /// or format requirements. It suggests potentially malicious or corrupted L1 data.
-    #[error("Invalid batch validity")]
-    InvalidBatchValidity,
     /// [`SystemConfig`] update operation failed.
     ///
     /// This error occurs when attempting to update the system configuration
@@ -355,9 +339,6 @@ pub enum PipelineEncodingError {
     /// Alloy RLP Encoding Error.
     #[error("RLP error: {0}")]
     AlloyRlpError(alloy_rlp::Error),
-    /// Span Batch Error.
-    #[error("{0}")]
-    SpanBatchError(#[from] SpanBatchError),
 }
 
 #[cfg(test)]
@@ -401,10 +382,6 @@ mod tests {
     fn test_pipeline_encoding_error_source() {
         let err =
             PipelineEncodingError::DepositDecodeError(DepositDecodeError::UnexpectedTopicsLen(0));
-        assert!(err.source().is_some());
-
-        let err = SpanBatchError::TooBigSpanBatchSize;
-        let err: PipelineEncodingError = err.into();
         assert!(err.source().is_some());
 
         let err = PipelineEncodingError::EmptyBuffer;

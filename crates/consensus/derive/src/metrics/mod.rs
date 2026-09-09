@@ -3,6 +3,9 @@
 base_metrics::define_metrics! {
     base_consensus_derive
 
+    #[describe("The number of decoded singular batches")]
+    pipeline_read_batches: gauge,
+
     #[describe("The block height of the pipeline l1 origin")]
     pipeline_origin: gauge,
 
@@ -33,15 +36,8 @@ base_metrics::define_metrics! {
     #[describe("The maximum rlp byte size of a channel")]
     pipeline_max_rlp_bytes: gauge,
 
-    #[describe("The number of batches held in the batch stream stage")]
-    pipeline_batch_buffer: gauge,
 
-    #[describe("The memory size of batches held in the batch stream stage")]
-    pipeline_batch_mem: gauge,
 
-    #[describe("The read batches")]
-    #[label(name = "type", default = ["single", "span"])]
-    pipeline_read_batches: gauge,
 
     #[describe("The total number of pipeline steps on the derivation pipeline")]
     pipeline_steps: gauge,
@@ -59,8 +55,6 @@ base_metrics::define_metrics! {
     #[describe("Latest l1 blocks height")]
     pipeline_l1_blocks_end: gauge,
 
-    #[describe("The number of payload attributes in the current span")]
-    pipeline_derived_span_size: gauge,
 
     #[describe("The number of transactions in the latest derived payload attributes")]
     pipeline_latest_payload_tx_count: gauge,
@@ -73,8 +67,6 @@ base_metrics::define_metrics! {
     #[label(validity)]
     pipeline_batch_validity: gauge,
 
-    #[describe("The time it takes to validate a span batch")]
-    pipeline_check_batch_prefix: histogram,
 
     #[describe("Wall-clock duration to decompress channel batch data")]
     pipeline_batch_decompress_duration_seconds: histogram,

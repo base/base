@@ -18,7 +18,6 @@ pub struct TestAttributesBuilder {
     min_base_fee: Option<u64>,
     parent: L2BlockInfo,
     derived_from: Option<BlockInfo>,
-    is_last_in_span: bool,
 }
 
 impl TestAttributesBuilder {
@@ -48,7 +47,6 @@ impl TestAttributesBuilder {
             min_base_fee: Some(0),
             parent,
             derived_from: None,
-            is_last_in_span: false,
         }
     }
 
@@ -78,12 +76,6 @@ impl TestAttributesBuilder {
         self
     }
 
-    /// Sets whether these attributes are the last block in the current span.
-    pub const fn with_is_last_in_span(mut self, is_last_in_span: bool) -> Self {
-        self.is_last_in_span = is_last_in_span;
-        self
-    }
-
     /// Builds the `AttributesWithParent`
     pub fn build(self) -> AttributesWithParent {
         let attributes = BasePayloadAttributes {
@@ -103,7 +95,7 @@ impl TestAttributesBuilder {
             min_base_fee: self.min_base_fee,
         };
 
-        AttributesWithParent::new(attributes, self.parent, self.derived_from, self.is_last_in_span)
+        AttributesWithParent::new(attributes, self.parent, self.derived_from)
     }
 }
 

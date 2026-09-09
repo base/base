@@ -5,7 +5,7 @@ use alloc::{boxed::Box, vec::Vec};
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_genesis::SystemConfig;
-use base_protocol::{Batch, BlockInfo, L2BlockInfo};
+use base_protocol::{BlockInfo, SingleBatch};
 
 use crate::{
     errors::PipelineError,
@@ -20,7 +20,7 @@ pub struct TestNextBatchProvider {
     /// The origin of the L1 block.
     pub origin: Option<BlockInfo>,
     /// A list of batches to return.
-    pub batches: Vec<PipelineResult<Batch>>,
+    pub batches: Vec<PipelineResult<SingleBatch>>,
     /// Tracks if the provider has been flushed.
     pub flushed: bool,
     /// Tracks if the reset method was called.
@@ -29,7 +29,7 @@ pub struct TestNextBatchProvider {
 
 impl TestNextBatchProvider {
     /// Creates a new [`TestNextBatchProvider`] with the given origin and batches.
-    pub fn new(batches: Vec<PipelineResult<Batch>>) -> Self {
+    pub fn new(batches: Vec<PipelineResult<SingleBatch>>) -> Self {
         Self { origin: Some(BlockInfo::default()), batches, flushed: false, reset: false }
     }
 }
@@ -46,11 +46,7 @@ impl NextBatchProvider for TestNextBatchProvider {
         self.flushed = true;
     }
 
-    fn span_buffer_size(&self) -> usize {
-        self.batches.len()
-    }
-
-    async fn next_batch(&mut self, _: L2BlockInfo, _: &[BlockInfo]) -> PipelineResult<Batch> {
+    async fn next_batch(&mut self) -> PipelineResult<SingleBatch> {
         self.batches.pop().ok_or(PipelineError::Eof.temp())?
     }
 }

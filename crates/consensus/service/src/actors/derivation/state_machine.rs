@@ -250,7 +250,6 @@ mod tests {
             attributes: BasePayloadAttributes::default(),
             parent: dummy_l2_block_info(),
             derived_from: None,
-            is_last_in_span: false,
         }
     }
 

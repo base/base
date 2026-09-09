@@ -15,8 +15,6 @@ pub struct AttributesWithParent {
     pub parent: L2BlockInfo,
     /// The L1 block that the attributes were derived from.
     pub derived_from: Option<BlockInfo>,
-    /// Whether the current batch is the last in its span.
-    pub is_last_in_span: bool,
 }
 
 impl AttributesWithParent {
@@ -25,9 +23,8 @@ impl AttributesWithParent {
         attributes: BasePayloadAttributes,
         parent: L2BlockInfo,
         derived_from: Option<BlockInfo>,
-        is_last_in_span: bool,
     ) -> Self {
-        Self { attributes, parent, derived_from, is_last_in_span }
+        Self { attributes, parent, derived_from }
     }
 
     /// Returns the L2 block number for the payload attributes if made canonical.
@@ -56,11 +53,6 @@ impl AttributesWithParent {
         self.derived_from.as_ref()
     }
 
-    /// Returns whether the current batch is the last in its span.
-    pub const fn is_last_in_span(&self) -> bool {
-        self.is_last_in_span
-    }
-
     /// Returns `true` if all transactions in the payload are deposits.
     pub fn is_deposits_only(&self) -> bool {
         self.attributes
@@ -79,12 +71,7 @@ impl AttributesWithParent {
             .iter_mut()
             .for_each(|txs| txs.retain(|tx| tx.first().copied() == Some(OpTxType::Deposit as u8)));
 
-        Self {
-            attributes,
-            parent: self.parent,
-            derived_from: self.derived_from,
-            is_last_in_span: self.is_last_in_span,
-        }
+        Self { attributes, parent: self.parent, derived_from: self.derived_from }
     }
 
     /// Returns the number of transactions in the attributes.
@@ -108,13 +95,10 @@ mod tests {
     fn test_attributes_with_parent() {
         let attributes = BasePayloadAttributes::default();
         let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes.clone(), parent, None, is_last_in_span);
+        let attributes_with_parent = AttributesWithParent::new(attributes.clone(), parent, None);
 
         assert_eq!(attributes_with_parent.attributes(), &attributes);
         assert_eq!(attributes_with_parent.parent(), &parent);
-        assert_eq!(attributes_with_parent.is_last_in_span(), is_last_in_span);
         assert_eq!(attributes_with_parent.derived_from(), None);
     }
 
@@ -124,7 +108,7 @@ mod tests {
             transactions: Some(vec![vec![OpTxType::Deposit as u8, 0xaa].into(), vec![0xff].into()]),
             ..Default::default()
         };
-        let attributes = AttributesWithParent::new(attributes, L2BlockInfo::default(), None, true);
+        let attributes = AttributesWithParent::new(attributes, L2BlockInfo::default(), None);
 
         assert_eq!(attributes.count_transactions(), 2);
     }
@@ -145,9 +129,7 @@ mod tests {
             ..BasePayloadAttributes::default()
         };
         let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
+        let attributes_with_parent = AttributesWithParent::new(attributes, parent, None);
         let deposits_only_attributes = attributes_with_parent.as_deposits_only();
 
         assert_eq!(
@@ -172,9 +154,7 @@ mod tests {
             ..BasePayloadAttributes::default()
         };
         let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
+        let attributes_with_parent = AttributesWithParent::new(attributes, parent, None);
         let deposits_only_attributes = attributes_with_parent.as_deposits_only();
 
         assert_eq!(
@@ -202,9 +182,7 @@ mod tests {
             ..BasePayloadAttributes::default()
         };
         let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
+        let attributes_with_parent = AttributesWithParent::new(attributes, parent, None);
         let deposits_only_attributes = attributes_with_parent.as_deposits_only();
 
         assert_eq!(deposits_only_attributes.attributes().transactions, Some(vec![]));
@@ -222,9 +200,7 @@ mod tests {
             ..BasePayloadAttributes::default()
         };
         let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
+        let attributes_with_parent = AttributesWithParent::new(attributes, parent, None);
         let deposits_only_attributes = attributes_with_parent.as_deposits_only();
 
         assert_eq!(
@@ -242,9 +218,7 @@ mod tests {
         let attributes =
             BasePayloadAttributes { transactions: None, ..BasePayloadAttributes::default() };
         let parent = L2BlockInfo::default();
-        let is_last_in_span = true;
-        let attributes_with_parent =
-            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
+        let attributes_with_parent = AttributesWithParent::new(attributes, parent, None);
         let deposits_only_attributes = attributes_with_parent.as_deposits_only();
 
         assert_eq!(deposits_only_attributes.attributes().transactions, None);
@@ -255,7 +229,6 @@ mod tests {
             BasePayloadAttributes { transactions: txs, ..BasePayloadAttributes::default() },
             L2BlockInfo::default(),
             None,
-            true,
         )
     }
 

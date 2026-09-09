@@ -2,12 +2,12 @@
 //!
 //! Sitting after the [`FrameQueue`] stage, the [`ChannelAssembler`] and [`ChannelAssembler`] stages are
 //! responsible for reading and decoding the [Frame]s into [Channel]s. The [`ChannelReader`] stage
-//! is responsible for decoding the [Channel]s into [Batch]es, forwarding the [Batch]es to the
+//! is responsible for decoding the [Channel]s into [SingleBatch]es, forwarding the [SingleBatch]es to the
 //! [`BatchValidator`] stage.
 //!
 //! [Frame]: base_protocol::Frame
 //! [Channel]: base_protocol::Channel
-//! [Batch]: base_protocol::Batch
+//! [SingleBatch]: base_protocol::SingleBatch
 //! [FrameQueue]: crate::stages::FrameQueue
 //! [BatchValidator]: crate::stages::BatchValidator
 

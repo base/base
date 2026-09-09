@@ -194,86 +194,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
     }
 }
 
-#[tokio::test]
-async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attributes() {
-    let cfg = Arc::new(RollupConfig::default());
-    let pinned_head = l2_block_info(
-        10,
-        b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        b256!("9999999999999999999999999999999999999999999999999999999999999999"),
-        20,
-    );
-    let pending_unsafe = l2_block_info(
-        40,
-        b256!("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
-        b256!("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
-        80,
-    );
-    let safe_child = l2_block_info(
-        11,
-        b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-        pinned_head.block_info.hash,
-        22,
-    );
-    let attributes = TestAttributesBuilder::new()
-        .with_parent(pinned_head)
-        .with_timestamp(safe_child.block_info.timestamp)
-        .with_transactions(vec![encoded_l1_info_deposit_tx()])
-        .with_is_last_in_span(false)
-        .build();
 
-    let client =
-        Arc::new(test_engine_client_builder().with_forkchoice_response(syncing_fcu()).build());
-    let mut state = TestEngineStateBuilder::new()
-        .with_unsafe_head(pinned_head)
-        .with_safe_head(pinned_head)
-        .with_finalized_head(pinned_head)
-        .with_el_sync_finished(true)
-        .build();
-
-    // A live unsafe target was accepted by newPayload, but its bare FCU returned SYNCING while
-    // reth backfilled. Consensus therefore remains pinned at the old unsafe head.
-    SynchronizeTask::new(
-        Arc::clone(&client),
-        Arc::clone(&cfg),
-        EngineSyncStateUpdate { unsafe_head: Some(pending_unsafe), ..Default::default() },
-    )
-    .execute(&mut state)
-    .await
-    .expect("SYNCING unsafe FCU should be non-fatal");
-    assert_eq!(state.sync_state.unsafe_head(), pinned_head);
-
-    // EL sync has now caught up enough to serve the next safe block that derivation is about to
-    // confirm.
-    client.set_forkchoice_response(valid_fcu()).await;
-    let safe_child_block = matching_rpc_block(safe_child, &attributes);
-    let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
-    client
-        .set_l2_block_by_label(
-            BlockNumberOrTag::Number(safe_child.block_info.number),
-            safe_child_block,
-        )
-        .await;
-
-    ConsolidateTask::new(Arc::clone(&client), Arc::clone(&cfg), ConsolidateInput::from(attributes))
-        .execute(&mut state)
-        .await
-        .expect("safe derivation should reconcile the available unsafe block instead of building");
-
-    assert!(
-        state.sync_state.unsafe_head().block_info.number >= expected_safe_child.block_info.number,
-        "unsafe head must advance before safe derivation advances"
-    );
-    assert_eq!(state.sync_state.local_safe_head(), expected_safe_child);
-    assert_eq!(state.sync_state.safe_head(), expected_safe_child);
-
-    let storage = client.storage();
-    let requests = storage.read().await;
-    assert!(
-        requests.forkchoice_requests.iter().all(|(_, has_attrs)| !has_attrs),
-        "safe reconciliation must not start a stale FCU-with-attributes build"
-    );
-}
 
 #[tokio::test]
 async fn consolidate_syncing_yields_until_a_later_drain() {
@@ -340,7 +261,7 @@ async fn consolidate_syncing_yields_until_a_later_drain() {
 }
 
 #[tokio::test]
-async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attributes() {
+async fn consolidate_reconciles_pending_unsafe_before_safe_attributes() {
     let cfg = Arc::new(RollupConfig::default());
     let pinned_head = l2_block_info(
         10,
@@ -364,7 +285,6 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
         .with_parent(pinned_head)
         .with_timestamp(safe_child.block_info.timestamp)
         .with_transactions(vec![encoded_l1_info_deposit_tx()])
-        .with_is_last_in_span(true)
         .build();
 
     let client =
@@ -399,7 +319,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
     ConsolidateTask::new(Arc::clone(&client), Arc::clone(&cfg), ConsolidateInput::from(attributes))
         .execute(&mut state)
         .await
-        .expect("span-ending safe derivation should use a bare FCU after unsafe reconciliation");
+        .expect("safe derivation should use a bare FCU after unsafe reconciliation");
 
     assert!(
         state.sync_state.unsafe_head().block_info.number >= expected_safe_child.block_info.number,
@@ -412,7 +332,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
     let requests = storage.read().await;
     assert!(
         requests.forkchoice_requests.iter().all(|(_, has_attrs)| !has_attrs),
-        "span-ending safe reconciliation must not start a stale FCU-with-attributes build"
+        "safe reconciliation must not start a stale FCU-with-attributes build"
     );
 }
 

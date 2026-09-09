@@ -87,11 +87,11 @@ impl BatchPipeline for MockBatchPipeline {
     }
 }
 
-/// One-shot framing for Span fixtures and tests.
+/// One-shot framing for channel fixtures and tests.
 ///
 /// Production encoding cuts frames incrementally via [`Channel::take_frame`].
 /// This helper still splits a fully compressed channel, which the action harness
-/// uses to inject historical Span payloads.
+/// uses to inject malformed channels and alternative compression formats.
 #[derive(Debug)]
 pub struct ChannelFramer;
 

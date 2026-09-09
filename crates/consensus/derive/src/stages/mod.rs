@@ -1,34 +1,4 @@
-//! This module contains each stage of the derivation pipeline.
-//!
-//! It offers a high-level API to functionally apply each stage's output as an input to the next
-//! stage, until finally arriving at the produced execution payloads.
-//!
-//! The [`ChannelAssembler`] and [`BatchValidator`] stages are multiplexers whose active inner
-//! stages depend on Holocene activation. [`BatchStream`] is always present in the composed stack,
-//! but it only performs span-batch streaming after Holocene; before Holocene it passes batches
-//! through unchanged.
-//!
-//! **Pre-Holocene effective stage order:**
-//!
-//! 1. L1 Traversal
-//! 2. L1 Retrieval
-//! 3. Frame Queue
-//! 4. Channel Bank
-//! 5. Channel Reader (Batch Decoding)
-//! 6. Batch Stream (Pass-Through)
-//! 7. Batch Queue
-//! 8. Payload Attributes Derivation
-//!
-//! **Post-Holocene effective stage order:**
-//!
-//! 1. L1 Traversal
-//! 2. L1 Retrieval
-//! 3. Frame Queue
-//! 4. Channel Assembler
-//! 5. Channel Reader (Batch Decoding)
-//! 6. Batch Stream (Span Batches)
-//! 7. Batch Validator
-//! 8. Payload Attributes Derivation
+//! Derivation stages for the Azul baseline and singular batches.
 
 mod traversal;
 pub use traversal::PollingTraversal;
@@ -43,7 +13,7 @@ mod channel;
 pub use channel::{ChannelAssembler, ChannelReader, ChannelReaderProvider, NextFrameProvider};
 
 mod batch;
-pub use batch::{BatchStream, BatchStreamProvider, BatchValidator, NextBatchProvider};
+pub use batch::{BatchValidator, NextBatchProvider};
 
 mod attributes_queue;
 pub use attributes_queue::AttributesQueue;

@@ -118,12 +118,7 @@ mod tests {
             seq_num: 0,
         };
         let derived_from = BlockInfo { number: l1_origin_number, ..Default::default() };
-        AttributesWithParent::new(
-            BasePayloadAttributes::default(),
-            parent,
-            Some(derived_from),
-            false,
-        )
+        AttributesWithParent::new(BasePayloadAttributes::default(), parent, Some(derived_from))
     }
 
     /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.

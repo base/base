@@ -93,10 +93,6 @@ impl AttributesProvider for TestAttributesProvider {
     async fn next_batch(&mut self, _parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
         self.batches.pop().ok_or(PipelineError::Eof.temp())?
     }
-
-    fn is_last_in_span(&self) -> bool {
-        self.batches.is_empty()
-    }
 }
 
 /// Creates a new [`TestAttributesProvider`] with the given origin and batches.

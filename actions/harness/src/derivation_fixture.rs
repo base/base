@@ -1,15 +1,12 @@
-//! Legacy channel fixtures for derivation tests.
+//! Channel fixtures for derivation rejection and compression tests.
 //!
-//! The production batcher emits Brotli-compressed Single batches only. These
-//! helpers construct legacy payloads so action tests retain historical
-//! derivation coverage without keeping legacy producers in the batcher.
-//! They bypass the batcher and transaction manager, submit calldata directly,
-//! and derive deterministic test channel IDs from the first transaction nonce.
+//! These helpers submit calldata directly so tests can exercise formats that
+//! the production Brotli singular batcher does not emit.
 
 use alloy_rlp::Encodable;
 use base_batcher_encoder::{BatchComposer, FrameEncoder, test_utils::ChannelFramer};
 use base_common_consensus::BaseBlock;
-use base_protocol::{BatchType, L1BlockInfoTx, SpanBatch};
+use base_protocol::SingleBatch;
 use miniz_oxide::deflate::compress_to_vec_zlib;
 
 use crate::{ActionTestHarness, BatcherConfig};
@@ -17,7 +14,19 @@ use crate::{ActionTestHarness, BatcherConfig};
 const LEGACY_ZLIB_LEVEL: u8 = 9;
 
 impl ActionTestHarness {
-    /// Encodes and submits one pre-Fjord Single batch through zlib calldata.
+    /// Submits a channel with the retired span discriminator for rejection tests.
+    pub fn submit_unsupported_span_calldata(
+        &mut self,
+        config: &BatcherConfig,
+        nonce: u64,
+    ) -> eyre::Result<()> {
+        let mut input = Vec::new();
+        [1u8].as_slice().encode(&mut input);
+        let channel = config.encoder.brotli_level.compress_channel(&input)?;
+        self.submit_channel_fixture_calldata(config, channel, nonce)
+    }
+
+    /// Encodes and submits one singular batch through zlib calldata.
     pub fn submit_single_batch_zlib_calldata(
         &mut self,
         config: &BatcherConfig,
@@ -27,60 +36,11 @@ impl ActionTestHarness {
         let batch = BatchComposer::block_to_single_batch(block)?;
         let mut channel_input = Vec::new();
         batch.rlp_header().encode(&mut channel_input);
-        channel_input.push(BatchType::Single as u8);
+        channel_input.push(SingleBatch::TYPE);
         batch.encode(&mut channel_input);
 
         let channel_data = compress_to_vec_zlib(&channel_input, LEGACY_ZLIB_LEVEL);
         self.submit_channel_fixture_calldata(config, channel_data, nonce)
-    }
-
-    /// Encodes and submits one Brotli-compressed Span fixture through calldata.
-    pub fn submit_span_batch_brotli_calldata(
-        &mut self,
-        config: &BatcherConfig,
-        blocks: &[BaseBlock],
-        first_nonce: u64,
-    ) -> eyre::Result<()> {
-        let channel_input = self.encode_span_batch_channel_input(blocks)?;
-        let channel_data = config.encoder.brotli_level.compress_channel(&channel_input)?;
-        self.submit_channel_fixture_calldata(config, channel_data, first_nonce)
-    }
-
-    /// Encodes and submits one legacy zlib-compressed Span fixture through calldata.
-    pub fn submit_span_batch_zlib_calldata(
-        &mut self,
-        config: &BatcherConfig,
-        blocks: &[BaseBlock],
-        first_nonce: u64,
-    ) -> eyre::Result<()> {
-        let channel_input = self.encode_span_batch_channel_input(blocks)?;
-        let channel_data = compress_to_vec_zlib(&channel_input, LEGACY_ZLIB_LEVEL);
-        self.submit_channel_fixture_calldata(config, channel_data, first_nonce)
-    }
-
-    /// Encodes blocks into the uncompressed channel input for one Span batch.
-    pub fn encode_span_batch_channel_input(&self, blocks: &[BaseBlock]) -> eyre::Result<Vec<u8>> {
-        let mut span = SpanBatch {
-            chain_id: self.rollup_config.l2_chain_id.id(),
-            genesis_timestamp: self.rollup_config.genesis.l2_time,
-            ..Default::default()
-        };
-        for block in blocks {
-            let single = BatchComposer::block_to_single_batch(block)?;
-            let Some(deposit) = block.body.transactions.first().and_then(|tx| tx.as_deposit())
-            else {
-                eyre::bail!("span fixture block has no L1 info deposit");
-            };
-            let l1_info = L1BlockInfoTx::decode_calldata(&deposit.input)?;
-            span.append_singular_batch(single, l1_info.sequence_number())?;
-        }
-
-        let mut encoded_span = vec![BatchType::Span as u8];
-        span.encode(&mut encoded_span)?;
-        let mut channel_input = Vec::new();
-        encoded_span.as_slice().encode(&mut channel_input);
-
-        Ok(channel_input)
     }
 
     /// Frames and submits compressed channel data through calldata, then mines one L1 block.

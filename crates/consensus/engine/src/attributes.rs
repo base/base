@@ -409,7 +409,6 @@ mod tests {
             },
             parent: L2BlockInfo::default(),
             derived_from: Some(BlockInfo::default()),
-            is_last_in_span: true,
         }
     }
 

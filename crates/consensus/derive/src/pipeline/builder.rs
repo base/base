@@ -8,9 +8,9 @@ use base_common_genesis::RollupConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
-    AttributesBuilder, AttributesQueue, BatchStream, BatchValidator, ChainProvider,
-    ChannelAssembler, ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue,
-    L1Retrieval, L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
+    AttributesBuilder, AttributesQueue, BatchValidator, ChainProvider, ChannelAssembler,
+    ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue, L1Retrieval,
+    L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
 };
 
 /// The `PipelineBuilder` constructs a [`DerivationPipeline`] using a builder pattern.
@@ -140,12 +140,10 @@ where
             .with_da_batcher_sender_override(builder.da_batcher_sender_override);
         let frame_queue = FrameQueue::new(l1_retrieval);
         let channel_provider = ChannelAssembler::new(Arc::clone(&rollup_config), frame_queue);
-        let channel_reader = ChannelReader::new(channel_provider, Arc::clone(&rollup_config));
-        let batch_stream =
-            BatchStream::new(channel_reader, Arc::clone(&rollup_config), l2_chain_provider.clone());
+        let channel_reader = ChannelReader::new(channel_provider);
         let batch_provider = BatchValidator::new(
             Arc::clone(&rollup_config),
-            batch_stream,
+            channel_reader,
             l2_chain_provider.clone(),
         );
         let attributes =

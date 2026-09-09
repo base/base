@@ -227,11 +227,6 @@ where
                 Metrics::pipeline_payload_attributes_buffer().increment(1.0);
                 Metrics::pipeline_latest_payload_tx_count()
                     .set(a.attributes.transactions.as_ref().map_or(0.0, |txs| txs.len() as f64));
-                if !a.is_last_in_span {
-                    Metrics::pipeline_derived_span_size().increment(1.0);
-                } else {
-                    Metrics::pipeline_derived_span_size().set(0);
-                }
                 self.prepared.push_back(a);
                 Metrics::pipeline_prepared_attributes().increment(1.0);
                 StepResult::PreparedAttributes
@@ -294,7 +289,6 @@ mod tests {
             },
             parent: Default::default(),
             derived_from: Default::default(),
-            is_last_in_span: false,
         }
     }
 

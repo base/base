@@ -175,11 +175,10 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 // ---------------------------------------------------------------------------
 
 /// Frames from two different channels are submitted to L1 in interleaved
-/// order (A0, B0, A1, B1). The derivation pipeline's channel bank must
-/// correctly track both channels simultaneously and reassemble them
-/// independently.
+/// order (A0, B0, A1, B1). The channel assembler discards the incomplete
+/// channel when a new one opens. Resubmitting in order recovers both blocks.
 #[tokio::test]
-async fn interleaved_channels_correctly_reassembled() {
+async fn interleaved_channels_are_discarded_and_recover() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig {
             da_type: DaType::Calldata,
@@ -198,13 +197,13 @@ async fn interleaved_channels_correctly_reassembled() {
 
     // Batcher A: block 1 in its own channel (distinct random channel ID).
     let mut source_a = ActionL2Source::new();
-    source_a.push(block_a);
+    source_a.push(block_a.clone());
     let mut batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
     batcher_a.encode_only().await;
 
     // Batcher B: block 2 in its own channel (distinct random channel ID).
     let mut source_b = ActionL2Source::new();
-    source_b.push(block_b);
+    source_b.push(block_b.clone());
     let mut batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
     batcher_b.encode_only().await;
 
@@ -228,7 +227,7 @@ async fn interleaved_channels_correctly_reassembled() {
     batcher_a.confirm_staged(h.l1.tip()).await;
     batcher_b.confirm_staged(h.l1.tip()).await;
 
-    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -236,8 +235,15 @@ async fn interleaved_channels_correctly_reassembled() {
 
     let derived = node.run_until_idle().await;
 
-    assert_eq!(derived, 2, "expected 2 L2 blocks derived from interleaved channels");
-    assert_eq!(node.l2_safe_number(), 2);
+    assert_eq!(derived, 0, "interleaved channels must be discarded");
+    assert_eq!(node.l2_safe_number(), 0);
+    let mut recovery = ActionL2Source::new();
+    recovery.push(block_a);
+    recovery.push(block_b);
+    Batcher::new(recovery, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+    assert_eq!(node.run_until_idle().await, 2);
+    assert_eq!(node.l2_safe_number(), 2, "a sequential channel recovers both blocks");
 }
 
 // ---------------------------------------------------------------------------

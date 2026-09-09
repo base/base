@@ -61,7 +61,7 @@ fn conductor_rpc_error() -> ConductorError {
 }
 
 fn dummy_attributes_with_parent() -> AttributesWithParent {
-    AttributesWithParent::new(BasePayloadAttributes::default(), L2BlockInfo::default(), None, false)
+    AttributesWithParent::new(BasePayloadAttributes::default(), L2BlockInfo::default(), None)
 }
 
 fn handle_with_parent_number(number: u64) -> UnsealedPayloadHandle {
@@ -79,7 +79,6 @@ fn handle_with_parent(number: u64, hash: B256) -> UnsealedPayloadHandle {
             BasePayloadAttributes::default(),
             parent,
             None,
-            false,
         ),
     }
 }

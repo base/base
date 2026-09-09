@@ -20,8 +20,8 @@ use base_consensus_derive::{
 };
 use base_protocol::{BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
-mod holocene_span_batches;
 mod node;
+mod singular_batches;
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.
@@ -1363,75 +1363,6 @@ async fn multi_frame_channel_reassembled() {
 
 // ── Span-batch derivation variants ────────────────────────────────────────────
 
-/// Derive a single L2 block encoded as a [`SpanBatch`] from one L1 inclusion
-/// block.
-///
-/// Mirrors [`single_l2_block_derived_from_batcher_frame`] but uses
-/// a protocol-level Span fixture. The derivation pipeline must correctly parse
-/// the span-encoded channel and advance the safe head.
-#[tokio::test]
-async fn single_l2_block_derived_from_span_batch() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction().await;
-    h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block], 0)
-        .expect("span fixture submission");
-
-    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-    node.initialize().await;
-
-    let derived = node.run_until_idle().await;
-
-    assert_eq!(derived, 1, "expected one L2 block from span batch");
-    assert_eq!(node.l2_safe_number(), 1);
-}
-
-/// Derive 3 L2 blocks encoded together as a single [`SpanBatch`].
-///
-/// All 3 blocks are grouped into one span-batch channel submitted in a single
-/// L1 block. The derivation pipeline must decode the span and advance the
-/// safe head by 3.
-#[tokio::test]
-async fn three_l2_blocks_derived_from_span_batch() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(l1_chain);
-
-    let mut blocks = Vec::new();
-    for _ in 1..=3u64 {
-        let block = sequencer.build_next_block_with_single_transaction().await;
-        blocks.push(block);
-    }
-    h.submit_span_batch_brotli_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
-
-    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-    node.initialize().await;
-
-    let derived = node.run_until_idle().await;
-
-    assert_eq!(derived, 3, "expected 3 L2 blocks from span batch");
-    assert_eq!(node.l2_safe_number(), 3);
-}
-
 // ── System-config update tests ─────────────────────────────────────────────────
 
 /// A `GasConfig` system-config update committed to L1 does not disrupt ongoing
@@ -2114,20 +2045,10 @@ async fn batcher_config_update_rolled_back_on_reorg() {
 
 /// Submit the batch for L2 block 2 to L1 before the batch for L2 block 1.
 ///
-/// The [`BatchQueue`] (pre-Holocene) buffers future batches rather than
-/// dropping them. When the missing predecessor batch (block 1) arrives on the
-/// next L1 block, the queue derives block 1 first, then pops the buffered
-/// block 2 — restoring correct L2 ordering even though the L1 submission order
-/// was reversed.
-///
-/// [`act_l2_pipeline_until`] is used to stop after each
-/// [`StepResult::PreparedAttributes`] so the test can assert the exact block
-/// number at each derivation step rather than racing to the final safe head.
-///
-/// [`BatchQueue`]: base_consensus_derive::BatchQueue
-/// [`act_l2_pipeline_until`]: TestRollupNode::act_l2_pipeline_until
+/// Future batches are dropped. Once block 1 arrives, block 2 must be resubmitted
+/// before it can become safe.
 #[tokio::test]
-async fn out_of_order_singular_batches_reordered_by_batch_queue() {
+async fn future_singular_batch_requires_resubmission() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -2150,7 +2071,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     // L1 block 1: carry the batch for L2 block 2 (submitted out of order).
     {
         let mut source = ActionL2Source::new();
-        source.push(block2);
+        source.push(block2.clone());
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: future batch
@@ -2165,9 +2086,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
 
     node.initialize().await;
 
-    // Signal L1 block 1 and step until idle.  The BatchQueue sees a future
-    // batch (block 2, timestamp 4 > expected 2) and buffers it.  No attributes
-    // are produced; the pipeline returns Eof.
+    // The future batch is discarded without producing attributes.
     let (_, hit) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
@@ -2182,10 +2101,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     // Now make block 2 visible to the pipeline.
     chain.push(h.l1.tip().clone()); // L1 block 2: present batch
 
-    // Signal L1 block 2.  The BatchQueue now receives the expected-next batch
-    // (block 1) and derives it before popping the buffered block 2.
-
-    // First PreparedAttributes: must be L2 block 1 (earliest timestamp).
+    // The expected batch derives normally when it arrives.
     let (_, hit1) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
@@ -2194,17 +2110,17 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     assert_eq!(
         node.l2_safe_number(),
         1,
-        "BatchQueue must reorder: block 1 derived before the buffered block 2"
+        "the expected block derives after the future block was discarded"
     );
 
-    // Second PreparedAttributes: the buffered block 2 batch is now the
-    // expected-next (timestamp 4 == safe head timestamp 2 + block_time 2).
-    let (_, hit2) = node
-        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
-        .await
-        .expect("step for block 2 attributes");
-    assert!(hit2, "pipeline must derive buffered block 2 after block 1 is safe");
-    assert_eq!(node.l2_safe_number(), 2, "safe head must reach block 2");
+    assert_eq!(node.run_until_idle().await, 0, "the future batch must not be buffered");
+    assert_eq!(node.l2_safe_number(), 1);
+    let mut source = ActionL2Source::new();
+    source.push(block2);
+    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+    assert_eq!(node.run_until_idle().await, 1);
+    assert_eq!(node.l2_safe_number(), 2, "resubmission recovers the dropped block");
 }
 
 /// [`act_l2_pipeline_until`] returns `(steps, false)` when the pipeline is
@@ -2345,149 +2261,6 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
 }
 
 // ── Span batch: multi-epoch crossing ──────────────────────────────────────────
-
-/// A single span batch encoding L2 blocks that span two L1 epochs is correctly
-/// derived by the pipeline.
-///
-/// With `block_time=2` and L1 `block_time=12`, L2 blocks 1–5 (ts=2..10)
-/// reference epoch 0 (L1 genesis) and L2 block 6 (ts=12) references epoch 1
-/// (L1 block 1). All 6 blocks are encoded together in one span batch and
-/// submitted in L1 block 2.
-///
-/// The `SpanBatch::get_single_batch` implementation encodes the epoch
-/// transition internally; this test exercises that path and verifies that
-/// the `BatchQueue` correctly emits all 6 blocks in order.
-///
-/// Mirrors [`multi_epoch_sequence`] which uses singular batches for the same
-/// block set.
-#[tokio::test]
-async fn span_batch_crossing_l1_epoch_boundary() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    // Mine L1 block 1 at ts=12 so the sequencer can advance to epoch 1 when
-    // building L2 block 6 (ts=12).
-    h.mine_l1_blocks(1);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_sequencer(l1_chain);
-
-    // Blocks 1–5 (ts=2..10) reference epoch 0; block 6 (ts=12) references epoch 1.
-    let mut blocks = Vec::new();
-    for _ in 1..=6u64 {
-        blocks.push(builder.build_next_block_with_single_transaction().await);
-    }
-    assert_eq!(builder.head().l1_origin.number, 1, "block 6 must reference epoch 1");
-
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut builder,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // Encode all 6 blocks as a single span batch and submit in L1 block 2.
-    h.submit_span_batch_brotli_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
-    chain.push(h.l1.tip().clone()); // L1 block 2: span batch for all 6 L2 blocks
-
-    node.initialize().await;
-
-    // L1 block 1 (epoch-providing) and L1 block 2 (span batch) are both
-    // available; the pipeline processes them in one run, emitting all 6 blocks.
-    let derived = node.run_until_idle().await;
-
-    assert_eq!(
-        derived, 6,
-        "all 6 L2 blocks must be derived from a single span batch crossing the epoch boundary"
-    );
-    assert_eq!(
-        node.l2_safe_number(),
-        6,
-        "safe head must reach block 6 after span batch crosses epoch 0 → 1"
-    );
-}
-
-/// The [`BatchQueue`] reorders span batches submitted in reverse L1 order.
-///
-/// This is the span-batch variant of
-/// [`out_of_order_singular_batches_reordered_by_batch_queue`]. The span batch
-/// for L2 block 2 is submitted in L1 block 1 (a "future" batch); the span
-/// batch for L2 block 1 arrives in L1 block 2 (the expected-next batch).
-///
-/// The `BatchQueue` must:
-/// 1. Buffer the future span batch on L1 block 1 (no blocks derived).
-/// 2. Derive L2 block 1 from the expected-next span batch on L1 block 2.
-/// 3. Pop the buffered span batch and derive L2 block 2 in the same run.
-///
-/// [`BatchQueue`]: base_consensus_derive::BatchQueue
-#[tokio::test]
-async fn out_of_order_span_batches_reordered_by_batch_queue() {
-    let span_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&span_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_sequencer(l1_chain);
-
-    let block1 = builder.build_next_block_with_single_transaction().await;
-    let block2 = builder.build_next_block_with_single_transaction().await;
-
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut builder,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // L1 block 1: span batch for L2 block 2 (future batch, submitted out of order).
-    h.submit_span_batch_brotli_calldata(&span_cfg, &[block2], 0)
-        .expect("future span fixture submission");
-    chain.push(h.l1.tip().clone()); // L1 block 1: future span batch
-
-    // L1 block 2: span batch for L2 block 1 (the expected-next batch).
-    h.submit_span_batch_brotli_calldata(&span_cfg, &[block1], 100)
-        .expect("expected span fixture submission");
-    // Do NOT push block 2 yet — let the pipeline see only block 1 first.
-
-    node.initialize().await;
-
-    // Signal L1 block 1: span batch for block 2 is a future batch (ts=4 >
-    // expected ts=2). The BatchQueue buffers it; no attributes produced.
-    let (_, hit) = node
-        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
-        .await
-        .expect("step block 1");
-    assert!(!hit, "future span batch must be buffered; no blocks derived from L1 block 1");
-    assert_eq!(node.l2_safe_number(), 0, "safe head must remain at genesis");
-
-    // Now make block 2 visible to the pipeline.
-    chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
-
-    // Signal L1 block 2: expected-next span batch (block 1) arrives.
-
-    // First PreparedAttributes: L2 block 1 (earliest timestamp) must derive first.
-    let (_, hit1) = node
-        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
-        .await
-        .expect("step for block 1 attributes");
-    assert!(hit1, "pipeline must derive block 1 when its span batch arrives");
-    assert_eq!(
-        node.l2_safe_number(),
-        1,
-        "BatchQueue must reorder: block 1 derived before the buffered span batch for block 2"
-    );
-
-    // Second PreparedAttributes: buffered block-2 span batch now matches expected-next.
-    let (_, hit2) = node
-        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
-        .await
-        .expect("step for block 2 attributes");
-    assert!(hit2, "buffered span batch for block 2 must derive after block 1 is safe");
-    assert_eq!(node.l2_safe_number(), 2, "safe head must reach block 2");
-}
 
 // ── Large L1 gaps ──────────────────────────────────────────────────────────────
 

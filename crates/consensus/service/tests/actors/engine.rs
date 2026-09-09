@@ -78,12 +78,8 @@ async fn full_public_rpc_queue_does_not_block_engine_processing_requests() {
     assert_eq!(error.code(), ErrorCode::ServerIsBusy.code());
 
     let (payload_id_tx, mut payload_id_rx) = mpsc::channel(1);
-    let attributes = AttributesWithParent::new(
-        BasePayloadAttributes::default(),
-        L2BlockInfo::default(),
-        None,
-        true,
-    );
+    let attributes =
+        AttributesWithParent::new(BasePayloadAttributes::default(), L2BlockInfo::default(), None);
     engine_actor_request_tx
         .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
             attributes,

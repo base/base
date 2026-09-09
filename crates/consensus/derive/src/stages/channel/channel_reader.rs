@@ -1,17 +1,17 @@
 //! This module contains the `ChannelReader` struct.
 
-use alloc::{boxed::Box, string::ToString, sync::Arc};
+use alloc::boxed::Box;
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{Batch, BatchReader, BlockInfo};
+use base_protocol::{BatchReader, BlockInfo, SingleBatch};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchStreamProvider, Metrics, OriginAdvancer, OriginProvider, PipelineError, PipelineResult,
+    Metrics, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult,
     StageReset,
 };
 
@@ -25,14 +25,14 @@ pub trait ChannelReaderProvider {
     async fn next_data(&mut self) -> PipelineResult<Option<Bytes>>;
 }
 
-/// [`ChannelReader`] is a stateful stage that reads [`Batch`]es from `Channel`s.
+/// [`ChannelReader`] is a stateful stage that reads [`SingleBatch`]es from `Channel`s.
 ///
 /// The [`ChannelReader`] pulls `Channel`s from the channel bank as raw data
 /// and pipes it into a `BatchReader`. Since the raw data is compressed,
 /// the `BatchReader` first decompresses the data using the first bytes as
 /// a compression algorithm identifier.
 ///
-/// Once the data is decompressed, it is decoded into a `Batch` and passed
+/// Once the data is decompressed, it is decoded into a `SingleBatch` and passed
 /// to the next stage in the pipeline.
 #[derive(Debug)]
 pub struct ChannelReader<P>
@@ -43,8 +43,6 @@ where
     pub prev: P,
     /// The batch reader.
     pub next_batch: Option<BatchReader>,
-    /// The rollup configuration.
-    pub cfg: Arc<RollupConfig>,
 }
 
 impl<P> ChannelReader<P>
@@ -52,8 +50,8 @@ where
     P: ChannelReaderProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// Create a new [`ChannelReader`] stage.
-    pub const fn new(prev: P, cfg: Arc<RollupConfig>) -> Self {
-        Self { prev, next_batch: None, cfg }
+    pub const fn new(prev: P) -> Self {
+        Self { prev, next_batch: None }
     }
 
     /// Creates the batch reader from available channel data.
@@ -66,7 +64,6 @@ where
             self.next_batch = Some(BatchReader::new(
                 &channel[..],
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
-                true,
             ));
             Metrics::pipeline_batch_reader_set().set(1);
         }
@@ -92,22 +89,17 @@ where
 }
 
 #[async_trait]
-impl<P> BatchStreamProvider for ChannelReader<P>
+impl<P> NextBatchProvider for ChannelReader<P>
 where
     P: ChannelReaderProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    /// This method is called by the `BatchStream` if an invalid span batch is found.
-    /// In the case of an invalid span batch, the associated channel must be flushed.
-    ///
-    /// See: <https://specs.base.org/upgrades/holocene/derivation#span-batches>
-    ///
-    /// SAFETY: Only called post-holocene activation.
+    /// Discards the current channel after an invalid batch.
     fn flush(&mut self) {
-        debug!(target: "channel_reader", "[POST-HOLOCENE] Flushing channel");
+        debug!(target: "channel_reader", "Flushing channel");
         self.next_channel();
     }
 
-    async fn next_batch(&mut self) -> PipelineResult<Batch> {
+    async fn next_batch(&mut self) -> PipelineResult<SingleBatch> {
         if let Err(e) = self.set_batch_reader().await {
             debug!(target: "channel_reader", error = ?e, "Failed to set batch reader");
             self.next_channel();
@@ -115,7 +107,7 @@ where
         }
 
         // SAFETY: The batch reader must be set above.
-        let next_batch = self.next_batch.as_mut().expect("Batch reader must be set");
+        let next_batch = self.next_batch.as_mut().expect("SingleBatch reader must be set");
         let decompress_result =
             base_metrics::time!(Metrics::pipeline_batch_decompress_duration_seconds(), {
                 next_batch.decompress()
@@ -142,11 +134,11 @@ where
         // Read the next batch from the reader's decompressed data
         let batch_result =
             base_metrics::time!(Metrics::pipeline_batch_decode_duration_seconds(), {
-                next_batch.next_batch(self.cfg.as_ref())
+                next_batch.next_batch()
             });
         match batch_result.ok_or(PipelineError::NotEnoughData.temp()) {
             Ok(batch) => {
-                Metrics::pipeline_read_batches(batch.to_string()).increment(1.0);
+                Metrics::pipeline_read_batches().increment(1.0);
                 Ok(batch)
             }
             Err(e) => {
@@ -198,10 +190,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::{vec, vec::Vec};
 
     use alloy_eips::BlockNumHash;
-    use base_common_genesis::{SystemConfig, UpgradeConfig};
+    use alloy_rlp::Encodable;
+    use base_common_genesis::SystemConfig;
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChannelReaderProvider};
@@ -217,11 +210,10 @@ mod tests {
     #[tokio::test]
     async fn test_flush_channel_reader() {
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(new_compressed_batch_data()))]);
-        let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
+        let mut reader = ChannelReader::new(mock);
         reader.next_batch = Some(BatchReader::new(
             new_compressed_batch_data(),
             RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
-            true,
         ));
         reader.flush_channel().await.unwrap();
         assert!(reader.next_batch.is_none());
@@ -230,11 +222,10 @@ mod tests {
     #[tokio::test]
     async fn test_reset_channel_reader() {
         let mock = TestChannelReaderProvider::new(vec![Ok(None)]);
-        let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
+        let mut reader = ChannelReader::new(mock);
         reader.next_batch = Some(BatchReader::new(
             vec![0x00, 0x01, 0x02],
             RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
-            true,
         ));
         assert!(!reader.prev.reset);
         reader.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
@@ -245,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_batch_batch_reader_set_fails() {
         let mock = TestChannelReaderProvider::new(vec![Err(PipelineError::Eof.temp())]);
-        let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
+        let mut reader = ChannelReader::new(mock);
         assert_eq!(reader.next_batch().await, Err(PipelineError::Eof.temp()));
         assert!(reader.next_batch.is_none());
     }
@@ -253,7 +244,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_batch_batch_reader_no_data() {
         let mock = TestChannelReaderProvider::new(vec![Ok(None)]);
-        let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
+        let mut reader = ChannelReader::new(mock);
         assert!(matches!(
             reader.next_batch().await.unwrap_err(),
             PipelineErrorKind::Temporary(PipelineError::ChannelReaderEmpty)
@@ -266,7 +257,7 @@ mod tests {
         let mut first = new_compressed_batch_data();
         let second = first.split_to(first.len() / 2);
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(first)), Ok(Some(second))]);
-        let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
+        let mut reader = ChannelReader::new(mock);
         assert_eq!(reader.next_batch().await, Err(PipelineError::NotEnoughData.temp()));
         assert!(reader.next_batch.is_none());
     }
@@ -275,25 +266,42 @@ mod tests {
     async fn test_next_batch_succeeds() {
         let raw = new_compressed_batch_data();
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(raw))]);
-        let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
+        let mut reader = ChannelReader::new(mock);
         let res = reader.next_batch().await.unwrap();
-        matches!(res, Batch::Span(_));
+        assert!(!res.transactions.is_empty());
         assert!(reader.next_batch.is_some());
     }
 
     #[tokio::test]
     async fn test_flush_post_holocene() {
         let raw = new_compressed_batch_data();
-        let config = Arc::new(RollupConfig {
-            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
-            ..Default::default()
-        });
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(raw))]);
-        let mut reader = ChannelReader::new(mock, config);
+        let mut reader = ChannelReader::new(mock);
         let res = reader.next_batch().await.unwrap();
-        matches!(res, Batch::Span(_));
+        assert!(!res.transactions.is_empty());
         assert!(reader.next_batch.is_some());
         reader.flush();
         assert!(reader.next_batch.is_none());
+    }
+
+    #[tokio::test]
+    async fn unsupported_span_flushes_channel_and_next_singular_channel_recovers() {
+        let mut channel = Vec::new();
+        [1u8].as_slice().encode(&mut channel);
+        let ignored = SingleBatch { timestamp: 999, ..Default::default() };
+        let mut encoded = Vec::new();
+        ignored.encode_batch(&mut encoded);
+        encoded.as_slice().encode(&mut channel);
+
+        let expected_channel = new_compressed_batch_data();
+        let expected = BatchReader::new(expected_channel.clone(), 10_000_000).next_batch().unwrap();
+        let provider = TestChannelReaderProvider::new(vec![Ok(Some(expected_channel))]);
+        let mut reader = ChannelReader::new(provider);
+        let mut buffered = BatchReader::new(Vec::new(), 10_000_000);
+        buffered.decompressed = channel;
+        reader.next_batch = Some(buffered);
+        assert_eq!(reader.next_batch().await, Err(PipelineError::NotEnoughData.temp()));
+        assert!(reader.next_batch.is_none(), "the entire unsupported channel must be discarded");
+        assert_eq!(reader.next_batch().await.unwrap(), expected);
     }
 }

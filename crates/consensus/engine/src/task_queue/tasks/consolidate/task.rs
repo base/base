@@ -54,15 +54,6 @@ impl ConsolidateInput {
             Self::BlockInfo(info) => block.hash() == info.block_info.hash,
         }
     }
-
-    /// Returns true if this is `Attributes` and `attributes.is_last_in_span` is true.
-    const fn is_attributes_last_in_span(&self) -> bool {
-        matches!(
-            self,
-            Self::Attributes(attributes)
-                if attributes.is_last_in_span
-        )
-    }
 }
 
 /// The [`ConsolidateTask`] attempts to consolidate the engine state
@@ -282,30 +273,6 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 "Consolidating engine state",
             );
             match L2BlockInfo::from_block_and_genesis(&block.into_block(), &self.cfg.genesis) {
-                // Only issue a forkchoice update if the attributes are the last in the span
-                // batch. This is an optimization to avoid sending a FCU
-                // call for every block in the span batch.
-                Ok(block_info) if !self.input.is_attributes_last_in_span() => {
-                    let total_duration = global_start.elapsed();
-
-                    // Apply a transient update to the safe head.
-                    state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
-                        local_safe_head: Some(block_info),
-                        safe_head: Some(block_info),
-                        ..Default::default()
-                    });
-
-                    info!(
-                        target: "engine",
-                        hash = %block_info.block_info.hash,
-                        number = block_info.block_info.number,
-                        ?total_duration,
-                        ?block_fetch_duration,
-                        "Updated safe head via L1 consolidation"
-                    );
-
-                    return Ok(());
-                }
                 Ok(block_info) => {
                     let fcu_start = Instant::now();
 

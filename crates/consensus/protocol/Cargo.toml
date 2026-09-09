@@ -13,20 +13,19 @@ workspace = true
 
 [dependencies]
 brotli = { workspace = true }
-tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 ambassador = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
-unsigned-varint = { workspace = true }
 alloc-no-stdlib = { workspace = true }
 base-common-genesis = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 base-common-consensus = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 serde = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 base-common-rpc-types-engine = { workspace = true }
 derive_more = { workspace = true, features = ["display"] }
 miniz_oxide = { workspace = true, features = ["default"] }
@@ -35,6 +34,7 @@ spin = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"], optional = true }
 [dev-dependencies]
+tracing = { workspace = true }
 serde_json = { workspace = true }
 brotli = { workspace = true, features = ["std"] }
 spin = { workspace = true, features = ["default"] }
@@ -70,6 +70,7 @@ default = [ "std" ]
 test-utils = [
 	"base-common-genesis/test-utils",
 	"dep:spin",
+    "dep:tracing",
 	"dep:tracing-subscriber",
 ]
 std = [
@@ -89,8 +90,7 @@ std = [
     "serde?/std",
     "spin?/std",
     "thiserror/std",
-    "tracing/std",
-    "unsigned-varint/std",
+    "tracing?/std",
 ]
 serde = [
     "base-common-consensus/serde",

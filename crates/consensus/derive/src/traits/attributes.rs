@@ -18,9 +18,6 @@ use crate::PipelineResult;
 pub trait AttributesProvider {
     /// Returns the next valid batch upon the given safe head.
     async fn next_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch>;
-
-    /// Returns whether the current batch is the last in its span.
-    fn is_last_in_span(&self) -> bool;
 }
 
 /// [`NextAttributes`] defines the interface for pulling attributes from

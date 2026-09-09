@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{Batch, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
+use base_protocol::{BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
 use crate::{
@@ -16,10 +16,8 @@ use crate::{
     types::PipelineResult,
 };
 
-/// The [`BatchValidator`] stage is responsible for validating the [`SingleBatch`]es from
-/// the [`BatchStream`] [`AttributesQueue`]'s consumption.
+/// Validates singular batches from the channel reader for the attributes queue.
 ///
-/// [`BatchStream`]: crate::stages::BatchStream
 /// [`AttributesQueue`]: crate::stages::attributes_queue::AttributesQueue
 #[derive(Debug)]
 pub struct BatchValidator<P, F>
@@ -106,10 +104,7 @@ where
         }
 
         // If the epoch is advanced, update the l1 blocks.
-        // Advancing epoch must be done after the pipeline successfully applies the entire span
-        // batch to the chain.
-        // Because the span batch can be reverted during processing the batch, then we must
-        // preserve existing l1 blocks to verify the epochs of the next candidate batch.
+        // Advance the epoch only after its batch has been applied to the safe head.
         if !self.l1_blocks.is_empty() && parent.l1_origin.number > self.l1_blocks[0].number {
             for (i, block) in self.l1_blocks.iter().enumerate() {
                 if parent.l1_origin.number == block.number {
@@ -202,7 +197,7 @@ where
         // If the origin is behind, we must drain previous stages to catch up.
         let stage_origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
         if self.origin_behind(&parent) || parent.l1_origin.number == stage_origin.number {
-            self.prev.next_batch(parent, self.l1_blocks.as_ref()).await?;
+            self.prev.next_batch().await?;
             return Err(PipelineError::NotEnoughData.temp());
         }
 
@@ -228,17 +223,12 @@ where
         let (next_batch, inclusion_block) = match self.pending_batch.take() {
             Some(pending_batch) => pending_batch,
             None => {
-                let next_batch = match self.prev.next_batch(parent, self.l1_blocks.as_ref()).await {
+                let next_batch = match self.prev.next_batch().await {
                     Ok(batch) => batch,
                     Err(PipelineErrorKind::Temporary(PipelineError::Eof)) => {
                         return self.try_derive_empty_batch(&parent);
                     }
                     Err(e) => return Err(e),
-                };
-
-                let Batch::Single(next_batch) = next_batch else {
-                    error!(target: "batch_validator", "BatchValidator received a batch that is not a SingleBatch");
-                    return Err(PipelineError::InvalidBatchType.crit());
                 };
                 (next_batch, stage_origin)
             }
@@ -297,15 +287,7 @@ where
                 Err(PipelineError::NotEnoughData.temp())
             }
             BatchValidity::Undecided => Err(PipelineError::NotEnoughData.temp()),
-            BatchValidity::Future => {
-                error!(target: "batch_validator", "Future batch detected in BatchValidator.");
-                Err(PipelineError::InvalidBatchValidity.crit())
-            }
         }
-    }
-
-    fn is_last_in_span(&self) -> bool {
-        self.prev.span_buffer_size() == 0
     }
 }
 
@@ -371,12 +353,12 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
     use base_common_genesis::{BaseUpgradeConfig, RollupConfig, SystemConfig, UpgradeConfig};
-    use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
+    use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
     use tracing::Level;
 
     use crate::{
-        AttributesProvider, BatchValidator, NextBatchProvider, OriginAdvancer, PipelineError,
-        PipelineErrorKind, PipelineResult, ResetError, StageReset,
+        AttributesProvider, BatchValidator, OriginAdvancer, PipelineError, PipelineErrorKind,
+        PipelineResult, ResetError, StageReset,
         test_utils::{TestL2ChainProvider, TestNextBatchProvider},
     };
 
@@ -463,9 +445,8 @@ mod tests {
     #[tokio::test]
     async fn test_batch_validator_origin_behind_drain_prev() {
         let cfg = Arc::new(RollupConfig::default());
-        let mut mock = TestNextBatchProvider::new(
-            (0..5).map(|_| Ok(Batch::Single(SingleBatch::default()))).collect(),
-        );
+        let mut mock =
+            TestNextBatchProvider::new((0..5).map(|_| Ok(SingleBatch::default())).collect());
         mock.origin = Some(BlockInfo::default());
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
         bv.origin = Some(BlockInfo::default());
@@ -474,13 +455,13 @@ mod tests {
             l1_origin: BlockNumHash { number: 5, ..Default::default() },
             ..Default::default()
         };
-        assert_eq!(bv.prev.span_buffer_size(), 5);
+        assert_eq!(bv.prev.batches.len(), 5);
         for i in 0..5 {
             assert_eq!(
                 bv.next_batch(mock_parent).await.unwrap_err(),
                 PipelineError::NotEnoughData.temp()
             );
-            assert_eq!(bv.prev.span_buffer_size(), 4 - i);
+            assert_eq!(bv.prev.batches.len(), 4 - i);
         }
         assert_eq!(bv.next_batch(mock_parent).await.unwrap_err(), PipelineError::Eof.temp());
     }
@@ -488,7 +469,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_validator_l1_origin_mismatch() {
         let cfg = Arc::new(RollupConfig::default());
-        let mut mock = TestNextBatchProvider::new(vec![Ok(Batch::Single(SingleBatch::default()))]);
+        let mut mock = TestNextBatchProvider::new(vec![Ok(SingleBatch::default())]);
         mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
         bv.origin = Some(BlockInfo::default());
@@ -503,27 +484,6 @@ mod tests {
             bv.next_batch(mock_parent).await.unwrap_err(),
             PipelineErrorKind::Reset(ResetError::L1OriginMismatch(_, _))
         ));
-    }
-
-    #[tokio::test]
-    async fn test_batch_validator_received_span_batch() {
-        let cfg = Arc::new(RollupConfig::default());
-        let mut mock = TestNextBatchProvider::new(vec![Ok(Batch::Span(SpanBatch::default()))]);
-        mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
-        let mut bv = BatchValidator::new(cfg, mock, TestL2ChainProvider::default());
-        bv.origin = Some(BlockInfo::default());
-        bv.l1_blocks.push(BlockInfo::default());
-
-        let mock_parent = L2BlockInfo {
-            l1_origin: BlockNumHash { number: 0, ..Default::default() },
-            ..Default::default()
-        };
-
-        assert_eq!(
-            bv.next_batch(mock_parent).await.unwrap_err(),
-            PipelineError::InvalidBatchType.crit()
-        );
-        assert_eq!(bv.next_batch(mock_parent).await.unwrap_err(), PipelineError::Eof.temp());
     }
 
     #[tokio::test]
@@ -554,7 +514,7 @@ mod tests {
         };
 
         // Setup batch validator deps
-        let batch_vec = vec![PipelineResult::Ok(Batch::Single(batch.clone()))];
+        let batch_vec = vec![PipelineResult::Ok(batch.clone())];
         let mut mock = TestNextBatchProvider::new(batch_vec);
         mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
 
@@ -664,10 +624,7 @@ mod tests {
             ..Default::default()
         };
         let past_batch = SingleBatch { timestamp: 600, ..next_batch.clone() };
-        let mut prev = TestNextBatchProvider::new(vec![
-            Ok(Batch::Single(next_batch)),
-            Ok(Batch::Single(past_batch)),
-        ]);
+        let mut prev = TestNextBatchProvider::new(vec![Ok(next_batch), Ok(past_batch)]);
         prev.origin = Some(inclusion_block);
         let cfg = Arc::new(RollupConfig {
             block_time: 1,
@@ -706,7 +663,7 @@ mod tests {
             epoch_hash: origin.hash,
             ..Default::default()
         };
-        let mut prev = TestNextBatchProvider::new(vec![Ok(Batch::Single(batch.clone()))]);
+        let mut prev = TestNextBatchProvider::new(vec![Ok(batch.clone())]);
         prev.origin = Some(origin);
         let cfg = Arc::new(RollupConfig {
             block_time: 2,

@@ -259,7 +259,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             &attributes,
         ));
 
-        let attrs_with_parent = AttributesWithParent::new(attributes, unsafe_head, None, false);
+        let attrs_with_parent = AttributesWithParent::new(attributes, unsafe_head, None);
         Ok(Some(attrs_with_parent))
     }
 }

@@ -7,7 +7,7 @@ use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;
 use base_comp::CompressionStream;
 use base_protocol::{
-    BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, BatchType, ChannelId, Frame, SingleBatch,
+    BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame, SingleBatch,
 };
 
 use crate::{BatcherMetrics, CompressionError, EncoderConfig, EncoderConfigError};
@@ -291,7 +291,7 @@ impl Channel {
         // Wire form of one Single batch: RLP string header, type byte, payload.
         self.candidate_scratch.clear();
         batch.rlp_header().encode(&mut self.candidate_scratch);
-        self.candidate_scratch.push(BatchType::Single as u8);
+        self.candidate_scratch.push(SingleBatch::TYPE);
         batch.encode(&mut self.candidate_scratch);
 
         // Reject on the cumulative RLP limit first. Every projection below then

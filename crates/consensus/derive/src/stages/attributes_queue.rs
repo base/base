@@ -42,8 +42,6 @@ where
     pub cfg: Arc<RollupConfig>,
     /// The previous stage of the derivation pipeline.
     pub prev: P,
-    /// Whether the current batch is the last in its span.
-    pub is_last_in_span: bool,
     /// The current batch being processed.
     pub batch: Option<SingleBatch>,
     /// The attributes builder.
@@ -57,7 +55,7 @@ where
 {
     /// Create a new [`AttributesQueue`] stage.
     pub const fn new(cfg: Arc<RollupConfig>, prev: P, builder: AB) -> Self {
-        Self { cfg, prev, is_last_in_span: false, batch: None, builder }
+        Self { cfg, prev, batch: None, builder }
     }
 
     /// Loads a [`SingleBatch`] from the [`AttributesProvider`] if needed.
@@ -65,7 +63,6 @@ where
         if self.batch.is_none() {
             let batch = self.prev.next_batch(parent).await?;
             self.batch = Some(batch);
-            self.is_last_in_span = self.prev.is_last_in_span();
         }
         self.batch.as_ref().cloned().ok_or(PipelineError::Eof.temp())
     }
@@ -91,13 +88,11 @@ where
             }
         };
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        let populated_attributes =
-            AttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
+        let populated_attributes = AttributesWithParent::new(attributes, parent, Some(origin));
         timer.stop();
 
         // Clear out the local state once payload attributes are prepared.
         self.batch = None;
-        self.is_last_in_span = false;
         Ok(populated_attributes)
     }
 
@@ -185,14 +180,12 @@ where
     ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.batch = None;
-        self.is_last_in_span = false;
         Ok(())
     }
 
     async fn activate(&mut self) -> PipelineResult<()> {
         self.prev.activate().await?;
         self.batch = None;
-        self.is_last_in_span = false;
         Ok(())
     }
 
@@ -282,13 +275,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_load_batch_last_in_span() {
+    async fn test_load_batch_retains_batch() {
         let mut attributes_queue =
             new_attributes_queue(None, None, vec![Ok(Default::default())], vec![]);
         let parent = L2BlockInfo::default();
         let result = attributes_queue.load_batch(parent).await.unwrap();
         assert_eq!(result, Default::default());
-        assert!(attributes_queue.is_last_in_span);
     }
 
     #[tokio::test]
@@ -356,7 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_next_attributes_load_batch_last_in_span() {
+    async fn test_next_attributes_consumes_loaded_batch() {
         let cfg = RollupConfig::default();
         let mock =
             new_test_attributes_provider(Some(Default::default()), vec![Ok(Default::default())]);
@@ -364,23 +356,19 @@ mod tests {
         let mock_builder =
             TestAttributesBuilder { attributes: vec![Ok(pa.clone())], ..Default::default() };
         let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
-        // If we load the batch, we should get the last in span.
-        // But it won't take it so it will be available in the next_attributes call.
+        // Loading retains the batch until attributes are successfully built.
         let _ = aq.load_batch(L2BlockInfo::default()).await.unwrap();
-        assert!(aq.is_last_in_span);
         assert!(aq.batch.is_some());
         // This should successfully construct the next payload attributes.
-        // It should also reset the last in span flag and clear the batch.
+        // Successful construction clears the batch.
         let attributes = aq.next_attributes(L2BlockInfo::default()).await.unwrap();
         pa.no_tx_pool = Some(true);
         let populated_attributes = AttributesWithParent {
             attributes: pa,
             parent: L2BlockInfo::default(),
             derived_from: Some(BlockInfo::default()),
-            is_last_in_span: true,
         };
         assert_eq!(attributes, populated_attributes);
-        assert!(!aq.is_last_in_span);
         assert!(aq.batch.is_none());
     }
 }

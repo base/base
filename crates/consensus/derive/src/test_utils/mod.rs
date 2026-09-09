@@ -2,9 +2,8 @@
 
 mod pipeline;
 pub use pipeline::{
-    TestAttributesQueue, TestBatchProvider, TestBatchStream, TestChannelProvider,
-    TestChannelReader, TestFrameQueue, TestL1Retrieval, TestNextAttributes, TestPipeline,
-    TestPollingTraversal, new_test_pipeline,
+    TestAttributesQueue, TestBatchProvider, TestChannelProvider, TestChannelReader, TestFrameQueue,
+    TestL1Retrieval, TestNextAttributes, TestPipeline, TestPollingTraversal, new_test_pipeline,
 };
 
 mod traversal;
@@ -26,9 +25,6 @@ mod attributes_queue;
 pub use attributes_queue::{
     TestAttributesBuilder, TestAttributesProvider, new_test_attributes_provider,
 };
-
-mod batch_stream;
-pub use batch_stream::TestBatchStreamProvider;
 
 mod channel_provider;
 pub use channel_provider::TestNextFrameProvider;

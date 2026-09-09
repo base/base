@@ -17,14 +17,14 @@ pub use attributes::StatefulAttributesBuilder;
 
 mod errors;
 pub use errors::{
-    BatchDecompressionError, BlobDecodingError, BlobProviderError, BuilderError,
-    PipelineEncodingError, PipelineError, PipelineErrorKind, ResetError,
+    BlobDecodingError, BlobProviderError, BuilderError, PipelineEncodingError, PipelineError,
+    PipelineErrorKind, ResetError,
 };
 
 mod pipeline;
 pub use pipeline::{
-    AttributesQueueStage, BatchProviderStage, BatchStreamStage, ChannelProviderStage,
-    ChannelReaderStage, DerivationPipeline, FrameQueueStage, L1RetrievalStage, PipelineBuilder,
+    AttributesQueueStage, BatchProviderStage, ChannelProviderStage, ChannelReaderStage,
+    DerivationPipeline, FrameQueueStage, L1RetrievalStage, PipelineBuilder,
     PolledAttributesQueueStage,
 };
 
@@ -36,9 +36,9 @@ pub use sources::{
 
 mod stages;
 pub use stages::{
-    AttributesQueue, BatchStream, BatchStreamProvider, BatchValidator, ChannelAssembler,
-    ChannelReader, ChannelReaderProvider, FrameQueue, FrameQueueProvider, L1Retrieval,
-    L1RetrievalProvider, NextBatchProvider, NextFrameProvider, PollingTraversal,
+    AttributesQueue, BatchValidator, ChannelAssembler, ChannelReader, ChannelReaderProvider,
+    FrameQueue, FrameQueueProvider, L1Retrieval, L1RetrievalProvider, NextBatchProvider,
+    NextFrameProvider, PollingTraversal,
 };
 
 mod traits;

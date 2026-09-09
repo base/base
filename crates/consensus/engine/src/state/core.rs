@@ -19,7 +19,7 @@ use crate::Metrics;
 /// The state tracks blocks at different safety levels, listed from least to most safe:
 ///
 /// 1. **Unsafe** - Most recent blocks from P2P network (unverified)
-/// 2. **Local-safe** - Derived from L1 data, completed span-batch
+/// 2. **Local-safe** - Derived from L1 data, derived block
 /// 3. **Safe** - Derived from L1 data and cross-verified to have safe L1 dependencies
 /// 4. **Finalized** - Derived from finalized L1 data only
 ///
@@ -28,7 +28,7 @@ use crate::Metrics;
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).
     unsafe_head: L2BlockInfo,
-    /// Derived from L1 data as a completed span-batch, but not yet cross-verified.
+    /// Derived from L1 data as a derived block, but not yet cross-verified.
     local_safe_head: L2BlockInfo,
     /// Derived from L1 data and cross-verified to have safe L1 dependencies.
     safe_head: L2BlockInfo,
@@ -120,7 +120,7 @@ impl EngineSyncState {
 pub struct EngineSyncStateUpdate {
     /// Most recent block found on the p2p network
     pub unsafe_head: Option<L2BlockInfo>,
-    /// Derived from L1, and known to be a completed span-batch,
+    /// Derived from L1, and known to be a derived block,
     /// but not cross-verified yet.
     pub local_safe_head: Option<L2BlockInfo>,
     /// Derived from L1 and cross-verified to have cross-safe dependencies.

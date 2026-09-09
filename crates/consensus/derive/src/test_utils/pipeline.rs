@@ -9,8 +9,8 @@ use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 // Re-export these types used internally to the test pipeline.
 use crate::{
-    AttributesQueue, BatchStream, ChannelAssembler, ChannelReader, DerivationPipeline, FrameQueue,
-    L1Retrieval, NextAttributes, OriginAdvancer, OriginProvider, PipelineBuilder, PipelineError,
+    AttributesQueue, ChannelAssembler, ChannelReader, DerivationPipeline, FrameQueue, L1Retrieval,
+    NextAttributes, OriginAdvancer, OriginProvider, PipelineBuilder, PipelineError,
     PollingTraversal, StageReset,
     test_utils::{TestAttributesBuilder, TestDAP},
 };
@@ -80,11 +80,8 @@ pub type TestChannelProvider = ChannelAssembler<TestFrameQueue>;
 /// A [`ChannelReader`] using test providers and sources.
 pub type TestChannelReader = ChannelReader<TestChannelProvider>;
 
-/// A [`BatchStream`] using test providers and sources.
-pub type TestBatchStream = BatchStream<TestChannelReader, TestL2ChainProvider>;
-
 /// A [`BatchValidator`] using test providers and sources.
-pub type TestBatchProvider = BatchValidator<TestBatchStream, TestL2ChainProvider>;
+pub type TestBatchProvider = BatchValidator<TestChannelReader, TestL2ChainProvider>;
 
 /// An [`AttributesQueue`] using test providers and sources.
 pub type TestAttributesQueue = AttributesQueue<TestBatchProvider, TestAttributesBuilder>;
