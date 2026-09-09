@@ -152,9 +152,6 @@ impl Deployment {
             caller,
         )?;
         let system = addresses["SystemConfigProxy"];
-        let mut inbox = Address::ZERO;
-        inbox.as_mut_slice()[1..]
-            .copy_from_slice(&keccak256(U256::from(config.l2_chain_id).to_be_bytes::<32>())[..19]);
         let system_addresses = json!({
             "l1CrossDomainMessenger": messenger, "l1ERC721Bridge": addresses["L1ERC721BridgeProxy"],
             "l1StandardBridge": bridge, "optimismPortal": addresses["OptimismPortalProxy"],
@@ -169,7 +166,7 @@ impl Deployment {
                 config.roles[1], {"maxResourceLimit": 20000000, "elasticityMultiplier": 10,
                 "baseFeeMaxChangeDenominator": 8, "minimumBaseFee": 1000000000,
                 "systemTxMaxGas": 1000000, "maximumBaseFee": u128::MAX.to_string()},
-                inbox, system_addresses, config.l2_chain_id, superchain]),
+                rollup.batch_inbox_address, system_addresses, config.l2_chain_id, superchain]),
             ),
             ("OptimismPortal2", json!([system, addresses["AnchorStateRegistryProxy"]])),
             ("OptimismMintableERC20Factory", json!([bridge])),

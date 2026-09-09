@@ -16,12 +16,12 @@ just devnet smoke              # Transfers, blob transaction, and portal deposit
 ```
 
 Compose's setup, conductor helper, and nodes share `base-devnet:local`. The
-`base-devnet` Docker stage extends the operator `base` image with contracts at
+`base-devnet` Docker stage packages only the unified binary with contracts at
 `/opt/base/contracts`, selected through `BASE_GENESIS_ARTIFACTS`. The binary is
 unchanged. Operator builds stop at `base` and do not depend on the contracts stage.
 Ordinary devnet startup needs no host artifact export or bind mount.
 
-System tests prepare the default local export on demand, then call
+System tests prepare the default local export on demand using Python 3, then call
 `GenesisOutput::generate` directly; they have no setup container. Setting
 `BASE_GENESIS_ARTIFACTS` selects an existing export without provisioning or
 overwriting it. Standalone library callers pass `ContractArtifacts` explicitly;
@@ -83,9 +83,9 @@ it does not replace or remove the core deployed registry.
 
 Supported inputs are output/artifact locations, chain IDs, role/peer identities,
 slot duration, activation administrator, six upgrade block settings, and signal
-settings. Existing environment names are preserved. `BASE_DEVNET_TIMESTAMP` and a
-nonzero 32-byte `BASE_DEVNET_SALT` make chain state reproducible; JWTs and encrypted
-keystores remain randomized. Use `base genesis --help` for the CLI.
+settings. Existing environment names are preserved. A nonzero
+`BASE_DEVNET_TIMESTAMP` and nonzero 32-byte `BASE_DEVNET_SALT` make chain state
+reproducible; JWTs and encrypted keystores remain randomized. Use `base genesis --help` for the CLI.
 
 Cobalt starts the 200ms cadence. Subsequent upgrade blocks must align to whole
 seconds: Cobalt 22 / Denim 27 / Zenith 102 is valid, Denim 25 is not. Genesis hashes
@@ -109,12 +109,13 @@ Completed files are checksummed and bound to both inputs and artifact contents.
 Changed, partial, or legacy output requires explicit regeneration (`just devnet
 up` clears the disposable network). A lock prevents concurrent generation into
 the same L1 directory; the generator never deletes caller-owned node datadirs.
+Validator keys are written only under `cl/validator_data`; legacy mnemonic,
+deposit-block, and duplicate `validator_keys` files are no longer generated.
 All development keys are public and must never control real funds.
 
 Beacon generation uses Lighthouse v8.2.2, matching the devnet client, and the
 existing minimal/Fulu one-validator preset. Its epoch-zero `BLOB_SCHEDULE` matches
 the EL's BPO2 maximum of 21 blobs. Beacon configuration uses standard YAML.
-Its libraries provide EIP-2333/2334
-key derivation and EIP-2335 encryption. The small EL/CL templates and peer defaults
-retain the original devnet layout; no deployment-specific binary fixture is
-needed to update contracts.
+Its libraries provide EIP-2333/2334 key derivation and EIP-2335 encryption.
+The EL/CL templates and peer defaults are text assets; no deployment-specific
+binary fixture is needed to update contracts.

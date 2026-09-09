@@ -47,7 +47,7 @@ async fn sequencer_recovers_from_l1_outage_and_deep_reorg() -> Result<()> {
     let builder = system.l2_builder_provider()?;
     let client = system.l2_client_provider()?;
     let rollup_config: RollupConfig =
-        serde_json::from_str(&system.l2_deployment().read_rollup_config()?)?;
+        serde_json::from_str(&std::fs::read_to_string(system.genesis.l2.join("rollup.json"))?)?;
 
     wait_for_reorgable_origin(&rpc, &l1_provider).await?;
     let proxy = system.l1_rpc_proxy().ok_or_eyre("L1 fault proxy was not configured")?;
@@ -104,7 +104,7 @@ async fn sequencer_recovers_from_l1_outage_and_deep_reorg() -> Result<()> {
     let reorg = L1ReorgDriver::new(
         system.l1_rpc_url().await?,
         system.l1_stack().engine_url().await?,
-        &system.l1_genesis().read_jwt_secret()?,
+        &std::fs::read_to_string(system.genesis.l1.join("jwt.hex"))?,
     )?;
     let replacement = reorg
         .build_replacement(

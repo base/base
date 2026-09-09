@@ -1,5 +1,4 @@
-//! In-process L1 genesis and L2 deployment setup.
+//! In-process L1 and L2 genesis setup.
 
 mod genesis;
-
-pub use genesis::{GenesisSetup, L1GenesisOutput, L2DeploymentOutput};
+pub use genesis::GenesisSetup;

@@ -14,7 +14,7 @@ echo "Sending L1 ETH tx..."
 cast send --private-key $PK --rpc-url $L1_RPC $TO --value 0.001ether --json | jq -r '"ETH tx: \(.transactionHash) block=\(.blockNumber) status=\(.status)"'
 
 echo "Sending L1 blob tx..."
-echo "blob" | cast send --private-key $PK --rpc-url $L1_RPC --blob --path /dev/stdin $TO --json | jq -r '"Blob tx: \(.transactionHash) block=\(.blockNumber) status=\(.status) blobGas=\(.blobGasUsed)"'
+echo "blob" | cast send --private-key "$PK" --rpc-url "$L1_RPC" --blob --path /dev/stdin "$TO" --json | jq -er 'select(.status == "0x1") | "Blob tx: \(.transactionHash) block=\(.blockNumber) status=\(.status) blobGas=\(.blobGasUsed)"'
 
 echo ""
 echo "=== L1 Base Contract Verification ==="

@@ -83,7 +83,7 @@ mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 
 mod setup;
-pub use setup::{GenesisSetup, L1GenesisOutput, L2DeploymentOutput};
+pub use setup::GenesisSetup;
 
 mod smoke;
 #[cfg(feature = "upgrade-signal")]

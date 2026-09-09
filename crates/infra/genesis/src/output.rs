@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
-use crate::{BeaconGenesis, ContractArtifacts, GenesisArtifacts, GenesisConfig, GenesisGenerator};
+use crate::{ContractArtifacts, GenesisArtifacts, GenesisConfig, GenesisGenerator};
 
 /// Output paths and devnet-specific peer/runtime files.
 #[derive(Debug, Clone, Serialize)]
@@ -42,8 +42,8 @@ pub struct GenesisCompletion {
 }
 
 impl GenesisCompletion {
-    /// Format version, including fork-state, fee-floor, and beacon-schedule semantics.
-    pub const VERSION: u32 = 3;
+    /// Format version, including fork semantics and the generated file layout.
+    pub const VERSION: u32 = 5;
 }
 
 impl GenesisOutput {
@@ -76,6 +76,7 @@ impl GenesisOutput {
             .truncate(false)
             .open(self.l1.join(".genesis.lock"))?;
         lock.try_lock().wrap_err("another generator is using this output directory")?;
+        // Compose mounts L2 configs below its read-only L1 config mount.
         fs::create_dir_all(self.l1.join("l2"))?;
         let fingerprint = keccak256(serde_json::to_vec(&(config, self, contracts.fingerprint))?);
         let marker = self.l1.join(".setup-complete");
@@ -109,7 +110,8 @@ impl GenesisOutput {
             info!("reusing completed devnet genesis");
             return Ok(());
         }
-        for root in [&self.l1, &self.l2] {
+        // These read-only checks also work when output roots alias or contain one another.
+        for root in [&self.l1, &self.l2, &self.shared] {
             ensure!(
                 Self::empty_tree(root)?,
                 "incomplete or legacy genesis directory {}; regenerate the disposable configuration",
@@ -152,8 +154,6 @@ impl GenesisOutput {
         for (path, data) in files {
             Self::write(&path, &data)?;
         }
-        // Compose mounts L2 configs below its read-only L1 config mount.
-        fs::create_dir_all(self.l1.join("l2"))?;
         let completion = serde_json::to_vec(&completion)?;
         Self::write(&self.l2.join(".setup-complete"), &completion)?;
         Self::write(&marker, &completion)?;
@@ -215,9 +215,8 @@ impl GenesisArtifacts {
         });
         rollup.as_object_mut().unwrap().remove("granite_channel_timeout");
         let mut conductor = rollup.clone();
-        conductor.as_object_mut().unwrap().remove("base");
         // Upstream conductor does not accept Base-only rollup fields.
-        conductor.as_object_mut().unwrap().remove("granite_channel_timeout");
+        conductor.as_object_mut().unwrap().remove("base");
         let mut files = BTreeMap::new();
         for (path, value) in [
             (output.l1.join("el/genesis.json"), serde_json::to_value(&self.l1)?),
@@ -231,10 +230,8 @@ impl GenesisArtifacts {
         }
         files.insert(output.l1.join("cl/genesis.ssz"), self.beacon.ssz.clone());
         files.insert(output.l1.join("cl/config.yaml"), self.beacon.config.as_bytes().to_vec());
-        files.insert(
-            output.l1.join("cl/mnemonics.yaml"),
-            format!("- mnemonic: \"{}\"\n  count: 1\n", BeaconGenesis::MNEMONIC).into_bytes(),
-        );
+        // Lighthouse requires this even with a preloaded genesis validator.
+        files.insert(output.l1.join("cl/deposit_contract_block.txt"), b"0\n".to_vec());
         files.insert(
             output.l1.join("jwt.hex"),
             format!("{}\n", alloy_primitives::hex::encode(B256::random())).into_bytes(),
@@ -243,20 +240,15 @@ impl GenesisArtifacts {
             output.shared.join("genesis_timestamp"),
             format!("{}\n", self.l1.timestamp).into_bytes(),
         );
-        for name in ["deposit_contract_block.txt", "deploy_block.txt"] {
-            files.insert(output.l1.join("cl").join(name), b"0\n".to_vec());
-        }
         let pubkey = format!("0x{}", self.beacon.keystore.pubkey());
-        for (root, directory) in [("validator_data", "validators"), ("validator_keys", "keys")] {
-            files.insert(
-                output.l1.join(format!("cl/{root}/{directory}/{pubkey}/voting-keystore.json")),
-                serde_json::to_vec(&self.beacon.keystore)?,
-            );
-            files.insert(
-                output.l1.join(format!("cl/{root}/secrets/{pubkey}")),
-                self.beacon.password.as_bytes().to_vec(),
-            );
-        }
+        files.insert(
+            output.l1.join(format!("cl/validator_data/validators/{pubkey}/voting-keystore.json")),
+            serde_json::to_vec(&self.beacon.keystore)?,
+        );
+        files.insert(
+            output.l1.join(format!("cl/validator_data/secrets/{pubkey}")),
+            self.beacon.password.as_bytes().to_vec(),
+        );
         Ok(files)
     }
 }

@@ -17,6 +17,7 @@ use alloy_signer_local::PrivateKeySigner;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
+use base_genesis::GenesisOutput;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
@@ -34,7 +35,7 @@ use crate::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
         SnapshotL2Stack, SnapshotL2StackConfig,
     },
-    setup::{GenesisSetup, L1GenesisOutput, L2DeploymentOutput},
+    setup::GenesisSetup,
     system_config::{DevnetConfig, DevnetL1Mode, DevnetL2State},
 };
 
@@ -101,8 +102,8 @@ pub struct SystemTestStack {
     _temp_dir: TempDir,
     #[cfg(feature = "upgrade-signal")]
     l2_chain_id: u64,
-    l1_genesis: L1GenesisOutput,
-    l2_deployment: L2DeploymentOutput,
+    /// Generated L1 and L2 configuration paths.
+    pub genesis: GenesisOutput,
     l1_stack: L1Stack,
     l2_stack: L2Stack,
     l1_rpc_proxy: Option<L1RpcProxy>,
@@ -117,8 +118,8 @@ pub struct SystemTestStack {
 impl std::fmt::Debug for SystemTestStack {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SystemTestStack")
-            .field("l1_genesis", &self.l1_genesis)
-            .field("l2_deployment", &self.l2_deployment)
+            .field("l1", &self.genesis.l1)
+            .field("l2", &self.genesis.l2)
             .finish_non_exhaustive()
     }
 }
@@ -147,16 +148,6 @@ impl SystemTestStack {
     /// Returns the public RPC URL of the L2 builder node.
     pub fn l2_rpc_url(&self) -> Result<Url> {
         self.l2_stack().rpc_url()
-    }
-
-    /// Returns a reference to the L1 genesis output.
-    pub const fn l1_genesis(&self) -> &L1GenesisOutput {
-        &self.l1_genesis
-    }
-
-    /// Returns a reference to the L2 deployment output.
-    pub const fn l2_deployment(&self) -> &L2DeploymentOutput {
-        &self.l2_deployment
     }
 
     /// Returns the internal RPC URL of the L1 Reth node.
@@ -275,8 +266,7 @@ impl SystemTestStack {
             _temp_dir,
             #[cfg(feature = "upgrade-signal")]
                 l2_chain_id: _,
-            l1_genesis,
-            l2_deployment,
+            genesis,
             l1_stack,
             l2_stack,
             l1_rpc_proxy,
@@ -292,8 +282,7 @@ impl SystemTestStack {
         drop(upgrade_signal);
         drop(l1_rpc_proxy);
         drop(l1_stack);
-        drop(l2_deployment);
-        drop(l1_genesis);
+        drop(genesis);
         drop(_temp_dir);
         #[cfg(feature = "upgrade-signal")]
         drop(_runtime_upgrade_signal_guard);
@@ -612,14 +601,15 @@ impl SystemTestStackBuilder {
             }
         }
 
-        let (l1_genesis, l2_deployment) =
-            tokio::task::spawn_blocking(move || setup.generate_genesis())
-                .await
-                .wrap_err("Genesis setup task panicked")?
-                .wrap_err("Failed to generate L1/L2 genesis")?;
+        let genesis = tokio::task::spawn_blocking(move || setup.generate_genesis())
+            .await
+            .wrap_err("Genesis setup task panicked")?
+            .wrap_err("Failed to generate L1/L2 genesis")?;
 
-        let el_genesis_json = l1_genesis.read_el_genesis()?;
-        let jwt_secret_hex = l1_genesis.read_jwt_secret()?;
+        let el_genesis_json = std::fs::read_to_string(genesis.l1.join("el/genesis.json"))
+            .wrap_err("Failed to read L1 genesis")?;
+        let jwt_secret_hex = std::fs::read_to_string(genesis.l1.join("jwt.hex"))
+            .wrap_err("Failed to read JWT secret")?;
 
         let (l1_container_config, l2_container_config) = if self.devnet_config.use_stable_ports {
             let config = &self.devnet_config.stable;
@@ -669,7 +659,7 @@ impl SystemTestStackBuilder {
         let l1_config = L1StackConfig {
             el_genesis_json,
             jwt_secret_hex,
-            testnet_dir: l1_genesis.testnet_dir(),
+            testnet_dir: genesis.l1.join("cl"),
             container_config: l1_container_config,
         };
 
@@ -679,11 +669,11 @@ impl SystemTestStackBuilder {
         let jwt_secret = JwtSecret::random();
 
         let l2_genesis_bytes =
-            std::fs::read(l2_deployment.genesis_path()).wrap_err("Failed to read L2 genesis")?;
-        let rollup_config_bytes = std::fs::read(l2_deployment.rollup_config_path())
+            std::fs::read(genesis.l2.join("genesis.json")).wrap_err("Failed to read L2 genesis")?;
+        let rollup_config_bytes = std::fs::read(genesis.l2.join("rollup.json"))
             .wrap_err("Failed to read rollup config")?;
-        let l1_genesis_bytes =
-            std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
+        let l1_genesis_bytes = std::fs::read(genesis.l1.join("el/genesis.json"))
+            .wrap_err("Failed to read L1 genesis")?;
 
         let shadow_sequencers = (self.shadow_sequencer_count > 0).then(|| {
             let keys = (0..self.shadow_sequencer_count)
@@ -777,8 +767,7 @@ impl SystemTestStackBuilder {
             _temp_dir: temp_dir,
             #[cfg(feature = "upgrade-signal")]
             l2_chain_id,
-            l1_genesis,
-            l2_deployment,
+            genesis,
             l1_stack,
             l2_stack,
             l1_rpc_proxy,

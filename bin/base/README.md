@@ -111,7 +111,6 @@ TOML values can be overridden with environment variables using the `BASE_CHAIN_`
 
 ## Internal devnet genesis
 
-`base genesis --help` documents the hidden, always-built offline development-network
-generator. It is not a production deployer. Compose runs this command from the same
-`base-devnet` image as the nodes, derived from the operator image with contract
-artifacts added; see `crates/infra/genesis/README.md` for its library and assets.
+`base genesis --help` documents the hidden development-network generator. See
+[base-genesis](../../crates/infra/genesis/README.md) for usage and library details.
+It is not a production deployer.

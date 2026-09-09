@@ -6,14 +6,18 @@ The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerf
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node`. The `base-devnet` target extends it with pinned contract artifacts for local development. Devnet compose overrides the default supervisord CMD.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node`. The `base-devnet` target builds and ships only the unified `base` binary plus pinned contract artifacts and devnet helpers, without the operator image's split binaries or supervisor.
 
 The `setup-devnet` service runs the hidden `/app/base genesis` command from the same `base-devnet:local` image as the nodes and Rust batcher. There is no separate setup image, binary, or runtime generator toolchain.
 
-The devnet image contains its contracts at `/opt/base/contracts`; ordinary startup
-needs no host artifact preparation or mount. Operator image builds remain independent
-of the contracts stage. Host-side Rust tests use `just contracts` and its shared
-content-checked cache; `just contracts-rebuild` forces a new export.
+Contracts are included in the devnet image, so startup needs no host export.
+See [base-genesis](../../crates/infra/genesis/README.md) for artifact preparation,
+generator configuration, and output-reuse rules.
+
+The shared `source` stage is build-only, not a separate runtime image. It copies
+only Cargo workspace inputs; the planner uses a temporary source mount and keeps
+only its dependency recipe. Nitro's proof services use the existing execution and
+consensus images, built only for that variant.
 
 `Dockerfile.op-batcher` builds Go `op-batcher/v1.16.5` at commit
 [`abe047af`](https://github.com/ethereum-optimism/optimism/commit/abe047afc995e0e22abf5ea9b157e267e907d494),
@@ -21,24 +25,6 @@ matching the Base mainnet infrastructure source pin. The `devnet` and `ingress`
 Bake groups build it as `op-batcher:local`; it runs as the canonical batcher.
 The Rust `base batcher` (the `base batcher` subcommand of `base-devnet:local`) runs
 alongside it in shadow mode; no separate Rust batcher image is needed.
-
-Genesis generation is implemented in `base-genesis`: Revm executes the pinned Solidity
-artifacts in-process, and Lighthouse libraries generate the Fulu beacon state and
-validator keystore. No Go, Forge, Anvil, or external key-generation process is used.
-Rust system tests use the same native generator before starting L1.
-
-Setup retains the existing flags, environment inputs, file paths, and nested L2
-mountpoint. Completed outputs are checksummed and reused only for matching inputs.
-Legacy, incomplete, or modified configurations require regeneration with
-`just devnet down` followed by `just devnet up`; the generator never deletes node
-datadirs. System tests call the same library directly before starting L1.
-
-The normal devnet initializes Base's real `ProtocolVersions` registry with the
-genesis upgrade schedule. The minimum version defaults to `4294967296` and honors
-`UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION`; live ownership, ordering, and notice/freeze
-guards remain enforced. Final genesis hashes are written into both rollup
-configurations. Nitro disables the generated signal environment because its
-bootstrap supplies its own registry; system tests can deploy their own runtime mock.
 
 HA conductor setup also uses `base-devnet:local`, with its helper script mounted read-only.
 It uses Bash, curl, and jq to wait for an elected leader, reject JSON-RPC errors,
@@ -187,10 +173,8 @@ just devnet up zenith
 
 `just devnet up` initializes the real Base `ProtocolVersions` registry in genesis,
 writes `.devnet/l2/configs/upgrade-signal.env`, and starts the normal L2 nodes in
-`runtime-admin` mode. The devnet image includes artifacts built from the revision in
-`etc/upstream-pins/contracts.rev`; no separate setup image is needed. Host-side
-generation uses the same export, and system tests provision it on demand unless
-`BASE_GENESIS_ARTIFACTS` selects an existing directory.
+`runtime-admin` mode. Nitro supplies its own registry and disables the generated
+signal environment.
 `just devnet smoke` checks transfers and an L1 portal deposit credited on L2; its
 blob test requires an EIP-7594-capable `cast` (tested with 1.7.1).
 

@@ -48,7 +48,7 @@ services:
   # The proof host needs historical trie data and debug_executePayload. Keep that
   # workload on the same proofs-history + follow-mode pair used in production.
   base-proofs:
-    image: base-devnet:local
+    image: base-execution:local
     container_name: base-proofs
     profiles: ["nitro-local"]
     depends_on:
@@ -97,7 +97,7 @@ services:
     restart: unless-stopped
 
   base-proofs-consensus:
-    image: base-devnet:local
+    image: base-consensus:local
     container_name: base-proofs-consensus
     profiles: ["nitro-local"]
     depends_on:

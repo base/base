@@ -41,9 +41,13 @@ impl GenesisGenerator {
         config.validate()?;
         let timestamp =
             config.timestamp.unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+        let mut inbox = [0u8; 20];
+        inbox[1..]
+            .copy_from_slice(&keccak256(U256::from(config.l2_chain_id).to_be_bytes::<32>())[..19]);
         // Resolve the local fork schedule without consulting runtime overrides.
         let mut rollup = RollupConfig {
             genesis: ChainGenesis { l2_time: timestamp, ..Default::default() },
+            batch_inbox_address: inbox.into(),
             block_time: 2,
             l1_chain_id: config.l1_chain_id,
             l2_chain_id: config.l2_chain_id.into(),
@@ -90,10 +94,6 @@ impl GenesisGenerator {
         rollup.deposit_contract_address = deployment.addresses["OptimismPortalProxy"];
         rollup.l1_system_config_address = deployment.addresses["SystemConfigProxy"];
         rollup.protocol_versions_address = deployment.addresses["ProtocolVersionsProxy"];
-        let mut inbox = [0u8; 20];
-        inbox[1..]
-            .copy_from_slice(&keccak256(U256::from(config.l2_chain_id).to_be_bytes::<32>())[..19]);
-        rollup.batch_inbox_address = inbox.into();
         rollup.genesis.system_config = Some(SystemConfig {
             batcher_address: config.roles[2],
             gas_limit: 60_000_000,
@@ -369,6 +369,18 @@ mod tests {
         let root = TempDir::new()?;
         let output = GenesisOutput::new(root.path());
         output.generate(&config, &contracts)?;
+        let deposit_block_path = root.path().join("cl/deposit_contract_block.txt");
+        let deposit_block = std::fs::read(&deposit_block_path)?;
+        assert_eq!(serde_yaml::from_slice::<u64>(&deposit_block)?, 0);
+        std::fs::remove_file(&deposit_block_path)?;
+        assert!(
+            output
+                .generate(&config, &contracts)
+                .unwrap_err()
+                .to_string()
+                .contains("missing genesis file")
+        );
+        std::fs::write(deposit_block_path, deposit_block)?;
         for name in ["el-bootnode-p2p-key.txt", "cl-bootnode-p2p-key.txt"] {
             let key = std::fs::read_to_string(root.path().join("l2").join(name))?;
             let _: PrivateKeySigner = key.parse()?;

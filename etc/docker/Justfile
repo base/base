@@ -297,7 +297,7 @@ _build-rust-images group profile='dev':
 
 [private]
 _build-nitro-images profile='dev':
-    PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl proposer prover-service nitro-host-local --load
+    PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl execution consensus proposer prover-service nitro-host-local --load
 
 [private]
 _up-devnet compose_profile mode:

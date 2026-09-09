@@ -86,8 +86,13 @@ target "base" {
 }
 
 target "base-devnet" {
-  inherits = ["base"]
+  inherits = ["_rust-service-common"]
   target = "base-devnet"
+  args = {
+    CARGO_CHEF_ARGS = "--package base"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof" : ""
+    SCCACHE_CACHE_ID = "rust-services-base-sccache"
+  }
   tags = ["base-devnet:local"]
 }
 

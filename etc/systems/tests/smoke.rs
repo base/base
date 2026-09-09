@@ -40,8 +40,9 @@ async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
         .build()
         .await?;
 
-    let genesis: serde_json::Value = serde_json::from_str(&system.l2_deployment().read_genesis()?)?;
-    let rollup_json = system.l2_deployment().read_rollup_config()?;
+    let genesis: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(system.genesis.l2.join("genesis.json"))?)?;
+    let rollup_json = std::fs::read_to_string(system.genesis.l2.join("rollup.json"))?;
     let rollup: serde_json::Value = serde_json::from_str(&rollup_json)?;
     let rollup_config: RollupConfig = serde_json::from_str(&rollup_json)?;
     let expected_azul =

@@ -20,7 +20,7 @@ pub struct GenesisConfig {
     pub activation_admin: Address,
     /// Explicit Base/Isthmus activation block numbers.
     pub upgrades: BTreeMap<String, u64>,
-    /// Fixed genesis time for reproducible tests; otherwise the current Unix time.
+    /// Nonzero fixed genesis time for reproducible tests; otherwise the current Unix time.
     pub timestamp: Option<u64>,
     /// Fixed deployment salt for reproducible tests; otherwise random.
     pub salt: Option<B256>,
@@ -62,6 +62,10 @@ impl GenesisConfig {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.l1_chain_id != 0 && self.l2_chain_id != 0, "chain IDs must be positive");
         ensure!(self.slot_duration > 0, "slot duration must be positive");
+        ensure!(
+            self.timestamp != Some(0),
+            "genesis timestamp must be nonzero; ProtocolVersions reserves zero for unscheduled upgrades"
+        );
         ensure!(
             !self.roles.contains(&Address::ZERO) && self.activation_admin != Address::ZERO,
             "role addresses must be nonzero"

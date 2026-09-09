@@ -340,7 +340,6 @@ case "$COMMAND" in
       echo "set requires --set upgrade=timestamp or <upgrade> <timestamp>" >&2
       exit 1
     fi
-    load_schedule_from_contract
     update_contract_schedule
     load_schedule_from_contract
     print_status
@@ -352,7 +351,6 @@ case "$COMMAND" in
       echo "move-future requires exactly one upgrade id" >&2
       exit 1
     fi
-    load_schedule_from_contract
     latest_timestamp="$(latest_l2_timestamp)"
     l1_timestamp="$(cast block latest --rpc-url "$L1_RPC" --json | jq -r '.timestamp')"
     if (( l1_timestamp > latest_timestamp )); then latest_timestamp=$((l1_timestamp)); fi

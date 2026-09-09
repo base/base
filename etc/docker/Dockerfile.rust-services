@@ -73,22 +73,28 @@ RUN set -eux; \
     rm /tmp/protoc.zip
 
 FROM rust-builder-base AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+# Only the recipe needs to persist; do not store a second copy of the source tree.
+RUN --mount=type=bind,target=/app \
+    cargo chef prepare --recipe-path /recipe.json
 
 FROM rust-builder-base AS rust-deps
 ARG PROFILE=release
 ARG CARGO_CHEF_ARGS=""
 ARG CARGO_FEATURES=""
 ARG SCCACHE_CACHE_ID=rust-services-sccache
-COPY --from=planner /app/recipe.json recipe.json
+COPY --from=planner /recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
     cargo chef cook --profile "$PROFILE" --recipe-path recipe.json ${CARGO_CHEF_ARGS} ${CARGO_FEATURES}
 
 FROM rust-deps AS source
-COPY . .
+# Keep unrelated repository files and local captures out of Rust build layers.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY actions/ actions/
+COPY bin/ bin/
+COPY crates/ crates/
+COPY etc/ etc/
 
 FROM source AS base-image-builder
 ARG PROFILE=release
@@ -221,7 +227,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
 
 FROM zk-builder-base AS zk-source
-COPY . .
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY actions/ actions/
+COPY bin/ bin/
+COPY crates/ crates/
+COPY etc/ etc/
 
 FROM zk-source AS zk-host-builder
 ARG PROFILE=release
@@ -256,16 +266,18 @@ COPY etc/scripts/node/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY etc/scripts/node/execution-entrypoint .
 COPY etc/scripts/node/consensus-entrypoint .
 RUN chmod +x execution-entrypoint consensus-entrypoint
-# Operator default. Devnet compose overrides entrypoint to /app/base or base-entrypoint.sh.
+# Operator default.
 CMD ["/usr/bin/supervisord"]
 
-# Setup and devnet nodes share this image; operator builds stop at `base`.
-FROM base AS base-devnet
+# Setup and devnet nodes need only the unified binary, not the operator's split binaries.
+FROM runtime-base AS base-devnet
 RUN apt-get update && apt-get install -y --no-install-recommends jq && \
     rm -rf /var/lib/apt/lists/*
+COPY --from=base-builder /app/base ./base
 COPY --chmod=755 etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
 COPY --from=contracts-builder /artifacts /opt/base/contracts
 ENV BASE_GENESIS_ARTIFACTS=/opt/base/contracts
+CMD ["/app/base"]
 
 FROM runtime-base AS execution
 COPY --from=execution-builder /app/base-reth-node ./base-reth-node
