@@ -24,20 +24,21 @@ node's real tip whenever applying updates is slower than receiving them.
 
 ### The invariant
 
-A published snapshot either tracks flashblocks anchored near the node's current canonical tip, or
+A published snapshot either still tracks flashblocks on the node's current canonical tip, or
 there is no snapshot at all.
 
 This matters because consumers execute against `PendingBlocks::canonical_block_number`, the
-canonical block the overlay is layered on. While that block stays close to the tip, callers read
-the node's in-memory canonical state. An overlay stranded on an old anchor forces them onto
-historical state instead, which is slow enough to starve the processor that produced the overlay
-and keep it stranded.
+canonical block the overlay is layered on. A snapshot whose tip has stopped advancing leaves
+that base stranded. Width from an inherited earliest header is a thicker overlay on an older
+base, not a stalled tip; `CanonicalBlockReconciler` rebuilds when that width exceeds
+`max_pending_blocks_depth`.
 
-`max_pending_blocks_depth` (CLI `--max-pending-blocks-depth`, default 3) sets the bound. It is
-measured from the earliest pending block, matching the depth `CanonicalBlockReconciler` already
-uses, so the reconciler never builds a snapshot that the tip checks then discard. The anchor is
-the block below the earliest pending block, so it may sit up to `max_pending_blocks_depth + 1`
-blocks behind the tip.
+`max_pending_blocks_depth` (CLI `--max-pending-blocks-depth`, default 3) sets the bound. Staleness
+is measured from the snapshot tip. `PendingBlocksBuilder::from_previous` keeps the inherited
+earliest header, so a healthy snapshot can grow wider than this bound while `latest` stays on
+the child of the tip. That width is bounded by `CanonicalBlockReconciler`'s `DepthLimitExceeded`
+rebuild, which retains post-canonical flashblocks instead of wiping. Measuring staleness from
+earliest would drop a live snapshot every few blocks and lose the rest of the current block.
 
 Bounding the distance rather than requiring the anchor to equal the tip is deliberate. When
 flashblocks for the next block arrive before the processor has applied the current canonical
@@ -56,10 +57,10 @@ a single expensive update. They use the notified block height directly instead o
 provider.
 
 - A canonical notification records the new height and immediately drops the published snapshot if
-  it is anchored more than `max_pending_blocks_depth` behind it. Because this runs at chain speed,
+  its tip is more than `max_pending_blocks_depth` behind it. Because this runs at chain speed,
   a snapshot cannot stay readable through a long apply. The drop is a compare-and-swap against the
   snapshot that was judged, so a snapshot the processor published concurrently, which is
-  necessarily anchored on a later tip, is left alone.
+  necessarily tracking a later tip, is left alone.
 - A flashblock for a block at or below the last notified canonical height is dropped before it is
   queued, so the queue never accumulates work that could not produce a publishable snapshot.
 
@@ -70,14 +71,15 @@ that lowers the tip does not suppress flashblocks built on the replacement chain
 queued update, because a lagging queue reports a stale height and makes a guard evaluate against a
 chain position the node left long ago.
 
-- Before an update is dispatched, a snapshot anchored more than `max_pending_blocks_depth` blocks
-  behind the tip is dropped. This covers advances the notification path did not report, such as the
-  gap between a canonical notification and the block becoming visible through the provider.
+- Before an update is dispatched, a snapshot whose tip is more than `max_pending_blocks_depth`
+  blocks behind the canonical tip is dropped. This covers advances the notification path did not
+  report, such as the gap between a canonical notification and the block becoming visible through
+  the provider.
 - Flashblocks whose block the node has already canonicalized are skipped before execution. This
   catches payloads that were fresh when queued and went stale while waiting, and cached payloads
   replayed after a canonical block arrives.
 - Every build path publishes through `publish_pending_blocks`, which re-reads the tip and refuses
-  to publish a snapshot that is anchored too far back or no longer extends past the tip. Because it
+  to publish a snapshot whose tip is too far back or no longer extends past the tip. Because it
   is the single funnel, this holds for the reorg and depth-limit rebuilds as well as for ordinary
   sequential appends.
 
@@ -127,7 +129,7 @@ cache and replayed once it lands.
 
 ### Observability
 
-- `pending_drop_stale`: snapshots dropped for being anchored too far behind the tip.
+- `pending_drop_stale`: snapshots dropped because their tip is too far behind the canonical tip.
 - `flashblock_superseded`: flashblocks skipped because their block was already canonical.
 - `pending_clear_catchup`, `pending_clear_reorg`: clears by reconciliation outcome.
 - `pending_snapshot_height`, `pending_snapshot_fb_index`: current snapshot position.

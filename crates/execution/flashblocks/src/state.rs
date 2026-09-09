@@ -84,7 +84,7 @@ impl FlashblocksState {
         });
     }
 
-    /// Drops the published snapshot when it is anchored more than `max_pending_blocks_depth`
+    /// Drops the published snapshot when its tip is more than `max_pending_blocks_depth`
     /// blocks behind `canonical_block_number`.
     ///
     /// [`StateProcessor`] enforces the same bound, but only once it reaches the matching queue
@@ -96,10 +96,10 @@ impl FlashblocksState {
         let published = self.pending_blocks.load();
         let Some(stale) = published.as_ref() else { return };
 
-        // Measured from the earliest pending block so this matches the bound the processor and
-        // the reconciler apply, and the three cannot disagree about which snapshots survive.
-        let earliest_pending_block = stale.earliest_block_number();
-        if canonical_block_number.saturating_sub(earliest_pending_block)
+        // Measured from the snapshot tip. Width from the inherited earliest header is bounded
+        // by the reconciler's rebuild, not by this wipe.
+        let latest_pending_block = stale.latest_block_number();
+        if canonical_block_number.saturating_sub(latest_pending_block)
             <= self.max_pending_blocks_depth
         {
             return;
@@ -114,9 +114,9 @@ impl FlashblocksState {
         }
 
         debug!(
-            message = "dropping pending snapshot anchored too far behind the canonical tip",
+            message = "dropping pending snapshot whose tip is too far behind the canonical tip",
             canonical_block_number,
-            earliest_pending_block,
+            latest_pending_block,
             max_depth = self.max_pending_blocks_depth,
         );
         Metrics::pending_drop_stale().increment(1);
@@ -243,15 +243,28 @@ mod tests {
         }
     }
 
-    /// Builds a snapshot whose earliest pending block is `block_number`, which is the height
-    /// the staleness bound is measured from.
+    /// Builds a single-block snapshot at `block_number`. Earliest and latest are the same,
+    /// so this fixture cannot distinguish width from staleness.
     fn pending_anchored_at(block_number: u64) -> PendingBlocks {
+        pending_spanning(block_number, block_number)
+    }
+
+    /// Builds a snapshot whose earliest and latest pending blocks differ, matching the
+    /// shape [`PendingBlocksBuilder::from_previous`] produces on a live chain.
+    fn pending_spanning(earliest: u64, latest: u64) -> PendingBlocks {
         let mut builder = PendingBlocksBuilder::new();
-        builder.with_flashblocks([flashblock_for_block(block_number)]);
+        builder.with_flashblocks([flashblock_for_block(earliest)]);
         builder.with_header(Sealed::new_unchecked(
-            Header { number: block_number, ..Default::default() },
+            Header { number: earliest, ..Default::default() },
             B256::ZERO,
         ));
+        if latest != earliest {
+            builder.with_flashblocks([flashblock_for_block(latest)]);
+            builder.with_header(Sealed::new_unchecked(
+                Header { number: latest, ..Default::default() },
+                B256::ZERO,
+            ));
+        }
         builder.build().expect("pending fixture builds")
     }
 
@@ -276,7 +289,7 @@ mod tests {
 
         assert!(
             state.get_pending_blocks().is_none(),
-            "a snapshot anchored past max_pending_blocks_depth must not survive the notification"
+            "a snapshot whose tip is past max_pending_blocks_depth must not survive the notification"
         );
     }
 
@@ -290,6 +303,34 @@ mod tests {
         assert!(
             state.get_pending_blocks().is_some(),
             "normal lag must not clear pending, or every notification would drop live state"
+        );
+    }
+
+    #[test]
+    fn canonical_notification_keeps_pending_that_still_tracks_the_tip() {
+        let state = FlashblocksState::new(MAX_DEPTH);
+        // Wider than max_depth, but latest is the child of the canonical tip.
+        state.set_pending_blocks_for_testing(Some(pending_spanning(1, 1 + MAX_DEPTH + 2)));
+
+        state.on_canonical_block_received(canonical_block(1 + MAX_DEPTH + 1));
+
+        assert!(
+            state.get_pending_blocks().is_some(),
+            "a snapshot that still extends the tip must survive even when it spans more than max_depth"
+        );
+    }
+
+    #[test]
+    fn canonical_notification_drops_pending_that_stopped_tracking_the_tip() {
+        let state = FlashblocksState::new(MAX_DEPTH);
+        // Latest fell more than max_depth behind the canonical tip.
+        state.set_pending_blocks_for_testing(Some(pending_spanning(1, 2)));
+
+        state.on_canonical_block_received(canonical_block(2 + MAX_DEPTH + 1));
+
+        assert!(
+            state.get_pending_blocks().is_none(),
+            "a snapshot whose tip stopped advancing must still be dropped"
         );
     }
 
