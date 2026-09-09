@@ -139,3 +139,17 @@ mod hashmap;
 pub use hashmap::HashMapStorageProvider;
 #[cfg(any(test, feature = "test-utils"))]
 pub use hashmap::setup_storage;
+
+mod dispatch;
+pub use dispatch::{EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result};
+
+mod registry;
+pub use registry::{
+    DynPrecompile, DynPrecompiles, MovePrecompileError, Precompile, PrecompileInput,
+    PrecompileLookup, PrecompilesMap,
+};
+
+mod internals;
+pub use internals::{ErasedError, EvmInternals, EvmInternalsError, TransactionTr};
+
+pub use revm_state::Bytecode;

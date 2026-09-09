@@ -56,4 +56,4 @@ mod tx;
 pub use tx::*;
 
 mod environment;
-pub use environment::{BlockEnvironment, EvmEnv, EvmLimitParams, TransactionEnvMut};
+pub use environment::{BlockEnvironment, EthEvmContext, EvmEnv, EvmLimitParams, TransactionEnvMut};

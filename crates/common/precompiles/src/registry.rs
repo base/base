@@ -8,22 +8,25 @@ use alloc::{
 };
 use core::fmt::{self, Debug, Display};
 
+use crate::EthPrecompiles;
+use crate::PrecompileProvider;
+use crate::precompile_output_to_interpreter_result;
 use alloy_primitives::{
     Address, U256,
     map::{AddressMap, AddressSet},
 };
 use base_common_types_chain::transaction::Either;
+use base_evm_context::Context;
 use base_evm_context::ContextTr;
-use base_evm_handler::{
-    Context,
-    interpreter::{CallInputs, InterpreterResult},
-    precompile::{PrecompileFn, PrecompileId, PrecompileResult, Precompiles},
-};
-use base_evm_handler::{
-    EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
-};
+use revm_interpreter::CallInputs;
+use revm_interpreter::InterpreterResult;
+use revm_precompile::PrecompileFn;
+use revm_precompile::PrecompileId;
+use revm_precompile::PrecompileResult;
+use revm_precompile::Precompiles;
 
-use crate::{Database, EvmInternals};
+use crate::EvmInternals;
+use base_state::Database;
 
 /// Returns whether the given [`PrecompileId`] supports caching.
 ///
@@ -768,7 +771,7 @@ pub trait Precompile {
     /// out-of-gas), distinguished by [`PrecompileOutput::status`]. `Err(PrecompileError)` is
     /// reserved for fatal errors that abort EVM execution.
     ///
-    /// [`PrecompileOutput::status`]: base_evm_handler::precompile::PrecompileOutput::status
+    /// [`PrecompileOutput::status`]: revm_precompile::PrecompileOutput::status
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult;
 
     /// Returns whether this precompile's results should be cached.
@@ -840,7 +843,7 @@ where
     }
 }
 
-impl Precompile for base_evm_handler::precompile::Precompile {
+impl Precompile for revm_precompile::Precompile {
     fn precompile_id(&self) -> &PrecompileId {
         self.id()
     }
@@ -988,14 +991,13 @@ impl core::error::Error for MovePrecompileError {}
 mod tests {
     use alloy_primitives::{Bytes, address};
     use base_evm_context::BlockEnv;
-    use base_evm_handler::{
-        database::EmptyDB,
-        precompile::{PrecompileId, PrecompileOutput},
-        primitives::hardfork::SpecId,
-    };
+    use base_state::EmptyDB;
+    use revm_precompile::PrecompileId;
+    use revm_precompile::PrecompileOutput;
+    use revm_primitives::hardfork::SpecId;
 
     use super::*;
-    use crate::eth::EthEvmContext;
+    use base_evm_context::EthEvmContext;
 
     #[test]
     fn test_map_precompile() {
@@ -1145,11 +1147,11 @@ mod tests {
         assert!(either_right.supports_caching(), "Either::Right with cacheable should return true");
 
         // Identity precompile should not support caching
-        let identity = base_evm_handler::precompile::identity::FUN;
+        let identity = revm_precompile::identity::FUN;
         assert!(!identity.supports_caching(), "identity precompile should not support caching");
 
         // Other builtin precompiles should support caching
-        let sha256 = base_evm_handler::precompile::hash::SHA256;
+        let sha256 = revm_precompile::hash::SHA256;
         assert!(sha256.supports_caching(), "sha256 precompile should support caching");
     }
 

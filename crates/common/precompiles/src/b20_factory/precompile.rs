@@ -1,7 +1,8 @@
 //! Precompile entry point for the `B20Factory`.
 
+use crate::DynPrecompile;
+use crate::PrecompilesMap;
 use base_common_chain_config::BaseUpgrade;
-use base_evm_handler::{DynPrecompile, PrecompilesMap};
 
 use crate::{
     B20FactoryStorage, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,

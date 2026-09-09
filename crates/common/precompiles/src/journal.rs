@@ -15,13 +15,12 @@
 
 use alloc::string::ToString;
 
+use crate::EvmInternals;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use base_evm_context::JournalCheckpoint;
-use base_evm_handler::EvmInternals;
-use base_evm_handler::{
-    primitives::keccak256,
-    state::{AccountInfo, Bytecode},
-};
+use revm_primitives::keccak256;
+use revm_state::AccountInfo;
+use revm_state::Bytecode;
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -235,9 +234,12 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::EvmInternals;
     use alloy_primitives::{Address, U256};
-    use base_evm_handler::{EthEvmContext, EvmInternals};
-    use base_evm_handler::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
+    use base_evm_context::EthEvmContext;
+    use base_state::EmptyDB;
+    use revm_primitives::hardfork::SpecId;
+    use revm_state::Bytecode;
 
     use super::JournalStorageProvider;
     use crate::storage_provider::PrecompileStorageProvider;

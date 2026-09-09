@@ -7,14 +7,16 @@
 
 use alloc::string::ToString;
 
+use crate::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use base_evm_context::{GasParams, JournalCheckpoint};
-use base_evm_handler::PrecompileInput;
-use base_evm_handler::{
-    interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
-    primitives::keccak256,
-    state::{AccountInfo, Bytecode},
-};
+use revm_interpreter::gas::Gas;
+use revm_interpreter::gas::KECCAK256;
+use revm_interpreter::gas::KECCAK256WORD;
+use revm_interpreter::gas::LOG;
+use revm_primitives::keccak256;
+use revm_state::AccountInfo;
+use revm_state::Bytecode;
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -28,7 +30,7 @@ use crate::{
 /// the real EVM journal.
 #[derive(Debug)]
 pub struct EvmPrecompileStorageProvider<'a> {
-    internals: base_evm_handler::EvmInternals<'a>,
+    internals: crate::EvmInternals<'a>,
     caller: Address,
     call_value: U256,
     gas: Gas,
@@ -371,18 +373,22 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 }
 
-impl From<base_evm_handler::EvmInternalsError> for BasePrecompileError {
-    fn from(e: base_evm_handler::EvmInternalsError) -> Self {
+impl From<crate::EvmInternalsError> for BasePrecompileError {
+    fn from(e: crate::EvmInternalsError) -> Self {
         Self::Fatal(e.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::EvmInternals;
+    use crate::PrecompileInput;
     use alloy_primitives::{Address, Bytes, U256};
+    use base_evm_context::EthEvmContext;
     use base_evm_context::GasParams;
-    use base_evm_handler::{EthEvmContext, EvmInternals, PrecompileInput};
-    use base_evm_handler::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
+    use base_state::EmptyDB;
+    use revm_primitives::hardfork::SpecId;
+    use revm_state::Bytecode;
 
     use crate::{
         BytesLikeHandler, Handler, StorageCtx,

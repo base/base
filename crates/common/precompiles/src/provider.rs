@@ -1,12 +1,13 @@
+use crate::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::StorageFeatures;
-use base_evm_handler::PrecompilesMap;
-use base_evm_handler::{
-    precompile,
-    precompile::{Precompiles, bn254, modexp, secp256r1},
-    primitives::OnceLock,
-};
+use revm_precompile as precompile;
+use revm_precompile::Precompiles;
+use revm_precompile::bn254;
+use revm_precompile::modexp;
+use revm_precompile::secp256r1;
+use revm_primitives::OnceLock;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistry, B20Factory, BerylLookup, NonceManager,
@@ -17,7 +18,7 @@ use crate::{
 /// Static Base precompile table for a Base upgrade.
 ///
 /// This type selects the fork's Ethereum-style precompiles. It is not a
-/// [`base_evm_handler::PrecompileProvider`]. Call [`Self::install`] or
+/// [`crate::PrecompileProvider`]. Call [`Self::install`] or
 /// [`Self::install_with_observer`] to build the executable [`PrecompilesMap`].
 #[derive(Debug, Clone)]
 pub struct BasePrecompiles {
@@ -238,10 +239,12 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use base_common_chain_config::BaseUpgrade;
     use base_common_precompiles::StorageFeatures;
-    use base_evm_handler::{
-        precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
-        primitives::eip7823,
-    };
+    use revm_precompile::Precompiles;
+    use revm_precompile::bls12_381_const;
+    use revm_precompile::bn254;
+    use revm_precompile::modexp;
+    use revm_precompile::secp256r1;
+    use revm_primitives::eip7823;
     use rstest::rstest;
 
     use crate::{

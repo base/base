@@ -6,10 +6,10 @@
 
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, LogData, U256, keccak256};
 use base_evm_context::JournalCheckpoint;
-use base_evm_handler::{
-    interpreter::gas::{KECCAK256, KECCAK256WORD},
-    state::{AccountInfo, Bytecode},
-};
+use revm_interpreter::gas::KECCAK256;
+use revm_interpreter::gas::KECCAK256WORD;
+use revm_state::AccountInfo;
+use revm_state::Bytecode;
 
 use crate::error::{BasePrecompileError, Result};
 

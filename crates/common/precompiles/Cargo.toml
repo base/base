@@ -13,13 +13,19 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+auto_impl = {workspace = true}
 tracing = { workspace = true }
+base-state = {workspace = true}
+revm-state = {workspace = true}
 thiserror = { workspace = true }
 alloy-sol-types = {workspace = true}
+revm-precompile = {workspace = true}
+revm-primitives = {workspace = true}
 alloy-primitives = {workspace = true}
 base-evm-context = {workspace = true}
-base-evm-handler = {workspace = true}
+revm-interpreter = {workspace = true}
 base-precompile-macros = {workspace = true}
+base-common-types-chain = {workspace = true}
 base-common-chain-config = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
 
@@ -63,6 +69,10 @@ required-features = ["test-utils"]
 name = "contract"
 required-features = ["test-utils"]
 
+[[test]]
+name = "b20_policy_v2_golden"
+required-features = ["test-utils"]
+
 [features]
 default = [
     "blst",
@@ -75,21 +85,27 @@ std = [
     "alloy-primitives/std",
     "alloy-sol-types/std",
     "base-common-chain-config/std",
-    "base-evm-handler/std",
+    "base-evm-context/std",
+    "base-state/std",
+    "revm-interpreter/std",
+    "revm-precompile/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "base-common-types-chain/std",
     "derive_more/std",
     "thiserror/std",
     "tracing/std",
 ]
-bn = ["base-evm-handler/bn"]
-blst = ["base-evm-handler/blst"]
-c-kzg = ["base-evm-handler/c-kzg"]
-portable = ["base-evm-handler/portable"]
-secp256k1 = ["base-evm-handler/secp256k1"]
-memory_limit = ["base-evm-handler/memory_limit"]
-optional_no_base_fee = ["base-evm-handler/optional_no_base_fee"]
-optional_eip3541 = ["base-evm-handler/optional_eip3541"]
-optional_eip3607 = ["base-evm-handler/optional_eip3607"]
-optional_fee_charge = ["base-evm-handler/optional_fee_charge"]
-optional_balance_check = ["base-evm-handler/optional_balance_check"]
-optional_block_gas_limit = ["base-evm-handler/optional_block_gas_limit"]
+bn = ["revm-precompile/bn"]
+blst = ["revm-precompile/blst"]
+c-kzg = ["revm-precompile/c-kzg"]
+portable = ["revm-precompile/portable"]
+secp256k1 = ["revm-precompile/secp256k1"]
+memory_limit = ["base-evm-context/memory_limit"]
+optional_no_base_fee = ["base-evm-context/optional_no_base_fee"]
+optional_eip3541 = ["base-evm-context/optional_eip3541"]
+optional_eip3607 = ["base-evm-context/optional_eip3607"]
+optional_fee_charge = ["base-evm-context/optional_fee_charge"]
+optional_balance_check = ["base-evm-context/optional_balance_check"]
+optional_block_gas_limit = ["base-evm-context/optional_block_gas_limit"]
 test-utils = ["base-common-chain-config/test-utils", "std"]

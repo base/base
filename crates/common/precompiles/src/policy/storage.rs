@@ -166,7 +166,7 @@ mod tests {
         BasePrecompileError, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
         StorageKey,
     };
-    use base_evm_handler::state::Bytecode;
+    use revm_state::Bytecode;
 
     use crate::{
         IPolicyRegistry::PolicyType,

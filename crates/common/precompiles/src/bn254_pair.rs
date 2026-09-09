@@ -1,7 +1,10 @@
-use base_evm_handler::precompile::{
-    Precompile, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, bn254,
-    call_eth_precompile,
-};
+use revm_precompile::Precompile;
+use revm_precompile::PrecompileHalt;
+use revm_precompile::PrecompileId;
+use revm_precompile::PrecompileOutput;
+use revm_precompile::PrecompileResult;
+use revm_precompile::bn254;
+use revm_precompile::call_eth_precompile;
 
 /// Max input size for the bn254 pair precompile after the Granite upgrade.
 pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
@@ -57,7 +60,8 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> Precompi
 
 #[cfg(test)]
 mod tests {
-    use base_evm_handler::{precompile::bn254, primitives::hex};
+    use revm_precompile::bn254;
+    use revm_primitives::hex;
 
     use crate::{JOVIAN_MAX_INPUT_SIZE, run_pair_granite, run_pair_jovian};
 

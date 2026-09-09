@@ -18,8 +18,8 @@ use revm_primitives::{
 use revm_state::Bytecode;
 
 use crate::{
-    CallFrame, CreateFrame, FrameData, FrameResult, ItemOrResult,
-    item_or_result::FrameInitOrResult, precompile_provider::PrecompileProvider,
+    CallFrame, CreateFrame, FrameData, FrameResult, ItemOrResult, PrecompileProvider,
+    item_or_result::FrameInitOrResult,
 };
 
 /// Frame implementation for Ethereum.

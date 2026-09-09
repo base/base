@@ -83,9 +83,6 @@ pub use post_execution::*;
 mod pre_execution;
 pub use pre_execution::*;
 
-mod precompile_provider;
-pub use precompile_provider::*;
-
 mod system_call;
 pub use system_call::*;
 
@@ -115,9 +112,6 @@ pub use error::*;
 mod tx;
 pub use tx::*;
 
-mod evm_internals;
-pub use evm_internals::*;
-
 #[cfg(feature = "call-util")]
 mod call;
 #[cfg(feature = "call-util")]
@@ -127,9 +121,6 @@ pub use call::*;
 mod overrides;
 #[cfg(feature = "overrides")]
 pub use overrides::*;
-
-mod precompiles;
-pub use precompiles::*;
 
 #[cfg(feature = "rpc")]
 mod rpc;
@@ -142,3 +133,9 @@ pub use tracing::*;
 mod either_evm;
 
 mod base_transactions;
+
+pub use base_common_precompiles::{
+    DynPrecompile, DynPrecompiles, ErasedError, EthPrecompiles, EvmInternals, EvmInternalsError,
+    MovePrecompileError, Precompile, PrecompileInput, PrecompileLookup, PrecompileProvider,
+    PrecompilesMap, TransactionTr, precompile_output_to_interpreter_result,
+};

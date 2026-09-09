@@ -1,9 +1,9 @@
 //! Precompile entry point for the asset B-20 variant.
 
+use crate::DynPrecompile;
 use alloy_primitives::{Address, Bytes};
 use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::BasePrecompileError;
-use base_evm_handler::DynPrecompile;
 
 use crate::{
     B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyRegistryStorage,

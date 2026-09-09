@@ -1,7 +1,8 @@
 //! Entry point for the `PolicyRegistry` precompile.
 
+use crate::DynPrecompile;
+use crate::PrecompilesMap;
 use base_common_chain_config::BaseUpgrade;
-use base_evm_handler::{DynPrecompile, PrecompilesMap};
 
 use crate::{
     NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,

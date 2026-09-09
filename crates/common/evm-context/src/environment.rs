@@ -6,6 +6,9 @@ use crate::{AccessList, BlockEnv, CfgEnv, TransactionType, TxEnv};
 use revm_primitives::U256;
 use revm_primitives::hardfork::SpecId;
 
+/// The Ethereum transaction and configuration context.
+pub type EthEvmContext<DB> = crate::Context<TxEnv, CfgEnv, DB>;
+
 /// Container type that holds both the configuration and block environment for EVM execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvmEnv<Spec = SpecId, BlockEnv = crate::BlockEnv> {

@@ -25,24 +25,25 @@ either = { workspace = true }
 tracing = { workspace = true }
 auto_impl = { workspace = true }
 thiserror = { workspace = true }
-revm-state = { workspace = true }
-base-state = { workspace = true }
 alloy-eips = { workspace = true }
+base-state = { workspace = true }
+revm-state = { workspace = true }
 revm-bytecode = { workspace = true }
+alloy-hardforks = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
-alloy-hardforks = { workspace = true }
+alloy-primitives = { workspace = true }
 base-evm-context = { workspace = true }
 revm-interpreter = { workspace = true }
-alloy-primitives = { workspace = true }
-serde_json = { workspace = true, features = [
-    "alloc",
-    "preserve_order",
-], optional = true }
+base-common-precompiles = {workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 base-common-types-rpc = { workspace = true, optional = true }
 base-common-types-chain = {workspace = true, features = ["k256"]}
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
+serde_json = { workspace = true, features = [
+    "alloc",
+    "preserve_order",
+], optional = true }
 
 [dev-dependencies]
 alloy-signer = { workspace = true }
@@ -50,6 +51,7 @@ base-common-network = { workspace = true }
 base-state = { workspace = true, features = ["serde"]}
 serde_json = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
+
 [lints]
 workspace = true
 
@@ -85,8 +87,14 @@ std = [
     "thiserror/std",
     "base-common-types-rpc?/std",
     "tracing/std",
+    "base-common-precompiles/std",
 ]
-tracer = ["std", "serde", "dep:serde", "dep:serde_json"]
+tracer = [
+    "std",
+    "serde",
+    "dep:serde",
+    "dep:serde_json",
+]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
 call-util = ["overrides"]
 gmp = ["revm-precompile/gmp"]

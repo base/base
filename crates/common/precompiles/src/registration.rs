@@ -5,7 +5,7 @@
 //! 2. One registration line in the precompile registry.
 
 use alloy_primitives::Address;
-use base_evm_handler::precompile::PrecompileResult;
+use revm_precompile::PrecompileResult;
 
 use crate::storage_provider::PrecompileStorageProvider;
 

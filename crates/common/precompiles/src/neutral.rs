@@ -16,14 +16,12 @@ use alloc::string::String;
 use core::result;
 
 use alloy_primitives::{B256, Bytes, U256};
-use base_evm_handler::{
-    precompile::{
-        PrecompileError as RevmPrecompileError, PrecompileHalt as RevmPrecompileHalt,
-        PrecompileOutput as RevmPrecompileOutput, PrecompileStatus as RevmPrecompileStatus,
-    },
-    primitives::KECCAK_EMPTY,
-    state::AccountInfo as RevmAccountInfo,
-};
+use revm_precompile::PrecompileError as RevmPrecompileError;
+use revm_precompile::PrecompileHalt as RevmPrecompileHalt;
+use revm_precompile::PrecompileOutput as RevmPrecompileOutput;
+use revm_precompile::PrecompileStatus as RevmPrecompileStatus;
+use revm_primitives::KECCAK_EMPTY;
+use revm_state::AccountInfo as RevmAccountInfo;
 
 /// Engine-neutral account information.
 ///
@@ -223,11 +221,11 @@ pub type PrecompileResult = result::Result<PrecompileOutput, PrecompileError>;
 /// macro) where a native precompile hands its result back to the engine.
 pub trait IntoEnginePrecompileResult {
     /// Converts a base precompile result into the `revm` precompile result.
-    fn into_revm(self) -> base_evm_handler::precompile::PrecompileResult;
+    fn into_revm(self) -> revm_precompile::PrecompileResult;
 }
 
 impl IntoEnginePrecompileResult for PrecompileResult {
-    fn into_revm(self) -> base_evm_handler::precompile::PrecompileResult {
+    fn into_revm(self) -> revm_precompile::PrecompileResult {
         self.map(Into::into).map_err(Into::into)
     }
 }

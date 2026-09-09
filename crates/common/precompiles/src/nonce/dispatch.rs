@@ -77,7 +77,7 @@ mod tests {
     /// deliberately rather than tracked silently.
     #[test]
     fn gas_matches_evm_reference() {
-        assert_eq!(super::CALLDATA_WORD_GAS, base_evm_handler::interpreter::gas::KECCAK256WORD);
+        assert_eq!(super::CALLDATA_WORD_GAS, revm_interpreter::gas::KECCAK256WORD);
     }
 
     #[test]
