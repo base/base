@@ -53,7 +53,15 @@ impl LocalL2Provider {
 
     /// Reads a native block using the execution provider's block-tag semantics.
     pub async fn block(&self, id: BlockId) -> Result<Option<BaseBlock>, LocalL2Error> {
-        self.read(move |provider| provider.block_by_id(id)).await
+        self.read(move |provider| match provider.block_by_id(id) {
+            // A fresh execution database has no safe/finalized labels yet. Consensus
+            // recovers them from genesis when this optional lookup returns no block.
+            Err(ProviderError::FinalizedBlockNotFound | ProviderError::SafeBlockNotFound) => {
+                Ok(None)
+            }
+            result => result,
+        })
+        .await
     }
 
     /// Reads L1 origin information from a local L2 block.
@@ -109,5 +117,35 @@ impl L2ChainProvider for LocalL2Provider {
     ) -> Result<SystemConfig, LocalL2Error> {
         let block = self.block_by_number(number).await?;
         to_system_config(&block, &rollup_config).map_err(|_| LocalL2Error::SystemConfig(number))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_eips::BlockNumberOrTag;
+    use reth_provider::{
+        CanonChainTracker, HeaderProvider, test_utils::create_test_provider_factory,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn unset_safety_labels_are_optional_until_consensus_assigns_them() {
+        let factory = create_test_provider_factory();
+        reth_db_common::init::init_genesis(&factory).unwrap();
+        let provider = LocalL2Provider {
+            provider: BlockchainProvider::new(factory).unwrap(),
+            rollup_config: Arc::new(RollupConfig::default()),
+        };
+        assert!(provider.block(BlockNumberOrTag::Finalized.into()).await.unwrap().is_none());
+        assert!(provider.block(BlockNumberOrTag::Safe.into()).await.unwrap().is_none());
+        assert!(provider.block(BlockNumberOrTag::Latest.into()).await.unwrap().is_some());
+        assert!(provider.block(1.into()).await.unwrap().is_none());
+        let genesis = provider.provider.sealed_header(0).unwrap().unwrap();
+        provider.provider.set_safe(genesis.clone());
+        provider.provider.set_finalized(genesis);
+        let block = provider.block(0.into()).await.unwrap();
+        assert_eq!(provider.block(BlockNumberOrTag::Finalized.into()).await.unwrap(), block);
+        assert_eq!(provider.block(BlockNumberOrTag::Safe.into()).await.unwrap(), block);
     }
 }

@@ -68,6 +68,7 @@ base-common-genesis = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
+base-node-core = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["default", "std"] }

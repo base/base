@@ -46,9 +46,11 @@ base-common-rpc-types = { workspace = true, features = ["network"]}
 alloy-provider = { workspace = true, features = ["default", "ws", "reqwest"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
 [dev-dependencies]
+reth-db-common = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 httpmock = { workspace = true, features = ["default"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "macros", "test-util"] }
 
 [features]

@@ -3415,6 +3415,7 @@ dependencies = [
  "metrics",
  "reqwest",
  "reth-db",
+ "reth-db-common",
  "reth-provider",
  "reth-storage-api",
  "reth-trie-common",

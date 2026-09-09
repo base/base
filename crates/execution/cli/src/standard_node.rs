@@ -545,10 +545,9 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before starting services.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         launch.base = BaseNode::new(rollup_args.clone());
-        let resource_metering_enabled = args.metering.enable_metering;
-        let provider: SharedMeteringProvider = if resource_metering_enabled
-            && args.metering.resource_metering.resource_metering_schedule.is_some()
-        {
+        let resource_metering_enabled = args.metering.enable_metering
+            && args.metering.resource_metering.resource_metering_schedule.is_some();
+        let provider: SharedMeteringProvider = if resource_metering_enabled {
             // Shared defaults with the Flashblocks builder CLI.
             let store: SharedMeteringProvider = Arc::new(MeteringStore::new(
                 true,
@@ -911,6 +910,20 @@ mod tests {
         .expect_err("execution upgrade signal reads should require an explicit execution L1 RPC");
 
         assert!(error.to_string().contains("--upgrade-signal.l1-rpc"));
+    }
+
+    #[test]
+    fn bundle_metering_can_start_without_a_payload_resource_schedule() {
+        let args =
+            CommandParser::<StandardNodeArgs>::parse_from(["base", "--enable-metering"]).args;
+        let mut launch = base_node_core::NodeLaunch::testing(
+            base_node_core::NodeConfig::test(),
+            reth_tasks::Runtime::test(),
+        );
+        StandardBaseRethNode::configure(&mut launch, args).unwrap();
+        assert!(launch.rpc.metering.unwrap().enabled);
+        assert!(!launch.base.resource_metering.enabled);
+        assert!(launch.rpc.metering_store.is_none());
     }
 
     #[test]
