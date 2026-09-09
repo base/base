@@ -4,7 +4,7 @@ use std::fmt;
 
 use alloy_eips::BlockId;
 use base_common_types_payload::PayloadError;
-use base_execution_consensus::ConsensusError;
+use base_execution_evm_blocks::ConsensusError;
 use jsonrpsee_core::RpcResult;
 
 /// Helper trait to easily convert various `Result` types into [`RpcResult`]

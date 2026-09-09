@@ -1,7 +1,13 @@
 //! Verification of blocks w.r.t. Base upgrades.
 
-pub mod canyon;
-pub mod isthmus;
+mod canyon;
+pub use canyon::{ensure_empty_shanghai_withdrawals, ensure_empty_withdrawals_root};
+
+mod isthmus;
+pub use isthmus::{
+    ensure_withdrawals_storage_root_is_some, verify_withdrawals_root,
+    verify_withdrawals_root_prehashed, withdrawals_root, withdrawals_root_prehashed,
+};
 
 use alloc::vec::Vec;
 

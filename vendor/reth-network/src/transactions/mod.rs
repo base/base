@@ -31,7 +31,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::Encodable;
 use base_common_types_chain::TxType;
-use base_execution_evm::SenderRecoveryCache;
+use base_execution_evm_blocks::SenderRecoveryCache;
 use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
     PropagatedTransactions, TransactionPool, ValidPoolTransaction,

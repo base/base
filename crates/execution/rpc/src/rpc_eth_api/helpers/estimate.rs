@@ -9,7 +9,7 @@ use base_evm_handler::{
     database::{EvmDatabaseError, State},
     primitives::KECCAK_EMPTY,
 };
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
 };
 use futures::Future;

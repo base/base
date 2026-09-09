@@ -28,9 +28,9 @@ base-common-precompiles = { workspace = true }
 base-common-types-chain = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 reth-storage-api = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
+base-execution-evm-blocks = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 alloy-eips = { workspace = true }

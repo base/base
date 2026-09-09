@@ -1,7 +1,7 @@
 use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_primitives::BlockNumber;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use reth_provider::providers::BlockchainProvider;
 use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;

@@ -9,8 +9,8 @@ use base_execution_cli::{
     chainspec::BaseChainSpecParser,
     commands::{GenesisOutputRootCommand, init_state, p2p},
 };
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::{config_cmd, db, dump_genesis, init_cmd, prune, re_execute, stage};
 

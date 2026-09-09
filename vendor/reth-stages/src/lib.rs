@@ -23,15 +23,15 @@
 //! # use reth_stages::Pipeline;
 //! # use reth_stages::sets::DefaultStages;
 //! # use tokio::sync::watch;
-//! # use base_execution_evm::BaseEvmConfig;
+//! # use base_execution_evm_blocks::BaseEvmConfig;
 //! # use reth_provider::ProviderFactory;
 //! # use reth_provider::StaticFileProviderFactory;
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
-//! # use base_execution_consensus::Consensus;
-//! # use base_execution_consensus::BaseBeaconConsensus;
-//! # use base_execution_consensus::BaseBeaconConsensus;
+//! # use base_execution_evm_blocks::Consensus;
+//! # use base_execution_evm_blocks::BaseBeaconConsensus;
+//! # use base_execution_evm_blocks::BaseBeaconConsensus;
 //! #
 //! # let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
 //! # let consensus: Arc<BaseBeaconConsensus> = Arc::new(TestConsensus::test());

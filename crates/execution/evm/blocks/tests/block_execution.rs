@@ -9,7 +9,7 @@ use base_common_types_chain::{
     BaseReceipt, BaseTransactionSigned, Block, BlockBody, Header, Predeploys, SignableTransaction,
     SystemAddresses, TxDeposit, TxEip1559,
 };
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BaseEvmConfig, BasicBlockExecutor, Executor, test_utils::StateProviderTest,
 };
 use base_protocol::BaseTimeUpdateTx;

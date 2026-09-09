@@ -1,5 +1,6 @@
 use alloc::sync::Arc;
 
+use crate::{calculate_receipt_root_no_memo, withdrawals_root};
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::logs_bloom;
 use base_common_chain_config::BaseChainSpec;
@@ -10,7 +11,6 @@ use base_common_types_chain::{
 };
 use base_evm_context::Block as _;
 use base_evm_handler::BlockExecutionError;
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_execution_types::BlockExecutionResult;
 
 use crate::execute::BlockAssemblerInput;
@@ -61,7 +61,7 @@ impl BaseBlockAssembler {
                 // withdrawals root field in block header is used for storage root of L2 predeploy
                 // `l2tol1-message-passer`
                 Some(
-                    isthmus::withdrawals_root(bundle_state, state_provider)
+                    withdrawals_root(bundle_state, state_provider)
                         .map_err(BlockExecutionError::other)?,
                 )
             } else if Upgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {

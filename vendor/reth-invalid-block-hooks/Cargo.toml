@@ -16,27 +16,28 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
-reth-trie = { workspace = true }
 jsonrpsee = { workspace = true }
+reth-trie = { workspace = true }
 reth-provider = { workspace = true }
 base-evm-handler = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
-base-common-types-chain = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tracing = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["serde"]}
 base-execution-rpc = { workspace = true, features = ["client"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-evm-blocks = { workspace = true, features = ["serde"]}
+
 [dev-dependencies]
 alloy-eips = { workspace = true }
 reth-testing-utils = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {workspace = true, features = ["serde"]}
-base-execution-evm = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }

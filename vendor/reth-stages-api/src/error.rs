@@ -1,7 +1,7 @@
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::DecompressError;
 use base_evm_handler::BlockExecutionError;
-use base_execution_consensus::ConsensusError;
+use base_execution_evm_blocks::ConsensusError;
 use reth_network_p2p::error::DownloadError;
 use reth_provider::ProviderError;
 use reth_prune::{PruneSegment, PruneSegmentError, PrunerError, UnwindTargetPrunedError};

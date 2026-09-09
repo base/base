@@ -848,7 +848,8 @@ where
     {
         self.block_info.timestamp.store(header.timestamp(), Ordering::Relaxed);
 
-        if let Some(Ok(l1_block_info)) = tx.map(base_execution_evm::extract_l1_info_from_tx) {
+        if let Some(Ok(l1_block_info)) = tx.map(base_execution_evm_blocks::extract_l1_info_from_tx)
+        {
             *self.block_info.l1_block_info.write() = l1_block_info;
         }
     }
@@ -2172,7 +2173,7 @@ mod tests {
         transaction::SignerRecoverable,
     };
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_txpool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
@@ -3396,7 +3397,7 @@ mod tests {
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
     /// `operator_fee_scalar`/`operator_fee_constant`. Mirrors the fixture used by
-    /// `parse_l1_info_isthmus` in `crates/execution/evm/src/l1.rs`.
+    /// `parse_l1_info_isthmus` in `crates/execution/evm/blocks/src/l1.rs`.
     const ISTHMUS_L1_INFO_DATA_HEX: &str = concat!(
         "098999be00000558000c5fc500000000000000030000000067a9f765",
         "0000000000000029000000000000000000000000000000000000000000000000",
@@ -3437,7 +3438,7 @@ mod tests {
         let encoded = recovered_tx.encoded_2718();
 
         let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
-        let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
+        let mut l1_block_info = base_execution_evm_blocks::parse_l1_info(&isthmus_data).unwrap();
         let l1_only_cost = l1_block_info.calculate_tx_l1_cost(
             &encoded,
             BaseSpecId::from_timestamp(
@@ -3584,7 +3585,7 @@ mod tests {
                 .as_timestamp()
                 .unwrap_or_default(),
         );
-        let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
+        let mut l1_block_info = base_execution_evm_blocks::parse_l1_info(&isthmus_data).unwrap();
         let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
 
         assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");

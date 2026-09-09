@@ -19,7 +19,7 @@ use base_evm_context::{Block, BlockEnv};
 use base_evm_handler::database::State;
 use base_evm_handler::{CommitChanges, Evm as AlloyEvm, TxResult};
 use base_execution_eip8130::IntrinsicGas;
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
     BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,
     Database, ExecutionWitnessRecord,
@@ -1369,7 +1369,7 @@ mod tests {
     };
     use base_common_types_payload::PayloadId;
     use base_evm_handler::{database::State, state::EvmState};
-    use base_execution_evm::{
+    use base_execution_evm_blocks::{
         BaseEvmConfig, BlockBuilder, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
     };
     use base_execution_trie::{

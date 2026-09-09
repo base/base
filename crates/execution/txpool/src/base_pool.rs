@@ -1734,7 +1734,7 @@ mod tests {
         Eip8130Constants, Eip8130Signed, SignableTransaction, Transaction, TxEip1559, TxEip8130,
         transaction::{Recovered, SignerRecoverable},
     };
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_txpool::{
         CanonicalStateUpdate, EthTransactionValidatorBuilder, InMemoryBlobStore, PoolConfig,
         PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,

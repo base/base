@@ -1,6 +1,6 @@
 //! Concrete components used by Base RPC handlers.
 
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_node_context::{BaseNodeContext, BaseNodePool};
 use reth_network::NetworkHandle;
 use reth_provider::providers::BlockchainProvider;

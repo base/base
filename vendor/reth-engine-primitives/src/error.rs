@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 
 use base_common_types_payload::ForkchoiceUpdateError;
 use base_evm_handler::{BlockExecutionError, BlockValidationError, InternalBlockExecutionError};
-use base_execution_consensus::ConsensusError;
+use base_execution_evm_blocks::ConsensusError;
 use reth_storage_errors::provider::ProviderError;
 
 /// Represents all error cases when handling a new payload.

@@ -7,7 +7,7 @@ use alloy_primitives::{
     map::{DefaultHashBuilder, FbBuildHasher},
 };
 use base_evm_handler::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
-use base_execution_evm::{DynPrecompile, Precompile, PrecompileInput};
+use base_execution_evm_blocks::{DynPrecompile, Precompile, PrecompileInput};
 use moka::policy::EvictionPolicy;
 use reth_primitives_traits::dashmap::DashMap;
 use tracing::error;
@@ -261,7 +261,7 @@ mod tests {
         precompile::{PrecompileOutput, PrecompileStatus},
         primitives::hardfork::SpecId,
     };
-    use base_execution_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
+    use base_execution_evm_blocks::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
 
     use super::*;
 

@@ -155,7 +155,7 @@ enum DownloaderUpdates {
 mod tests {
     use std::sync::Arc;
 
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestHeadersClient;
 
     use super::*;

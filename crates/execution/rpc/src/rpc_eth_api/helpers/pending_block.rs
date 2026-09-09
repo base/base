@@ -15,7 +15,7 @@ use base_common_types_rpc::BlockNumberOrTag;
 use base_evm_context::{Block, Cfg as _};
 use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
     EvmEnvFor, TxResult,
 };

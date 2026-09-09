@@ -12,7 +12,7 @@ use std::{
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
 use base_evm_handler::database::BundleState;
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
 };
@@ -613,7 +613,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_evm_handler::{database::BundleState, state::AccountInfo};
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
 
     use crate::tree::{

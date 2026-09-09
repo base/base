@@ -680,7 +680,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseBlock, Header};
     use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_txpool::{
         BaseOrdering, BaseTransactionPool, BaseTransactionValidator,
         EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,

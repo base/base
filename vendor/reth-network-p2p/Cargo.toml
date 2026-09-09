@@ -22,26 +22,27 @@ reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-consensus = { workspace = true }
+base-execution-evm-blocks = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
+
 [dev-dependencies]
 test-case = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 parking_lot = { workspace = true, features = ["default"] }
-base-execution-consensus = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["std"]
 test-utils = [
-    "base-execution-consensus/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "parking_lot",
     "reth-network-types/test-utils",
     "reth-primitives-traits/test-utils",
@@ -50,12 +51,11 @@ test-utils = [
 ]
 std = [
     "base-common-types-chain/std",
-    "base-execution-consensus/std",
+    "base-execution-evm-blocks/std",
     "alloy-eip7928/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "reth-primitives-traits/std",
-    "base-common-types-chain/std",
     "derive_more/std",
     "reth-network-peers/std",
     "reth-storage-errors/std",

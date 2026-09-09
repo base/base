@@ -29,7 +29,9 @@ use base_evm_handler::{
     database::{BundleRetention, State},
     state::bal::Bal as RevmBal,
 };
-use base_execution_evm::{BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor};
+use base_execution_evm_blocks::{
+    BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
+};
 use crossbeam_channel::{Receiver, Sender};
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::Runtime;
@@ -186,7 +188,7 @@ fn convert_alloy_to_revm_bal(alloy_bal: &AlloyBal) -> Result<Arc<RevmBal>, BalEx
     // invalid as no legal execution should've led to this bytecode deployment.
     let received_bal_revm = RevmBal::clone_from_alloy(alloy_bal.as_vec()).map_err(|e| {
         BalExecutionError::Consensus(
-            base_execution_consensus::ConsensusError::BlockAccessListInvalid(format!("{e:?}")),
+            base_execution_evm_blocks::ConsensusError::BlockAccessListInvalid(format!("{e:?}")),
         )
     })?;
     Ok(Arc::new(received_bal_revm))

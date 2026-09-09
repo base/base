@@ -10,7 +10,7 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::Stream;
 use futures_util::StreamExt;
 use reth_config::BodiesConfig;
@@ -606,7 +606,7 @@ impl BodiesDownloaderBuilder {
 mod tests {
     use alloy_primitives::{B256, map::B256Map};
     use assert_matches::assert_matches;
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use reth_provider::test_utils::create_test_provider_factory;
     use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
 

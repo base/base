@@ -146,7 +146,7 @@ async fn test_eth_subscribe_not_available_over_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_txpool::{TransactionOrigin, TransactionPool};
     use reth_rpc_builder::RpcRegistryInner;
     use reth_tasks::Runtime;

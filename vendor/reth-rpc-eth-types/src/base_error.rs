@@ -8,7 +8,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode};
 use base_evm_context::{EVMError, ExecutionResult, InvalidTransaction};
-use base_execution_evm::{BaseBlockExecutionError, ProviderError};
+use base_execution_evm_blocks::{BaseBlockExecutionError, ProviderError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_rpc_convert::{EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};

@@ -29,8 +29,8 @@ eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-payload-builder = { workspace = true }
 base-common-types-chain = { workspace = true, features = ["std"]}
-base-execution-evm = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
+base-execution-evm-blocks = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

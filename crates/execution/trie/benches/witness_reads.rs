@@ -11,7 +11,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_evm_handler::{Database, database::State};
-use base_execution_evm::ExecutionWitnessRecord;
+use base_execution_evm_blocks::ExecutionWitnessRecord;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
     provider::BaseProofsStateProviderRef,

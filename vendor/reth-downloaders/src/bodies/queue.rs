@@ -6,7 +6,7 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::{Stream, stream::FuturesUnordered};
 use futures_util::StreamExt;
 use reth_network_p2p::{
@@ -21,7 +21,8 @@ use crate::metrics::BodyDownloaderMetrics;
 /// The wrapper around [`FuturesUnordered`] that keeps information
 /// about the blocks currently being requested.
 #[derive(Debug)]
-pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>> {
+pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>>
+{
     /// Inner body request queue.
     inner: FuturesUnordered<BodiesRequestFuture<C>>,
     /// The downloader metrics.

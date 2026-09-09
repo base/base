@@ -5,9 +5,9 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
-use base_common_types_chain::BaseBlock;
 use base_common_evm::L1BlockInfo;
-use base_execution_evm::extract_l1_info_from_tx;
+use base_common_types_chain::BaseBlock;
+use base_execution_evm_blocks::extract_l1_info_from_tx;
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,

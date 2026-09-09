@@ -6,7 +6,9 @@ use base_common_chain_config::Upgrades;
 use base_common_evm::BaseTime;
 use base_common_types_chain::{BlockHeader, Predeploys};
 use base_common_types_payload::ExecutionData;
-use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
+use base_execution_evm_blocks::{
+    BaseConsensusError, ConsensusError, verify_withdrawals_root_prehashed,
+};
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError,
 };
@@ -139,7 +141,7 @@ impl BaseEngineValidator {
             .get(&self.hashed_addr_l2tol1_msg_passer)
             .cloned()
             .unwrap_or_default();
-        isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
+        verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
             .map_err(ConsensusError::other)
     }
 }
@@ -270,7 +272,7 @@ mod tests {
         BaseBlock, BaseTxEnvelope, BlockBody, EMPTY_ROOT_HASH, Header, Sealable, TxDeposit,
     };
     use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
-    use base_execution_consensus::BaseConsensusError;
+    use base_execution_evm_blocks::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{

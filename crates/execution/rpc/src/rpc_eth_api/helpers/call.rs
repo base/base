@@ -21,7 +21,7 @@ use base_evm_handler::{
     database::{EvmDatabaseError, State},
 };
 use base_evm_handler::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides};
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BlockBuilder, BlockEnvironment, BlockExecutor, CancelOnDrop, Evm, EvmEnvFor, EvmFor,
     HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
 };
@@ -495,7 +495,7 @@ impl BaseEthApi {
         Ok(res)
     }
 
-    /// Executes the [`base_execution_evm::EvmEnv`] against the given [Database] without committing state
+    /// Executes the [`base_execution_evm_blocks::EvmEnv`] against the given [Database] without committing state
     /// changes.
     pub fn transact_with_inspector<DB, I>(
         &self,
@@ -566,7 +566,7 @@ impl BaseEthApi {
     /// Prepares the state and env for the given [`RpcTxReq`] at the given [`BlockId`] and
     /// executes the closure on a new task returning the result of the closure.
     ///
-    /// This returns the configured [`base_execution_evm::EvmEnv`] for the given [`RpcTxReq`] at
+    /// This returns the configured [`base_execution_evm_blocks::EvmEnv`] for the given [`RpcTxReq`] at
     /// the given [`BlockId`] and with configured call settings: `prepare_call_env`.
     ///
     /// This is primarily used by `eth_call`.
@@ -703,7 +703,7 @@ impl BaseEthApi {
 
     ///
     /// All `TxEnv` fields are derived from the given [`RpcTxReq`], if fields are
-    /// `None`, they fall back to the [`base_execution_evm::EvmEnv`]'s settings.
+    /// `None`, they fall back to the [`base_execution_evm_blocks::EvmEnv`]'s settings.
     pub fn create_txn_env(
         &self,
         evm_env: &EvmEnvFor,
@@ -722,7 +722,7 @@ impl BaseEthApi {
         Ok(self.converter().tx_env(request, evm_env)?)
     }
 
-    /// Prepares the [`base_execution_evm::EvmEnv`] for execution of calls.
+    /// Prepares the [`base_execution_evm_blocks::EvmEnv`] for execution of calls.
     ///
     /// Does not commit any changes to the underlying database.
     ///

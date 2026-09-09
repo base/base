@@ -21,14 +21,14 @@ metrics = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
-reth-config = { workspace = true }
 pin-project = { workspace = true }
+reth-config = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-consensus = { workspace = true }
+base-execution-evm-blocks = { workspace = true }
 itertools = { workspace = true, optional = true }
 reth-provider = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
@@ -36,13 +36,14 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio = { workspace = true, features = ["sync", "fs", "io-util"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
+
 [dev-dependencies]
 itertools = { workspace = true }
 assert_matches = { workspace = true }
@@ -55,7 +56,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {workspace = true, features = ["serde"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-base-execution-consensus = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
@@ -63,7 +64,7 @@ default = []
 file-client = ["dep:async-compression", "dep:alloy-rlp", "dep:itertools"]
 test-utils = [
     "tempfile",
-    "base-execution-consensus/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "reth-network-p2p/test-utils",
     "reth-testing-utils",
     "reth-provider/test-utils",

@@ -1,5 +1,5 @@
 [package]
-name = "base-execution-evm"
+name = "base-execution-evm-blocks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,41 +11,53 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-thiserror = { workspace = true }
-alloy-eips = { workspace = true }
+thiserror = {workspace = true}
+tracing = { workspace = true }
+alloy-eips = {workspace = true}
+alloy-trie = { workspace = true }
 futures-util = { workspace = true }
+base-protocol = { workspace = true }
+base-evm-handler = {workspace = true}
+alloy-hardforks = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
-reth-storage-api = { workspace = true }
-reth-trie-common = { workspace = true }
-reth-storage-errors = { workspace = true }
-reth-execution-types = { workspace = true }
+reth-storage-errors = {workspace = true}
+reth-primitives-traits = {workspace = true}
 rayon = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true }
-base-execution-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-trie = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true }
 reth-metrics = { workspace = true, optional = true }
+alloy-eip7928 = {features = ["rlp"], workspace = true}
 derive_more = { workspace = true, features = ["full"] }
-alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
+reth-storage-api = {features = ["default"], workspace = true}
+reth-trie-common = {features = ["default"], workspace = true}
+base-common-types-chain = {features = ["reth"], workspace = true}
+reth-execution-types = {features = ["default"], workspace = true}
+alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-common-evm = { workspace = true, features = ["std", "reth"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"]}
-base-common-types-chain = { workspace = true, features = ["reth"] }
-base-common-chain-config = {features = ["default"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
+base-common-chain-config = {features = ["default", "std"], workspace = true}
 
 [dev-dependencies]
-reth-trie = { workspace = true }
+reth-trie = {workspace = true}
 alloy-eips = { workspace = true }
+alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
+alloy-hardforks = {workspace = true}
 base-protocol = { workspace = true }
-alloy-hardforks = { workspace = true }
+reth-db-common = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = {features = ["std"], workspace = true}
-base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-common-types-chain = {features = ["arbitrary", "reth", "serde"], workspace = true}
+
+[[test]]
+name = "block_execution"
+required-features = ["test-utils"]
 
 [features]
 default = ["metrics", "std"]
@@ -56,35 +68,38 @@ metrics = [
     "dep:reth-metrics",
 ]
 std = [
-    "base-common-types-chain/std",
+    "alloy-chains/std",
+    "alloy-eip7928/std",
     "alloy-eips/std",
     "alloy-primitives/std",
+    "alloy-rlp?/std",
+    "alloy-trie/std",
     "base-common-chain-config/std",
     "base-common-evm/std",
+    "base-common-types-chain/std",
     "base-evm-handler/std",
-    "reth-primitives-traits/std",
-    "thiserror/std",
-    "base-execution-consensus/std",
     "base-execution-payload-types/std",
+    "base-protocol/std",
     "dep:rayon",
-    "reth-execution-types/std",
-    "reth-storage-errors/std",
-    "futures-util/std",
     "derive_more/std",
-    "reth-storage-api/std",
-    "reth-trie-common/std",
-    "alloy-eip7928/std",
     "fixed-cache/std",
-    "alloy-rlp?/std",
+    "futures-util/std",
+    "reth-execution-types/std",
+    "reth-primitives-traits/std",
+    "reth-storage-api/std",
+    "reth-storage-errors/std",
+    "reth-trie-common/std",
+    "thiserror/std",
+    "tracing/std",
 ]
 portable = ["base-common-evm/portable", "base-evm-handler/portable"]
 rpc = ["base-evm-handler/rpc"]
 test-utils = [
-    "std",
+    "dep:reth-trie",
     "reth-primitives-traits/test-utils",
     "reth-trie-common/test-utils",
-    "dep:reth-trie",
     "reth-trie?/test-utils",
+    "std",
 ]
 witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
 serde = [

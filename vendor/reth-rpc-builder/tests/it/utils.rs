@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,

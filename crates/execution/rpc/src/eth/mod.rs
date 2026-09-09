@@ -7,7 +7,7 @@ mod proofs;
 pub use proofs::*;
 mod transaction;
 
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 
 use crate::BaseTimeCache;
 

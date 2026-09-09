@@ -21,7 +21,7 @@ use base_evm_handler::{
     Database, DatabaseCommit,
     database::{BundleRetention, State},
 };
-use base_execution_evm::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
+use base_execution_evm_blocks::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
 use base_execution_txpool::TransactionPool;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;

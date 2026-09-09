@@ -32,8 +32,8 @@ reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-prune-types = { workspace = true }
 base-node-context = { workspace = true }
-base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-evm-blocks = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
@@ -55,15 +55,15 @@ base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
 reth-trie-common = { workspace = true, features = ["serde-bincode-compat"] }
 
 [features]
 serde = [
     "reth-exex-types/serde",
-    "base-execution-evm/serde",
+    "base-execution-evm-blocks/serde",
     "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",

@@ -625,7 +625,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use assert_matches::assert_matches;
-    use base_execution_consensus::ConsensusError;
+    use base_execution_evm_blocks::ConsensusError;
     use reth_provider::test_utils::create_test_provider_factory;
     use reth_prune::PruneModes;
     use reth_storage_errors::provider::ProviderError;

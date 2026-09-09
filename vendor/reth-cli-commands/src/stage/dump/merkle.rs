@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, BlockNumber};
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use eyre::Result;
 use reth_config::config::EtlConfig;
 use reth_db::DatabaseEnv;

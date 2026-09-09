@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use alloy_eips::{BlockHashOrNumber, eip1898::BlockWithParent};
 use alloy_primitives::B256;
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::Stream;
 use reth_primitives_traits::SealedHeader;
 

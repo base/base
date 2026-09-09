@@ -1,10 +1,11 @@
 use std::{future::Future, sync::Arc};
 
+use crate::{RethApiServer, RethJitAction};
 use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};
 use reth_chain_state::{
@@ -13,7 +14,6 @@ use reth_chain_state::{
 };
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
-use crate::{RethApiServer, RethJitAction};
 use reth_rpc_eth_types::{EthApiError, EthResult};
 use reth_storage_api::{
     BlockReader, BlockReaderIdExt, ChangeSetReader, StateProviderFactory, TransactionVariant,
@@ -172,7 +172,7 @@ where
         }
 
         let outcome = self.evm_config().executor(db).execute_batch(&blocks).map_err(
-            |e: base_execution_evm::BlockExecutionError| EthApiError::Internal(e.into()),
+            |e: base_execution_evm_blocks::BlockExecutionError| EthApiError::Internal(e.into()),
         )?;
 
         Ok(Some(outcome))

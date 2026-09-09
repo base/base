@@ -11,13 +11,14 @@ use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{GotExpected, RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::{
-    ConsensusError, HeaderConsensusError, ReceiptRootBloom, canyon,
+    ConsensusError, HeaderConsensusError, ReceiptRootBloom,
     common_validation::{
         validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
         validate_cancun_gas, validate_header_base_fee, validate_header_extra_data,
         validate_header_gas,
     },
-    isthmus, validate_block_post_execution, validation,
+    ensure_empty_shanghai_withdrawals, ensure_empty_withdrawals_root,
+    ensure_withdrawals_storage_root_is_some, validate_block_post_execution, validation,
 };
 
 /// Base consensus implementation.
@@ -157,7 +158,7 @@ impl BaseBeaconConsensus {
 
         // Check empty shanghai-withdrawals
         if self.chain_spec.is_canyon_active_at_timestamp(block.timestamp()) {
-            canyon::ensure_empty_shanghai_withdrawals(block.body()).map_err(|err| {
+            ensure_empty_shanghai_withdrawals(block.body()).map_err(|err| {
                 ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
                     format!("failed to verify block {}: {err}", block.number()),
                 )))
@@ -179,14 +180,14 @@ impl BaseBeaconConsensus {
         // Check withdrawals root field in header
         if self.chain_spec.is_isthmus_active_at_timestamp(block.timestamp()) {
             // storage root of withdrawals pre-deploy is verified post-execution
-            isthmus::ensure_withdrawals_storage_root_is_some(block.header()).map_err(|err| {
+            ensure_withdrawals_storage_root_is_some(block.header()).map_err(|err| {
                 ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
                     format!("failed to verify block {}: {err}", block.number()),
                 )))
             })?
         } else {
             // canyon is active, else would have returned already
-            canyon::ensure_empty_withdrawals_root(block.header())?
+            ensure_empty_withdrawals_root(block.header())?
         }
 
         Ok(())

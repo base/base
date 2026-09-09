@@ -35,10 +35,9 @@ figment = { workspace = true, features = ["env", "toml"] }
 base-builder-core = { workspace = true, features = ["default"] }
 base-consensus-cli = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
-base-execution-consensus = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
+base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 
 [dev-dependencies]
 url = { workspace = true }

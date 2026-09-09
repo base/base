@@ -10,8 +10,8 @@ use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction, Header,
     TxEip1559, TxReceipt, constants::ETH_TO_WEI,
 };
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use reth_config::config::StageConfig;
 use reth_db_common::init::init_genesis;
 use reth_downloaders::{

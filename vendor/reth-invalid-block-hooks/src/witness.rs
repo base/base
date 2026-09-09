@@ -8,7 +8,7 @@ use base_evm_handler::{
     database::{AccountInfoRevert, AccountStatus, BundleState, RevertToSlot, State, StorageSlot},
     state::AccountInfo,
 };
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_rpc::DebugApiClient;
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
@@ -409,7 +409,7 @@ mod tests {
         bytecode::Bytecode,
         database::{AccountRevert, BundleAccount, BundleState},
     };
-    use base_execution_evm::test_utils::StateProviderTest;
+    use base_execution_evm_blocks::test_utils::StateProviderTest;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{self, BlockParams, random_eoa_accounts};
     use tempfile::TempDir;

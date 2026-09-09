@@ -123,7 +123,7 @@ where
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
     /// use alloy_hardforks::{EthereumHardforks};
-    /// use base_execution_evm::BaseEvmConfig;
+    /// use base_execution_evm_blocks::BaseEvmConfig;
     /// use base_common_types_chain::Header;
     /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
     /// # where

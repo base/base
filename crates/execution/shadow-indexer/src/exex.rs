@@ -253,7 +253,7 @@ mod tests {
 
     use alloy_primitives::B256;
     use base_common_types_chain::Receipt;
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use futures::TryStreamExt;
     use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;

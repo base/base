@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_types_chain::{BlockHeader, Compact, constants::KECCAK_EMPTY};
-use base_execution_consensus::ConsensusError;
+use base_execution_evm_blocks::ConsensusError;
 use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},

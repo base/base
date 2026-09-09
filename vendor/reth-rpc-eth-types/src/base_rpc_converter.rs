@@ -9,7 +9,7 @@ use base_common_types_chain::{
 use base_common_types_rpc::{
     BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
 };
-use base_execution_evm::{EvmEnvFor, TxEnvFor};
+use base_execution_evm_blocks::{EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::{
     TransactionConversionError, TryIntoTxEnv, transaction::ConvertReceiptInput,

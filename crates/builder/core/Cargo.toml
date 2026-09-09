@@ -85,7 +85,6 @@ alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-tracing-otlp = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
@@ -95,7 +94,6 @@ tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
-base-execution-consensus = { workspace = true, features = ["default"] }
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
@@ -103,6 +101,7 @@ hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
+base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
@@ -140,7 +139,7 @@ metrics = [
     "base-metrics/metrics",
     "base-observability-events/metrics",
     "dep:metrics",
-    "base-execution-evm/metrics",
+    "base-execution-evm-blocks/metrics",
     "reth-trie/metrics",
 ]
 jemalloc = ["dep:tikv-jemallocator", "reth-cli-util/jemalloc"]
@@ -165,7 +164,7 @@ test-utils = [
     "nanoid",
     "reth-chain-state/test-utils",
     "reth-db/test-utils",
-    "base-execution-evm/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "reth-execution-cache/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",

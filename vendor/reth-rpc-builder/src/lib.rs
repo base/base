@@ -18,8 +18,8 @@ use std::{
 use alloy_provider::{Provider, ProviderBuilder, fillers::RecommendedFillers};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_network::IntoWallet;
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc::{
     AdminApi, BaseEthApi, DebugApi, EthApiServer, EthBundle, EthCallBundleApiServer,
     EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi, RPCApi, RethApi,

@@ -15,7 +15,9 @@ use base_evm_handler::{
     primitives::{Address, Bytes, TxKind, U256},
 };
 use base_evm_handler::{PrecompilesMap, TxResult};
-use base_execution_evm::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor};
+use base_execution_evm_blocks::{
+    BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor,
+};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};

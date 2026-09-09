@@ -91,7 +91,7 @@ where
             block.header().timestamp(),
             &block.body().transactions,
         );
-        let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
+        let mut l1_block_info = match base_execution_evm_blocks::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
             Err(err) => {
                 let genesis_number =
@@ -458,8 +458,8 @@ mod tests {
             ..Default::default()
         };
 
-        let mut l1_block_info =
-            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+        let mut l1_block_info = base_execution_evm_blocks::extract_l1_info(&block.body)
+            .expect("should extract l1 info");
 
         // test
         let base_mainnet = BaseChainSpec::mainnet();
@@ -589,8 +589,8 @@ mod tests {
             body: BlockBody { transactions: vec![tx_0], ..Default::default() },
             ..Default::default()
         };
-        let mut l1_block_info =
-            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+        let mut l1_block_info = base_execution_evm_blocks::extract_l1_info(&block.body)
+            .expect("should extract l1 info");
 
         // https://basescan.org/tx/0xf9420cbaf66a2dda75a015488d37262cbfd4abd0aad7bb2be8a63e14b1fa7a94
         let tx = hex!(

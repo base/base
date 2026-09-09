@@ -14,13 +14,13 @@
 //! # use reth_stages::sets::{OfflineStages};
 //! #
 //! # use reth_prune_types::PruneModes;
-//! # use base_execution_evm::BaseEvmConfig;
+//! # use base_execution_evm_blocks::BaseEvmConfig;
 //! # use reth_provider::StaticFileProviderFactory;
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use std::sync::Arc;
-//! # use base_execution_consensus::BaseBeaconConsensus;
+//! # use base_execution_evm_blocks::BaseBeaconConsensus;
 //!
 //! # fn create(exec: BaseEvmConfig, consensus: BaseBeaconConsensus) {
 //!
@@ -37,8 +37,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use reth_config::config::StageConfig;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
 use reth_provider::HeaderSyncGapProvider;

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, PayloadBuilderHandle,
     PayloadBuilderService, config::BaseBuilderConfig,

@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use base_common_types_chain::BaseBlock;
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
 use futures::Stream;
 use reth_engine_primitives::BeaconEngineMessage;
@@ -25,7 +25,7 @@ use crate::{
     download::BasicBlockDownloader,
     engine::{EngineApiKind, EngineHandler},
     persistence::PersistenceHandle,
-    tree::{EngineApiTreeHandler, BasicEngineValidator, TreeConfig},
+    tree::{BasicEngineValidator, EngineApiTreeHandler, TreeConfig},
 };
 
 /// Builds the engine [`ChainOrchestrator`] that drives the chain forward.
@@ -64,9 +64,7 @@ pub fn build_engine_orchestrator<Client, S>(
     sync_metrics_tx: MetricEventsSender,
     evm_config: BaseEvmConfig,
     runtime: Runtime,
-) -> ChainOrchestrator<
-    S, Client,
->
+) -> ChainOrchestrator<S, Client>
 where
     Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,

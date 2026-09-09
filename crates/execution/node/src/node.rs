@@ -12,7 +12,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::BasePayloadAttributes;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
@@ -214,7 +214,7 @@ impl BaseNode {
             evm_config,
             network,
             payload_builder_handle,
-            consensus: Arc::new(base_execution_consensus::BaseBeaconConsensus::new(
+            consensus: Arc::new(base_execution_evm_blocks::BaseBeaconConsensus::new(
                 ctx.chain_spec(),
             )),
         })

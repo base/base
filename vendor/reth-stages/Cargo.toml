@@ -38,7 +38,6 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-execution-consensus = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["metrics"] }
@@ -48,9 +47,9 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
 reth-libmdbx = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["metrics"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-evm-blocks = {features = ["metrics"], workspace = true}
 tempfile = { workspace = true, optional = true, features = ["default"] }
 
 [dev-dependencies]
@@ -72,8 +71,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
-base-execution-evm = { workspace = true, features = ["test-utils"] }
-base-execution-consensus = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
@@ -86,8 +84,7 @@ test-utils = [
     "reth-stages-api/test-utils",
     "dep:reth-testing-utils",
     "dep:tempfile",
-    "base-execution-consensus/test-utils",
-    "base-execution-evm/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "reth-downloaders/test-utils",
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",

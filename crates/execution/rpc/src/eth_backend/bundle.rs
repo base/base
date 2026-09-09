@@ -10,7 +10,7 @@ use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse, EthCallBundleT
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
 use base_evm_handler::{DatabaseCommit, DatabaseRef};
-use base_execution_evm::Evm;
+use base_execution_evm_blocks::Evm;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_types::{

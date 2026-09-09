@@ -13,7 +13,7 @@ use base_common_types_rpc::{
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockEnvironment, apply_block_overrides};
 use base_evm_handler::{DatabaseCommit, DatabaseRef};
-use base_execution_evm::Evm;
+use base_execution_evm_blocks::Evm;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;

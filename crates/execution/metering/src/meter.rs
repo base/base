@@ -20,7 +20,9 @@ use base_evm_handler::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::EvmState,
 };
-use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
+use base_execution_evm_blocks::{
+    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _,
+};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
 use revm_bytecode::opcode::OpCode;

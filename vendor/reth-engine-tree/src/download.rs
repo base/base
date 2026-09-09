@@ -10,7 +10,7 @@ use std::{
 
 use alloy_primitives::{B256, map::B256Set};
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_network_p2p::{
     BlockClient,
@@ -290,7 +290,7 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
 

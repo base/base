@@ -133,7 +133,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use reth_network_p2p::error::DownloadError;
     use reth_provider::test_utils::create_test_provider_factory;
 

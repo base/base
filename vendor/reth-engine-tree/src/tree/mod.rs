@@ -15,8 +15,8 @@ use base_common_types_payload::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
 use base_evm_handler::interpreter::debug_unreachable;
-use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use base_execution_payload_types::{BasePayloadBuilderAttributes, NewPayloadError};
 use crossbeam_channel::{Receiver, Sender};

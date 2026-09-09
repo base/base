@@ -1,6 +1,6 @@
 //! Shared components of a running Base node.
 
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskExecutor;
 
@@ -17,7 +17,7 @@ pub struct BaseNodeContext {
     /// The Base EVM configuration.
     pub evm_config: BaseEvmConfig,
     /// The Base consensus validator.
-    pub consensus: std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
+    pub consensus: std::sync::Arc<base_execution_evm_blocks::BaseBeaconConsensus>,
     /// The network handle.
     pub network: reth_network::NetworkHandle,
     /// The payload service handle.
@@ -40,7 +40,7 @@ impl BaseNodeContext {
     }
 
     /// Returns the Base consensus validator.
-    pub fn consensus(&self) -> &std::sync::Arc<base_execution_consensus::BaseBeaconConsensus> {
+    pub fn consensus(&self) -> &std::sync::Arc<base_execution_evm_blocks::BaseBeaconConsensus> {
         &self.consensus
     }
 

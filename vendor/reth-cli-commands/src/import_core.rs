@@ -3,8 +3,8 @@
 use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use futures::StreamExt;
 use reth_config::Config;
 use reth_db_api::{tables, transaction::DbTx};

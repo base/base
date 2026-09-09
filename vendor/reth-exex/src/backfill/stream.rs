@@ -6,7 +6,7 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::BaseBlock;
-use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
+use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use futures::{
     StreamExt,
     stream::{FuturesOrdered, Stream},

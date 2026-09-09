@@ -1,4 +1,4 @@
-use base_execution_consensus::ConsensusError;
+use base_execution_evm_blocks::ConsensusError;
 use derive_more::{Display, Error};
 use reth_primitives_traits::SealedHeader;
 

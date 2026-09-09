@@ -5,7 +5,7 @@ use alloy_primitives::Address;
 use base_common_types_chain::Transaction;
 use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockExecutorFactory, Evm};
 use base_evm_handler::{database::State, state::bal::Bal as RevmBal};
-use base_execution_evm::{
+use base_execution_evm_blocks::{
     BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
 };
 use crossbeam_channel::{Receiver, Sender};

@@ -37,12 +37,12 @@ base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
-base-execution-evm = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-types = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 base-common-chain-config = {workspace = true}
+base-execution-evm-blocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 rand = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }

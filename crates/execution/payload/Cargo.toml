@@ -48,13 +48,12 @@ reth-engine-primitives = { workspace = true, features = ["std"] }
 base-execution-trie = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
-base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-payload-types = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["default", "witness"] }
+base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace = true}
 
 [dev-dependencies]
 metrics-exporter-prometheus = { workspace = true }
@@ -62,7 +61,7 @@ tokio = { workspace = true, features = ["sync", "rt"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
-base-execution-evm = { workspace = true, features = ["default", "test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 default = ["metrics"]
@@ -70,7 +69,7 @@ metrics = [
     "base-common-evm/metrics",
     "base-metrics/metrics",
     "base-observability-events/metrics",
-    "base-execution-evm/metrics",
+    "base-execution-evm-blocks/metrics",
 ]
 test-utils = [
     "reth-chain-state/test-utils",

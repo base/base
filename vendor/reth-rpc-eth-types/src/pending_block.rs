@@ -8,17 +8,17 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
 use base_common_types_chain::{BaseReceipt, BlockHeader, EthereumReceipt as Receipt};
 use base_common_types_rpc::BaseTransactionReceipt;
-use base_execution_evm::EvmEnvFor;
+use base_execution_evm_blocks::EvmEnvFor;
 use derive_more::Constructor;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_primitives_traits::{IndexedTx, RecoveredBlock, SealedHeader};
 
 use crate::block::BlockAndReceipts;
 
-/// Configured [`base_execution_evm::EvmEnv`] for a pending block.
+/// Configured [`base_execution_evm_blocks::EvmEnv`] for a pending block.
 #[derive(Debug, Clone, Constructor)]
 pub struct PendingBlockEnv {
-    /// Configured [`base_execution_evm::EvmEnv`] for the pending block.
+    /// Configured [`base_execution_evm_blocks::EvmEnv`] for the pending block.
     pub evm_env: EvmEnvFor,
     /// Origin block for the config
     pub origin: PendingBlockEnvOrigin<BaseReceipt>,

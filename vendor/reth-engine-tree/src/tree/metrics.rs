@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
-use base_execution_evm::ExecutorMetrics;
+use base_execution_evm_blocks::ExecutorMetrics;
 use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
 use reth_execution_types::BlockExecutionOutput;
 use reth_metrics::{

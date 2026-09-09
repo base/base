@@ -10,7 +10,7 @@ use base_common_types_chain::constants::KECCAK_EMPTY;
 use base_common_types_rpc::{
     Account, AccountInfo, BaseTransactionRequest, EIP1186AccountProofResponse,
 };
-use base_execution_evm::EvmEnvFor;
+use base_execution_evm_blocks::EvmEnvFor;
 use base_execution_txpool::TransactionPool;
 use futures::Future;
 use reth_primitives_traits::RecoveredBlock;

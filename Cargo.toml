@@ -69,10 +69,9 @@ members = [
   "crates/consensus/service",
   "crates/consensus/sources",
   "crates/execution/cli",
-  "crates/execution/consensus",
   "crates/execution/eip8130",
   "crates/execution/eip8130-rpc",
-  "crates/execution/evm",
+  "crates/execution/evm/blocks",
   "crates/execution/exex",
   "crates/execution/metering",
   "crates/execution/node",
@@ -377,7 +376,7 @@ base-consensus-providers = { path = "crates/consensus/providers", default-featur
 # Execution
 base-node-core = { path = "crates/execution/node", default-features = false }
 base-execution-cli = { path = "crates/execution/cli", default-features = false }
-base-execution-evm = { path = "crates/execution/evm", default-features = false }
+base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-rpc = { path = "crates/execution/rpc", default-features = false }
 base-metering = { path = "crates/execution/metering", default-features = false }
 base-node-runner = { path = "crates/execution/runner", default-features = false }
@@ -388,7 +387,6 @@ base-execution-txpool = { path = "crates/execution/txpool", default-features = f
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
 base-shadow-indexer = { path = "crates/execution/shadow-indexer", default-features = false }
-base-execution-consensus = { path = "crates/execution/consensus", default-features = false }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
 base-execution-payload-builder = { path = "crates/execution/payload", default-features = false }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc", default-features = false }

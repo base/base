@@ -15,15 +15,15 @@ workspace = true
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
-reth-db-api = { workspace = true }
 async-trait = { workspace = true }
+reth-db-api = { workspace = true }
 base-metrics = { workspace = true }
 reth-network-api = { workspace = true }
 base-node-context = { workspace = true }
-base-execution-evm = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
+reth-primitives-traits = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-execution-evm-blocks = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
@@ -32,6 +32,7 @@ chrono = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-execution-types = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 mockall = { workspace = true }
 reth-db-common = { workspace = true }
@@ -39,9 +40,9 @@ alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-execution-evm = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["serde", "std"]}
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["metrics"]

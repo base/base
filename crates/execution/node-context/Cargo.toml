@@ -21,8 +21,7 @@ reth-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-tokio-util = { workspace = true }
-base-execution-evm = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-engine-primitives = { workspace = true }
-base-execution-consensus = { workspace = true }
+base-execution-evm-blocks = {workspace = true}
 base-execution-payload-builder = { workspace = true }

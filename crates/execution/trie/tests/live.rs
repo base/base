@@ -11,7 +11,7 @@ use base_common_types_chain::{
     BaseTypedTransaction as Transaction, BlockHeader, Header, SignableTransaction, TxEip2930,
     constants::ETH_TO_WEI,
 };
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
@@ -156,7 +156,7 @@ fn execute_block(
     block: &mut RecoveredBlock,
     provider_factory: &ProviderFactory,
     chain_spec: &Arc<BaseChainSpec>,
-) -> eyre::Result<base_execution_evm::BlockExecutionOutput> {
+) -> eyre::Result<base_execution_evm_blocks::BlockExecutionOutput> {
     let provider = provider_factory.provider()?;
     let db = LatestStateProviderRef::new(&provider);
     let evm_config =
@@ -177,7 +177,7 @@ fn execute_block(
 /// Commits a block and its execution output to the database
 fn commit_block_to_database(
     block: &RecoveredBlock,
-    execution_output: &base_execution_evm::BlockExecutionOutput,
+    execution_output: &base_execution_evm_blocks::BlockExecutionOutput,
     provider_factory: &ProviderFactory,
 ) -> eyre::Result<()> {
     let execution_outcome = ExecutionOutcome {

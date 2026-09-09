@@ -67,3 +67,32 @@ mod witness;
 pub use witness::ExecutionWitnessRecord;
 #[cfg(any(test, feature = "test-utils"))]
 mod state_provider_test;
+
+mod proof;
+pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
+
+mod validation;
+pub use validation::*;
+
+mod error;
+pub use error::BaseConsensusError;
+
+mod beacon;
+pub use beacon::BaseBeaconConsensus;
+mod mode;
+pub use mode::ValidationMode;
+mod consensus_error;
+pub use consensus_error::{
+    ConsensusError, HeaderConsensusError, MessageError, ReceiptRootBloom, TransactionRoot,
+    TxGasLimitTooHighErr,
+};
+mod common_validation;
+pub use common_validation::*;
+#[cfg(any(test, feature = "test-utils"))]
+mod test_consensus;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_consensus::TestConsensus;
+#[cfg(any(test, feature = "test-utils"))]
+mod ethereum_test_consensus;
+#[cfg(any(test, feature = "test-utils"))]
+pub use ethereum_test_consensus::EthereumTestConsensus;

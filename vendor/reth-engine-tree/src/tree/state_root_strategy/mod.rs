@@ -65,7 +65,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_execution_evm::OnStateHook;
+use base_execution_evm_blocks::OnStateHook;
 pub use base_execution_trie::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
@@ -1303,7 +1303,7 @@ mod tests {
     use base_evm_handler::state::{
         AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
     };
-    use base_execution_evm::OnStateHook;
+    use base_execution_evm_blocks::OnStateHook;
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_common::init::init_genesis;

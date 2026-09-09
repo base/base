@@ -116,8 +116,8 @@ use base_common_types_chain::{
 };
 use base_evm_handler::database::{BundleAccount, BundleRetention, State};
 use base_evm_handler::{BlockExecutionError, Evm};
-use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
-use base_execution_evm::{
+use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
+use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
 };
 use base_execution_payload_builder::{

@@ -10,7 +10,7 @@ use std::{
 
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_txpool::{
     EthTransactionPool, InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
 };

@@ -24,7 +24,7 @@ use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_node::{
     EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
 };
-use base_execution_evm::{BaseEvmConfig, CancelOnDrop};
+use base_execution_evm_blocks::{BaseEvmConfig, CancelOnDrop};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,
     PayloadConfig,

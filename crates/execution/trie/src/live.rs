@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use derive_more::Constructor;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use reth_provider::{

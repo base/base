@@ -80,9 +80,9 @@ reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
-base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"]}
+base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
 base-evm-handler = { workspace = true, features = ["overrides", "call-util", "optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
 
 [dev-dependencies]
@@ -99,9 +99,9 @@ reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {workspace = true, features = ["serde"]}
 base-common-chain-config = { workspace = true, features = ["std"] }
-base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 
 [features]
@@ -113,10 +113,10 @@ metrics = [
     "base-execution-trie/metrics",
     "base-metrics/metrics",
     "base-observability-events/metrics",
-    "base-execution-evm/metrics",
+    "base-execution-evm-blocks/metrics",
 ]
 test-utils = [
-    "base-execution-evm/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "reth-provider/test-utils",
     "reth-network/test-utils",
     "dep:reth-db-common",

@@ -7,7 +7,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use base_common_types_chain::BlockHeader;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };

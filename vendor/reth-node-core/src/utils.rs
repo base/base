@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use alloy_eips::BlockHashOrNumber;
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use eyre::Result;
 use reth_network_p2p::{
     bodies::client::BodiesClient, headers::client::HeadersClient, priority::Priority,

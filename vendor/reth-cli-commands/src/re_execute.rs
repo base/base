@@ -14,7 +14,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, TxReceipt};
 use base_evm_handler::database::{AccountInfoRevert, BundleState, RevertToSlot};
-use base_execution_evm::Executor;
+use base_execution_evm_blocks::Executor;
 use clap::Parser;
 use eyre::WrapErr;
 use reth_cli_util::cancellation::CancellationToken;

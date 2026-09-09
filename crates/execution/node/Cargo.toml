@@ -83,10 +83,9 @@ base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
-base-execution-consensus = { workspace = true, features = ["default", "std"] }
-base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-execution-evm-blocks = {features = ["default", "rpc", "std"], workspace = true}
 tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt-multi-thread"] }
 base-evm-handler = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
 
@@ -115,7 +114,7 @@ reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
-base-execution-evm = { workspace = true, features = ["default", "std", "test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["default", "std", "test-utils"] }
 base-common-types-chain = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }
 
 [[bench]]
@@ -158,12 +157,11 @@ test-utils = [
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "base-execution-evm/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "reth-stages-types/test-utils",
     "reth-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",
-    "base-execution-consensus/test-utils",
     "reth-engine-tree/test-utils",
     "reth-downloaders/test-utils",
     "reth-network-p2p/test-utils",

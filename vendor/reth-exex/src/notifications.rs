@@ -8,7 +8,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use futures::{Stream, StreamExt};
 use reth_exex_types::ExExHead;
 use reth_provider::{BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory};

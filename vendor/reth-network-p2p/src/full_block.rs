@@ -12,7 +12,7 @@ use std::{
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use reth_network_peers::{PeerId, WithPeerId};
@@ -55,7 +55,7 @@ where
     /// Returns a client with Test consensus
     #[cfg(any(test, feature = "test-utils"))]
     pub fn test_client(client: Client) -> Self {
-        Self::new(client, Arc::new(base_execution_consensus::BaseBeaconConsensus::test()))
+        Self::new(client, Arc::new(base_execution_evm_blocks::BaseBeaconConsensus::test()))
     }
 }
 
@@ -2010,7 +2010,7 @@ mod tests {
         let range_length: usize = 3;
         let (header, _) = insert_headers_into_client(&client, 0..range_length);
 
-        let test_consensus = base_execution_consensus::BaseBeaconConsensus::test();
+        let test_consensus = base_execution_evm_blocks::BaseBeaconConsensus::test();
         test_consensus.set_fail_validation(true);
         test_consensus.set_fail_body_against_header(false);
         let client = FullBlockClient::new(client, Arc::new(test_consensus));

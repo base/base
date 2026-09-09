@@ -28,14 +28,13 @@ reth-node-core = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
+base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 
 [dependencies.base-node-context]
 workspace = true

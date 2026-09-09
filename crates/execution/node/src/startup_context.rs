@@ -32,7 +32,7 @@ pub struct BuilderContext {
     /// Config container
     pub(crate) config_container: WithConfigs,
     /// Cache of recovered transaction senders shared by node components, if enabled.
-    sender_recovery_cache: Option<base_execution_evm::SenderRecoveryCache>,
+    sender_recovery_cache: Option<base_execution_evm_blocks::SenderRecoveryCache>,
 }
 
 impl BuilderContext {
@@ -47,7 +47,7 @@ impl BuilderContext {
             .config
             .engine
             .sender_recovery_cache_enabled
-            .then(base_execution_evm::SenderRecoveryCache::default);
+            .then(base_execution_evm_blocks::SenderRecoveryCache::default);
         Self { head, provider, executor, config_container, sender_recovery_cache }
     }
 
@@ -84,7 +84,9 @@ impl BuilderContext {
     }
 
     /// Returns the sender recovery cache shared by node components, if enabled.
-    pub const fn sender_recovery_cache(&self) -> Option<&base_execution_evm::SenderRecoveryCache> {
+    pub const fn sender_recovery_cache(
+        &self,
+    ) -> Option<&base_execution_evm_blocks::SenderRecoveryCache> {
         self.sender_recovery_cache.as_ref()
     }
 

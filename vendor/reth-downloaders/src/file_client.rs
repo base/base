@@ -4,7 +4,7 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
+use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
 use futures::Future;
 use itertools::{Either, Itertools};
 use reth_network_p2p::{
@@ -712,7 +712,7 @@ mod tests {
 
     use assert_matches::assert_matches;
     use async_compression::tokio::write::GzipEncoder;
-    use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
+    use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
     use futures_util::stream::StreamExt;
     use rand::Rng;
     use reth_network_p2p::{

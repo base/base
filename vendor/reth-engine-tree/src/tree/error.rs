@@ -1,7 +1,7 @@
 //! Internal errors for the tree module.
 
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::ConsensusError;
+use base_execution_evm_blocks::ConsensusError;
 use base_execution_payload_types::NewPayloadError;
 pub use reth_engine_primitives::{
     InsertBlockErrorKind, InsertBlockFatalError, InsertBlockValidationError,

@@ -22,9 +22,9 @@ pin-project = { workspace = true }
 reth-fs-util = { workspace = true }
 base-evm-handler = { workspace = true }
 reth-storage-api = { workspace = true }
-base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-evm-blocks = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }

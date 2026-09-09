@@ -11,8 +11,8 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics};
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::{BaseEvmConfig, Executor, ExecutorMetrics};
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
 use reth_db::{static_file::HeaderMask, tables};
@@ -740,7 +740,7 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_evm_handler::database::{AccountStatus, BundleAccount};
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use reth_db_api::{
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},

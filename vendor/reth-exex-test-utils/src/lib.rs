@@ -17,7 +17,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::NoopPayloadBuilderService;
 use base_execution_txpool::Pool;
 use base_node_context::BaseNodeContext;
@@ -146,8 +146,9 @@ pub async fn test_exex_context_with_chain_spec(
     let provider = BlockchainProvider::new(provider_factory.clone())?;
 
     let evm_config = BaseEvmConfig::new(provider_factory.chain_spec());
-    let consensus =
-        Arc::new(base_execution_consensus::BaseBeaconConsensus::new(provider_factory.chain_spec()));
+    let consensus = Arc::new(base_execution_evm_blocks::BaseBeaconConsensus::new(
+        provider_factory.chain_spec(),
+    ));
     let blob_dir = tempfile::tempdir()?;
     let blob_store =
         base_execution_txpool::DiskFileBlobStore::open(blob_dir.path(), Default::default())?;

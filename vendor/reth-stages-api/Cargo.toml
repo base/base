@@ -32,7 +32,7 @@ reth-storage-errors = {workspace = true}
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-execution-consensus = { workspace = true }
+base-execution-evm-blocks = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
@@ -51,7 +51,7 @@ tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
 
 [features]
 test-utils = [
-    "base-execution-consensus/test-utils",
+    "base-execution-evm-blocks/test-utils",
     "reth-db/test-utils",
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",

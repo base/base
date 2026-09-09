@@ -224,7 +224,7 @@ impl BasePooledTransaction {
     /// Recovers and converts a pooled transaction using the provided sender recovery cache.
     pub fn try_recover_with_cache(
         pooled: BasePooledEnvelope,
-        cache: &base_execution_evm::SenderRecoveryCache,
+        cache: &base_execution_evm_blocks::SenderRecoveryCache,
     ) -> Result<Self, BasePooledEnvelope> {
         match cache.recover(&pooled) {
             Ok(signer) => Ok(Self::from_pooled(Recovered::new_unchecked(pooled, signer))),
@@ -478,7 +478,7 @@ mod tests {
         Eip8130Constants, Eip8130Signed, EthereumTxEnvelope, SignableTransaction, TxDeposit,
         TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxEip8130, TxLegacy, transaction::Recovered,
     };
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_txpool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };

@@ -21,7 +21,7 @@ use base_common_types_chain::{
     },
 };
 use base_evm_context::Cfg;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseEvmConfig;
 use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };

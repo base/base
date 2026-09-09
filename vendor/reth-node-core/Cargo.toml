@@ -37,7 +37,7 @@ base-execution-txpool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-execution-consensus = { workspace = true }
+base-execution-evm-blocks = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["mdbx"] }
 strum = { workspace = true, features = ["derive"] }

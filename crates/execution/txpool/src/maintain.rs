@@ -738,7 +738,7 @@ mod tests {
 
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{U256, hex};
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm_blocks::BaseEvmConfig;
     use reth_fs_util as fs;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;

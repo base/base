@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::B256;
 use base_common_types_chain::BlockHeader;
-use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::{Future, FutureExt};
 use reth_network_p2p::{
     bodies::{client::BodiesClient, response::BlockResponse},
@@ -38,8 +38,9 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 /// All errors regarding the response cause the peer to get penalized, meaning that adversaries
 /// that try to give us bodies that do not match the requested order are going to be penalized
 /// and eventually disconnected.
-pub(crate) struct BodiesRequestFuture<C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>>
-{
+pub(crate) struct BodiesRequestFuture<
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>,
+> {
     client: Arc<C>,
     consensus: Arc<BaseBeaconConsensus>,
     metrics: BodyDownloaderMetrics,
@@ -255,7 +256,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_consensus::BaseBeaconConsensus;
+    use base_execution_evm_blocks::BaseBeaconConsensus;
     use reth_testing_utils::{generators, generators::random_header_range};
 
     use super::*;

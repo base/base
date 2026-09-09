@@ -14,7 +14,7 @@ use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::BlockHeader;
 use base_evm_handler::Precompile;
 use base_evm_handler::database::EmptyDB;
-use base_execution_evm::{BaseEvmConfig, Evm, PrecompilesMap};
+use base_execution_evm_blocks::{BaseEvmConfig, Evm, PrecompilesMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_types::EthApiError;

@@ -22,8 +22,8 @@ use base_common_types_payload::{
     ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
     PayloadAttributes as EthPayloadAttributes,
 };
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadServiceCommand;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
