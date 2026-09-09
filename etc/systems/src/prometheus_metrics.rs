@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use eyre::{Result, WrapErr};
 use prometheus_scraper::{
     Format, TextFormat,

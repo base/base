@@ -17,6 +17,7 @@ async-trait = { workspace = true }
 base-metrics = { workspace = true }
 base-tx-manager = { workspace = true }
 base-batcher-core = { workspace = true }
+base-common-network = {workspace = true}
 base-batcher-admin = { workspace = true }
 base-batcher-source = { workspace = true }
 base-balance-monitor = { workspace = true }
@@ -33,12 +34,12 @@ base-runtime = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
-base-common-rpc-types = { workspace = true, features = ["network"]}
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
+
 [dev-dependencies]
 httpmock = { workspace = true, features = ["default"] }
 base-runtime = { workspace = true, features = ["test-utils"] }

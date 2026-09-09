@@ -16,7 +16,7 @@ use base_batcher_core::{
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};

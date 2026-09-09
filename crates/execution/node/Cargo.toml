@@ -43,6 +43,7 @@ reth-static-file = { workspace = true }
 base-node-context = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
+base-common-network = {workspace = true}
 base-tx-forwarding = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
@@ -54,6 +55,7 @@ base-shadow-indexer-db = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 base-execution-eip8130-rpc = { workspace = true }
+base-execution-payload-types = {workspace = true}
 url = { workspace = true, features = ["default"] }
 reth-consensus-debug-client = { workspace = true }
 clap = { workspace = true, features = ["default"] }
@@ -76,7 +78,6 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
-base-common-rpc-types = { workspace = true, features = ["network"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
@@ -90,9 +91,6 @@ reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt-multi-thread"] }
 revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
-
-[dependencies.base-execution-payload-types]
-workspace = true
 
 [dev-dependencies]
 reth-trie = { workspace = true }
@@ -112,9 +110,9 @@ reth-e2e-test-utils = { workspace = true  }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = [] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types = { workspace = true, features = ["network"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }

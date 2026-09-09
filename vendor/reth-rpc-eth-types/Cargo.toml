@@ -55,12 +55,12 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = [] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 base-common-consensus = { workspace = true, features = ["reth", "serde"] }

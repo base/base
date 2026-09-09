@@ -40,7 +40,6 @@ reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
-base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter"] }

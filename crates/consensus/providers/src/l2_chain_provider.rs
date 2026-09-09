@@ -14,7 +14,7 @@ use alloy_transport_http::{
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;

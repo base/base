@@ -4,7 +4,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_consensus::{BaseTxEnvelope, Block};
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::BlockInfo;
 use thiserror::Error;

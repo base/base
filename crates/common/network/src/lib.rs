@@ -50,3 +50,8 @@ mod network;
 pub use network::Network;
 
 mod wallet_macro;
+
+mod base;
+pub use base::Base;
+
+mod base_builder;

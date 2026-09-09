@@ -1,7 +1,13 @@
-use base_common_consensus::{BaseTypedTransaction, OpTxType, TxType};
-use base_common_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilderError};
+//! Base transaction builders.
 
-use crate::{Base, BaseTransactionRequest};
+use alloy_primitives::Bytes;
+use alloy_rpc_types_eth::TransactionRequest;
+use base_common_consensus::{BaseTypedTransaction, OpTxType, TxType};
+use base_common_rpc_types::BaseTransactionRequest;
+
+use crate::{
+    Base, BuildResult, NetworkTransactionBuilder, TransactionBuilder, TransactionBuilderError,
+};
 
 impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
     fn complete_type(&self, ty: OpTxType) -> Result<(), Vec<&'static str>> {
@@ -57,22 +63,37 @@ impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
         Ok(self.build_typed_tx().expect("checked by missing_keys"))
     }
 
-    async fn build<W: base_common_network::NetworkWallet<Base>>(
+    async fn build<W: crate::NetworkWallet<Base>>(
         self,
         wallet: &W,
-    ) -> Result<<Base as base_common_network::Network>::TxEnvelope, TransactionBuilderError<Base>>
-    {
+    ) -> Result<<Base as crate::Network>::TxEnvelope, TransactionBuilderError<Base>> {
         Ok(wallet.sign_request(self).await?)
+    }
+}
+
+impl TransactionBuilder for BaseTransactionRequest {
+    fn transaction_request(&self) -> &TransactionRequest {
+        self.as_ref()
+    }
+    fn transaction_request_mut(&mut self) -> &mut TransactionRequest {
+        self.as_mut()
+    }
+    fn set_input_kind<T: Into<Bytes>>(
+        &mut self,
+        input: T,
+        _: alloy_rpc_types_eth::TransactionInputKind,
+    ) {
+        self.set_input(input);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, TxKind};
-    use base_common_network::TransactionBuilder;
     use rstest::rstest;
 
     use super::*;
+    use crate::TransactionBuilder;
 
     /// Returns a minimal valid EIP-1559 [`BaseTransactionRequest`].
     fn complete_eip1559_request() -> BaseTransactionRequest {

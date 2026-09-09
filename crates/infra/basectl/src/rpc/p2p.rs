@@ -10,7 +10,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_transport::TransportError;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_consensus_gossip::{Direction, PeerInfo, PeerStats};
 use base_consensus_peers::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;

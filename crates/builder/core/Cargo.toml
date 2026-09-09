@@ -97,6 +97,7 @@ alloy-transport-http = { workspace = true, features = ["default"] }
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = {workspace = true, features = ["std"]}
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
@@ -109,10 +110,10 @@ base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["default", "network"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "json"] }
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true, features = ["default"] }
+
 [dev-dependencies]
 rlimit = { workspace = true }
 nanoid = { workspace = true }

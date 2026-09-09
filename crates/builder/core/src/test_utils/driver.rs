@@ -5,7 +5,8 @@ use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::Block;
 use base_common_consensus::{BaseTypedTransaction, TxDeposit};
-use base_common_rpc_types::{Base, Transaction};
+use base_common_network::Base;
+use base_common_rpc_types::Transaction;
 use base_common_rpc_types_engine::{
     BasePayloadAttributes, ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum,
 };

@@ -19,8 +19,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use base_common_consensus::SignableTransaction;
-use base_common_network::{PrivateKeySigner, TransactionBuilder};
-use base_common_rpc_types::{Base, BaseTransactionRequest};
+use base_common_network::{Base, PrivateKeySigner, TransactionBuilder};
+use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, SystemTestProviderExt, SystemTestStackBuilder,
 };

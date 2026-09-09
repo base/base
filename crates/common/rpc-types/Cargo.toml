@@ -18,19 +18,14 @@ alloy-serde = { workspace = true }
 alloy-network-primitives = { workspace = true }
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
-base-common-evm = { workspace = true, optional = true }
-base-evm-handler = { workspace = true, optional = true }
-base-common-network = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
-alloy-provider = { workspace = true, features = ["default"], optional = true}
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
 [dev-dependencies]
 rand = { workspace = true, features = ["default"] }
-rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 similar-asserts = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
@@ -42,13 +37,11 @@ default = ["std"]
 std = [
     "base-common-consensus/std",
     "alloy-eips/std",
-    "base-evm-handler?/std",
     "alloy-network-primitives/std",
     "alloy-primitives/std",
     "alloy-rpc-types-eth/std",
     "alloy-serde/std",
     "base-common-consensus/std",
-    "base-common-evm?/std",
     "derive_more/std",
     "serde/std",
     "serde_json/std",
@@ -71,13 +64,4 @@ serde = [
     "alloy-primitives/serde",
     "alloy-rpc-types-eth/serde",
     "base-common-consensus/serde",
-    "base-common-evm?/serde",
 ]
-network = [
-    "dep:base-common-network",
-    "std",
-    "base-common-consensus/serde",
-    "dep:alloy-provider",
-]
-eip8130 = ["dep:base-evm-handler", "dep:base-common-evm", "std"]
-reth = ["eip8130", "network", "std"]

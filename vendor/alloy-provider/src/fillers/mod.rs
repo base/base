@@ -856,3 +856,11 @@ impl RecommendedFillers for Ethereum {
         Default::default()
     }
 }
+
+impl RecommendedFillers for base_common_network::Base {
+    type RecommendedFillers = JoinFill<GasFiller, JoinFill<NonceFiller, ChainIdFiller>>;
+
+    fn recommended_fillers() -> Self::RecommendedFillers {
+        Default::default()
+    }
+}

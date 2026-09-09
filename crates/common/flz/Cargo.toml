@@ -12,13 +12,12 @@ exclude.workspace = true
 [lints]
 workspace = true
 
-[dependencies]
-
 [dev-dependencies]
 hex-literal = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default"] }
 iai-callgrind = { workspace = true, features = ["default"] }
+
 [[bench]]
 name = "flz"
 harness = false

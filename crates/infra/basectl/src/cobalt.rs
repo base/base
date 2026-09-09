@@ -18,7 +18,7 @@ use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_consensus::Predeploys;
 use base_common_evm::BaseTime;
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BaseTimeUpdateTx;
 use futures::{SinkExt, StreamExt};

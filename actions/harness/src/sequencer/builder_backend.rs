@@ -29,7 +29,7 @@ use base_builder_core::{
 };
 use base_common_consensus::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_node::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,

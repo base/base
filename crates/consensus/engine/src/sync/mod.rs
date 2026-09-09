@@ -233,7 +233,8 @@ mod tests {
     };
     use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_genesis::ChainGenesis;
-    use base_common_rpc_types::{Base, Transaction as BaseTransaction};
+    use base_common_network::Base;
+    use base_common_rpc_types::Transaction as BaseTransaction;
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;

@@ -1,10 +1,10 @@
 //! Reth compatibility implementations for RPC types.
 
 use alloy_primitives::Bytes;
-use base_common_evm::BaseTransaction as BaseRevm;
+use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_handler::{BlockEnvironment, EthTxEnvError, EvmEnv, TryIntoTxEnv};
 
-use crate::BaseTransactionRequest;
+use crate::BaseTransaction as BaseRevm;
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for BaseTransactionRequest {
     type Err = EthTxEnvError;
@@ -23,14 +23,11 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for Base
 mod tests {
     use alloy_primitives::{Address, address};
     use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
-    use base_common_evm::Eip8130ExecutionMode;
+    use base_common_rpc_types::Eip8130AuthScheme;
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        Eip8130AuthScheme,
-        eip8130::{MAX_AUTH_SIZE, STUB_AUTH_FILL},
-    };
+    use crate::{Eip8130ExecutionMode, MAX_AUTH_SIZE, STUB_AUTH_FILL};
 
     const CHAIN_ID: u64 = 8453;
     const GAS_CAP: u64 = 30_000_000;
@@ -39,7 +36,7 @@ mod tests {
 
     fn sim_tx(request: serde_json::Value) -> BaseRevm {
         let req: BaseTransactionRequest = serde_json::from_value(request).expect("valid request");
-        req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).expect("simulation tx")
+        BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).expect("simulation tx")
     }
 
     fn signed(tx: &BaseRevm) -> &Eip8130Signed {
@@ -244,7 +241,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
             "a `from`/`sender` mismatch is rejected rather than guessing the account",
         );
     }
@@ -270,7 +267,7 @@ mod tests {
         let req: BaseTransactionRequest =
             serde_json::from_value(json!({ "calls": [] })).expect("valid request");
         assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an 8130 request with no account is rejected",
         );
     }
@@ -321,7 +318,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an over-cap sender auth blob is rejected rather than priced",
         );
     }
@@ -336,7 +333,7 @@ mod tests {
             "senderAuth": blob(None, MAX_AUTH_SIZE as usize + 1),
         }))
         .expect("valid request");
-        assert!(req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
+        assert!(BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none());
     }
 
     #[test]
@@ -350,7 +347,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an over-cap payer auth blob is rejected rather than priced",
         );
     }
@@ -386,7 +383,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an unrecognized payer authenticator selector is rejected rather than priced",
         );
     }

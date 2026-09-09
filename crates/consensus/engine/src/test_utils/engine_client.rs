@@ -10,8 +10,8 @@ use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as Eth
 use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{Base, Transaction as BaseTransaction};
+use base_common_network::{Base, Ethereum, Network};
+use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,

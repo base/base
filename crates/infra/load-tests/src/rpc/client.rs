@@ -5,8 +5,7 @@ use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
-use base_common_network::{Ethereum, EthereumWallet};
-use base_common_rpc_types::Base;
+use base_common_network::{Base, Ethereum, EthereumWallet};
 use base_execution_txpool::ValidityPredicate;
 use futures::future::join_all;
 use tokio::sync::Semaphore;

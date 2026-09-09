@@ -14,8 +14,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
 use base_common_consensus::{Header, HoloceneExtraData, JovianExtraData, Predeploys};
-use base_common_network::Network;
-use base_common_rpc_types::Base;
+use base_common_network::{Base, Network};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
@@ -1310,7 +1309,7 @@ mod tests {
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
     use alloy_rlp::Encodable;
     use base_common_genesis::RollupConfig;
-    use base_common_rpc_types::Base;
+    use base_common_network::Base;
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;

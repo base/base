@@ -13,8 +13,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
-use base_common_network::{Ethereum, PrivateKeySigner};
-use base_common_rpc_types::Base;
+use base_common_network::{Base, Ethereum, PrivateKeySigner};
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;

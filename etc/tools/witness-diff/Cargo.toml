@@ -16,12 +16,13 @@ alloy-rlp = { workspace = true }
 alloy-trie = { workspace = true }
 serde_json = { workspace = true }
 alloy-primitives = { workspace = true }
+base-common-network = {workspace = true}
 hex = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 base-proof-mpt = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = []}
 tokio = { workspace = true, features = ["default", "full"] }
 alloy-provider = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["network"]}

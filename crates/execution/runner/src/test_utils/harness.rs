@@ -10,7 +10,7 @@ use alloy_rpc_types::BlockNumberOrTag;
 use base_common_chains::Upgrades;
 use base_common_consensus::Predeploys;
 use base_common_evm::BaseTime;
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;

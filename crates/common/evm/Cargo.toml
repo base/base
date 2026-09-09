@@ -18,15 +18,16 @@ thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 base-common-flz = { workspace = true }
-base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-genesis = { workspace = true }
+base-common-rpc-types = {workspace = true}
 serde = { workspace = true, optional = true }
 base-common-precompiles = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-metrics = { workspace = true, optional = true }
+base-evm-handler = { workspace = true, features = ["rpc"] }
 base-common-consensus = { workspace = true, features = [] }
 base-execution-eip8130 = { workspace = true, optional = true }
 base-precompile-storage = { workspace = true, optional = true }
@@ -36,6 +37,7 @@ sha2 = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }

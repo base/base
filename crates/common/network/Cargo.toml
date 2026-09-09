@@ -34,11 +34,13 @@ zeroize = { workspace = true, features = [
 auto_impl = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-common-rpc-types = {workspace = true}
 alloy-network-primitives = { workspace = true }
 futures-utils-wasm = { workspace = true, features = ["default"] }
 base-common-consensus = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 base-common-consensus = { workspace = true, features = ["std"] }

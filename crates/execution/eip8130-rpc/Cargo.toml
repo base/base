@@ -33,7 +33,7 @@ alloy-rpc-types = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["default", "reth"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 alloy-eips = { workspace = true }

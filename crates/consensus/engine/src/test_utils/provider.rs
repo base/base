@@ -1,7 +1,6 @@
 use alloy_provider::Provider;
 use async_trait::async_trait;
-use base_common_network::Ethereum;
-use base_common_rpc_types::Base;
+use base_common_network::{Base, Ethereum};
 
 /// Mock L1 Provider that implements the Provider trait for testing.
 ///

@@ -68,3 +68,8 @@ mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseBlockExecutorFactory, BaseTxResult,
 };
+
+mod rpc_eip8130;
+pub use rpc_eip8130::{AUTHENTICATOR_SELECTOR_LEN, MAX_AUTH_SIZE, STUB_AUTH_FILL};
+
+mod rpc_transaction;

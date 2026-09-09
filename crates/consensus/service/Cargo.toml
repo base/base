@@ -51,6 +51,7 @@ backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = []}
 tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
@@ -61,7 +62,6 @@ tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["network"]}
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }

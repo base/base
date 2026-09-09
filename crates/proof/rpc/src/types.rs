@@ -1,8 +1,7 @@
 //! RPC response types and provider aliases for Base proof clients.
 
 use alloy_provider::RootProvider;
-use base_common_network::Ethereum;
-use base_common_rpc_types::Base;
+use base_common_network::{Base, Ethereum};
 
 /// Shared type alias for the L1 HTTP provider.
 ///

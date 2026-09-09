@@ -32,6 +32,6 @@ moka = { workspace = true, features = ["default", "future"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["default", "network"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "test-util"] }

@@ -1,7 +1,7 @@
 //! Beryl stack helpers. Path-included only by tests that activate Beryl.
 
 use alloy_provider::RootProvider;
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_system_tests::{SystemTestStack, SystemTestStackBuilder};
 use eyre::Result;
 

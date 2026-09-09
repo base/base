@@ -8,8 +8,6 @@ use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
     Sealed, SignableTransaction, Signed, TxDeposit, TxEip1559, TxEip4844, TypedTransaction,
 };
-#[cfg(feature = "network")]
-use base_common_network::TransactionBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::Transaction;
@@ -452,23 +450,6 @@ impl TransactionBuilder7702 for BaseTransactionRequest {
 
     fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
         self.as_mut().set_authorization_list(authorization_list);
-    }
-}
-
-#[cfg(feature = "network")]
-impl TransactionBuilder for BaseTransactionRequest {
-    fn transaction_request(&self) -> &TransactionRequest {
-        &self.inner
-    }
-    fn transaction_request_mut(&mut self) -> &mut TransactionRequest {
-        &mut self.inner
-    }
-    fn set_input_kind<T: Into<Bytes>>(
-        &mut self,
-        input: T,
-        _: alloy_rpc_types_eth::TransactionInputKind,
-    ) {
-        self.set_input(input);
     }
 }
 

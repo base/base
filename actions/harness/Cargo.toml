@@ -51,7 +51,6 @@ base-execution-evm = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-batcher-core = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-common-rpc-types-engine = {workspace = true, features = ["std"]}

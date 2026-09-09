@@ -8,7 +8,7 @@ use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
 use base_common_genesis::UpgradeConfig;
-use base_common_rpc_types::Base;
+use base_common_network::Base;
 use base_consensus_rpc::{BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
 use base_upgrade_signal::UpgradeReadiness;
