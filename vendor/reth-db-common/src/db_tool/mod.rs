@@ -4,15 +4,12 @@ use std::{path::Path, rc::Rc, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_io_files as fs;
+use base_execution_state_database::{
+    Database, DatabaseError, DbCursorRO, DbDupCursorRO, DbTx, DbTxMut, Decode, Decompress, DupSort,
+    RawTable, Table, TableRawRow, TableRow,
+};
 use boyer_moore_magiclen::BMByte;
 use eyre::Result;
-use reth_db_api::{
-    DatabaseError, RawTable, TableRawRow,
-    cursor::{DbCursorRO, DbDupCursorRO},
-    database::Database,
-    table::{Decode, Decompress, DupSort, Table, TableRow},
-    transaction::{DbTx, DbTxMut},
-};
 use reth_provider::{ChainSpecProvider, DBProvider, ProviderFactory};
 use tracing::info;
 

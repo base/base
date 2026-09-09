@@ -15,6 +15,9 @@ use base_execution_state_api::{
     BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
     TryIntoHistoricalStateProvider,
 };
+use base_execution_state_database::{
+    models::AccountBeforeTx, models::BlockNumberAddress, models::StoredBlockBodyIndices,
+};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
@@ -22,7 +25,6 @@ use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
-use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_primitives_traits::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 
 use super::{DatabaseProviderRO, ProviderFactory};
@@ -1471,13 +1473,13 @@ mod tests {
     use alloy_primitives::B256;
     use base_execution_evm_runtime::database::BundleState;
     use base_execution_state_api::{BlockReader, BlockSource, ChangeSetReader};
+    use base_execution_state_database::models::AccountBeforeTx;
     use base_execution_state_types::{
         BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome,
     };
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
-    use reth_db_api::models::AccountBeforeTx;
     use reth_primitives_traits::{RecoveredBlock, SealedBlock};
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,

@@ -1,6 +1,6 @@
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
+use base_execution_state_database::DbTxMut;
 use base_execution_state_types::PruneModes;
-use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, providers::StaticFileProvider,

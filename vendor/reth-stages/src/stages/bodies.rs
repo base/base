@@ -3,14 +3,10 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use base_execution_state_database::{DbCursorRO, DbTx, DbTxMut, tables};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::TryStreamExt;
-use reth_db_api::{
-    cursor::DbCursorRO,
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_network_p2p::bodies::{downloader::BodyDownloader, response::BlockResponse};
 use reth_provider::{
     BlockReader, BlockWriter, DBProvider, ProviderError, StaticFileProviderFactory, StatsReader,
@@ -41,19 +37,19 @@ use super::missing_static_data_error;
 ///
 /// The bodies are processed and data is inserted into these tables:
 ///
-/// - [`BlockOmmers`][reth_db_api::tables::BlockOmmers]
-/// - [`BlockBodies`][reth_db_api::tables::BlockBodyIndices]
-/// - [`Transactions`][reth_db_api::tables::Transactions]
-/// - [`TransactionBlocks`][reth_db_api::tables::TransactionBlocks]
+/// - [`BlockOmmers`][base_execution_state_database::tables::BlockOmmers]
+/// - [`BlockBodies`][base_execution_state_database::tables::BlockBodyIndices]
+/// - [`Transactions`][base_execution_state_database::tables::Transactions]
+/// - [`TransactionBlocks`][base_execution_state_database::tables::TransactionBlocks]
 ///
 /// # Genesis
 ///
 /// This stage expects that the genesis has been inserted into the appropriate tables:
 ///
 /// - The header tables (see [`HeaderStage`][crate::stages::HeaderStage])
-/// - The [`BlockOmmers`][reth_db_api::tables::BlockOmmers] table
-/// - The [`BlockBodies`][reth_db_api::tables::BlockBodyIndices] table
-/// - The [`Transactions`][reth_db_api::tables::Transactions] table
+/// - The [`BlockOmmers`][base_execution_state_database::tables::BlockOmmers] table
+/// - The [`BlockBodies`][base_execution_state_database::tables::BlockBodyIndices] table
+/// - The [`Transactions`][base_execution_state_database::tables::Transactions] table
 #[derive(Debug)]
 pub struct BodyStage<D: BodyDownloader> {
     /// The body downloader.
@@ -482,14 +478,12 @@ mod tests {
         use base_common_types_chain::{
             BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
         };
+        use base_execution_state_database::{
+            DbCursorRO, DbTx, DbTxMut, models::StoredBlockBodyIndices, models::StoredBlockOmmers,
+        };
+        use base_execution_state_database::{static_file::HeaderWithHashMask, tables};
         use base_execution_state_types::StaticFileSegment;
         use futures_util::Stream;
-        use base_execution_state_database::{static_file::HeaderWithHashMask, tables};
-        use reth_db_api::{
-            cursor::DbCursorRO,
-            models::{StoredBlockBodyIndices, StoredBlockOmmers},
-            transaction::{DbTx, DbTxMut},
-        };
         use reth_network_p2p::{
             bodies::{
                 downloader::{BodyDownloader, BodyDownloaderResult},

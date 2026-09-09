@@ -3,12 +3,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::ChainSpecParser;
 use base_common_chain_config::BaseChainSpec;
-use clap::Parser;
-use base_execution_state_database::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
-use reth_db_api::{
-    cursor::DbCursorRO, database::Database, models::ClientVersion, table::TableImporter, tables,
-    transaction::DbTx,
+use base_execution_state_database::{
+    Database, DbCursorRO, DbTx, TableImporter, models::ClientVersion, tables,
 };
+use base_execution_state_database::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
+use clap::Parser;
 use reth_db_common::DbTool;
 use reth_node_core::{
     args::DatadirArgs,

@@ -1,15 +1,11 @@
 use alloc::vec::Vec;
 use core::ops::{Bound, RangeBounds};
 
+use base_execution_state_database::{
+    DatabaseError, DbCursorRO, DbTx, DbTxMut, KeyValue, Table, TableImporter,
+};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::PruneModes;
-use reth_db_api::{
-    DatabaseError,
-    common::KeyValue,
-    cursor::DbCursorRO,
-    table::{Table, TableImporter},
-    transaction::{DbTx, DbTxMut},
-};
 
 /// Provides shared access to a database transaction.
 #[auto_impl::auto_impl(&)]

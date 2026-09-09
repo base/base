@@ -1,12 +1,7 @@
+use base_execution_state_database::static_file::iter_static_files;
+use base_execution_state_database::{Database, DbTx, DbTxMut, Table, TableViewer, Tables};
 use base_execution_state_types::StaticFileSegment;
 use clap::{Parser, Subcommand};
-use base_execution_state_database::static_file::iter_static_files;
-use reth_db_api::{
-    TableViewer, Tables,
-    database::Database,
-    table::Table,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_db_common::DbTool;
 use reth_provider::StaticFileProviderFactory;
 

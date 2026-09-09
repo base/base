@@ -9,8 +9,8 @@ use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_client_ethereum::TxSignerSync;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
-use base_node_core::NodeConfig;
 use base_execution_state_database::test_utils::create_test_rw_db_with_path;
+use base_node_core::NodeConfig;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };

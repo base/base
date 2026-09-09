@@ -1,12 +1,9 @@
 use std::marker::PhantomData;
 
 use alloy_primitives::B256;
-use reth_db_api::{
-    DatabaseError,
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    table::{DupSort, Key, Table, Value},
-    tables::{PackedAccountsTrie, PackedStoragesTrie},
-    transaction::DbTx,
+use base_execution_state_database::{
+    DatabaseError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, DbTx, DupSort, Key, Table,
+    Value, tables::PackedAccountsTrie, tables::PackedStoragesTrie,
 };
 
 use crate::{
@@ -330,7 +327,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::hex_literal::hex;
-    use reth_db_api::{cursor::DbCursorRW, transaction::DbTxMut};
+    use base_execution_state_database::{DbCursorRW, DbTxMut};
     use reth_provider::test_utils::create_test_provider_factory;
 
     use super::*;

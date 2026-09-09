@@ -41,7 +41,9 @@ pub trait StorageChangeSetReader: Send {
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
-    ) -> ProviderResult<Vec<(reth_db_api::models::BlockNumberAddress, StorageEntry)>>;
+    ) -> ProviderResult<
+        Vec<(base_execution_state_database::models::BlockNumberAddress, StorageEntry)>,
+    >;
 
     /// Search the block's changesets for the given address and storage key, and return the result.
     ///
@@ -57,7 +59,9 @@ pub trait StorageChangeSetReader: Send {
     fn storage_changesets_range(
         &self,
         range: impl core::ops::RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<(reth_db_api::models::BlockNumberAddress, StorageEntry)>>;
+    ) -> ProviderResult<
+        Vec<(base_execution_state_database::models::BlockNumberAddress, StorageEntry)>,
+    >;
 
     /// Get storage changesets for a block as static-file rows.
     ///

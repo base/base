@@ -6,15 +6,11 @@ use base_execution_state_api::{
     BlockNumReader, BytecodeReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StateProofProvider, StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
 };
+use base_execution_state_database::{
+    BlockNumberList, DbCursorRO, DbDupCursorRO, DbTx, Table, tables,
+};
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ProviderResult;
-use reth_db_api::{
-    BlockNumberList,
-    cursor::{DbCursorRO, DbDupCursorRO},
-    table::Table,
-    tables,
-    transaction::DbTx,
-};
 use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
@@ -801,7 +797,7 @@ impl LowestAvailableBlocks {
 /// This logic is shared between MDBX cursor-based lookups and `RocksDB` iterator lookups.
 #[inline]
 pub fn compute_history_rank(
-    chunk: &reth_db_api::BlockNumberList,
+    chunk: &base_execution_state_database::BlockNumberList,
     block_number: BlockNumber,
 ) -> (u64, Option<u64>) {
     let mut rank = chunk.rank(block_number);
@@ -880,15 +876,13 @@ mod tests {
         PruneCheckpointReader, StageCheckpointReader, StateReadProvider, StorageChangeSetReader,
         StorageSettingsCache,
     };
+    use base_execution_state_database::{
+        BlockNumberList, DbTx, DbTxMut, models::AccountBeforeTx, models::ShardedKey,
+        models::storage_sharded_key::StorageShardedKey, tables,
+    };
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::StorageEntry;
-    use reth_db_api::{
-        BlockNumberList,
-        models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
-        tables,
-        transaction::{DbTx, DbTxMut},
-    };
     use reth_storage_overlay::OverlayManager;
 
     use super::needs_prev_shard_check;
@@ -1098,10 +1092,11 @@ mod tests {
         // setup
         let mut changesets = crate::test_utils::TestChangesets::default();
         {
-            let index: reth_db_api::models::BlockNumberAddress = (3, ADDRESS).into();
+            let index: base_execution_state_database::models::BlockNumberAddress =
+                (3, ADDRESS).into();
             let entry = entry_at3;
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -1109,10 +1104,11 @@ mod tests {
             );
         }
         {
-            let index: reth_db_api::models::BlockNumberAddress = (4, HIGHER_ADDRESS).into();
+            let index: base_execution_state_database::models::BlockNumberAddress =
+                (4, HIGHER_ADDRESS).into();
             let entry = higher_entry_at4;
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -1120,10 +1116,11 @@ mod tests {
             );
         }
         {
-            let index: reth_db_api::models::BlockNumberAddress = (7, ADDRESS).into();
+            let index: base_execution_state_database::models::BlockNumberAddress =
+                (7, ADDRESS).into();
             let entry = entry_at7;
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -1131,10 +1128,11 @@ mod tests {
             );
         }
         {
-            let index: reth_db_api::models::BlockNumberAddress = (10, ADDRESS).into();
+            let index: base_execution_state_database::models::BlockNumberAddress =
+                (10, ADDRESS).into();
             let entry = entry_at10;
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -1142,10 +1140,11 @@ mod tests {
             );
         }
         {
-            let index: reth_db_api::models::BlockNumberAddress = (15, ADDRESS).into();
+            let index: base_execution_state_database::models::BlockNumberAddress =
+                (15, ADDRESS).into();
             let entry = entry_at15;
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -1310,8 +1309,8 @@ mod tests {
 
         use alloy_primitives::keccak256;
         use base_execution_evm_runtime::database::BundleState;
+        use base_execution_state_database::models::StorageSettings;
         use base_execution_state_types::ExecutionOutcome;
-        use reth_db_api::models::StorageSettings;
         use reth_testing_utils::generators::{self, BlockRangeParams};
 
         use crate::BlockWriter;

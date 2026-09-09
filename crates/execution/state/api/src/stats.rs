@@ -1,4 +1,4 @@
-use reth_db_api::table::Table;
+use base_execution_state_database::Table;
 
 /// The trait for fetching provider statistics.
 #[auto_impl::auto_impl(&, Arc)]

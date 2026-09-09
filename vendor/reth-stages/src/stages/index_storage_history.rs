@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
+use base_execution_state_database::{DbTxMut, Tables, tables};
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::{EtlConfig, IndexHistoryConfig};
-use reth_db_api::{Tables, tables, transaction::DbTxMut};
 use reth_provider::{
     DBProvider, EitherWriter, HistoryWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StorageChangeSetReader,
@@ -189,9 +189,9 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use reth_db_api::{
-        BlockNumberList,
-        models::{ShardedKey, StoredBlockBodyIndices, storage_sharded_key::StorageShardedKey},
+    use base_execution_state_database::{
+        BlockNumberList, models::ShardedKey, models::StoredBlockBodyIndices,
+        models::storage_sharded_key::StorageShardedKey,
     };
     use reth_provider::DatabaseProviderFactory;
 
@@ -211,8 +211,8 @@ mod tests {
     }
     mod rocksdb_tests {
         use base_execution_state_api::StorageSettings;
+        use base_execution_state_database::models::StorageBeforeTx;
         use base_execution_state_types::StaticFileSegment;
-        use reth_db_api::models::StorageBeforeTx;
         use reth_provider::{RocksDBProviderFactory, providers::StaticFileWriter};
 
         use super::*;
@@ -415,7 +415,7 @@ mod tests {
         /// Test multi-shard unwind correctly handles shards that span across unwind boundary.
         #[tokio::test]
         async fn unwind_multi_shard() {
-            use reth_db_api::models::sharded_key::NUM_OF_INDICES_IN_SHARD;
+            use base_execution_state_database::models::sharded_key::NUM_OF_INDICES_IN_SHARD;
 
             let db = TestStageDB::default();
             let num_blocks = (NUM_OF_INDICES_IN_SHARD * 2 + 100) as u64;

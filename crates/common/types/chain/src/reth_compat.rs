@@ -444,7 +444,7 @@ impl Compact for BaseReceipt {
 }
 
 // ---------------------------------------------------------------------------
-// Compress / Decompress (reth-db-api)
+// Compress / Decompress (base-execution-state-database)
 // ---------------------------------------------------------------------------
 
 impl base_common_types_chain::Compress for BaseTxEnvelope {

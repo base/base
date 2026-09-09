@@ -52,7 +52,9 @@ impl NodeLaunch {
     pub fn testing(mut config: NodeConfig, task_executor: TaskExecutor) -> Self {
         let path = base_execution_state_database::test_utils::tempdir_path();
         config.datadir.datadir = path.into();
-        let db = base_execution_state_database::test_utils::create_test_rw_db_with_datadir(config.datadir().data_dir());
+        let db = base_execution_state_database::test_utils::create_test_rw_db_with_datadir(
+            config.datadir().data_dir(),
+        );
         Self::new(config, db, task_executor)
     }
 }

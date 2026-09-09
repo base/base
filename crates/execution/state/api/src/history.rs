@@ -2,10 +2,10 @@ use core::ops::RangeBounds;
 
 use alloy_primitives::{Address, B256, BlockNumber};
 use auto_impl::auto_impl;
+use base_execution_state_database::models::BlockNumberAddress;
 use base_execution_state_types::AccountBeforeTx;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StorageEntry;
-use reth_db_api::models::BlockNumberAddress;
 
 /// History Writer
 #[auto_impl(&, Arc, Box)]

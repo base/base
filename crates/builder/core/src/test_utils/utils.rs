@@ -6,9 +6,8 @@ use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
 use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactionHashes};
 use base_execution_state_database::{
-    ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
-    test_utils::{ERROR_DB_CREATION, TempDatabase},
+    ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, mdbx::KILOBYTE, mdbx::MEGABYTE,
+    mdbx::MaxReadTransactionDuration, test_utils::ERROR_DB_CREATION, test_utils::TempDatabase,
 };
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 

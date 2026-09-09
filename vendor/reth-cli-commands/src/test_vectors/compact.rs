@@ -17,6 +17,10 @@ use base_common_types_chain::{
         withdrawal::Withdrawal,
     },
 };
+use base_execution_state_database::{
+    ClientVersion, models::AccountBeforeTx, models::StaticFileBlockWithdrawals,
+    models::StoredBlockBodyIndices, models::StoredBlockOmmers, models::StoredBlockWithdrawals,
+};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
@@ -32,13 +36,6 @@ use eyre::{Context, Result};
 use proptest::{
     prelude::{ProptestConfig, RngCore},
     test_runner::{TestRng, TestRunner},
-};
-use base_execution_state_database::{
-    ClientVersion,
-    models::{
-        AccountBeforeTx, StaticFileBlockWithdrawals, StoredBlockBodyIndices, StoredBlockOmmers,
-        StoredBlockWithdrawals,
-    },
 };
 use reth_primitives_traits::{Log, LogData};
 use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
@@ -114,7 +111,7 @@ compact_types!(
         CheckpointBlockRange,
         StageCheckpoint,
         StageUnitCheckpoint,
-        // reth_db_api
+        // base_execution_state_database
         StoredBlockOmmers,
         StoredBlockBodyIndices,
         StoredBlockWithdrawals,

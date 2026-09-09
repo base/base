@@ -2,27 +2,19 @@ use std::{collections::BTreeMap, fmt::Debug, path::Path};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
 use base_common_types_chain::{BaseReceipt as Receipt, BaseTxEnvelope};
+use base_execution_state_database::{
+    Database, DatabaseError as DbError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut,
+    KeyValue, Table, models::AccountBeforeTx, models::StorageBeforeTx,
+    models::StoredBlockBodyIndices, tables,
+};
+use base_execution_state_database::{
+    DatabaseEnv, test_utils::create_test_rocksdb_dir, test_utils::create_test_rw_db,
+    test_utils::create_test_rw_db_with_path, test_utils::create_test_static_files_dir,
+};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
-use base_execution_state_database::{
-    DatabaseEnv,
-    test_utils::{
-        create_test_rocksdb_dir, create_test_rw_db, create_test_rw_db_with_path,
-        create_test_static_files_dir,
-    },
-};
-use reth_db_api::{
-    DatabaseError as DbError,
-    common::KeyValue,
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
-    database::Database,
-    models::{AccountBeforeTx, StorageBeforeTx, StoredBlockBodyIndices},
-    table::Table,
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     DatabaseProviderFactory, EitherWriter, HistoryWriter, ProviderError, ProviderFactory,

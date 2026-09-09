@@ -5,14 +5,12 @@ use std::{
 
 use base_common_runtime_tasks::TaskExecutor;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
+use base_execution_state_database::{
+    Database, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut,
+};
 use clap::Parser;
 use metrics::{self, Counter};
 use reth_cli_util::parse_socket_address;
-use reth_db_api::{
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
-    database::Database,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_db_common::DbTool;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},

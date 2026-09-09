@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_execution_state_database::{RawValue, Table, TableRow};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -14,10 +15,6 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-};
-use reth_db_api::{
-    RawValue,
-    table::{Table, TableRow},
 };
 use tracing::error;
 

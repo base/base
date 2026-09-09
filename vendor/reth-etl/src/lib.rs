@@ -24,8 +24,8 @@ use std::{
 /// Key len and Value len encode use [`usize::to_be_bytes()`] the length is 8.
 const KV_LEN: usize = 8;
 
+use base_execution_state_database::{Compress, Encode, Key, Value};
 use rayon::prelude::*;
-use reth_db_api::table::{Compress, Encode, Key, Value};
 use tempfile::{NamedTempFile, TempDir};
 
 /// An ETL (extract, transform, load) data collector.

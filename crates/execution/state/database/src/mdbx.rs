@@ -159,3 +159,167 @@ pub fn open_db(path: impl AsRef<Path>, args: DatabaseArguments) -> eyre::Result<
     }
     open(path.as_ref(), args)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::{Database, DbCursorRO, DbTx, models::ClientVersion};
+    use assert_matches::assert_matches;
+    use reth_libmdbx::MaxReadTransactionDuration;
+    use tempfile::tempdir;
+
+    use crate::{
+        init_db,
+        mdbx::DatabaseArguments,
+        open_db, tables,
+        version::{DatabaseVersionError, db_version_file_path},
+    };
+
+    #[test]
+    fn test_temp_database_cleanup() {
+        // Test that TempDatabase properly cleans up its directory when dropped
+        let temp_path = {
+            let db = crate::test_utils::create_test_rw_db();
+            let path = db.path();
+            assert!(path.exists(), "Database directory should exist while TempDatabase is alive");
+            path
+            // TempDatabase dropped here
+        };
+
+        // Verify the directory was cleaned up
+        assert!(
+            !temp_path.exists(),
+            "Database directory should be cleaned up after TempDatabase is dropped"
+        );
+    }
+
+    #[test]
+    fn db_version() {
+        let path = tempdir().unwrap();
+
+        let args = DatabaseArguments::new(ClientVersion::default())
+            .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded));
+
+        // Database is empty
+        {
+            let db = init_db(&path, args.clone());
+            assert_matches!(db, Ok(_));
+        }
+
+        // Database is not empty, current version is the same as in the file
+        {
+            let db = init_db(&path, args.clone());
+            assert_matches!(db, Ok(_));
+        }
+
+        // Database is not empty, version file is malformed
+        {
+            base_common_io_files::Files::write(
+                path.path().join(db_version_file_path(&path)),
+                "invalid-version",
+            )
+            .unwrap();
+            let db = init_db(&path, args.clone());
+            assert!(db.is_err());
+            assert_matches!(
+                db.unwrap_err().downcast_ref::<DatabaseVersionError>(),
+                Some(DatabaseVersionError::MalformedFile)
+            )
+        }
+
+        // Database is not empty, version file contains not matching version
+        {
+            base_common_io_files::Files::write(path.path().join(db_version_file_path(&path)), "0")
+                .unwrap();
+            let db = init_db(&path, args);
+            assert!(db.is_err());
+            assert_matches!(
+                db.unwrap_err().downcast_ref::<DatabaseVersionError>(),
+                Some(DatabaseVersionError::VersionMismatch { version: 0 })
+            )
+        }
+    }
+
+    #[test]
+    fn db_client_version() {
+        let path = tempdir().unwrap();
+
+        // Empty client version is not recorded
+        {
+            let db = init_db(&path, DatabaseArguments::new(ClientVersion::default())).unwrap();
+            let tx = db.tx().unwrap();
+            let mut cursor = tx.cursor_read::<tables::VersionHistory>().unwrap();
+            assert_matches!(cursor.first(), Ok(None));
+        }
+
+        // Client version is recorded
+        let first_version = ClientVersion { version: String::from("v1"), ..Default::default() };
+        {
+            let db = init_db(&path, DatabaseArguments::new(first_version.clone())).unwrap();
+            let tx = db.tx().unwrap();
+            let mut cursor = tx.cursor_read::<tables::VersionHistory>().unwrap();
+            assert_eq!(
+                cursor
+                    .walk_range(..)
+                    .unwrap()
+                    .map(|x| x.map(|(_, v)| v))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                vec![first_version.clone()]
+            );
+        }
+
+        // Same client version is not duplicated.
+        {
+            let db = init_db(&path, DatabaseArguments::new(first_version.clone())).unwrap();
+            let tx = db.tx().unwrap();
+            let mut cursor = tx.cursor_read::<tables::VersionHistory>().unwrap();
+            assert_eq!(
+                cursor
+                    .walk_range(..)
+                    .unwrap()
+                    .map(|x| x.map(|(_, v)| v))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                vec![first_version.clone()]
+            );
+        }
+
+        // Different client version is recorded
+        std::thread::sleep(Duration::from_secs(1));
+        let second_version = ClientVersion { version: String::from("v2"), ..Default::default() };
+        {
+            let db = init_db(&path, DatabaseArguments::new(second_version.clone())).unwrap();
+            let tx = db.tx().unwrap();
+            let mut cursor = tx.cursor_read::<tables::VersionHistory>().unwrap();
+            assert_eq!(
+                cursor
+                    .walk_range(..)
+                    .unwrap()
+                    .map(|x| x.map(|(_, v)| v))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                vec![first_version.clone(), second_version.clone()]
+            );
+        }
+
+        // Different client version is recorded on db open.
+        std::thread::sleep(Duration::from_secs(1));
+        let third_version = ClientVersion { version: String::from("v3"), ..Default::default() };
+        {
+            let db = open_db(path.path(), DatabaseArguments::new(third_version.clone())).unwrap();
+            let tx = db.tx().unwrap();
+            let mut cursor = tx.cursor_read::<tables::VersionHistory>().unwrap();
+            assert_eq!(
+                cursor
+                    .walk_range(..)
+                    .unwrap()
+                    .map(|x| x.map(|(_, v)| v))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                vec![first_version, second_version, third_version]
+            );
+        }
+    }
+}

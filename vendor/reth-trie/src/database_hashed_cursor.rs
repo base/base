@@ -1,11 +1,6 @@
 use alloy_primitives::{B256, U256};
+use base_execution_state_database::{DatabaseError, DbCursorRO, DbDupCursorRO, DbTx, tables};
 use base_execution_state_memory::StoredAccount as Account;
-use reth_db_api::{
-    DatabaseError,
-    cursor::{DbCursorRO, DbDupCursorRO},
-    tables,
-    transaction::DbTx,
-};
 
 use crate::hashed_cursor::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
 

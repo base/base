@@ -124,7 +124,6 @@ members = [
   "vendor/reth-config",
   "vendor/reth-consensus-debug-client",
   "crates/execution/state/database",
-  "vendor/reth-db-api",
   "vendor/reth-db-common",
   "vendor/reth-downloaders",
   "vendor/reth-e2e-test-utils",
@@ -442,7 +441,6 @@ reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
 reth-prune = { path = "vendor/reth-prune", default-features = false }
-reth-db-api = { path = "vendor/reth-db-api", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }

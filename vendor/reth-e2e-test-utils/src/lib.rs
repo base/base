@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use base_node_context::BaseNodeContext;
 use node::NodeTestContext;
-use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 

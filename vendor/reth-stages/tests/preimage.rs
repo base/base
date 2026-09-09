@@ -15,13 +15,10 @@ use base_common_types_chain::{
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
+use base_execution_state_database::tables;
+use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
 use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
-use base_execution_state_database::tables;
-use reth_db_api::{
-    cursor::{DbCursorRO, DbDupCursorRO},
-    transaction::DbTx,
-};
 use reth_db_common::init::{init_genesis, init_genesis_with_settings};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,

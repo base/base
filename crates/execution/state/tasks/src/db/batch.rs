@@ -5,11 +5,7 @@
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
-use base_execution_state_database::{
-    Database, DatabaseEnv,
-    table::{DupSort, Table},
-    transaction::DbTx,
-};
+use base_execution_state_database::{Database, DatabaseEnv, DbTx, DupSort, Table};
 
 use crate::{
     BaseProofsStorageError, BaseProofsStorageResult, BlockStateDiff,

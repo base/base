@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 #[cfg(feature = "test-utils")]
-use reth_db_api as _;
+use base_execution_state_database as _;
 
 /// CLI argument parsing for the Base node.
 mod args;

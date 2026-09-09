@@ -2,9 +2,9 @@ use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageVal
 use base_execution_state_api::{
     BytecodeReader, DBProvider, StateProofProvider, StorageRootProvider, StorageSettingsCache,
 };
+use base_execution_state_database::{DbDupCursorRO, DbTx, tables};
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::{ProviderError, ProviderResult};
-use reth_db_api::{cursor::DbDupCursorRO, tables, transaction::DbTx};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
@@ -329,12 +329,8 @@ base_execution_state_api::delegate_provider_impls!(LatestStateProvider<Provider>
 mod tests {
     use alloy_primitives::{U256, address, b256, keccak256};
     use base_execution_state_api::{StateReadProvider, StorageSettingsCache};
+    use base_execution_state_database::{DbTx, DbTxMut, models::StorageSettings, tables};
     use base_execution_state_types::StorageEntry;
-    use reth_db_api::{
-        models::StorageSettings,
-        tables,
-        transaction::{DbTx, DbTxMut},
-    };
 
     use super::*;
     use crate::test_utils::create_test_provider_factory;

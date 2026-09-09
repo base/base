@@ -10,23 +10,18 @@ use std::{
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_api::{ChangeSetReader, DBProvider, DbTxProvider};
+use base_execution_state_database::{
+    CursorMutTy, CursorTy, DbCursorRO, DbDupCursorRW, DbTx, DbTxMut, DupCursorMutTy, DupCursorTy,
+    Value, models::AccountBeforeTx, models::StorageBeforeTx, static_file::TransactionSenderMask,
+};
+use base_execution_state_database::{
+    DbCursorRW, models::BlockNumberAddress, models::ShardedKey,
+    models::storage_sharded_key::StorageShardedKey, tables, tables::BlockNumberList,
+};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use rayon::slice::ParallelSliceMut;
-use base_execution_state_database::{
-    cursor::{DbCursorRO, DbDupCursorRW},
-    models::{AccountBeforeTx, StorageBeforeTx},
-    static_file::TransactionSenderMask,
-    table::Value,
-    transaction::{CursorMutTy, CursorTy, DbTx, DbTxMut, DupCursorMutTy, DupCursorTy},
-};
-use reth_db_api::{
-    cursor::DbCursorRW,
-    models::{BlockNumberAddress, ShardedKey, storage_sharded_key::StorageShardedKey},
-    tables,
-    tables::BlockNumberList,
-};
 use strum::{Display, EnumIs};
 
 use crate::{
@@ -839,8 +834,8 @@ mod tests {
     use base_execution_state_api::{
         DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
     };
-    use base_execution_state_types::StaticFileSegment;
     use base_execution_state_database::models::AccountBeforeTx;
+    use base_execution_state_types::StaticFileSegment;
 
     use super::*;
     use crate::{StaticFileWriter, test_utils::create_test_provider_factory};
@@ -945,10 +940,9 @@ mod rocksdb_tests {
     use base_execution_state_api::{
         DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
     };
-    use reth_db_api::{
-        models::{IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
-        tables,
-        transaction::DbTxMut,
+    use base_execution_state_database::{
+        DbTxMut, models::IntegerList, models::ShardedKey,
+        models::storage_sharded_key::StorageShardedKey, tables,
     };
     use tempfile::TempDir;
 
@@ -1195,14 +1189,22 @@ mod rocksdb_tests {
     }
 
     // Type aliases for cursor types (needed for EitherWriter/EitherReader type inference)
-    type AccountsHistoryWriteCursor =
-        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RW, tables::AccountsHistory>;
-    type StoragesHistoryWriteCursor =
-        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RW, tables::StoragesHistory>;
-    type AccountsHistoryReadCursor =
-        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RO, tables::AccountsHistory>;
-    type StoragesHistoryReadCursor =
-        base_execution_state_database::mdbx::cursor::Cursor<base_execution_state_database::mdbx::RO, tables::StoragesHistory>;
+    type AccountsHistoryWriteCursor = base_execution_state_database::mdbx::cursor::Cursor<
+        base_execution_state_database::mdbx::RW,
+        tables::AccountsHistory,
+    >;
+    type StoragesHistoryWriteCursor = base_execution_state_database::mdbx::cursor::Cursor<
+        base_execution_state_database::mdbx::RW,
+        tables::StoragesHistory,
+    >;
+    type AccountsHistoryReadCursor = base_execution_state_database::mdbx::cursor::Cursor<
+        base_execution_state_database::mdbx::RO,
+        tables::AccountsHistory,
+    >;
+    type StoragesHistoryReadCursor = base_execution_state_database::mdbx::cursor::Cursor<
+        base_execution_state_database::mdbx::RO,
+        tables::StoragesHistory,
+    >;
 
     /// Runs the same account history queries against both MDBX and `RocksDB` backends,
     /// asserting they produce identical results.

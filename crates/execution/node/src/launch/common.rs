@@ -44,13 +44,13 @@ use base_common_observability_tracing::{
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_database::{DatabaseMetrics, models::PartialStateTrieUnwindMarker};
 use base_execution_txpool::TransactionPool;
 use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
 use reth_config::{PruneConfig, config::EtlConfig};
-use reth_db_api::{database_metrics::DatabaseMetrics, models::PartialStateTrieUnwindMarker};
 use reth_db_common::init::{
     InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate,
 };
@@ -1238,7 +1238,7 @@ fn get_partial_trie_unwind_marker(
 const PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY: &str = "partial_state_trie_unwind";
 
 fn write_partial_trie_unwind_marker(
-    provider: &reth_provider::DatabaseProvider<impl reth_db_api::transaction::DbTxMut>,
+    provider: &reth_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
     marker: PartialStateTrieUnwindMarker,
 ) -> ProviderResult<()> {
     provider.write_metadata(
@@ -1248,15 +1248,15 @@ fn write_partial_trie_unwind_marker(
 }
 
 fn delete_partial_trie_unwind_marker(
-    provider: &reth_provider::DatabaseProvider<impl reth_db_api::transaction::DbTxMut>,
+    provider: &reth_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
 ) -> ProviderResult<()> {
     provider.delete_metadata(PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY)
 }
 
 #[cfg(test)]
 mod tests {
+    use base_execution_state_database::models::PartialStateTrieUnwindMarker;
     use reth_config::Config;
-    use reth_db_api::models::PartialStateTrieUnwindMarker;
     use reth_node_core::args::PruningArgs;
     use reth_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
     use reth_stages::{FinishCheckpoint, StageCheckpoint, StageId};

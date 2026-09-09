@@ -7,11 +7,8 @@ use alloy_primitives::{B256, BlockNumber, keccak256, map::B256Map};
 use base_execution_state_api::{
     ChangeSetReader, DBProvider, StorageChangeSetReader, StorageSettingsCache,
 };
+use base_execution_state_database::{DbTx, models::AccountBeforeTx, models::BlockNumberAddress};
 use base_execution_state_types::{ProviderError, StateRootError};
-use reth_db_api::{
-    models::{AccountBeforeTx, BlockNumberAddress},
-    transaction::DbTx,
-};
 use tracing::{debug, instrument};
 
 use crate::{
@@ -100,8 +97,8 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     ///
     /// ```
     /// use alloy_primitives::U256;
-    /// use base_execution_state_database::test_utils::create_test_rw_db;
-    /// use reth_db_api::database::Database;
+    /// use base_execution_state_database::{test_utils::create_test_rw_db};
+    /// use base_execution_state_database::{Database};
     /// use base_execution_state_memory::StoredAccount;
     /// use crate::{updates::TrieUpdates, HashedPostState, StateRoot};
     /// use reth_trie::{DatabaseStateRoot, PackedKeyAdapter};
@@ -357,20 +354,18 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::StorageSettingsCache;
+    use base_execution_state_database::{
+        DbTxMut, models::AccountBeforeTx, models::BlockNumberAddress, tables,
+    };
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StateRootError;
     use base_execution_state_types::StorageEntry;
-    use reth_db_api::{
-        models::{AccountBeforeTx, BlockNumberAddress},
-        tables,
-        transaction::DbTxMut,
-    };
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
 
     use super::*;
     use crate::{HashedPostState, HashedPostStateSorted, HashedStorage, StateRoot};
 
-    fn overlay_root_for_provider<TX: reth_db_api::transaction::DbTx>(
+    fn overlay_root_for_provider<TX: base_execution_state_database::DbTx>(
         _provider: &impl StorageSettingsCache,
         tx: &TX,
         sorted: &HashedPostStateSorted,
@@ -474,7 +469,7 @@ mod tests {
             let index = BlockNumberAddress((1, address1));
             let entry = StorageEntry { key: slot2, value: U256::from(200) };
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -485,7 +480,7 @@ mod tests {
             let index = BlockNumberAddress((2, address1));
             let entry = StorageEntry { key: slot1, value: U256::from(100) };
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -496,7 +491,7 @@ mod tests {
             let index = BlockNumberAddress((3, address1));
             let entry = StorageEntry { key: slot1, value: U256::from(999) };
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -548,7 +543,7 @@ mod tests {
 
     #[test]
     fn from_reverts_with_hashed_state() {
-        use reth_db_api::models::{StorageBeforeTx, StorageSettings};
+        use base_execution_state_database::{models::StorageBeforeTx, models::StorageSettings};
         use reth_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
 
         let factory = create_test_provider_factory();

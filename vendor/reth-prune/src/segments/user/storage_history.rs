@@ -1,10 +1,10 @@
 use alloy_primitives::BlockNumber;
 use base_execution_state_api::{StorageChangeSetReader, StorageSettingsCache};
+use base_execution_state_database::DbTxMut;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
 };
-use reth_db_api::transaction::DbTxMut;
 use reth_provider::{DBProvider, RocksDBProviderFactory, StaticFileProviderFactory};
 use rustc_hash::FxHashMap;
 use tracing::{instrument, trace};
@@ -181,8 +181,8 @@ mod tests {
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
     use base_execution_state_api::StorageSettingsCache;
+    use base_execution_state_database::{BlockNumberList, tables};
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
-    use reth_db_api::{BlockNumberList, tables};
     use reth_provider::{DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn prune_rocksdb() {
         use base_execution_state_api::StorageSettings;
-        use reth_db_api::models::storage_sharded_key::StorageShardedKey;
+        use base_execution_state_database::models::storage_sharded_key::StorageShardedKey;
         use reth_provider::RocksDBProviderFactory;
 
         let db = TestStageDB::default();
@@ -304,8 +304,8 @@ mod tests {
     fn dense_block_advances_rocksdb_checkpoint() {
         use alloy_primitives::U256;
         use base_execution_state_api::StorageSettings;
+        use base_execution_state_database::models::storage_sharded_key::StorageShardedKey;
         use base_execution_state_types::StorageEntry;
-        use reth_db_api::models::storage_sharded_key::StorageShardedKey;
         use reth_provider::RocksDBProviderFactory;
 
         let db = TestStageDB::default();

@@ -1,5 +1,5 @@
+use crate::{AccountChangeSets, Table, models::StorageBeforeTx};
 use alloy_primitives::{Address, BlockHash};
-use reth_db_api::{AccountChangeSets, models::StorageBeforeTx, table::Table};
 
 use crate::{
     HeaderTerminalDifficulties, add_static_file_mask,

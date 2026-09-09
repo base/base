@@ -1,10 +1,8 @@
 use std::{fmt::Debug, ops::RangeBounds};
 
-use reth_db_api::{
-    DatabaseError,
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, RangeWalker},
-    table::{DupSort, Table, TableRow},
-    transaction::{DbTx, DbTxMut},
+use base_execution_state_database::{
+    DatabaseError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut, DupSort, RangeWalker,
+    Table, TableRow,
 };
 use tracing::debug;
 
@@ -190,8 +188,8 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::{B256, U256};
+    use base_execution_state_database::{DbTxMut, tables};
     use base_execution_state_types::StorageEntry;
-    use reth_db_api::{tables, transaction::DbTxMut};
     use reth_provider::{DBProvider, DatabaseProviderFactory};
     use reth_stages::test_utils::TestStageDB;
 

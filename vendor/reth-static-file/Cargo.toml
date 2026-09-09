@@ -17,11 +17,11 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-database = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

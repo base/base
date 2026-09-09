@@ -2,13 +2,10 @@ use std::path::Path;
 
 use alloy_primitives::{B256, keccak256, map::HashSet};
 use base_execution_evm_runtime::database::RevertToSlot;
+use base_execution_state_database::tables;
+use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
 use eyre::Context;
 use rayon::slice::ParallelSliceMut;
-use base_execution_state_database::tables;
-use reth_db_api::{
-    cursor::{DbCursorRO, DbDupCursorRO},
-    transaction::DbTx,
-};
 use reth_libmdbx::{
     DatabaseFlags, Environment, EnvironmentFlags, Geometry, Mode, RO, SyncMode, WriteFlags,
 };

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use alloy_primitives::B256;
-use reth_db_api::{cursor::DbCursorRW, tables, transaction::DbTxMut};
+use base_execution_state_database::{DbCursorRW, DbTxMut, tables};
 use reth_provider::test_utils::create_test_provider_factory;
 use reth_trie::{
     BranchNodeCompact, DatabaseTrieCursorFactory, Nibbles, PackedStorageTrieEntry,

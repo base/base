@@ -3,11 +3,11 @@
 use std::{path::PathBuf, sync::Arc};
 
 use base_cli_utils::CliContext;
-use base_common_chain_config::BaseChainSpec;
-use base_node_core::{NodeHandle, NodeLaunch};
 use base_common_chain_activation::UpgradeSignalStartupMode;
-use clap::{Args, value_parser};
+use base_common_chain_config::BaseChainSpec;
 use base_execution_state_database::init_db;
+use base_node_core::{NodeHandle, NodeLaunch};
+use clap::{Args, value_parser};
 use reth_node_core::{
     args::{
         DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs,

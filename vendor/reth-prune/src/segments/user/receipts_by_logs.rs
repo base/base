@@ -1,9 +1,9 @@
 use base_common_types_chain::{BaseReceipt, TxReceipt};
+use base_execution_state_database::{DbTxMut, tables};
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment,
     ReceiptsLogPruneConfig, SegmentOutput,
 };
-use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider};
 use tracing::{instrument, trace};
 
@@ -230,8 +230,8 @@ mod tests {
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseReceipt;
+    use base_execution_state_database::{DbCursorRO, DbTx, tables};
     use base_execution_state_types::{PruneMode, PruneSegment, ReceiptsLogPruneConfig};
-    use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
     use reth_primitives_traits::InMemorySize;
     use reth_provider::{BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
     use reth_stages::test_utils::{StorageKind, TestStageDB};

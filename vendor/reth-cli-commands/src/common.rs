@@ -7,9 +7,9 @@ use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_database::{DatabaseEnv, init_db, open_db_read_only};
 use clap::Parser;
 use reth_config::{Config, config::EtlConfig};
-use base_execution_state_database::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_node_core::{

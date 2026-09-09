@@ -19,10 +19,10 @@ workspace = true
 auto_impl = { workspace = true }
 itertools = { workspace = true }
 alloy-trie = { workspace = true }
-reth-db-api = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
+base-execution-state-database = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
@@ -84,7 +84,6 @@ test-utils = [
     "base-execution-state-types/test-utils",
     "reth-trie-sparse/test-utils",
     "base-execution-state-database/test-utils",
-    "reth-db-api/test-utils",
     "reth-provider/test-utils",
     "base-execution-state-memory/test-utils",
 ]

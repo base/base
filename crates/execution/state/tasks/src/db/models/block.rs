@@ -1,12 +1,9 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_types_chain::DecompressError;
+use base_execution_state_database::{Compress, DatabaseError, Decompress};
 use bytes::BufMut;
 use derive_more::{From, Into};
-use base_execution_state_database::{
-    DatabaseError,
-    table::{Compress, Decompress},
-};
 use serde::{Deserialize, Serialize};
 
 /// Wrapper for block number and block hash tuple to implement [`Compress`]/[`Decompress`].

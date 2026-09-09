@@ -1,5 +1,5 @@
-use base_execution_state_types::DatabaseError;
 use base_execution_state_database::{Database, DatabaseEnv, test_utils::TempDatabase};
+use base_execution_state_types::DatabaseError;
 use reth_provider::{DatabaseProvider, ProviderError};
 use reth_stages_api::{
     ExecInput, ExecOutput, Stage, StageError, StageExt, UnwindInput, UnwindOutput,

@@ -82,7 +82,7 @@ pub trait RocksDBProviderFactory {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use reth_db_api::models::StorageSettings;
+    use base_execution_state_database::models::StorageSettings;
 
     use super::*;
 

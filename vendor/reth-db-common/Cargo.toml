@@ -17,7 +17,6 @@ reth-etl = { workspace = true }
 reth-trie = { workspace = true }
 thiserror = { workspace = true }
 reth-config = { workspace = true }
-reth-db-api = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-provider = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -28,6 +27,7 @@ base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-state-memory = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
+base-execution-state-database = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true, features = ["attributes"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

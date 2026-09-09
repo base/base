@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, path::Path};
 
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
+use base_execution_state_database::tables;
+use base_execution_state_database::{DbTx, DbTxMut};
 use base_execution_state_types::StageCheckpoint;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use reth_config::config::{BlocksPerFileConfig, Config, PruneConfig, StaticFilesConfig};
-use base_execution_state_database::tables;
-use reth_db_api::transaction::{DbTx, DbTxMut};
 use reth_node_core::args::DefaultPruningValues;
 use tracing::info;
 
@@ -303,7 +303,11 @@ mod tests {
     #[test]
     fn write_prune_checkpoints_sets_all_segments() {
         let dir = tempfile::tempdir().unwrap();
-        let db = base_execution_state_database::init_db(dir.path(), base_execution_state_database::mdbx::DatabaseArguments::default()).unwrap();
+        let db = base_execution_state_database::init_db(
+            dir.path(),
+            base_execution_state_database::mdbx::DatabaseArguments::default(),
+        )
+        .unwrap();
 
         let mut selections = BTreeMap::new();
         selections.insert(SnapshotComponentType::State, ComponentSelection::All);
@@ -345,7 +349,11 @@ mod tests {
     #[test]
     fn write_prune_checkpoints_archive_no_checkpoints() {
         let dir = tempfile::tempdir().unwrap();
-        let db = base_execution_state_database::init_db(dir.path(), base_execution_state_database::mdbx::DatabaseArguments::default()).unwrap();
+        let db = base_execution_state_database::init_db(
+            dir.path(),
+            base_execution_state_database::mdbx::DatabaseArguments::default(),
+        )
+        .unwrap();
 
         // Archive node — no pruning configured, so no checkpoints written
         let mut selections = BTreeMap::new();
@@ -568,7 +576,11 @@ mod tests {
     #[test]
     fn reset_index_stage_checkpoints_clears_only_rocksdb_index_stages() {
         let dir = tempfile::tempdir().unwrap();
-        let db = base_execution_state_database::init_db(dir.path(), base_execution_state_database::mdbx::DatabaseArguments::default()).unwrap();
+        let db = base_execution_state_database::init_db(
+            dir.path(),
+            base_execution_state_database::mdbx::DatabaseArguments::default(),
+        )
+        .unwrap();
 
         // Simulate a fully synced node: set stage checkpoints at tip
         let tip_checkpoint = StageCheckpoint::new(24_500_000);

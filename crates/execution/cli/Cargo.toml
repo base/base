@@ -15,7 +15,6 @@ tracing = { workspace = true }
 humantime = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-reth-db-api = { workspace = true }
 reth-network = { workspace = true }
 base-metering = { workspace = true }
 base-reth-cli = { workspace = true }
@@ -55,7 +54,7 @@ base-execution-network-types = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-network-discovery = {features = ["default"], workspace = true}
 tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
-base-execution-state-database = { workspace = true, features = ["default", "mdbx"] }
+base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
 
 [dev-dependencies]

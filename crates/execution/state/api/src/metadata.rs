@@ -2,8 +2,8 @@
 
 use alloc::vec::Vec;
 
+use base_execution_state_database::models::StorageSettings;
 use base_execution_state_types::ProviderResult;
-use reth_db_api::models::StorageSettings;
 
 /// Storage configuration settings for this node.
 pub const STORAGE_SETTINGS: &str = "storage_settings";

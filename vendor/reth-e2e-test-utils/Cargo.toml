@@ -20,7 +20,6 @@ tokio = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-genesis = {workspace = true}
-reth-db-api = { workspace = true }
 alloy-signer = { workspace = true }
 futures-util = { workspace = true }
 reth-network = { workspace = true }
@@ -51,7 +50,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
-base-execution-state-database = { workspace = true, features = ["test-utils"] }
+base-execution-state-database = {workspace = true, features = ["test-utils"]}
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth", "kzg", "serde"] }

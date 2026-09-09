@@ -16,7 +16,8 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-db-api = { workspace = true }
+base-execution-state-database = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }

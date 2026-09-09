@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
+use base_execution_state_database::{DbTxMut, Tables, tables};
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::{EtlConfig, IndexHistoryConfig};
-use reth_db_api::{Tables, tables, transaction::DbTxMut};
 use reth_provider::{
     DBProvider, EitherWriter, HistoryWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StorageSettingsCache,
@@ -190,9 +190,9 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, address};
-    use reth_db_api::{
-        BlockNumberList,
-        models::{AccountBeforeTx, ShardedKey, StoredBlockBodyIndices},
+    use base_execution_state_database::{
+        BlockNumberList, models::AccountBeforeTx, models::ShardedKey,
+        models::StoredBlockBodyIndices,
     };
     use reth_provider::DatabaseProviderFactory;
 

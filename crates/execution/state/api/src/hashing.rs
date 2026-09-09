@@ -3,11 +3,11 @@ use core::ops::RangeBounds;
 
 use alloy_primitives::{Address, B256, BlockNumber, map::B256Map};
 use auto_impl::auto_impl;
+use base_execution_state_database::models::BlockNumberAddress;
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::AccountBeforeTx;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StorageEntry;
-use reth_db_api::models::BlockNumberAddress;
 
 /// Hashing Writer
 #[auto_impl(&, Arc, Box)]
@@ -32,7 +32,7 @@ pub trait HashingWriter: Send {
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<BTreeMap<B256, Option<Account>>>;
 
-    /// Inserts all accounts into [`AccountsHistory`][reth_db_api::tables::AccountsHistory] table.
+    /// Inserts all accounts into [`AccountsHistory`][base_execution_state_database::tables::AccountsHistory] table.
     ///
     /// # Returns
     ///

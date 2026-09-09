@@ -6,8 +6,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, TxDeposit};
 use base_common_types_payload::PayloadAttributes;
-use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_consensus_batch_types::L1BlockInfoEcotone;
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use reth_e2e_test_utils::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]
@@ -16,10 +16,10 @@ use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_rpc::{
     Transaction, TransactionInput, TransactionReceipt, TransactionRequest,
 };
+use base_execution_state_database::tables;
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;
-use base_execution_state_database::tables;
 use reth_e2e_test_utils::{E2ETestSetupBuilder, transaction::TransactionTestContext, wallet};
 use reth_provider::RocksDBProviderFactory;
 

@@ -7,9 +7,9 @@ use base_execution_state_api::{
     DatabaseProviderROFactory, DbTxProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
+use base_execution_state_database::{DatabaseError, DbTx};
 use base_execution_state_types::ProviderResult;
 use metrics::{Counter, Histogram};
-use reth_db_api::{DatabaseError, transaction::DbTx};
 use reth_primitives_traits::dashmap::{self, DashMap};
 use reth_trie::{
     DatabaseAccountTrieCursor, DatabaseHashedCursorFactory, DatabaseStorageTrieCursor,

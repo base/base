@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, keccak256, map::HashMap};
+use base_execution_state_database::DbTx;
 use base_execution_state_types::StateProofError;
-use reth_db_api::transaction::DbTx;
 
 use crate::{
     AccountProof, DatabaseHashedCursorFactory, DatabaseTrieCursorFactory, HashedPostStateSorted,

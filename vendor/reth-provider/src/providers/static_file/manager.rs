@@ -18,6 +18,16 @@ use base_execution_state_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, PruneCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
+use base_execution_state_database::{
+    DbCursorRO, DbTx, Table, models::AccountBeforeTx, models::BlockNumberAddress,
+    models::StorageBeforeTx, models::StoredBlockBodyIndices, tables,
+};
+use base_execution_state_database::{
+    lockfile::StorageLock, static_file::BlockHashMask, static_file::HeaderMask,
+    static_file::HeaderWithHashMask, static_file::ReceiptMask, static_file::StaticFileCursor,
+    static_file::StorageChangesetMask, static_file::TransactionMask,
+    static_file::TransactionSenderMask, static_file::iter_static_files,
+};
 use base_execution_state_types::PipelineTarget;
 use base_execution_state_types::PruneSegment;
 use base_execution_state_types::StorageEntry;
@@ -28,20 +38,6 @@ use base_execution_state_types::{
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
-use base_execution_state_database::{
-    lockfile::StorageLock,
-    static_file::{
-        BlockHashMask, HeaderMask, HeaderWithHashMask, ReceiptMask, StaticFileCursor,
-        StorageChangesetMask, TransactionMask, TransactionSenderMask, iter_static_files,
-    },
-};
-use reth_db_api::{
-    cursor::DbCursorRO,
-    models::{AccountBeforeTx, BlockNumberAddress, StorageBeforeTx, StoredBlockBodyIndices},
-    table::Table,
-    tables,
-    transaction::DbTx,
-};
 use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
     AlloyBlockHeader as _, RecoveredBlock, SealedHeader, dashmap::DashMap,
@@ -2368,9 +2364,10 @@ impl ChangeSetReader for StaticFileProvider {
 
         while low < high {
             let mid = low + (high - low) / 2;
-            if let Some(change) =
-                cursor.get_one::<base_execution_state_database::static_file::AccountChangesetMask>(mid.into())?
-            {
+            if let Some(change) = cursor
+                .get_one::<base_execution_state_database::static_file::AccountChangesetMask>(
+                mid.into(),
+            )? {
                 if change.address < address {
                     low = mid + 1;
                 } else {
@@ -2396,7 +2393,9 @@ impl ChangeSetReader for StaticFileProvider {
 
         if low < range.end
             && let Some(change) = cursor
-                .get_one::<base_execution_state_database::static_file::AccountChangesetMask>(low.into())?
+                .get_one::<base_execution_state_database::static_file::AccountChangesetMask>(
+                    low.into(),
+                )?
                 .filter(|change| change.address == address)
         {
             return Ok(Some(change));
@@ -2408,7 +2407,8 @@ impl ChangeSetReader for StaticFileProvider {
     fn account_changesets_range(
         &self,
         range: impl core::ops::RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<(BlockNumber, base_execution_state_database::models::AccountBeforeTx)>> {
+    ) -> ProviderResult<Vec<(BlockNumber, base_execution_state_database::models::AccountBeforeTx)>>
+    {
         let range = self.bound_range(range, StaticFileSegment::AccountChangeSets);
         self.walk_account_changeset_range(range).collect()
     }
@@ -3000,8 +3000,8 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use base_execution_state_types::{SegmentRangeInclusive, StaticFileSegment};
     use base_execution_state_database::test_utils::create_test_static_files_dir;
+    use base_execution_state_types::{SegmentRangeInclusive, StaticFileSegment};
 
     use crate::{StaticFileProviderBuilder, providers::StaticFileProvider};
 

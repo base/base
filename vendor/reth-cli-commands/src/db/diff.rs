@@ -7,11 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::Parser;
+use base_execution_state_database::{Database, DbCursorRO, DbTx, Table, Tables};
 use base_execution_state_database::{open_db_read_only, tables_to_generic};
-use reth_db_api::{
-    Tables, cursor::DbCursorRO, database::Database, table::Table, transaction::DbTx,
-};
+use clap::Parser;
 use reth_db_common::DbTool;
 use reth_node_core::{
     args::DatabaseArgs,

@@ -19,9 +19,9 @@ workspace = true
 metrics = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
-reth-db-api = { workspace = true }
 reth-chain-state = { workspace = true }
 rayon = { workspace = true, optional = true }
+base-execution-state-database = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 base-execution-state-types = {features = ["std"], workspace = true}

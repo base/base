@@ -2,12 +2,12 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
+use base_execution_state_database::DbTx;
+use base_execution_state_database::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
 use base_execution_state_types::StageId;
 use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
 use clap::Parser;
 use eyre::{ContextCompat, Result, WrapErr};
-use base_execution_state_database::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
-use reth_db_api::transaction::DbTx;
 use tracing::{info, warn};
 
 /// Generate modular chunk archives and a snapshot manifest from a source datadir.

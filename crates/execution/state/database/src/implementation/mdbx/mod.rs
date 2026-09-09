@@ -8,17 +8,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    Database, DatabaseMetrics, DbCursorRO, DbCursorRW, DbTx, DbTxMut, models::ClientVersion,
+};
 use base_common_observability_tracing::tracing::error;
 use base_execution_state_types::LogLevel;
 use eyre::Context;
 use metrics::{Label, gauge};
-use reth_db_api::{
-    cursor::{DbCursorRO, DbCursorRW},
-    database::Database,
-    database_metrics::DatabaseMetrics,
-    models::ClientVersion,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_libmdbx::{
     DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
     MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
@@ -700,16 +696,15 @@ mod tests {
     #[cfg(feature = "test-utils")]
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use crate::{
+        DbDupCursorRO, DbDupCursorRW, Encode, ReverseWalker, Table, Walker,
+        models::AccountBeforeTx, models::IntegerList, models::ShardedKey,
+    };
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_types_chain::Header;
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
-    use reth_db_api::{
-        cursor::{DbDupCursorRO, DbDupCursorRW, ReverseWalker, Walker},
-        models::{AccountBeforeTx, IntegerList, ShardedKey},
-        table::{Encode, Table},
-    };
     use reth_libmdbx::Error;
     use tempfile::TempDir;
 

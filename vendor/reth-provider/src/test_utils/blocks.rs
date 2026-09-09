@@ -10,8 +10,8 @@ use base_common_types_chain::{
     BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header, TxLegacy,
 };
 use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+use base_execution_state_database::{Database, models::StoredBlockBodyIndices, tables};
 use base_execution_state_memory::StoredAccount as Account;
-use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
 

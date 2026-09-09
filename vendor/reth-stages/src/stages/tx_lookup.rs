@@ -1,13 +1,8 @@
 use alloy_primitives::{TxHash, TxNumber};
+use base_execution_state_database::{DbTxMut, Decode, Decompress, Tables, tables};
 use base_execution_state_types::ProviderError;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::{EtlConfig, TransactionLookupConfig};
-use reth_db_api::{
-    Tables,
-    table::{Decode, Decompress},
-    tables,
-    transaction::DbTxMut,
-};
 use reth_etl::Collector;
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointReader, PruneCheckpointWriter,
@@ -283,7 +278,7 @@ mod tests {
 
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
-    use reth_db_api::{cursor::DbCursorRO, transaction::DbTx};
+    use base_execution_state_database::{DbCursorRO, DbTx};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,

@@ -4,6 +4,7 @@ use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
 };
+use base_execution_state_database::DatabaseError;
 use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
@@ -12,7 +13,6 @@ use base_execution_state_types::{
 use base_execution_state_types::{
     StateProofError, StateRootError, StorageRootError, TrieWitnessError,
 };
-use base_execution_state_database::DatabaseError;
 use reth_trie::{
     StateRoot, StorageRoot, TrieType,
     hashed_cursor::HashedPostStateCursorFactory,

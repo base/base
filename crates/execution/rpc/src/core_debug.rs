@@ -1267,8 +1267,8 @@ mod tests {
         database::{AccountStatus, BundleAccount, BundleState, StorageSlot},
         state::AccountInfo as RevmAccountInfo,
     };
+    use base_execution_state_database::{DbTxMut, tables};
     use base_execution_state_types::StorageEntry;
-    use reth_db_api::{tables, transaction::DbTxMut};
     use reth_provider::test_utils::create_test_provider_factory;
 
     use super::*;

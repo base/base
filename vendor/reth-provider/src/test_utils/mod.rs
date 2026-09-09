@@ -4,10 +4,12 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
+use base_execution_state_database::{
+    DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase,
+};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StorageEntry;
-use base_execution_state_database::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_trie::{DatabaseStateRoot, StateRoot};
 
 use crate::{
@@ -71,7 +73,8 @@ fn create_test_provider_factory_with_genesis(
     std::fs::create_dir_all(&static_files_path).expect("failed to create static_files dir");
 
     // Create database with the datadir path so TempDatabase cleans up everything on drop
-    let db = base_execution_state_database::test_utils::create_test_rw_db_with_datadir(&datadir_path);
+    let db =
+        base_execution_state_database::test_utils::create_test_rw_db_with_datadir(&datadir_path);
 
     ProviderFactory::new(
         db,

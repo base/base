@@ -22,7 +22,6 @@ metrics = { workspace = true }
 smallvec = { workspace = true }
 itertools = { workspace = true }
 alloy-eips = { workspace = true }
-reth-db-api = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -44,7 +43,7 @@ tokio = { workspace = true, features = ["sync"], optional = true }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
-base-execution-state-database = { workspace = true, features = ["mdbx"] }
+base-execution-state-database = {workspace = true, features = ["mdbx"]}
 base-execution-state-memory = {workspace = true, features = ["reth-codec"]}
 base-execution-state-api = { workspace = true, features = ["std", "db-api"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
@@ -80,7 +79,6 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
-    "reth-db-api/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "dep:tokio",

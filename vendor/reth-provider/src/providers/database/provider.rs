@@ -23,6 +23,11 @@ use base_execution_state_api::{
     StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
     WriteStateInput,
 };
+use base_execution_state_database::{
+    DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, DbTx, DbTxMut, ReaderTxnTracker, Table,
+    models::AccountBeforeTx, models::BlockNumberAddress, models::StorageBeforeTx,
+    models::StorageSettings, models::StoredBlockBodyIndices, tables,
+};
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
@@ -38,17 +43,6 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
 use reth_chain_state::ExecutedBlock;
-use reth_db_api::{
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    database::ReaderTxnTracker,
-    models::{
-        AccountBeforeTx, BlockNumberAddress, StorageBeforeTx, StorageSettings,
-        StoredBlockBodyIndices,
-    },
-    table::Table,
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_primitives_traits::{
     Block as _, BlockBody as _, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
@@ -101,17 +95,25 @@ impl CommitOrder {
 }
 
 /// A [`DatabaseProvider`] that holds a read-only database transaction.
-pub type DatabaseProviderRO = DatabaseProvider<base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RO>>;
+pub type DatabaseProviderRO = DatabaseProvider<
+    base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RO>,
+>;
 
 /// A [`DatabaseProvider`] that holds a read-write database transaction.
 ///
 /// Ideally this would be an alias type. However, there's some weird compiler error (<https://github.com/rust-lang/rust/issues/102211>), that forces us to wrap this in a struct instead.
 /// Once that issue is solved, we can probably revert back to being an alias type.
 #[derive(Debug)]
-pub struct DatabaseProviderRW(pub DatabaseProvider<base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>>);
+pub struct DatabaseProviderRW(
+    pub  DatabaseProvider<
+        base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>,
+    >,
+);
 
 impl Deref for DatabaseProviderRW {
-    type Target = DatabaseProvider<base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>>;
+    type Target = DatabaseProvider<
+        base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>,
+    >;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -124,8 +126,18 @@ impl DerefMut for DatabaseProviderRW {
     }
 }
 
-impl AsRef<DatabaseProvider<base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>>> for DatabaseProviderRW {
-    fn as_ref(&self) -> &DatabaseProvider<base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>> {
+impl
+    AsRef<
+        DatabaseProvider<
+            base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>,
+        >,
+    > for DatabaseProviderRW
+{
+    fn as_ref(
+        &self,
+    ) -> &DatabaseProvider<
+        base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>,
+    > {
         &self.0
     }
 }
@@ -137,7 +149,9 @@ impl DatabaseProviderRW {
     }
 
     /// Consume `DbTx` or `DbTxMut`.
-    pub fn into_tx(self) -> base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW> {
+    pub fn into_tx(
+        self,
+    ) -> base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW> {
         self.0.into_tx()
     }
 
@@ -149,7 +163,11 @@ impl DatabaseProviderRW {
     }
 }
 
-impl From<DatabaseProviderRW> for DatabaseProvider<base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>> {
+impl From<DatabaseProviderRW>
+    for DatabaseProvider<
+        base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>,
+    >
+{
     fn from(provider: DatabaseProviderRW) -> Self {
         provider.0
     }
@@ -790,7 +808,7 @@ impl<TX: DbTx + DbTxMut + 'static> DatabaseProvider<TX> {
 
         if rocksdb_enabled {
             timings.rocksdb = rocksdb_result.ok_or_else(|| {
-                ProviderError::Database(reth_db_api::DatabaseError::Other(
+                ProviderError::Database(base_execution_state_database::DatabaseError::Other(
                     "RocksDB thread panicked".into(),
                 ))
             })??;
@@ -3525,11 +3543,11 @@ mod tests {
     use base_common_types_chain::Header;
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::{MetadataProvider, StateReadProvider};
+    use base_execution_state_database::models::StorageSettings;
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
-    use reth_db_api::models::StorageSettings;
     use reth_primitives_traits::SealedBlock;
     use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{

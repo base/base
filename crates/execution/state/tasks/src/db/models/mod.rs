@@ -16,15 +16,11 @@ mod kv;
 use std::fmt;
 
 use alloy_primitives::B256;
+use base_execution_state_database::{DupSort, TableInfo, TableSet, TableType, TableViewer, tables};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, StoredNibbles};
 pub use change_set::*;
 pub use kv::*;
-use base_execution_state_database::{
-    TableSet, TableType, TableViewer,
-    table::{DupSort, TableInfo},
-    tables,
-};
 
 tables! {
     /// Stores historical branch nodes for the account state trie.

@@ -4,14 +4,13 @@ use std::{
 };
 
 use alloy_primitives::map::foldhash::fast::FixedState;
+use base_execution_state_database::static_file::iter_static_files;
+use base_execution_state_database::{
+    DbCursorRO, DbTx, RawKey, RawTable, RawValue, Table, TableViewer, Tables,
+};
 use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 use clap::Parser;
 use itertools::Itertools;
-use base_execution_state_database::static_file::iter_static_files;
-use reth_db_api::{
-    RawKey, RawTable, RawValue, TableViewer, Tables, cursor::DbCursorRO, table::Table,
-    transaction::DbTx,
-};
 use reth_db_common::DbTool;
 use reth_provider::{DBProvider, StaticFileProviderFactory};
 use tracing::{info, warn};

@@ -5,13 +5,10 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_execution_state_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
-use base_execution_state_types::ProviderError;
-use reth_db_api::{
-    cursor::DbCursorRO,
-    models::{AccountBeforeTx, BlockNumberAddress},
-    tables,
-    transaction::DbTx,
+use base_execution_state_database::{
+    DbCursorRO, DbTx, models::AccountBeforeTx, models::BlockNumberAddress, tables,
 };
+use base_execution_state_types::ProviderError;
 
 use crate::{
     Nibbles,

@@ -1746,7 +1746,7 @@ mod tests {
         let provider = MockEthProvider::default();
 
         use base_common_types_chain::{BaseTxEnvelope as TransactionSigned, TxLegacy};
-        use reth_db_api::models::StoredBlockBodyIndices;
+        use base_execution_state_database::models::StoredBlockBodyIndices;
 
         let tx_inner = TxLegacy {
             chain_id: Some(1),
@@ -1888,7 +1888,7 @@ mod tests {
         provider.add_receipts(103, vec![]);
 
         // Add block body indices for each block so receipts can be fetched
-        use reth_db_api::models::StoredBlockBodyIndices;
+        use base_execution_state_database::models::StoredBlockBodyIndices;
         provider
             .add_block_body_indices(100, StoredBlockBodyIndices { first_tx_num: 0, tx_count: 1 });
         provider

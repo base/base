@@ -58,10 +58,7 @@ pub enum TableType {
 /// # Example
 ///
 /// ```
-/// use reth_db_api::{
-///     table::{DupSort, Table},
-///     TableViewer, Tables,
-/// };
+/// use base_execution_state_database::{DupSort, Table, TableViewer, Tables};
 ///
 /// struct MyTableViewer;
 ///
@@ -152,9 +149,9 @@ macro_rules! tables {
                 }
             }
 
-            impl$(<$($generic),*>)? $crate::table::Table for $name$(<$($generic),*>)?
+            impl$(<$($generic),*>)? $crate::Table for $name$(<$($generic),*>)?
             where
-                $value: $crate::table::Value + 'static
+                $value: $crate::Value + 'static
                 $($(,$generic: Send + Sync)*)?
             {
                 const NAME: &'static str = table_names::$name;
@@ -287,7 +284,7 @@ macro_rules! tables {
         /// # Examples
         ///
         /// ```
-        /// use reth_db_api::{table::Table, Tables, tables_to_generic};
+        /// use base_execution_state_database::{Table,Tables,tables_to_generic};
         ///
         /// let table = Tables::Headers;
         /// let result = tables_to_generic!(table, |GenericTable| <GenericTable as Table>::NAME);

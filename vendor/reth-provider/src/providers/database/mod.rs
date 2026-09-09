@@ -21,6 +21,8 @@ use base_execution_state_api::{
     BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
+use base_execution_state_database::{Database, DbTx, models::StoredBlockBodyIndices, tables};
+use base_execution_state_database::{init_db, mdbx::DatabaseArguments};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
@@ -29,8 +31,6 @@ use base_execution_state_types::{
 use base_execution_state_types::{PipelineTarget, StageCheckpoint, StageId};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use base_execution_state_database::{init_db, mdbx::DatabaseArguments};
-use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_storage_overlay::OverlayManager;
 use tracing::{info, instrument, trace, warn};
@@ -440,7 +440,9 @@ impl ProviderFactory {
     #[track_caller]
     pub fn unwind_provider_rw(
         &self,
-    ) -> ProviderResult<DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TXMut>> {
+    ) -> ProviderResult<
+        DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TXMut>,
+    > {
         Ok(DatabaseProvider::new_unwind_rw(
             self.db.tx_mut()?,
             self.chain_spec.clone(),
@@ -552,7 +554,9 @@ impl ProviderFactory {
     /// header, resets it to the highest header.
     fn heal_chain_state_block_numbers(
         &self,
-        provider_ro: &DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TX>,
+        provider_ro: &DatabaseProvider<
+            <base_execution_state_database::DatabaseEnv as Database>::TX,
+        >,
     ) -> ProviderResult<()> {
         let highest_header = self.last_block_number()?;
 
@@ -614,7 +618,8 @@ impl DatabaseProviderROFactory for ProviderFactory {
 }
 
 impl DatabaseProviderFactory for ProviderFactory {
-    type ProviderRW = DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TXMut>;
+    type ProviderRW =
+        DatabaseProvider<<base_execution_state_database::DatabaseEnv as Database>::TXMut>;
 
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW> {
         self.provider_rw().map(|provider| provider.0)
@@ -1011,13 +1016,13 @@ mod tests {
     use alloy_primitives::{B256, TxNumber};
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_execution_state_database::{DbTxMut, tables};
+    use base_execution_state_database::{
+        mdbx::DatabaseArguments, test_utils::ERROR_TEMPDIR, test_utils::create_test_rocksdb_dir,
+        test_utils::create_test_static_files_dir,
+    };
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::{PruneMode, PruneModes};
-    use base_execution_state_database::{
-        mdbx::DatabaseArguments,
-        test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},
-    };
-    use reth_db_api::{tables, transaction::DbTxMut};
     use reth_primitives_traits::SignerRecoverable;
     use reth_testing_utils::generators::{self, BlockParams, random_header};
 

@@ -26,6 +26,10 @@ use base_execution_state_api::{
     HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
     StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
+use base_execution_state_database::{DbTx, DbTxMut};
+use base_execution_state_database::{
+    TxMock, models::AccountBeforeTx, models::StorageSettings, models::StoredBlockBodyIndices,
+};
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::StorageEntry;
@@ -34,11 +38,6 @@ use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
-use base_execution_state_database::transaction::{DbTx, DbTxMut};
-use reth_db_api::{
-    mock::TxMock,
-    models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
-};
 use reth_primitives_traits::{
     Block, BlockBody, GotExpected, RecoveredBlock, SealedHeader, SignerRecoverable,
 };
@@ -260,7 +259,7 @@ impl MockEthProvider {
                 }),
             )])?;
             if let Some(bytecode) = &account.bytecode {
-                provider.tx_ref().put::<reth_db_api::tables::Bytecodes>(
+                provider.tx_ref().put::<base_execution_state_database::tables::Bytecodes>(
                     account.account.bytecode_hash.expect("bytecode hash"),
                     bytecode.clone(),
                 )?;
@@ -274,7 +273,7 @@ impl MockEthProvider {
             .min()
             .and_then(|number| number.checked_sub(1))
         {
-            provider.tx_ref().put::<reth_db_api::tables::BlockBodyIndices>(
+            provider.tx_ref().put::<base_execution_state_database::tables::BlockBodyIndices>(
                 anchor,
                 StoredBlockBodyIndices::default(),
             )?;
@@ -1226,7 +1225,9 @@ impl StorageChangeSetReader for MockEthProvider {
     fn storage_changeset(
         &self,
         _block_number: BlockNumber,
-    ) -> ProviderResult<Vec<(reth_db_api::models::BlockNumberAddress, StorageEntry)>> {
+    ) -> ProviderResult<
+        Vec<(base_execution_state_database::models::BlockNumberAddress, StorageEntry)>,
+    > {
         Ok(Vec::default())
     }
 
@@ -1242,7 +1243,9 @@ impl StorageChangeSetReader for MockEthProvider {
     fn storage_changesets_range(
         &self,
         _range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<(reth_db_api::models::BlockNumberAddress, StorageEntry)>> {
+    ) -> ProviderResult<
+        Vec<(base_execution_state_database::models::BlockNumberAddress, StorageEntry)>,
+    > {
         Ok(Vec::default())
     }
 }

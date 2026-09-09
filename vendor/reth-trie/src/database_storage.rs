@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, BlockNumber, keccak256, map::hash_map};
 use base_execution_state_api::{BlockNumReader, StorageChangeSetReader};
+use base_execution_state_database::{DbTx, models::BlockNumberAddress};
 use base_execution_state_types::{ProviderResult, StorageRootError};
-use reth_db_api::{models::BlockNumberAddress, transaction::DbTx};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::TrieRootMetrics;
@@ -114,7 +114,7 @@ mod tests {
 
     fn append_storage_changesets_to_static_files(
         factory: &impl StaticFileProviderFactory,
-        changesets: Vec<(u64, Vec<reth_db_api::models::StorageBeforeTx>)>,
+        changesets: Vec<(u64, Vec<base_execution_state_database::models::StorageBeforeTx>)>,
     ) {
         let sf = factory.static_file_provider();
         let mut writer = sf.latest_writer(StaticFileSegment::StorageChangeSets).unwrap();
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_hashed_storage_from_reverts_hashed_state() {
-        use reth_db_api::models::{StorageBeforeTx, StorageSettings};
+        use base_execution_state_database::{models::StorageBeforeTx, models::StorageSettings};
 
         let factory = create_test_provider_factory();
 

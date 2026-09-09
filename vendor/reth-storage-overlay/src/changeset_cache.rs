@@ -619,14 +619,12 @@ mod tests {
     };
     use base_common_types_chain::Header;
     use base_execution_state_api::TrieWriter;
+    use base_execution_state_database::{
+        DbTxMut, models::AccountBeforeTx, models::BlockNumberAddress, tables,
+    };
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
-    use base_execution_state_database::{
-        models::{AccountBeforeTx, BlockNumberAddress},
-        tables,
-        transaction::DbTxMut,
-    };
     use reth_provider::{
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
         test_utils::create_test_provider_factory,
@@ -877,7 +875,7 @@ mod tests {
             let index = BlockNumberAddress((1, address));
             let entry = test_storage(1, 0);
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -888,7 +886,7 @@ mod tests {
             let index = BlockNumberAddress((1, address));
             let entry = test_storage(2, 0);
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -899,7 +897,7 @@ mod tests {
             let index = BlockNumberAddress((2, address));
             let entry = StorageEntry { key: slot1, value: U256::from(10) };
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,
@@ -910,7 +908,7 @@ mod tests {
             let index = BlockNumberAddress((3, address));
             let entry = StorageEntry { key: slot1, value: U256::from(15) };
             changesets.storage.entry(index.block_number()).or_default().push(
-                reth_db_api::models::StorageBeforeTx {
+                base_execution_state_database::models::StorageBeforeTx {
                     address: index.address(),
                     key: entry.key,
                     value: entry.value,

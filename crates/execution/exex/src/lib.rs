@@ -12,7 +12,6 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
-use base_execution_state_types::Chain;
 #[cfg(feature = "metrics")]
 use base_execution_state_tasks::BaseProofsStore;
 use base_execution_state_tasks::{
@@ -20,6 +19,7 @@ use base_execution_state_tasks::{
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
 };
+use base_execution_state_types::Chain;
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_provider::{
@@ -634,11 +634,11 @@ mod tests {
 
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_common_types_chain::private::alloy_primitives::B256;
-    use base_execution_state_types::{Chain, ExecutionOutcome};
+    use base_execution_state_database::test_utils::tempdir_path;
     use base_execution_state_tasks::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
-    use base_execution_state_database::test_utils::tempdir_path;
+    use base_execution_state_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
     use reth_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,

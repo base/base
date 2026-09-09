@@ -2,9 +2,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::Address;
 use base_common_types_chain::BlockHeader;
 use base_execution_state_database::{
-    BlockNumberList,
-    models::{ShardedKey, storage_sharded_key::StorageShardedKey},
-    transaction::DbTxMut,
+    BlockNumberList, DbTxMut, models::ShardedKey, models::storage_sharded_key::StorageShardedKey,
 };
 use tracing::trace;
 

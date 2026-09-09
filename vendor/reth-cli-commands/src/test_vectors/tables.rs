@@ -4,6 +4,7 @@ use alloy_primitives::{B256, hex};
 use arbitrary::Arbitrary;
 use base_common_io_files as fs;
 use base_common_types_chain::{EthereumTxEnvelope, Header, TxEip4844};
+use base_execution_state_database::{DupSort, Table, TableRow, tables};
 use eyre::Result;
 use proptest::{
     prelude::ProptestConfig,
@@ -11,10 +12,6 @@ use proptest::{
     test_runner::{TestRng, TestRunner},
 };
 use proptest_arbitrary_interop::arb;
-use reth_db_api::{
-    table::{DupSort, Table, TableRow},
-    tables,
-};
 use tracing::error;
 
 const VECTORS_FOLDER: &str = "testdata/micro/db";

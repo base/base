@@ -21,12 +21,12 @@ metrics = { workspace = true }
 thiserror = { workspace = true }
 rustc-hash = { workspace = true }
 reth-config = { workspace = true }
-reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-database = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 reth-exex-types = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }

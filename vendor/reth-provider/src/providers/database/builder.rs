@@ -7,8 +7,7 @@ use std::{
 
 use base_common_chain_config::BaseChainSpec;
 use base_execution_state_database::{
-    mdbx::{DatabaseArguments, MaxReadTransactionDuration},
-    open_db_read_only,
+    mdbx::DatabaseArguments, mdbx::MaxReadTransactionDuration, open_db_read_only,
 };
 
 use crate::{

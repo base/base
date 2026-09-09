@@ -2,15 +2,12 @@
 
 use std::{borrow::Cow, collections::Bound, marker::PhantomData, ops::RangeBounds};
 
-use base_execution_state_types::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation};
-use reth_db_api::{
-    common::{PairResult, ValueOnlyResult},
-    cursor::{
-        DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, DupWalker, RangeWalker,
-        ReverseWalker, Walker,
-    },
-    table::{Compress, Decode, Decompress, DupSort, Encode, IntoVec, Table},
+use crate::{
+    Compress, DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, Decode, Decompress, DupSort,
+    DupWalker, Encode, IntoVec, PairResult, RangeWalker, ReverseWalker, Table, ValueOnlyResult,
+    Walker,
 };
+use base_execution_state_types::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation};
 use reth_libmdbx::{Error as MDBXError, RO, RW, TransactionKind, WriteFlags};
 
 use super::utils::*;
@@ -363,14 +360,12 @@ impl<T: DupSort> DbDupCursorRW<T> for Cursor<RW, T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        DbCursorRO, DbDupCursorRW, DbTx, DbTxMut, TableImporter, models::BlockNumberAddress,
+        models::ClientVersion,
+    };
     use alloy_primitives::{Address, B256, U256, address};
     use base_execution_state_types::StorageEntry;
-    use reth_db_api::{
-        cursor::{DbCursorRO, DbDupCursorRW},
-        models::{BlockNumberAddress, ClientVersion},
-        table::TableImporter,
-        transaction::{DbTx, DbTxMut},
-    };
     use tempfile::TempDir;
 
     use crate::{

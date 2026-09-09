@@ -33,7 +33,7 @@ where
 /// Creates a dummy chain (with no transactions) up to the last EVM block and appends the
 /// first valid block.
 pub fn setup_without_evm<
-    TX: reth_db_api::transaction::DbTx + reth_db_api::transaction::DbTxMut + 'static,
+    TX: base_execution_state_database::DbTx + base_execution_state_database::DbTxMut + 'static,
     F,
 >(
     provider_rw: &reth_provider::DatabaseProvider<TX>,

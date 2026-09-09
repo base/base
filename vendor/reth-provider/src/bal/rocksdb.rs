@@ -10,15 +10,13 @@ use base_common_runtime_tasks::EventSender;
 use base_execution_state_api::{
     BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, RawBal,
 };
+use base_execution_state_database::{
+    DatabaseError, Decode, Decompress, models::StoredBlockAccessList,
+    models::StoredBlockAccessListKey, tables,
+};
 use base_execution_state_types::PruneMode;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use parking_lot::RwLock;
-use reth_db_api::{
-    DatabaseError,
-    models::{StoredBlockAccessList, StoredBlockAccessListKey},
-    table::{Decode, Decompress},
-    tables,
-};
 
 use crate::providers::RocksDBProvider;
 

@@ -2,16 +2,15 @@
 
 use std::{fmt, str::FromStr, time::Duration};
 
+use base_execution_state_database::{
+    ClientVersion, mdbx::MaxReadTransactionDuration, mdbx::SyncMode,
+};
 use base_execution_state_types::LogLevel;
 use clap::{
     Arg, Args, Command, Error,
     builder::{PossibleValue, TypedValueParser},
     error::ErrorKind,
     value_parser,
-};
-use base_execution_state_database::{
-    ClientVersion,
-    mdbx::{MaxReadTransactionDuration, SyncMode},
 };
 
 use crate::version::default_client_version;
@@ -227,8 +226,10 @@ fn parse_byte_size(s: &str) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
+    use base_execution_state_database::{
+        mdbx::GIGABYTE, mdbx::KILOBYTE, mdbx::MEGABYTE, mdbx::TERABYTE,
+    };
     use clap::Parser;
-    use base_execution_state_database::mdbx::{GIGABYTE, KILOBYTE, MEGABYTE, TERABYTE};
 
     use super::*;
 

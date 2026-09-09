@@ -1,7 +1,7 @@
 use alloy_primitives::BlockNumber;
-use eyre::Result;
 use base_execution_state_database::DatabaseEnv;
-use reth_db_api::{database::Database, table::TableImporter, tables};
+use base_execution_state_database::{Database, TableImporter, tables};
+use eyre::Result;
 use reth_db_common::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{

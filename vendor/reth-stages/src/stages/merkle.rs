@@ -3,10 +3,7 @@ use std::fmt::Debug;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_types_chain::{BlockHeader, Compact, constants::KECCAK_EMPTY};
 use base_execution_evm_blocks::ConsensusError;
-use reth_db_api::{
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
+use base_execution_state_database::{DbTx, DbTxMut, tables};
 use reth_primitives_traits::{GotExpected, SealedHeader};
 use reth_provider::{
     HeaderProvider, ProviderError, StageCheckpointReader, StatsReader, TrieWriter,
@@ -474,8 +471,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;
+    use base_execution_state_database::{DbCursorRO, DbDupCursorRO};
     use base_execution_state_types::StaticFileSegment;
-    use reth_db_api::cursor::{DbCursorRO, DbDupCursorRO};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
         DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,

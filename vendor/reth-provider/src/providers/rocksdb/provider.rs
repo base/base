@@ -9,6 +9,11 @@ use alloy_primitives::{
     Address, B256, BlockNumber, TxNumber,
     map::{AddressMap, HashMap},
 };
+use base_execution_state_database::{
+    BlockNumberList, Compress, DatabaseError, DatabaseMetrics, Decode, Decompress, Encode, Table,
+    models::ShardedKey, models::StorageSettings, models::storage_sharded_key::StorageShardedKey,
+    tables,
+};
 use base_execution_state_types::PruneMode;
 use base_execution_state_types::{
     DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation, LogLevel, ProviderError,
@@ -17,13 +22,6 @@ use base_execution_state_types::{
 use metrics::Label;
 use parking_lot::Mutex;
 use reth_chain_state::ExecutedBlock;
-use reth_db_api::{
-    BlockNumberList, DatabaseError,
-    database_metrics::DatabaseMetrics,
-    models::{ShardedKey, StorageSettings, storage_sharded_key::StorageShardedKey},
-    table::{Compress, Decode, Decompress, Encode, Table},
-    tables,
-};
 use reth_primitives_traits::{BlockBody as _, FastInstant as Instant};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, CompactionPri, DB, DBCompressionType,
@@ -1018,7 +1016,7 @@ impl RocksDBProvider {
 
             match iter.next() {
                 Some(Ok((key_bytes, value_bytes))) => {
-                    let key = <T::Key as reth_db_api::table::Decode>::decode(&key_bytes)
+                    let key = <T::Key as base_execution_state_database::Decode>::decode(&key_bytes)
                         .map_err(|_| ProviderError::Database(DatabaseError::Decode))?;
                     let value = T::Value::decompress(&value_bytes)
                         .map_err(|_| ProviderError::Database(DatabaseError::Decode))?;
@@ -1662,7 +1660,7 @@ impl<'db> RocksReadSnapshot<'db> {
         block_number: BlockNumber,
         lowest_available_block_number: Option<BlockNumber>,
         visible_tip: BlockNumber,
-        key_matches: impl FnOnce(&[u8]) -> Result<bool, reth_db_api::DatabaseError>,
+        key_matches: impl FnOnce(&[u8]) -> Result<bool, base_execution_state_database::DatabaseError>,
         prev_key_matches: impl Fn(&[u8]) -> bool,
     ) -> ProviderResult<HistoryInfo>
     where
@@ -2778,7 +2776,7 @@ fn decode_iter_item<T: Table>(result: RawKVResult) -> ProviderResult<(T::Key, T:
         }))
     })?;
 
-    let key = <T::Key as reth_db_api::table::Decode>::decode(&key_bytes)
+    let key = <T::Key as base_execution_state_database::Decode>::decode(&key_bytes)
         .map_err(|_| ProviderError::Database(DatabaseError::Decode))?;
 
     let value = T::Value::decompress(&value_bytes)
@@ -2855,14 +2853,9 @@ const fn current_file_descriptor_limit() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxHash};
-    use reth_db_api::{
-        models::{
-            IntegerList,
-            sharded_key::{NUM_OF_INDICES_IN_SHARD, ShardedKey},
-            storage_sharded_key::StorageShardedKey,
-        },
-        table::Table,
-        tables,
+    use base_execution_state_database::{
+        Table, models::IntegerList, models::sharded_key::NUM_OF_INDICES_IN_SHARD,
+        models::sharded_key::ShardedKey, models::storage_sharded_key::StorageShardedKey, tables,
     };
     use tempfile::TempDir;
 
@@ -2918,9 +2911,12 @@ mod tests {
             .with_table::<tables::BlockAccessLists>()
             .build()
             .unwrap();
-        let bal_key =
-            reth_db_api::models::StoredBlockAccessListKey::new(1, B256::with_last_byte(1));
-        let bal_value = reth_db_api::models::StoredBlockAccessList::new(Bytes::from(vec![
+        let bal_key = base_execution_state_database::models::StoredBlockAccessListKey::new(
+            1,
+            B256::with_last_byte(1),
+        );
+        let bal_value =
+            base_execution_state_database::models::StoredBlockAccessList::new(Bytes::from(vec![
             0;
             DEFAULT_BAL_MIN_BLOB_SIZE as usize
                 + 1
@@ -2965,9 +2961,12 @@ mod tests {
     #[test]
     fn test_reopens_blob_column_family_with_legacy_table_set() {
         let temp_dir = TempDir::new().unwrap();
-        let bal_key =
-            reth_db_api::models::StoredBlockAccessListKey::new(1, B256::with_last_byte(1));
-        let bal_value = reth_db_api::models::StoredBlockAccessList::new(Bytes::from(vec![
+        let bal_key = base_execution_state_database::models::StoredBlockAccessListKey::new(
+            1,
+            B256::with_last_byte(1),
+        );
+        let bal_value =
+            base_execution_state_database::models::StoredBlockAccessList::new(Bytes::from(vec![
             0;
             DEFAULT_BAL_MIN_BLOB_SIZE as usize
                 + 1

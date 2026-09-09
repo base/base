@@ -1,25 +1,18 @@
 use alloy_primitives::{Address, B256, BlockHash, hex};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use base_execution_state_api::StorageChangeSetReader;
+use base_execution_state_database::{
+    Compress, Database, DbCursorRO, DbDupCursorRO, DbTx, Decompress, DupSort, RawKey, RawTable,
+    Table, TableViewer, models::ShardedKey, models::storage_sharded_key::StorageShardedKey, tables,
+};
+use base_execution_state_database::{
+    RawDupSort, static_file::AccountChangesetMask, static_file::ColumnSelectorOne,
+    static_file::ColumnSelectorTwo, static_file::HeaderWithHashMask, static_file::ReceiptMask,
+    static_file::TransactionMask, static_file::TransactionSenderMask,
+};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::ValueWithSubKey;
 use clap::Parser;
-use base_execution_state_database::{
-    RawDupSort,
-    static_file::{
-        AccountChangesetMask, ColumnSelectorOne, ColumnSelectorTwo, HeaderWithHashMask,
-        ReceiptMask, TransactionMask, TransactionSenderMask,
-    },
-};
-use reth_db_api::{
-    RawKey, RawTable, TableViewer,
-    cursor::{DbCursorRO, DbDupCursorRO},
-    database::Database,
-    models::{ShardedKey, storage_sharded_key::StorageShardedKey},
-    table::{Compress, Decompress, DupSort, Table},
-    tables,
-    transaction::DbTx,
-};
 use reth_db_common::DbTool;
 use reth_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
 use tracing::error;
@@ -698,11 +691,11 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_primitives::{B256, address};
-    use clap::{Args, Parser};
-    use reth_db_api::{
+    use base_execution_state_database::{
         AccountsHistory, HashedAccounts, Headers, StageCheckpoints, StoragesHistory,
-        models::{ShardedKey, storage_sharded_key::StorageShardedKey},
+        models::ShardedKey, models::storage_sharded_key::StorageShardedKey,
     };
+    use clap::{Args, Parser};
 
     use super::*;
 

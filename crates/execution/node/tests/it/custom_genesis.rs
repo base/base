@@ -8,9 +8,9 @@ use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::ForkchoiceState;
 use base_common_types_rpc::BlockNumberOrTag;
+use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use base_execution_state_types::StageId;
 use base_node_core::NodeConfig;
-use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
@@ -37,7 +37,10 @@ async fn test_base_node_custom_genesis_number() {
 
     // Configure and launch the node
     let config = NodeConfig::new(Arc::clone(&chain_spec)).with_unused_ports().with_datadir_args(
-        DatadirArgs { datadir: base_execution_state_database::test_utils::tempdir_path().into(), ..Default::default() },
+        DatadirArgs {
+            datadir: base_execution_state_database::test_utils::tempdir_path().into(),
+            ..Default::default()
+        },
     );
     let db = create_test_rw_db_with_path(
         config

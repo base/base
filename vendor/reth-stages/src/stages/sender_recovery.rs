@@ -3,16 +3,11 @@ use std::{fmt::Debug, ops::Range, sync::mpsc};
 use alloy_primitives::{Address, BlockNumber, TxNumber};
 use base_common_types_chain::BaseTxEnvelope;
 use base_execution_evm_blocks::ConsensusError;
+use base_execution_state_database::static_file::TransactionMask;
+use base_execution_state_database::{DbCursorRW, DbTx, DbTxMut, RawValue, tables};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::SenderRecoveryConfig;
-use base_execution_state_database::static_file::TransactionMask;
-use reth_db_api::{
-    RawValue,
-    cursor::DbCursorRW,
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_primitives_traits::{FastInstant as Instant, GotExpected, SignedTransaction};
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, HeaderProvider, ProviderError, PruneCheckpointReader,
@@ -39,7 +34,7 @@ type RecoveryResultSender = mpsc::SyncSender<Result<(u64, Address), Box<SenderRe
 
 /// The sender recovery stage iterates over existing transactions,
 /// recovers the transaction signer and stores them
-/// in [`TransactionSenders`][reth_db_api::tables::TransactionSenders] table.
+/// in [`TransactionSenders`][base_execution_state_database::tables::TransactionSenders] table.
 #[derive(Clone, Debug)]
 pub struct SenderRecoveryStage {
     /// The size of inserted items after which the control
@@ -80,9 +75,9 @@ where
     }
 
     /// Retrieve the range of transactions to iterate over by querying
-    /// [`BlockBodyIndices`][reth_db_api::tables::BlockBodyIndices],
+    /// [`BlockBodyIndices`][base_execution_state_database::tables::BlockBodyIndices],
     /// collect transactions within that range, recover signer for each transaction and store
-    /// entries in the [`TransactionSenders`][reth_db_api::tables::TransactionSenders] table or
+    /// entries in the [`TransactionSenders`][base_execution_state_database::tables::TransactionSenders] table or
     /// static files depending on configuration.
     fn execute(
         &mut self,
@@ -461,9 +456,9 @@ mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseTxEnvelope as TransactionSigned;
+    use base_execution_state_database::{DbCursorRO, models::StorageSettings};
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode};
-    use reth_db_api::{cursor::DbCursorRO, models::StorageSettings};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, PruneCheckpointWriter,

@@ -26,7 +26,6 @@ itertools = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
-reth-db-api = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
@@ -72,8 +71,8 @@ proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-state-types = {features = ["clap"], workspace = true}
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-execution-state-database = {workspace = true, features = ["mdbx"]}
 proptest = { workspace = true, optional = true, features = ["default"] }
-base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-network-wire = {workspace = true, features = ["transport"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
@@ -94,9 +93,8 @@ arbitrary = [
     "dep:proptest",
     "dep:arbitrary",
     "dep:proptest-arbitrary-interop",
-    "reth-db-api/arbitrary",
-    "base-execution-network-wire/arbitrary",
     "base-execution-state-database/arbitrary",
+    "base-execution-network-wire/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "base-common-types-chain/test-utils",

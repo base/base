@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
+use base_execution_state_database::{DupSort, Table};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
-use base_execution_state_database::table::{DupSort, Table};
 
 use crate::db::{
     AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey, MaybeDeleted,

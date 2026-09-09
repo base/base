@@ -14,6 +14,8 @@ use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
+#[cfg(feature = "db-api")]
+use base_execution_state_database::TxMock;
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ExecutionOutcome;
 #[cfg(feature = "db-api")]
@@ -26,8 +28,6 @@ use base_execution_state_types::{
 use base_execution_state_types::{ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
-#[cfg(feature = "db-api")]
-use reth_db_api::mock::TxMock;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 
 use crate::{
@@ -423,7 +423,10 @@ impl StorageChangeSetReader for NoopProvider {
         &self,
         _block_number: BlockNumber,
     ) -> ProviderResult<
-        Vec<(reth_db_api::models::BlockNumberAddress, base_execution_state_types::StorageEntry)>,
+        Vec<(
+            base_execution_state_database::models::BlockNumberAddress,
+            base_execution_state_types::StorageEntry,
+        )>,
     > {
         Ok(Vec::default())
     }
@@ -441,7 +444,10 @@ impl StorageChangeSetReader for NoopProvider {
         &self,
         _range: impl core::ops::RangeBounds<BlockNumber>,
     ) -> ProviderResult<
-        Vec<(reth_db_api::models::BlockNumberAddress, base_execution_state_types::StorageEntry)>,
+        Vec<(
+            base_execution_state_database::models::BlockNumberAddress,
+            base_execution_state_types::StorageEntry,
+        )>,
     > {
         Ok(Vec::default())
     }
@@ -691,7 +697,7 @@ impl DBProvider for NoopProvider {
     }
 
     fn commit(self) -> ProviderResult<()> {
-        use reth_db_api::transaction::DbTx;
+        use base_execution_state_database::DbTx;
 
         Ok(self.tx.commit()?)
     }
@@ -717,9 +723,13 @@ impl DatabaseProviderFactory for NoopProvider {
 
 #[cfg(feature = "db-api")]
 impl StorageSettingsCache for NoopProvider {
-    fn cached_storage_settings(&self) -> reth_db_api::models::StorageSettings {
-        reth_db_api::models::StorageSettings::default()
+    fn cached_storage_settings(&self) -> base_execution_state_database::models::StorageSettings {
+        base_execution_state_database::models::StorageSettings::default()
     }
 
-    fn set_storage_settings_cache(&self, _settings: reth_db_api::models::StorageSettings) {}
+    fn set_storage_settings_cache(
+        &self,
+        _settings: base_execution_state_database::models::StorageSettings,
+    ) {
+    }
 }

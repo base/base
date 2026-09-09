@@ -1,4 +1,4 @@
-use reth_db_api::table::Decompress;
+use crate::Decompress;
 
 ///  Trait for specifying a mask to select one column value.
 pub trait ColumnSelectorOne {
@@ -40,7 +40,7 @@ macro_rules! add_static_file_mask {
 
         impl$(<$generic>)? ColumnSelectorOne for $mask_struct$(<$generic>)?
         where
-            $type1: Send + Sync + std::fmt::Debug + reth_db_api::table::Decompress,
+            $type1: Send + Sync + std::fmt::Debug + crate::Decompress,
         {
             type FIRST = $type1;
             const MASK: usize = $mask;
@@ -53,8 +53,8 @@ macro_rules! add_static_file_mask {
 
         impl$(<$generic>)? ColumnSelectorTwo for $mask_struct$(<$generic>)?
         where
-            $type1: Send + Sync + std::fmt::Debug + reth_db_api::table::Decompress,
-            $type2: Send + Sync + std::fmt::Debug + reth_db_api::table::Decompress,
+            $type1: Send + Sync + std::fmt::Debug + crate::Decompress,
+            $type2: Send + Sync + std::fmt::Debug + crate::Decompress,
         {
             type FIRST = $type1;
             type SECOND = $type2;
@@ -68,9 +68,9 @@ macro_rules! add_static_file_mask {
 
         impl$(<$generic>)? ColumnSelectorThree for $mask_struct$(<$generic>)?
         where
-            $type1: Send + Sync + std::fmt::Debug + reth_db_api::table::Decompress,
-            $type2: Send + Sync + std::fmt::Debug + reth_db_api::table::Decompress,
-            $type3: Send + Sync + std::fmt::Debug + reth_db_api::table::Decompress,
+            $type1: Send + Sync + std::fmt::Debug + crate::Decompress,
+            $type2: Send + Sync + std::fmt::Debug + crate::Decompress,
+            $type3: Send + Sync + std::fmt::Debug + crate::Decompress,
         {
             type FIRST = $type1;
             type SECOND = $type2;

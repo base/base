@@ -1,9 +1,6 @@
 use alloy_primitives::B256;
 use base_common_types_chain::DecompressError;
-use base_execution_state_database::{
-    DatabaseError,
-    table::{self, Decode, Encode},
-};
+use base_execution_state_database::{self as table, DatabaseError, Decode, Encode};
 use base_execution_state_types::StoredNibbles;
 use serde::{Deserialize, Serialize};
 
@@ -57,7 +54,7 @@ impl table::Decompress for ChangeSet {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_execution_state_database::table::{Compress, Decompress};
+    use base_execution_state_database::{Compress, Decompress};
 
     use super::*;
 

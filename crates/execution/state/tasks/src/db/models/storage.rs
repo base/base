@@ -1,11 +1,8 @@
 use alloy_primitives::{B256, U256};
 use base_common_types_chain::DecompressError;
-use derive_more::{Constructor, From, Into};
-use base_execution_state_database::{
-    DatabaseError,
-    table::{Compress, Decode, Decompress, Encode},
-};
+use base_execution_state_database::{Compress, DatabaseError, Decode, Decompress, Encode};
 use base_execution_state_types::StoredNibbles;
+use derive_more::{Constructor, From, Into};
 use serde::{Deserialize, Serialize};
 
 /// Composite key: `(hashed-address, path)` for storage trie branches

@@ -103,6 +103,8 @@ use crate::ChainSpecParser;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use archive::run_modular_downloads;
 use base_common_io_files as fs;
+use base_execution_state_database::DbTx;
+use base_execution_state_database::{Database, init_db};
 use base_execution_state_types::PruneMode;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
@@ -113,8 +115,6 @@ pub use planning::{DownloadPlan, DownloadPlanArchive};
 use planning::{PlannedDownloads, collect_planned_archives, summarize_download_startup};
 use progress::{DownloadProgress, DownloadRequestLimiter};
 use reth_cli_util::cancellation::CancellationToken;
-use base_execution_state_database::{Database, init_db};
-use reth_db_api::transaction::DbTx;
 use reth_node_core::args::DefaultPruningValues;
 use source::{
     discover_manifest_url, fetch_manifest_from_source, fetch_snapshot_api_entries,

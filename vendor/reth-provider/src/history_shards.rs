@@ -15,17 +15,13 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, BlockNumber};
+use base_execution_state_database::{
+    BlockNumberList, Table, models::ShardedKey, models::sharded_key::NUM_OF_INDICES_IN_SHARD,
+    models::storage_sharded_key::StorageShardedKey, tables,
+};
 use base_execution_state_types::{ProviderError, ProviderResult};
 use itertools::Itertools;
 use rayon::prelude::*;
-use reth_db_api::{
-    BlockNumberList,
-    models::{
-        ShardedKey, sharded_key::NUM_OF_INDICES_IN_SHARD, storage_sharded_key::StorageShardedKey,
-    },
-    table::Table,
-    tables,
-};
 
 /// A history table whose keys are sharded by highest block number.
 ///

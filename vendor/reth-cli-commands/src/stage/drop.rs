@@ -4,13 +4,10 @@ use std::sync::Arc;
 use crate::ChainSpecParser;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
+use base_execution_state_database::{DatabaseError, mdbx::tx::Tx};
+use base_execution_state_database::{DbTx, DbTxMut, tables};
 use base_execution_state_types::StaticFileSegment;
 use clap::Parser;
-use base_execution_state_database::{DatabaseError, mdbx::tx::Tx};
-use reth_db_api::{
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
 use reth_db_common::{
     DbTool,
     init::{

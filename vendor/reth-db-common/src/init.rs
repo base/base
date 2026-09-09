@@ -7,19 +7,16 @@ use alloy_primitives::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
+use base_execution_state_database::{
+    DatabaseError, DbCursorRW, DbTxMut, models::AccountBeforeTx, models::IntegerList,
+    models::ShardedKey, models::storage_sharded_key::StorageShardedKey, tables,
+};
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::StateRootError;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_config::config::EtlConfig;
-use reth_db_api::{
-    DatabaseError,
-    cursor::DbCursorRW,
-    models::{AccountBeforeTx, IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
-    tables,
-    transaction::DbTxMut,
-};
 use reth_etl::Collector;
 use reth_primitives_traits::{GotExpected, SealedHeader};
 use reth_provider::{
@@ -723,7 +720,7 @@ fn prepare_storage_changeset_writer(
     writer.begin_storage_changeset(block)
 }
 
-fn snapshot_state_tables_empty<TX: reth_db_api::transaction::DbTx>(
+fn snapshot_state_tables_empty<TX: base_execution_state_database::DbTx>(
     tx: &TX,
 ) -> ProviderResult<bool> {
     Ok(tx.entries::<tables::PlainAccountState>()? == 0
@@ -770,7 +767,7 @@ fn commit_mdbx_only<Provider>(provider: Provider) -> ProviderResult<()>
 where
     Provider: DBProvider<Tx: DbTxMut>,
 {
-    reth_db_api::transaction::DbTx::commit(provider.into_tx()).map_err(ProviderError::from)
+    base_execution_state_database::DbTx::commit(provider.into_tx()).map_err(ProviderError::from)
 }
 
 /// Writes a single account to the v2 storage destinations.
@@ -831,7 +828,11 @@ where
                 .upsert(hashed_address, &StorageEntry { key: hashed_key, value: value_u256 })?;
 
             storage_changeset_writer.append_storage_changeset_entry(
-                reth_db_api::models::StorageBeforeTx { address: *address, key, value: U256::ZERO },
+                base_execution_state_database::models::StorageBeforeTx {
+                    address: *address,
+                    key,
+                    value: U256::ZERO,
+                },
             )?;
 
             history_batch.put::<tables::StoragesHistory>(
@@ -1021,14 +1022,9 @@ mod tests {
     use alloy_genesis::Genesis;
     use base_common_chain_config::BaseChainSpec;
     use base_execution_state_database::DatabaseEnv;
-    use reth_db_api::{
-        Database,
-        cursor::DbCursorRO,
-        models::{
-            BlockNumberAddress, IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey,
-        },
-        table::{Table, TableRow},
-        transaction::DbTx,
+    use base_execution_state_database::{
+        Database, DbCursorRO, DbTx, Table, TableRow, models::BlockNumberAddress,
+        models::IntegerList, models::ShardedKey, models::storage_sharded_key::StorageShardedKey,
     };
     use reth_provider::{
         ProviderFactory, RocksDBProviderFactory,
