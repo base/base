@@ -10,9 +10,7 @@ use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
     BlockEnv, CfgEnv, DBErrorMarker, EVMError, HaltReason, ResultAndState, TxEnv,
 };
-use base_evm_handler::{
-    EthFrame, EthPrecompiles, NoOpInspector, PrecompileProvider,
-};
+use base_evm_handler::{EthFrame, EthPrecompiles, NoOpInspector, PrecompileProvider};
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
     interpreter::InterpreterResult,
@@ -24,8 +22,6 @@ use crate::{Database, Evm, env::EvmEnv, evm_api::EvmFactory, precompiles::Precom
 
 mod tx_result;
 pub use tx_result::*;
-mod receipt_builder;
-pub use receipt_builder::*;
 
 /// The Ethereum EVM context type.
 pub type EthEvmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;

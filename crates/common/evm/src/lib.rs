@@ -55,9 +55,6 @@ pub use factory::BaseEvmFactory;
 mod error;
 pub use error::BaseBlockExecutionError;
 
-mod receipt_builder;
-pub use receipt_builder::{AlloyReceiptBuilder, BaseReceiptBuilder};
-
 mod canyon;
 pub use canyon::ensure_create2_deployer;
 

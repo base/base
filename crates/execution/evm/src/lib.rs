@@ -24,9 +24,6 @@ pub use base_config::{BaseEvmConfig, BaseExecutorFactory, BaseNextBlockEnvAttrib
 mod base_env;
 pub use base_env::BaseEvmEnvBuilder;
 
-mod base_receipts;
-pub use base_receipts::BaseRethReceiptBuilder;
-
 mod base_payload_env;
 
 mod either;

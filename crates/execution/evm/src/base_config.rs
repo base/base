@@ -32,8 +32,8 @@ use revm::{
 #[cfg(feature = "std")]
 use crate::ExecutableTxIterator;
 use crate::{
-    BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder, BlockExecutorForEvm, EvmEnv,
-    EvmEnvFor, EvmFactoryFor, EvmFor, InspectorFor, TxEnvFor,
+    BaseBlockAssembler, BaseEvmEnvBuilder, BlockExecutorForEvm, EvmEnv, EvmEnvFor, EvmFactoryFor,
+    EvmFor, InspectorFor, TxEnvFor,
     execute::{BasicBlockBuilder, BasicBlockExecutor, BlockBuilder, Executor},
 };
 
@@ -55,8 +55,7 @@ pub struct BaseNextBlockEnvAttributes {
 }
 
 /// Executor factory used by the Base node.
-pub type BaseExecutorFactory =
-    BaseBlockExecutorFactory<BaseRethReceiptBuilder, Arc<BaseChainSpec>, BaseEvmFactory>;
+pub type BaseExecutorFactory = BaseBlockExecutorFactory<Arc<BaseChainSpec>, BaseEvmFactory>;
 
 /// Base EVM configuration.
 #[derive(Debug, Clone)]
@@ -80,7 +79,6 @@ impl BaseEvmConfig {
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
             executor_factory: BaseBlockExecutorFactory::new(
-                BaseRethReceiptBuilder,
                 chain_spec,
                 BaseEvmFactory::new(activation_admin_address),
             ),
@@ -404,8 +402,8 @@ mod tests {
     };
     use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
     use revm::{
-        database::{BundleState, CacheDB},
         database::EmptyDBTyped,
+        database::{BundleState, CacheDB},
         primitives::Log,
         state::AccountInfo,
     };

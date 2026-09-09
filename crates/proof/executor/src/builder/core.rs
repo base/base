@@ -7,17 +7,16 @@
 use alloc::{string::ToString, vec::Vec};
 use core::fmt::Debug;
 
-use base_common_consensus::{BaseReceiptEnvelope, Header, Sealed, crypto::RecoveryError};
+use base_common_consensus::{BaseReceipt, Header, Sealed, crypto::RecoveryError};
 use base_common_evm::{
-    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId,
-    BaseTransaction,
+    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTransaction,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
 use base_evm_handler::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory, EvmFactory};
 use base_proof_mpt::TrieHinter;
-use revm::database::{State, BundleRetention};
+use revm::database::{BundleRetention, State};
 
 use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 
@@ -44,7 +43,7 @@ where
     /// The trie database providing stateless access to L2 state via Merkle proofs.
     pub(crate) trie_db: TrieDB<P, H>,
     /// The block executor factory for creating Base execution environments.
-    pub(crate) factory: BaseBlockExecutorFactory<AlloyReceiptBuilder, RollupConfig, Evm>,
+    pub(crate) factory: BaseBlockExecutorFactory<RollupConfig, Evm>,
 }
 
 impl<'a, P, H, Evm> StatelessL2Builder<'a, P, H, Evm>
@@ -72,11 +71,7 @@ where
         parent_header: Sealed<Header>,
     ) -> Self {
         let trie_db = TrieDB::new(parent_header, provider, hinter);
-        let factory = BaseBlockExecutorFactory::new(
-            AlloyReceiptBuilder::default(),
-            config.clone(),
-            evm_factory,
-        );
+        let factory = BaseBlockExecutorFactory::new(config.clone(), evm_factory);
         Self { config, trie_db, factory }
     }
 
@@ -184,12 +179,12 @@ pub struct BlockBuildingOutcome {
     /// The block header.
     pub header: Sealed<Header>,
     /// The block execution result.
-    pub execution_result: BlockExecutionResult<BaseReceiptEnvelope>,
+    pub execution_result: BlockExecutionResult<BaseReceipt>,
 }
 
-impl From<(Sealed<Header>, BlockExecutionResult<BaseReceiptEnvelope>)> for BlockBuildingOutcome {
+impl From<(Sealed<Header>, BlockExecutionResult<BaseReceipt>)> for BlockBuildingOutcome {
     fn from(
-        (header, execution_result): (Sealed<Header>, BlockExecutionResult<BaseReceiptEnvelope>),
+        (header, execution_result): (Sealed<Header>, BlockExecutionResult<BaseReceipt>),
     ) -> Self {
         Self { header, execution_result }
     }

@@ -6,7 +6,7 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_consensus::{
-    BaseReceiptEnvelope, EMPTY_OMMER_ROOT_HASH, Header, Predeploys, Sealed,
+    BaseReceipt, EMPTY_OMMER_ROOT_HASH, Header, Predeploys, Sealed, TxReceipt,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -35,7 +35,7 @@ where
         attrs: &BasePayloadAttributes,
         parent_hash: B256,
         block_env: &BlockEnv,
-        ex_result: &BlockExecutionResult<BaseReceiptEnvelope>,
+        ex_result: &BlockExecutionResult<BaseReceipt>,
         bundle: BundleState,
     ) -> ExecutorResult<Sealed<Header>> {
         let timestamp = block_env.timestamp.saturating_to::<u64>();
@@ -173,7 +173,7 @@ where
 
 /// Computes the receipts root from the given set of receipts.
 pub fn compute_receipts_root(
-    receipts: &[BaseReceiptEnvelope],
+    receipts: &[BaseReceipt],
     config: &RollupConfig,
     timestamp: u64,
 ) -> B256 {
@@ -186,19 +186,22 @@ pub fn compute_receipts_root(
             .iter()
             .cloned()
             .map(|receipt| match receipt {
-                BaseReceiptEnvelope::Deposit(mut deposit_receipt) => {
-                    deposit_receipt.receipt.deposit_nonce = None;
-                    BaseReceiptEnvelope::Deposit(deposit_receipt)
+                BaseReceipt::Deposit(mut deposit_receipt) => {
+                    deposit_receipt.deposit_nonce = None;
+                    BaseReceipt::Deposit(deposit_receipt)
                 }
                 _ => receipt,
             })
             .collect::<Vec<_>>();
 
         ordered_trie_with_encoder(receipts.as_ref(), |receipt, mut buf| {
-            receipt.encode_2718(&mut buf)
+            receipt.with_bloom_ref().encode_2718(&mut buf)
         })
         .root()
     } else {
-        ordered_trie_with_encoder(receipts, |receipt, mut buf| receipt.encode_2718(&mut buf)).root()
+        ordered_trie_with_encoder(receipts, |receipt, mut buf| {
+            receipt.with_bloom_ref().encode_2718(&mut buf)
+        })
+        .root()
     }
 }

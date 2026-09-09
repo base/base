@@ -5,37 +5,36 @@ use alloc::{boxed::Box, vec::Vec};
 use alloy_eips::{Encodable2718, Typed2718};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    DepositReceipt, Eip658Value, Header, Predeploys, Transaction, TransactionEnvelope, TxReceipt,
+    BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip658Value, Eip8130Receipt, Header, OpTxType,
+    Predeploys, Transaction, TransactionEnvelope, TxReceipt,
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{
     BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError, Database,
-    EthTxResult, Evm, ExecutableTx, FromRecoveredTx, FromTxWithEncoded, GasOutput,
-    ReceiptBuilderCtx, RecoveredTx, StateDB, SystemCaller, post_block_balance_increments,
+    EthTxResult, Evm, ExecutableTx, GasOutput, RecoveredTx, StateDB, SystemCaller,
+    post_block_balance_increments,
 };
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
 use revm::{DatabaseCommit, database::DatabaseCommitExt};
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTransaction,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseTime, BaseTransaction, BaseTxResult,
+    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
 #[derive(Debug)]
-pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
+pub struct BaseBlockExecutor<Evm, Spec> {
     /// Spec.
     pub spec: Spec,
-    /// Receipt builder.
-    pub receipt_builder: R,
     /// Context for block execution.
     pub ctx: BaseBlockExecutionCtx,
     /// The EVM used by executor.
     pub evm: Evm,
     /// Receipts of executed transactions.
-    pub receipts: Vec<R::Receipt>,
+    pub receipts: Vec<BaseReceipt>,
     /// Total gas used by executed transactions.
     pub gas_used: u64,
     /// DA footprint.
@@ -49,21 +48,19 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     pub system_caller: SystemCaller<Spec>,
 }
 
-impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
+impl<E, Spec> BaseBlockExecutor<E, Spec>
 where
     E: Evm,
-    R: BaseReceiptBuilder,
     Spec: Upgrades + Clone,
 {
     /// Creates a new [`BaseBlockExecutor`].
-    pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+    pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec) -> Self {
         Self {
             is_regolith: spec
                 .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),
             evm,
             system_caller: SystemCaller::new(spec.clone()),
             spec,
-            receipt_builder,
             receipts: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
@@ -72,11 +69,9 @@ where
     }
 }
 
-impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
+impl<E, Spec> BaseBlockExecutor<E, Spec>
 where
     E: Evm<DB: Database + DatabaseCommit + StateDB, Tx = BaseTransaction>,
-    BaseTransaction: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
-    R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: Upgrades,
 {
     /// Block gas the transaction may consume, reserved against the block gas
@@ -119,7 +114,7 @@ where
     fn jovian_da_footprint_estimation(
         &mut self,
         tx_env: &E::Tx,
-        tx: impl RecoveredTx<R::Transaction>,
+        tx: impl RecoveredTx<BaseTxEnvelope>,
     ) -> Result<u64, BlockExecutionError> {
         // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
         let encoded = tx_env
@@ -143,20 +138,15 @@ where
     }
 }
 
-impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
+impl<E, Spec> BlockExecutor for BaseBlockExecutor<E, Spec>
 where
     E: Evm<DB: Database + DatabaseCommit + StateDB, Tx = BaseTransaction>,
-    BaseTransaction: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
-    R: BaseReceiptBuilder<
-            Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
-            Receipt: TxReceipt,
-        >,
     Spec: Upgrades,
 {
-    type Transaction = R::Transaction;
-    type Receipt = R::Receipt;
+    type Transaction = BaseTxEnvelope;
+    type Receipt = BaseReceipt;
     type Evm = E;
-    type Result = BaseTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
+    type Result = BaseTxResult<E::HaltReason, <BaseTxEnvelope as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.system_caller.apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
@@ -286,34 +276,29 @@ where
             self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
         }
 
-        self.receipts.push(
-            match self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx_type,
-                result,
-                cumulative_gas_used: self.gas_used,
-                evm: &self.evm,
-                state: &state,
-            }) {
-                Ok(receipt) => receipt,
-                Err(ctx) => {
-                    let receipt = base_common_consensus::Receipt {
-                        status: Eip658Value::Eip658(ctx.result.is_success()),
-                        cumulative_gas_used: ctx.cumulative_gas_used,
-                        logs: ctx.result.into_logs(),
-                    };
-
-                    self.receipt_builder.build_deposit_receipt(DepositReceipt {
-                        inner: receipt,
-                        deposit_nonce: depositor.map(|account| account.nonce),
-                        deposit_receipt_version: (is_deposit
-                            && self.spec.is_canyon_active_at_timestamp(
-                                self.evm.block().timestamp().saturating_to(),
-                            ))
-                        .then_some(1),
-                    })
-                }
-            },
-        );
+        let receipt = base_common_consensus::Receipt {
+            status: Eip658Value::Eip658(result.is_success()),
+            cumulative_gas_used: self.gas_used,
+            logs: result.into_logs(),
+        };
+        self.receipts.push(match tx_type {
+            OpTxType::Legacy => BaseReceipt::Legacy(receipt),
+            OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
+            OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
+            OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+            OpTxType::Eip8130 => BaseReceipt::Eip8130(Eip8130Receipt::new(
+                receipt,
+                crate::Eip8130PhaseStatuses::take(),
+            )),
+            OpTxType::Deposit => BaseReceipt::Deposit(DepositReceipt {
+                inner: receipt,
+                deposit_nonce: depositor.map(|account| account.nonce),
+                deposit_receipt_version: self
+                    .spec
+                    .is_canyon_active_at_timestamp(self.evm.block().timestamp().saturating_to())
+                    .then_some(1),
+            }),
+        });
 
         self.evm.db_mut().commit(state);
 
@@ -322,7 +307,7 @@ where
 
     fn finish(
         mut self,
-    ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
+    ) -> Result<(Self::Evm, BlockExecutionResult<BaseReceipt>), BlockExecutionError> {
         let balance_increments =
             post_block_balance_increments::<Header>(&self.spec, self.evm.block(), &[], None);
 
@@ -384,14 +369,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId,
-        Builder, DefaultBase, L1BlockInfo,
+        BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId, Builder, DefaultBase,
+        L1BlockInfo,
     };
 
     #[test]
     fn test_with_encoded() {
         let executor_factory = BaseBlockExecutorFactory::new(
-            AlloyReceiptBuilder::default(),
             base_common_chains::ChainConfig::mainnet().upgrades.clone(),
             BaseEvmFactory::default(),
         );
@@ -459,13 +443,11 @@ mod tests {
 
     fn build_executor<'a>(
         db: &'a mut revm::database::State<InMemoryDB>,
-        receipt_builder: &'a AlloyReceiptBuilder,
         base_chain_upgrades: &'a ChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
         BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector, PrecompilesMap>,
-        &'a AlloyReceiptBuilder,
         &'a ChainUpgrades,
     > {
         let ctx = Context::base()
@@ -484,12 +466,7 @@ mod tests {
 
         let evm = ctx.build_with_inspector(NoOpInspector {});
 
-        BaseBlockExecutor::new(
-            evm,
-            BaseBlockExecutionCtx::default(),
-            base_chain_upgrades,
-            receipt_builder,
-        )
+        BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default(), base_chain_upgrades)
     }
 
     #[test]
@@ -505,14 +482,8 @@ mod tests {
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            GAS_LIMIT,
-            JOVIAN_TIMESTAMP,
-        );
+        let mut executor =
+            build_executor(&mut db, &base_chain_upgrades, GAS_LIMIT, JOVIAN_TIMESTAMP);
 
         let tx_inner = TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() };
 
@@ -550,14 +521,8 @@ mod tests {
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            GAS_LIMIT,
-            JOVIAN_TIMESTAMP,
-        );
+        let mut executor =
+            build_executor(&mut db, &base_chain_upgrades, GAS_LIMIT, JOVIAN_TIMESTAMP);
 
         let tx_inner = TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() };
 
@@ -607,14 +572,8 @@ mod tests {
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            GAS_LIMIT,
-            JOVIAN_TIMESTAMP,
-        );
+        let mut executor =
+            build_executor(&mut db, &base_chain_upgrades, GAS_LIMIT, JOVIAN_TIMESTAMP);
 
         let tx_inner = TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() };
 
@@ -688,14 +647,8 @@ mod tests {
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            block_gas_limit,
-            JOVIAN_TIMESTAMP,
-        );
+        let mut executor =
+            build_executor(&mut db, &base_chain_upgrades, block_gas_limit, JOVIAN_TIMESTAMP);
 
         let tx = Recovered::new_unchecked(
             BaseTxEnvelope::Eip8130(signed),
@@ -737,14 +690,8 @@ mod tests {
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            GAS_LIMIT,
-            JOVIAN_TIMESTAMP,
-        );
+        let mut executor =
+            build_executor(&mut db, &base_chain_upgrades, GAS_LIMIT, JOVIAN_TIMESTAMP);
 
         let tx = Recovered::new_unchecked(
             BaseTxEnvelope::Eip8130(signed),
@@ -758,5 +705,55 @@ mod tests {
         {
             panic!("self-pay transaction must not be rejected by the block gas pre-check");
         }
+    }
+    #[test]
+    #[cfg(feature = "std")]
+    fn committed_receipts_preserve_phase_statuses_deposit_fields_and_cumulative_gas() {
+        let factory = BaseBlockExecutorFactory::new(
+            base_common_chains::ChainConfig::mainnet().upgrades.clone(),
+            BaseEvmFactory::default(),
+        );
+        let mut db = revm::database::State::builder().with_database(EmptyDB::default()).build();
+        let evm = factory.evm_factory().create_evm(
+            &mut db,
+            EvmEnv {
+                block_env: BlockEnv { timestamp: U256::from(u64::MAX), ..Default::default() },
+                ..Default::default()
+            },
+        );
+        let mut executor = factory.create_executor(evm, BaseBlockExecutionCtx::default());
+        crate::Eip8130PhaseStatuses::set(vec![1, 0]);
+        for tx_type in [OpTxType::Eip8130, OpTxType::Deposit] {
+            executor.commit_transaction(BaseTxResult {
+                inner: EthTxResult {
+                    result: ResultAndState {
+                        result: base_evm_context::ExecutionResult::Success {
+                            reason: base_evm_context::SuccessReason::Return,
+                            gas: base_evm_context::ResultGas::new_with_state_gas(21_000, 0, 0, 0),
+                            logs: vec![alloy_primitives::Log::default()],
+                            output: base_evm_context::Output::Call(Bytes::new()),
+                        },
+                        state: Default::default(),
+                    },
+                    blob_gas_used: 0,
+                    tx_type,
+                },
+                is_deposit: tx_type == OpTxType::Deposit,
+                sender: Address::ZERO,
+                depositor: Some(AccountInfo { nonce: 42, ..Default::default() }),
+            });
+        }
+        let BaseReceipt::Eip8130(receipt) = &executor.receipts()[0] else {
+            panic!("expected EIP-8130 receipt")
+        };
+        assert_eq!(receipt.phase_statuses, [1, 0]);
+        assert_eq!(receipt.inner.cumulative_gas_used, 21_000);
+        assert_eq!(receipt.inner.logs.len(), 1);
+        assert!(crate::Eip8130PhaseStatuses::take().is_empty());
+        let deposit = executor.receipts()[1].as_deposit_receipt().unwrap();
+        assert_eq!(deposit.deposit_nonce, Some(42));
+        assert_eq!(deposit.deposit_receipt_version, Some(1));
+        assert_eq!(deposit.inner.cumulative_gas_used, 42_000);
+        assert_eq!(deposit.inner.logs.len(), 1);
     }
 }

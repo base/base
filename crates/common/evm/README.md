@@ -7,9 +7,8 @@ EVM implementation.
 Provides Base-specific EVM execution support. Maps upgrade activation timestamps to revm
 `SpecId` values, and exposes `BaseEvm`, `BaseEvmFactory`, `BaseBlockExecutor`, and
 `BaseBlockExecutorFactory` for executing blocks with the correct gas rules and precompile sets for
-each upgrade. Also provides `AlloyReceiptBuilder` and `BaseReceiptBuilder` for constructing Base
-receipts and
-`ensure_create2_deployer` for Canyon upgrade compatibility.
+each upgrade. Execution produces `BaseReceipt` directly, including deposit metadata and EIP-8130
+phase statuses. Bloom generation happens when receipts are encoded.
 
 ## Usage
 

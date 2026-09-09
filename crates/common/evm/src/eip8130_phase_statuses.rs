@@ -2,7 +2,7 @@
 //! receipt builder.
 //!
 //! The EIP-8130 executor computes a per-phase status array while running a
-//! transaction's `calls`, but the receipt builder ([`BaseReceiptBuilder`]) is
+//! transaction's `calls`, but the receipt builder ([`BaseBlockExecutor`]) is
 //! generic over `E: Evm` and reth's block-executor / factory machinery offers no
 //! type-safe channel to pass extra per-transaction execution metadata to it (the
 //! receipt builder only receives the [`ExecutionResult`], whose `output` already
@@ -27,7 +27,7 @@
 //! transaction is discarded before the current one runs, and `set` publishes the
 //! current statuses as `execute`'s last step.
 //!
-//! [`BaseReceiptBuilder`]: crate::BaseReceiptBuilder
+//! [`BaseBlockExecutor`]: crate::BaseBlockExecutor
 //! [`ExecutionResult`]: base_evm_context::ExecutionResult
 //! [`set`]: Eip8130PhaseStatuses::set
 //! [`take`]: Eip8130PhaseStatuses::take
