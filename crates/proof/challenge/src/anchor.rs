@@ -114,7 +114,7 @@ impl AnchorUpdater {
         anchor_game: Address,
     ) -> Option<Address> {
         // Resolved from the anchor block, which is where the next game's range starts:
-        // the verifier switches to a shorter cadence at the Cobalt activation block, so a
+        // the verifier switches to a shorter cadence at the Denim activation block, so a
         // pair cached at startup silently stops matching any game past the boundary.
         let (block_interval, intermediate_block_interval) = match resolve_intervals(
             self.factory_client.as_ref(),
@@ -563,7 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_finds_next_game_built_with_fast_intervals() {
-        // The anchor sits exactly at the Cobalt activation block, so the next game
+        // The anchor sits exactly at the Denim activation block, so the next game
         // spans FAST_BLOCK_INTERVAL and carries two intermediate roots instead of
         // one. Its UUID is only reproducible with the post-activation pair.
         let game = addr(1);
@@ -606,15 +606,15 @@ mod tests {
         state.anchor_state_registry = ASR_ADDRESS;
         let games = HashMap::from([(game, state)]);
 
-        let cobalt_verifier = verifier(games.clone()).with_fast_intervals(
+        let denim_verifier = verifier(games.clone()).with_fast_intervals(
             FAST_ACTIVATION_BLOCK,
             FAST_BLOCK_INTERVAL,
             FAST_INTERMEDIATE_BLOCK_INTERVAL,
         );
-        let (cobalt_submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
-        let mut cobalt_updater =
+        let (denim_submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
+        let mut denim_updater =
             updater(Arc::clone(&factory), Arc::clone(&anchor_registry), Arc::clone(&l2));
-        cobalt_updater.poll(&cobalt_verifier, &cobalt_submitter).await;
+        denim_updater.poll(&denim_verifier, &denim_submitter).await;
 
         let calls = tx_manager.recorded_calls();
         assert_eq!(calls.len(), 1, "anchor should advance to the post-activation game");

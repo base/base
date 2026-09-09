@@ -1053,7 +1053,7 @@ mod tests {
         );
     }
 
-    /// Two games straddling the Cobalt activation block resolve different intervals.
+    /// Two games straddling the Denim activation block resolve different intervals.
     #[tokio::test]
     async fn test_scan_resolves_intervals_per_game_across_cadence_activation() {
         let factory =

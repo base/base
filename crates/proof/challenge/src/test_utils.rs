@@ -278,7 +278,7 @@ impl MockAggregateVerifier {
     }
 
     /// Makes the verifier switch to `(block_interval, intermediate_block_interval)` for
-    /// games whose range starts at or after `activation_block`, as the Cobalt-aware
+    /// games whose range starts at or after `activation_block`, as the Denim-aware
     /// `AggregateVerifier` does.
     #[must_use]
     pub const fn with_fast_intervals(
