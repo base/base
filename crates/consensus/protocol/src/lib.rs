@@ -29,7 +29,8 @@ mod errors;
 pub use errors::BaseBlockConversionError;
 
 mod block;
-pub use block::{BlockInfo, FromBlockError, L2BlockInfo, L2BlockInfoDecoder};
+pub use base_common_types_chain::{BlockInfo, L2BlockInfo};
+pub use block::{FromBlockError, L2BlockInfoDecoder};
 
 mod frame;
 pub use frame::{

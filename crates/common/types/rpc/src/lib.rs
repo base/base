@@ -138,3 +138,5 @@ pub use consensus_peers::{
     Connectedness, ConsensusPeerInfo, Direction, GossipScores, PeerCount, PeerDump, PeerScores,
     PeerStats, ReqRespScores, TopicScores,
 };
+
+mod block_info;

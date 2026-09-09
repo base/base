@@ -186,3 +186,6 @@ pub use sealed_header::SealedHeader;
 
 mod output_root;
 pub use output_root::OutputRoot;
+
+mod block_info;
+pub use block_info::{BlockInfo, L2BlockInfo};
