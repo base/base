@@ -6,10 +6,10 @@ use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSou
 use base_batcher_encoding_channel::{
     BatchPipeline, BatcherMetrics, DerivationReconciliation, StepError, StepResult,
 };
+use base_common_l1_transactions::TxManager;
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
-use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -627,6 +627,9 @@ mod tests {
         BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
     };
     use base_batcher_encoding_channel::{BlobDecoder, BlobEncoder};
+    use base_common_l1_transactions::{
+        SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
+    };
     use base_common_runtime_tasks::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
@@ -634,7 +637,6 @@ mod tests {
     use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_common_types_rpc::TransactionReceipt;
     use base_protocol::{BlockInfo, Frame};
-    use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
     use tokio::sync::{mpsc, oneshot};
 
     use crate::{
@@ -832,7 +834,7 @@ mod tests {
 
         fn cancel_tx(
             &self,
-        ) -> impl std::future::Future<Output = base_tx_manager::TxManagerResult<()>> + Send
+        ) -> impl std::future::Future<Output = base_common_l1_transactions::TxManagerResult<()>> + Send
         {
             let state = Arc::clone(&self.state);
             async move {

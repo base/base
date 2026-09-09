@@ -9,13 +9,13 @@ use alloy_primitives::Address;
 use base_batcher_service_driver::ThrottleConfig;
 use base_batcher_service_driver::{BatcherConfig, BatcherService};
 use base_cli_utils::RuntimeManager;
+use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
 use base_common_runtime_tasks::TokioRuntime;
-use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
 use tracing::info;
 use url::Url;
 
-base_tx_manager::define_signer_cli!("BASE_BATCHER");
+base_common_l1_transactions::define_signer_cli!("BASE_BATCHER");
 
 /// CLI arguments for the batcher.
 #[derive(Parser, Clone, Debug)]

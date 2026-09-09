@@ -21,7 +21,6 @@ alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
 base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
 base-balance-monitor = { workspace = true }
@@ -31,6 +30,7 @@ base-proof-submission = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-prover-service-client = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 serde_json = { workspace = true, optional = true }
 url = { workspace = true, features = ["default"] }
 async-trait = { workspace = true, optional = true }
@@ -43,10 +43,10 @@ tokio-util = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["default", "ring"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
 
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
@@ -55,7 +55,7 @@ base-challenger = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
-metrics = ["base-common-observability-metrics/metrics", "base-tx-manager/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "base-common-l1-transactions/metrics", "dep:metrics"]
 test-utils = [
     "base-common-types-rpc",
     "async-trait",

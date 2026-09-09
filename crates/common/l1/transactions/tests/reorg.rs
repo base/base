@@ -11,8 +11,8 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{B256, U256};
 use alloy_provider::{Provider, RootProvider};
+use base_common_l1_transactions::{NoopTxMetrics, SendState, SimpleTxManager, TxManagerConfig};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
-use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager, TxManagerConfig};
 use common::{mine_block, publish_simple_tx, setup_with_config};
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -124,8 +124,23 @@ async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
         .expect("should fetch receipt")
         .expect("receipt should exist");
     let original_block_hash = receipt.block_hash.expect("should have block hash");
+    let original_timestamp = manager
+        .provider()
+        .get_block_by_hash(original_block_hash)
+        .await
+        .expect("should fetch original block")
+        .expect("original block should exist")
+        .header
+        .timestamp;
 
     revert(manager.provider(), snap).await;
+
+    // Force a distinct replacement block even when both branches are mined in the same second.
+    manager
+        .provider()
+        .raw_request::<[u64; 1], ()>("evm_setNextBlockTimestamp".into(), [original_timestamp + 1])
+        .await
+        .expect("should set replacement block timestamp");
 
     // Anvil may not restore the mempool on revert, so re-submit.
     let _ =

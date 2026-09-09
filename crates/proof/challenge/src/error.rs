@@ -1,8 +1,8 @@
 //! Challenge submission error types.
 
 use alloy_primitives::B256;
+use base_common_l1_transactions::TxManagerError;
 use base_proof_submission::KnownRevert;
-use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
 /// Errors that can occur when submitting a challenge transaction.

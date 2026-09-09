@@ -13,8 +13,10 @@ use std::{
 
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
+use base_common_l1_transactions::{
+    SendState, SimpleTxManager, TxManager, TxManagerConfig, TxManagerError,
+};
 use base_common_types_chain::Transaction;
-use base_tx_manager::{SendState, SimpleTxManager, TxManager, TxManagerConfig, TxManagerError};
 use common::{
     SAFE_ABORT_DEPTH, mine_block, publish_simple_tx, setup_with_config, setup_with_failing_signer,
     simple_tx_candidate,

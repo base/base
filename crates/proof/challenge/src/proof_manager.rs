@@ -12,13 +12,13 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
+use base_common_l1_transactions::{TxManager, TxManagerError};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
-use base_tx_manager::{TxManager, TxManagerError};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -624,10 +624,10 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
+    use base_common_l1_transactions::TxManagerError;
     use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
     use base_proof_rpc::L1Provider;
     use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
-    use base_tx_manager::TxManagerError;
 
     use super::*;
     use crate::test_utils::{

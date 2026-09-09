@@ -12,9 +12,9 @@
 //! and it exercises the `cancel_tx` hook that the harness previously left as the
 //! trait's default no-op.
 //!
-//! [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
-//! [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
-//! [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
+//! [`TxManager::send_async`]: base_common_l1_transactions::TxManager::send_async
+//! [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+//! [`TxManagerError::AlreadyReserved`]: base_common_l1_transactions::TxManagerError::AlreadyReserved
 //! [`BatchDriver`]: base_batcher_service_driver::BatchDriver
 //! [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
 
@@ -36,7 +36,7 @@ fn calldata_batcher_config() -> BatcherConfig {
 /// derivation node successfully derives the L2 block after recovery.
 ///
 /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-/// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+/// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
 #[tokio::test]
 async fn txpool_blocked_recovers_via_cancel_tx_and_derives() {
     let batcher_cfg = calldata_batcher_config();
@@ -87,7 +87,7 @@ async fn txpool_blocked_recovers_via_cancel_tx_and_derives() {
 /// [`TxManager::cancel_tx`] before the third submission succeeds. No data is
 /// lost: the derivation node still sees the correct L2 block.
 ///
-/// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+/// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
 #[tokio::test]
 async fn consecutive_txpool_blocks_recover_and_derive() {
     let batcher_cfg = calldata_batcher_config();

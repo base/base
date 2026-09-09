@@ -23,14 +23,14 @@ async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 tracing-indicatif = { workspace = true }
-base-execution-evm-precompiles = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
+base-execution-evm-precompiles = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 indicatif = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }

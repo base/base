@@ -13,10 +13,11 @@ workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-common-types-rpc = { workspace = true }
+base-common-l1-transactions = { workspace = true }
+
 [dev-dependencies]
 base-common-types-chain = { workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt", "test-util"] }

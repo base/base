@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
+use base_common_l1_transactions::TxManagerError;
 use base_proof_contracts::ContractError;
 use base_proof_tee_nitro_verifier::VerifierError;
-use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
 /// Errors that can occur in the prover registrar.

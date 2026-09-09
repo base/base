@@ -1,7 +1,7 @@
 //! Error types for proof submission.
 
 use alloy_primitives::B256;
-use base_tx_manager::TxManagerError;
+use base_common_l1_transactions::TxManagerError;
 use thiserror::Error;
 
 /// Errors produced while submitting aggregate proof bytes.

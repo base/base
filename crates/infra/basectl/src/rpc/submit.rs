@@ -4,12 +4,12 @@ use std::{env, fmt, fs, path::Path, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
+use base_common_l1_transactions::{
+    NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
+};
 use base_common_network::PrivateKeySigner;
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
-use base_tx_manager::{
-    NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
-};
 use tokio::time::timeout;
 use url::Url;
 

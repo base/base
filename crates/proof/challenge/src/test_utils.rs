@@ -12,6 +12,7 @@ use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
+use base_common_l1_transactions::{SendHandle, SendResponse, TxCandidate, TxManager};
 use base_common_types_chain::{
     Eip658Value, Header as ConsensusHeader, Predeploys, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
@@ -28,7 +29,6 @@ use base_prover_service_protocol::{
     ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,
     ZkProofResult, ZkVm,
 };
-use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
 /// Discovery interval used in tests (5 minutes).
 pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);

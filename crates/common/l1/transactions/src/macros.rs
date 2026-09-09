@@ -4,9 +4,9 @@
 /// # Usage
 ///
 /// ```rust,ignore
-/// base_tx_manager::define_tx_manager_cli!("BASE_TX_MANAGER");
-/// base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
-/// base_tx_manager::define_tx_manager_cli!(
+/// base_common_l1_transactions::define_tx_manager_cli!("BASE_TX_MANAGER");
+/// base_common_l1_transactions::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
+/// base_common_l1_transactions::define_tx_manager_cli!(
 ///     "BASE_PROPOSER",
 ///     tx_send_timeout_default = "10m",
 /// );
@@ -235,8 +235,8 @@ macro_rules! define_tx_manager_cli {
 /// # Usage
 ///
 /// ```rust,ignore
-/// base_tx_manager::define_signer_cli!("CHALLENGER");
-/// base_tx_manager::define_signer_cli!("PROPOSER");
+/// base_common_l1_transactions::define_signer_cli!("CHALLENGER");
+/// base_common_l1_transactions::define_signer_cli!("PROPOSER");
 /// ```
 ///
 /// The generated struct has three fields covering local and remote signing.

@@ -19,9 +19,9 @@ workspace = true
 serde = { workspace = true }
 humantime = { workspace = true }
 base-cli-utils = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }

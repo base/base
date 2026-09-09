@@ -1,9 +1,9 @@
 //! Shared test fixtures for the registrar crate.
 
 use alloy_primitives::{Address, B256};
+use base_common_l1_transactions::{SendHandle, TxCandidate, TxManager};
 use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope};
 use base_common_types_rpc::TransactionReceipt;
-use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;
 
@@ -38,7 +38,7 @@ pub const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
 pub struct NoopTxManager;
 
 impl TxManager for NoopTxManager {
-    async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
+    async fn send(&self, _candidate: TxCandidate) -> base_common_l1_transactions::SendResponse {
         unreachable!("NoopTxManager does not submit transactions")
     }
 

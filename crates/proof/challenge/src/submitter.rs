@@ -11,8 +11,8 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, Bytes};
+use base_common_l1_transactions::{TxCandidate, TxManager};
 use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
-use base_tx_manager::{TxCandidate, TxManager};
 use tracing::{debug, info};
 
 use crate::{ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
@@ -165,9 +165,9 @@ impl DisputeIntent {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use base_common_l1_transactions::TxManagerError;
     use base_proof_contracts::l1_origin_too_old_selector;
     use base_proof_submission::KnownRevert;
-    use base_tx_manager::TxManagerError;
 
     use super::*;
     use crate::test_utils::{MockTxManager, receipt_with_status};

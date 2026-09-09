@@ -5,7 +5,7 @@ use std::{net::SocketAddr, time::Duration};
 use crate::ThrottleConfig;
 use alloy_primitives::Address;
 use base_batcher_encoding_channel::EncoderConfig;
-use base_tx_manager::{SignerConfig, TxManagerConfig};
+use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
 use url::Url;
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding

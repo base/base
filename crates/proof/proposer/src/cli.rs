@@ -11,8 +11,11 @@ base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
-base_tx_manager::define_signer_cli!("BASE_PROPOSER");
-base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
+base_common_l1_transactions::define_signer_cli!("BASE_PROPOSER");
+base_common_l1_transactions::define_tx_manager_cli!(
+    "BASE_PROPOSER",
+    tx_send_timeout_default = "10m"
+);
 
 const DEFAULT_RECOVERY_SCAN_CONCURRENCY: usize = 8;
 

@@ -4,13 +4,13 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
+use base_common_l1_transactions::TxManager;
+use base_common_runtime_tasks::Clock;
 use base_proof_contracts::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
 };
 use base_proof_rpc::L2Provider;
-use base_common_runtime_tasks::Clock;
-use base_tx_manager::TxManager;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
@@ -569,7 +569,7 @@ mod tests {
     }
 
     fn bond_submitter(
-        responses: Vec<base_tx_manager::SendResponse>,
+        responses: Vec<base_common_l1_transactions::SendResponse>,
     ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
         let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)

@@ -11,8 +11,8 @@ use base_batcher_encoding_channel::BlobEncoder;
 use base_batcher_encoding_channel::{
     BatchEncoder, BatchPipeline, BatchSubmission, DaType, EncoderConfig, SubmissionPayload,
 };
+use base_common_l1_transactions::TxCandidate;
 use base_protocol::Frame;
-use base_tx_manager::TxCandidate;
 
 fn submission_frames(submission: &BatchSubmission) -> Vec<Arc<Frame>> {
     match submission.payload() {

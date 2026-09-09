@@ -6,13 +6,13 @@ use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
 use base_batcher_service_driver::L1HeadEvent;
+use base_common_l1_transactions::{
+    BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
+    TxManagerResult,
+};
 use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{
     SignableTransaction, TxEip1559, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
-};
-use base_tx_manager::{
-    BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
-    TxManagerResult,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
@@ -64,13 +64,13 @@ pub struct Inner {
     ///
     /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
-    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
     blocked_remaining: usize,
     /// Number of times [`cancel_tx`] has been invoked by the driver's txpool
     /// recovery path. Tests assert on this to prove the blockage was cleared
     /// through the production recovery flow rather than by chance.
     ///
-    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
     cancellations: usize,
 }
 
@@ -173,7 +173,7 @@ impl L1MinerTxManager {
     /// [`send_async`]: L1MinerTxManager::send_async
     /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
-    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
     pub fn block_next_n(&self, n: usize) {
         self.inner.lock().unwrap().blocked_remaining += n;
     }
@@ -181,7 +181,7 @@ impl L1MinerTxManager {
     /// Returns how many times the driver has called [`cancel_tx`] to recover
     /// from a txpool blockage.
     ///
-    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
     pub fn cancellation_count(&self) -> usize {
         self.inner.lock().unwrap().cancellations
     }
@@ -282,7 +282,7 @@ impl L1MinerTxManager {
     /// driver in an inconsistent state.
     ///
     /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`SendHandle`]: base_tx_manager::SendHandle
+    /// [`SendHandle`]: base_common_l1_transactions::SendHandle
     /// [`confirm_block`]: L1MinerTxManager::confirm_block
     pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {
         l1.reorg_to(block_number).expect("reorg_to should not fail");
@@ -456,8 +456,8 @@ impl TxManager for L1MinerTxManager {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
+    use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
     use base_common_network::PrivateKeySigner;
-    use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 
     use super::L1MinerTxManager;
     use crate::L1Miner;

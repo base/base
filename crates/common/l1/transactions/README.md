@@ -1,4 +1,4 @@
-# `base-tx-manager`
+# `base-common-l1-transactions`
 
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -85,7 +85,7 @@ confirmation.
 bump fees, or abort. Use `is_retryable()` and `is_already_known()` to branch:
 
 ```rust,ignore
-use base_tx_manager::{RpcErrorClassifier, TxManagerError};
+use base_common_l1_transactions::{RpcErrorClassifier, TxManagerError};
 
 fn handle_rpc_error(transport_err: &alloy_transport::TransportError) {
     let err = RpcErrorClassifier::classify_rpc_error(transport_err);
@@ -107,9 +107,9 @@ converted from a macro-generated `TxManagerCli` via `TryFrom`.
 ### CLI parsing
 
 ```rust,ignore
-use base_tx_manager::TxManagerConfig;
+use base_common_l1_transactions::TxManagerConfig;
 
-base_tx_manager::define_tx_manager_cli!("BASE_TX_MANAGER");
+base_common_l1_transactions::define_tx_manager_cli!("BASE_TX_MANAGER");
 
 let cli = TxManagerCli::try_parse().unwrap();
 let config = TxManagerConfig::try_from(cli)?;
@@ -118,7 +118,7 @@ let config = TxManagerConfig::try_from(cli)?;
 ### Custom env var prefix
 
 ```rust,ignore
-base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
+base_common_l1_transactions::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
 
 #[derive(clap::Parser)]
 struct Cli {
@@ -136,7 +136,7 @@ let config = TxManagerConfig::try_from(cli.tx)?;
 
 ```toml
 [dependencies]
-base-tx-manager = { git = "https://github.com/base/base" }
+base-common-l1-transactions = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
@@ -145,7 +145,7 @@ use std::sync::Arc;
 use alloy_primitives::{bytes, Address, U256};
 use alloy_provider::RootProvider;
 use base_common_network::PrivateKeySigner;
-use base_tx_manager::{
+use base_common_l1_transactions::{
     BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManagerConfig,
 };
 

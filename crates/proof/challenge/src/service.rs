@@ -9,15 +9,15 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
+use base_common_l1_transactions::{BaseTxMetrics, SimpleTxManager};
 use base_common_observability_health::HealthServer;
+use base_common_runtime_tasks::TokioRuntime;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
-use base_common_runtime_tasks::TokioRuntime;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};

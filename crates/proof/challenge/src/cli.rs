@@ -14,8 +14,8 @@ base_cli_utils::define_cli_env!("BASE_CHALLENGER");
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7300);
 base_cli_utils::define_health_args!("BASE_CHALLENGER", 8080);
-base_tx_manager::define_signer_cli!("BASE_CHALLENGER");
-base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER");
+base_common_l1_transactions::define_signer_cli!("BASE_CHALLENGER");
+base_common_l1_transactions::define_tx_manager_cli!("BASE_CHALLENGER");
 
 /// Challenger - ZK-proof dispute game challenger for Base.
 #[derive(Debug, Parser)]

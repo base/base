@@ -1,9 +1,11 @@
 //! Test [`TxManager`] implementations for controlling submission outcomes in driver tests.
 
 use alloy_primitives::{Address, B256, Bloom};
+use base_common_l1_transactions::{
+    SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
+};
 use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
 use base_common_types_rpc::TransactionReceipt;
-use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 use tokio::sync::oneshot;
 
 const fn stub_receipt(block_number: u64) -> TransactionReceipt {

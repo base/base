@@ -8,7 +8,7 @@ use base_batcher_encoding_channel::{
     SubmissionId, SubmissionPayload,
 };
 use base_batcher_encoding_channel::{BlobEncodeError, BlobEncoder};
-use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
+use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};

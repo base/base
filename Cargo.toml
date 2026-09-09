@@ -116,7 +116,7 @@ members = [
   "crates/common/runtime/tasks",
   "crates/testing/support",
   "crates/utilities/trusted-proxy",
-  "crates/utilities/tx-manager",
+  "crates/common/l1/transactions",
   "crates/common/chain/activation",
   "etc/systems",
   "etc/tools/witness-diff",
@@ -410,7 +410,7 @@ base-common-observability-metrics = { path = "crates/common/observability/metric
 base-common-runtime-tasks = { path = "crates/common/runtime/tasks", default-features = false }
 base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
 base-testing-support = { path = "crates/testing/support", default-features = false }
-base-tx-manager = { path = "crates/utilities/tx-manager", default-features = false }
+base-common-l1-transactions = { path = "crates/common/l1/transactions", default-features = false }
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc", default-features = false }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
 base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }

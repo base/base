@@ -15,8 +15,8 @@ workspace = true
 humantime = { workspace = true }
 base-protocol = { workspace = true }
 base-cli-utils = { workspace = true }
-base-tx-manager = { workspace = true }
 base-common-network = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }

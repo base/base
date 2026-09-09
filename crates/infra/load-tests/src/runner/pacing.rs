@@ -11,9 +11,9 @@ use std::{
 
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
-use base_common_types_rpc::BlockNumberOrTag;
+use base_common_l1_transactions::NonceManager;
 use base_common_network::{Base, Ethereum, PrivateKeySigner};
-use base_tx_manager::NonceManager;
+use base_common_types_rpc::BlockNumberOrTag;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{
     sync::{mpsc, watch},

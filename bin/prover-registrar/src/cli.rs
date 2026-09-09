@@ -3,11 +3,11 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
+use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
 };
-use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
 use url::Url;
 
@@ -16,8 +16,8 @@ base_cli_utils::define_cli_env!("BASE_REGISTRAR");
 base_cli_utils::define_log_args!("BASE_REGISTRAR");
 base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7300);
 base_cli_utils::define_health_args!("BASE_REGISTRAR", 8080);
-base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
-base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
+base_common_l1_transactions::define_signer_cli!("BASE_REGISTRAR");
+base_common_l1_transactions::define_tx_manager_cli!("BASE_REGISTRAR");
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]

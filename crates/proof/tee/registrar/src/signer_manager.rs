@@ -11,13 +11,13 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
 use alloy_sol_types::SolCall;
+use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
 use base_proof_contracts::{
     CertManagerAuthorizationError, CertManagerClient, ContractError, ITEEProverRegistry,
     TEEProverRegistryClient, decode_cert_manager_authorization_error,
     encode_register_signer_calldata, encode_revoke_cert_calldata,
     encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
-use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
     task::{self, JoinError, JoinSet},
@@ -1200,8 +1200,8 @@ mod tests {
 
     use alloy_primitives::Address;
     use async_trait::async_trait;
+    use base_common_l1_transactions::{SendHandle, TxManagerError};
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
-    use base_tx_manager::{SendHandle, TxManagerError};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         MetricKind,
@@ -1482,7 +1482,7 @@ mod tests {
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+        async fn send(&self, candidate: TxCandidate) -> base_common_l1_transactions::SendResponse {
             let outcome = {
                 let mut state = self.chain.0.lock().unwrap();
                 state.sent.push((candidate.to, candidate.tx_data.clone()));

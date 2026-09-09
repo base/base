@@ -16,12 +16,12 @@ use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_encoding_channel::{BatchEncoder, BatcherMetrics};
+use base_common_l1_transactions::{BaseTxMetrics, SimpleTxManager};
 use base_common_network::Base;
 use base_common_runtime_tasks::TokioRuntime;
 use base_common_runtime_tasks::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     StreamExt,
     future::BoxFuture,

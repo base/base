@@ -1,10 +1,10 @@
 //! Known revert classification for proof contract transactions.
 
+use base_common_l1_transactions::TxManagerError;
 use base_proof_contracts::{
     already_proven_selector, game_already_exists_selector, invalid_parent_game_selector,
     invalid_signer_selector, l1_origin_too_old_selector,
 };
-use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
 use crate::ProofSubmissionError;
@@ -143,7 +143,7 @@ impl From<TxManagerError> for ProofSubmissionError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Bytes;
-    use base_tx_manager::TxManagerError;
+    use base_common_l1_transactions::TxManagerError;
 
     use super::*;
 

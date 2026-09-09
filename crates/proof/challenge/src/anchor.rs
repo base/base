@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use alloy_primitives::Address;
+use base_common_l1_transactions::TxManager;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorSnapshot, AnchorStateRegistryClient,
     DisputeGameFactoryClient, GameStatus, encode_set_anchor_state_calldata, game_lookup_blocks,
     game_lookup_key,
 };
 use base_proof_rpc::L2Provider;
-use base_tx_manager::TxManager;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
@@ -340,12 +340,12 @@ mod tests {
         factory.insert_uuid_game(GAME_TYPE, output_root, extra_data, game);
     }
 
-    fn tx_success(tx_hash: B256) -> base_tx_manager::SendResponse {
+    fn tx_success(tx_hash: B256) -> base_common_l1_transactions::SendResponse {
         Ok(receipt_with_status(true, tx_hash))
     }
 
     fn submitter(
-        responses: Vec<base_tx_manager::SendResponse>,
+        responses: Vec<base_common_l1_transactions::SendResponse>,
     ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
         let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)

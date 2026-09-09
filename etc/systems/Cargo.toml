@@ -29,12 +29,9 @@ reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-load-tests = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-consensus-disc = { workspace = true }
 base-consensus-node = { workspace = true }
-base-batcher-encoding-channel = { workspace = true }
-base-batcher-service-driver = { workspace = true }
 base-consensus-peers = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
@@ -42,12 +39,15 @@ base-consensus-sources = { workspace = true }
 base-prover-service-db = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-consensus-providers = { workspace = true }
+base-batcher-service-driver = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
+base-batcher-encoding-channel = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-evm-precompiles = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
@@ -68,7 +68,6 @@ base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-shadow-indexer = { workspace = true, features = ["default"] }
-base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -78,6 +77,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
+base-common-chain-activation = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}

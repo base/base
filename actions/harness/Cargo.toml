@@ -21,7 +21,6 @@ async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-transport = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-node = { workspace = true }
@@ -32,6 +31,7 @@ base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 base-execution-state-memory = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }

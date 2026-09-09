@@ -18,11 +18,11 @@ aws-sdk-ec2 = { workspace = true }
 alloy-signer = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-common-l1-transactions = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-verifier = { workspace = true }
@@ -36,11 +36,11 @@ x509-parser = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 alloy-provider = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "net", "time", "macros"] }
 
 [dev-dependencies]
@@ -52,4 +52,4 @@ metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["default", "rt", "macros", "test-util"] }
 
 [features]
-metrics = ["base-common-observability-metrics/metrics", "base-tx-manager/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "base-common-l1-transactions/metrics", "dep:metrics"]

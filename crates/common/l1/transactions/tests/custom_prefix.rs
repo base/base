@@ -2,7 +2,7 @@
 
 use clap::{CommandFactory, Parser};
 
-base_tx_manager::define_tx_manager_cli!("CUSTOM_PREFIX");
+base_common_l1_transactions::define_tx_manager_cli!("CUSTOM_PREFIX");
 
 #[derive(Parser)]
 struct TestCli {
@@ -50,7 +50,7 @@ fn env_vars_use_custom_prefix() {
 
 #[test]
 fn try_from_default_matches_config_default() {
-    let config = base_tx_manager::TxManagerConfig::try_from(TxManagerCli::default())
+    let config = base_common_l1_transactions::TxManagerConfig::try_from(TxManagerCli::default())
         .expect("default CLI should convert successfully");
-    assert_eq!(config, base_tx_manager::TxManagerConfig::default());
+    assert_eq!(config, base_common_l1_transactions::TxManagerConfig::default());
 }

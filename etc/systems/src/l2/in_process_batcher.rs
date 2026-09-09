@@ -7,9 +7,9 @@
 use alloy_primitives::B256;
 use base_batcher_encoding_channel::DaType;
 use base_batcher_service_driver::{BatcherConfig, BatcherService};
+use base_common_l1_transactions::SignerConfig;
 use base_common_network::PrivateKeySigner;
 use base_common_runtime_tasks::TokioRuntime;
-use base_tx_manager::SignerConfig;
 use eyre::Result;
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_util::sync::CancellationToken;

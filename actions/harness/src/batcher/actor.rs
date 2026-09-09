@@ -8,10 +8,10 @@ use base_batcher_service_driver::{
 };
 use base_batcher_service_driver::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_chain_config::RollupConfig;
+use base_common_l1_transactions::TxManager;
 use base_common_network::PrivateKeySigner;
 use base_common_runtime_tasks::TokioRuntime;
 use base_common_types_chain::BaseBlock;
-use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
 
 use crate::{ActionL2Source, L1Block, L1Miner, L1MinerTxManager, L2BlockProvider};
@@ -254,8 +254,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Use [`wait_until_requeued`] after [`encode_only`] to wait for the driver
     /// to process the failures and return frames to the pending queue.
     ///
-    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
-    /// [`TxManagerError::Rpc`]: base_tx_manager::TxManagerError::Rpc
+    /// [`TxManager::send_async`]: base_common_l1_transactions::TxManager::send_async
+    /// [`TxManagerError::Rpc`]: base_common_l1_transactions::TxManagerError::Rpc
     /// [`encode_only`]: Batcher::encode_only
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn fail_next_n_submissions(&self, n: usize) {
@@ -274,9 +274,9 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`wait_until_requeued`] to wait for the frames to return to pending.
     ///
     /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
-    /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
-    /// [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
+    /// [`TxManager::send_async`]: base_common_l1_transactions::TxManager::send_async
+    /// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+    /// [`TxManagerError::AlreadyReserved`]: base_common_l1_transactions::TxManagerError::AlreadyReserved
     /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
     /// [`cancellation_count`]: Batcher::cancellation_count
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
@@ -287,7 +287,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Returns how many times the driver has called [`TxManager::cancel_tx`] to
     /// recover from a txpool blockage.
     ///
-    /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
     pub fn cancellation_count(&self) -> usize {
         self.tx_manager.cancellation_count()
     }

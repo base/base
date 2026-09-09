@@ -5,11 +5,11 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256};
 use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
+use base_common_l1_transactions::TxManagerError;
 use base_common_network::LocalSignerError;
 use base_proof_contracts::ContractError;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
-use base_tx_manager::TxManagerError;
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 

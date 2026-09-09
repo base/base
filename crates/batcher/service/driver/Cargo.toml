@@ -14,10 +14,10 @@ workspace = true
 [dependencies]
 async-trait = {workspace = true}
 auto_impl = { workspace = true }
-base-tx-manager = {workspace = true}
 base-common-network = {workspace = true}
 base-balance-monitor = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-common-l1-transactions = {workspace = true}
 tracing = {workspace = true, features = ["std"]}
 eyre = {workspace = true, features = ["default"]}
 base-batcher-encoding-channel = {workspace = true}
@@ -75,7 +75,7 @@ metrics = [
     "base-batcher-encoding-channel/metrics",
     "base-consensus-rpc/metrics",
     "base-common-observability-metrics/metrics",
-    "base-tx-manager/metrics",
+    "base-common-l1-transactions/metrics",
     "dep:metrics",
 ]
 test-utils = ["base-protocol/test-utils", "base-common-runtime-tasks/test-utils"]

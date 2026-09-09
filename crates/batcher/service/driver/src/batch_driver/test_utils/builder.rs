@@ -4,9 +4,9 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use base_batcher_encoding_channel::{BatchSubmission, BlobPayload, SubmissionId};
+use base_common_l1_transactions::TxManager;
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_protocol::Frame;
-use base_tx_manager::TxManager;
 
 use crate::{
     BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
