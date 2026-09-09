@@ -4,13 +4,12 @@ use std::{boxed::Box, collections::HashMap, format, string::String, time::Durati
 
 use alloy_eips::eip4844::{env_settings::EnvKzgSettings, kzg_to_versioned_hash};
 use alloy_primitives::{B256, FixedBytes};
-use alloy_rpc_types_beacon::sidecar::GetBlobsResponse;
 use async_trait::async_trait;
 use c_kzg::Blob;
 use reqwest::{self, Client};
 use thiserror::Error;
 
-use crate::{Metrics, blobs::BoxedBlob};
+use crate::{GetBlobsResponse, Metrics, blobs::BoxedBlob};
 
 /// The config spec engine api method.
 const SPEC_METHOD: &str = "eth/v1/config/spec";

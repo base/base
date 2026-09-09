@@ -47,7 +47,6 @@ base-common-network = { workspace = true }
 reth-execution-cache = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
-alloy-rpc-types-beacon = { workspace = true }
 rlimit = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }

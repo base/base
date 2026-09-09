@@ -24,7 +24,6 @@ mod reth;
 mod rpc;
 mod trace;
 mod txpool;
-mod validation;
 mod web3;
 
 pub use reth::RethJitAction;
@@ -45,7 +44,6 @@ pub mod servers {
         rpc::RpcApiServer,
         trace::TraceApiServer,
         txpool::TxPoolApiServer,
-        validation::BlockSubmissionValidationApiServer,
         web3::Web3ApiServer,
     };
 }
@@ -69,7 +67,6 @@ pub mod clients {
         rpc::RpcApiClient,
         trace::TraceApiClient,
         txpool::TxPoolApiClient,
-        validation::BlockSubmissionValidationApiClient,
         web3::Web3ApiClient,
     };
 }

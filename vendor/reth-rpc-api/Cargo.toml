@@ -27,7 +27,6 @@ alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
-alloy-rpc-types-beacon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rpc-types = { workspace = true, features = ["eth"] }

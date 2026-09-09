@@ -35,3 +35,6 @@ pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 
 mod pipeline;
 pub use pipeline::OnlinePipeline;
+
+mod beacon_blobs;
+pub use beacon_blobs::GetBlobsResponse;

@@ -28,7 +28,6 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
 base-common-network = { workspace = true }
-alloy-rpc-types-beacon = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["default"] }

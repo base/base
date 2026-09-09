@@ -28,7 +28,6 @@ reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 base-common-genesis = { workspace = true }
 base-consensus-derive = { workspace = true }
-alloy-rpc-types-beacon = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 lru = { workspace = true, features = ["default"] }

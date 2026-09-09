@@ -525,7 +525,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-beacon",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -548,25 +547,6 @@ dependencies = [
  "alloy-primitives",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "alloy-rpc-types-beacon"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "derive_more",
- "ethereum_ssz",
- "ethereum_ssz_derive",
- "serde",
- "serde_json",
- "serde_with",
- "similar-asserts",
- "thiserror 2.0.19",
- "tree_hash",
- "tree_hash_derive",
 ]
 
 [[package]]
@@ -2610,7 +2590,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-client",
- "alloy-rpc-types-beacon",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-serde",
@@ -3345,7 +3324,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-client",
- "alloy-rpc-types-beacon",
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-transport",
@@ -3822,7 +3800,6 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-beacon",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -3843,7 +3820,6 @@ dependencies = [
  "base-evm-context",
  "base-evm-handler",
  "base-execution-chainspec",
- "base-execution-consensus",
  "base-execution-evm",
  "base-execution-payload-builder",
  "base-execution-payload-types",
@@ -3853,7 +3829,6 @@ dependencies = [
  "base-node-context",
  "base-observability-events",
  "base-state-api",
- "derive_more",
  "dyn-clone",
  "eyre",
  "futures",
@@ -3873,7 +3848,6 @@ dependencies = [
  "reth-db-common",
  "reth-engine-primitives",
  "reth-execution-types",
- "reth-metrics",
  "reth-network",
  "reth-network-api",
  "reth-network-peers",
@@ -3895,7 +3869,6 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
@@ -4522,7 +4495,6 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types",
- "alloy-rpc-types-beacon",
  "alloy-transport",
  "ark-ff 0.6.0",
  "async-trait",
@@ -8015,17 +7987,6 @@ dependencies = [
  "cfg-if",
  "home",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "ethereum_hashing"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aa93f58bb1eb3d1e556e4f408ef1dac130bad01ac37db4e7ade45de40d1c86a"
-dependencies = [
- "cpufeatures 0.2.17",
- "ring",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -15274,7 +15235,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-beacon",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-mev",
@@ -18895,31 +18855,6 @@ checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
  "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "tree_hash"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7fd51aa83d2eb83b04570808430808b5d24fdbf479a4d5ac5dee4a2e2dd2be4"
-dependencies = [
- "alloy-primitives",
- "ethereum_hashing",
- "ethereum_ssz",
- "smallvec",
- "typenum",
-]
-
-[[package]]
-name = "tree_hash_derive"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8840ad4d852e325d3afa7fde8a50b2412f89dce47d7eb291c0cc7f87cd040f38"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

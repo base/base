@@ -12,7 +12,6 @@ description = "Ethereum RPC implementation for Base."
 workspace = true
 
 [dependencies]
-sha2 = { workspace = true }
 serde = { workspace = true }
 tower = { workspace = true }
 thiserror = { workspace = true }
@@ -24,7 +23,6 @@ pin-project = { workspace = true }
 base-metrics = { workspace = true }
 reth-rpc-api = { workspace = true }
 alloy-signer = { workspace = true }
-reth-metrics = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
 alloy-genesis = { workspace = true }
@@ -54,7 +52,6 @@ reth-engine-primitives = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
-base-execution-consensus = { workspace = true }
 base-observability-events = { workspace = true }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -82,13 +79,11 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 reth-execution-types = { workspace = true, features = ["serde"] }
-alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
-derive_more = { workspace = true, features = ["constructor", "full"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }

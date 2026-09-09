@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 
-use base_execution_rpc::ValidationApiConfig;
 use jsonrpsee::server::ServerConfigBuilder;
 use reth_node_core::args::RpcServerArgs;
 use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig, GasPriceOracleConfig};
@@ -17,9 +16,6 @@ use crate::{RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
 pub trait RethRpcServerConfig {
     /// The configured ethereum RPC settings.
     fn eth_config(&self) -> EthConfig;
-
-    /// The configured ethereum RPC settings.
-    fn flashbots_config(&self) -> ValidationApiConfig;
 
     /// Returns state cache configuration.
     fn state_cache_config(&self) -> EthStateCacheConfig;
@@ -73,13 +69,6 @@ impl RethRpcServerConfig for RpcServerArgs {
             .raw_tx_forwarder(self.rpc_forwarder.clone())
             .rpc_evm_memory_limit(self.rpc_evm_memory_limit)
             .force_blob_sidecar_upcasting(self.rpc_force_blob_sidecar_upcasting)
-    }
-
-    fn flashbots_config(&self) -> ValidationApiConfig {
-        ValidationApiConfig {
-            disallow: self.builder_disallow.clone().unwrap_or_default(),
-            validation_window: self.rpc_eth_proof_window,
-        }
     }
 
     fn state_cache_config(&self) -> EthStateCacheConfig {

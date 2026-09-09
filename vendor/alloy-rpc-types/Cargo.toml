@@ -38,7 +38,6 @@ alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
-alloy-rpc-types-beacon = { workspace = true, optional = true }
 alloy-rpc-types-txpool = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"], optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["serde"], optional = true }
@@ -62,7 +61,6 @@ arbitrary = [
     "alloy-primitives/arbitrary",
     "alloy-rpc-types-engine?/arbitrary",
 ]
-beacon = ["dep:alloy-rpc-types-beacon"]
 debug = ["dep:alloy-rpc-types-debug"]
 default = [
     "eth",
@@ -78,7 +76,6 @@ k256 = [
 kzg = ["alloy-rpc-types-engine?/kzg"]
 mev = ["dep:alloy-rpc-types-mev"]
 ssz = [
-    "alloy-rpc-types-beacon?/ssz",
     "alloy-rpc-types-engine?/ssz",
 ]
 trace = ["dep:alloy-rpc-types-trace"]

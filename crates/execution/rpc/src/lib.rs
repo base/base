@@ -62,9 +62,6 @@ pub mod test_utils;
 mod txpool;
 pub use txpool::*;
 
-mod validation;
-pub use validation::*;
-
 mod reth;
 pub use reth::*;
 
