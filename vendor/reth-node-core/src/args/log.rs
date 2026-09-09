@@ -3,7 +3,7 @@
 use std::{fmt, fmt::Display, path::PathBuf, sync::OnceLock};
 
 use clap::{ArgAction, Args, ValueEnum};
-use reth_tracing::{
+use base_common_observability_tracing::{
     FileInfo, LayerInfo, Layers, LogFormat, RethTracer, Tracer, TracingGuards,
     tracing_subscriber::filter::Directive,
 };

@@ -16,7 +16,7 @@ use reth_provider::{
 };
 use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
-use reth_tracing::tracing::{debug, trace};
+use base_common_observability_tracing::tracing::{debug, trace};
 
 use crate::StreamBackfillJob;
 
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_backfill() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Create a key pair for the sender
         let key_pair = generators::generate_key(&mut generators::rng());
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_single_block_backfill() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Create a key pair for the sender
         let key_pair = generators::generate_key(&mut generators::rng());
@@ -333,7 +333,7 @@ mod tests {
     /// pipeline used during initial sync.
     #[test]
     fn test_backfill_state_provider_parity() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let key_pair = generators::generate_key(&mut generators::rng());
         let address = public_key_to_address(key_pair.public_key());
@@ -398,7 +398,7 @@ mod tests {
     /// produced block-by-block.
     #[test]
     fn test_backfill_batch_state_provider_parity() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let key_pair = generators::generate_key(&mut generators::rng());
         let address = public_key_to_address(key_pair.public_key());
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_backfill_with_batch_threshold() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Create a key pair for the sender
         let key_pair = generators::generate_key(&mut generators::rng());

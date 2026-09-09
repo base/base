@@ -1349,7 +1349,7 @@ mod test {
 
     #[test]
     fn pack_eth68_request() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // RIG TEST
 
@@ -1400,7 +1400,7 @@ mod test {
 
     #[test]
     fn pack_eth68_request_does_not_overflow_announced_size() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let tx_fetcher = &mut TransactionFetcher::default();
 
@@ -1437,7 +1437,7 @@ mod test {
 
     #[test]
     fn pack_eth72_request_uses_metadata_size_limit() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let tx_fetcher = &mut TransactionFetcher::default();
 
@@ -1463,7 +1463,7 @@ mod test {
 
     #[tokio::test]
     async fn test_on_fetch_pending_hashes() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let tx_fetcher = &mut TransactionFetcher::default();
 

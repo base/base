@@ -806,7 +806,7 @@ mod tests {
     #[test]
     fn test_all_storage_slots_deleted_not_wiped_exact_keys() {
         use tracing::debug;
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // This test reproduces an edge case where:
         // - cursor is not None (not wiped)
@@ -975,7 +975,7 @@ mod tests {
                 in_memory_nodes in sorted_in_memory_nodes_strategy(),
                 op_choices in prop::collection::vec(any::<u8>(), 10..500),
             ) {
-                reth_tracing::init_test_tracing();
+                base_common_observability_tracing::init_test_tracing();
                 use tracing::debug;
 
                 debug!(

@@ -114,7 +114,7 @@ fn test_attributes_generator(timestamp: u64) -> BasePayloadBuilderAttributes {
 /// Smoke test: node boots with `RocksDB` routing enabled.
 #[tokio::test]
 async fn test_rocksdb_node_startup() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
 
@@ -139,7 +139,7 @@ async fn test_rocksdb_node_startup() -> Result<()> {
 /// Block mining works with `RocksDB` storage.
 #[tokio::test]
 async fn test_rocksdb_block_mining() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -191,7 +191,7 @@ async fn test_rocksdb_block_mining() -> Result<()> {
 /// Tx hash lookup exercises `TransactionHashNumbers` table.
 #[tokio::test]
 async fn test_rocksdb_transaction_queries() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -255,7 +255,7 @@ async fn test_rocksdb_transaction_queries() -> Result<()> {
 /// Multiple transactions in the same block are correctly persisted to `RocksDB`.
 #[tokio::test]
 async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -320,7 +320,7 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
 /// Transactions across multiple blocks have globally continuous `tx_numbers`.
 #[tokio::test]
 async fn test_rocksdb_txs_across_blocks() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -402,7 +402,7 @@ async fn test_rocksdb_txs_across_blocks() -> Result<()> {
 /// Pending transactions should NOT appear in `RocksDB` until mined.
 #[tokio::test]
 async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -458,7 +458,7 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
 /// Verifies that reorg unwind reads changesets from static files.
 #[tokio::test]
 async fn test_rocksdb_reorg_unwind() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -578,7 +578,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 /// must then be served from `RocksDB` changesets.
 #[tokio::test]
 async fn test_rocksdb_historical_account_queries() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -719,7 +719,7 @@ async fn test_rocksdb_historical_account_queries() -> Result<()> {
 /// blocks survive.
 #[tokio::test]
 async fn test_rocksdb_account_history_pruning() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
@@ -813,7 +813,7 @@ async fn test_rocksdb_account_history_pruning() -> Result<()> {
 /// lost every cycle.
 #[tokio::test]
 async fn test_rocksdb_storage_history_pruning() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();

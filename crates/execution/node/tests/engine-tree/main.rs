@@ -50,7 +50,7 @@ fn v2_engine_tree_setup() -> Setup {
 /// Test that verifies forkchoice update and canonical chain insertion functionality.
 #[tokio::test]
 async fn test_engine_tree_fcu_canon_chain_insertion_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
@@ -71,7 +71,7 @@ async fn test_engine_tree_fcu_canon_chain_insertion_e2e() -> Result<()> {
 /// Test that verifies forkchoice update with a reorg where all blocks are already available.
 #[tokio::test]
 async fn test_engine_tree_fcu_reorg_with_all_blocks_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
@@ -105,7 +105,7 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_e2e() -> Result<()> {
 /// correctly handles chains where the canonical head is older than fork tips.
 #[tokio::test]
 async fn test_engine_tree_valid_forks_with_older_canonical_head_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
@@ -142,7 +142,7 @@ async fn test_engine_tree_valid_forks_with_older_canonical_head_e2e() -> Result<
 /// Test that verifies valid and invalid forks with an older canonical head.
 #[tokio::test]
 async fn test_engine_tree_valid_and_invalid_forks_with_older_canonical_head_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
@@ -192,7 +192,7 @@ async fn test_engine_tree_valid_and_invalid_forks_with_older_canonical_head_e2e(
 /// attempts to build on top of them fail appropriately.
 #[tokio::test]
 async fn test_engine_tree_reorg_with_missing_ancestor_expecting_valid_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
@@ -224,7 +224,7 @@ async fn test_engine_tree_reorg_with_missing_ancestor_expecting_valid_e2e() -> R
 /// Test that verifies buffered blocks are eventually connected when sent in reverse order.
 #[tokio::test]
 async fn test_engine_tree_buffered_blocks_are_eventually_connected_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(
@@ -275,7 +275,7 @@ async fn test_engine_tree_buffered_blocks_are_eventually_connected_e2e() -> Resu
 /// advances the canonical head when all blocks are already available.
 #[tokio::test]
 async fn test_engine_tree_fcu_extends_canon_chain_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
@@ -306,7 +306,7 @@ async fn test_engine_tree_fcu_extends_canon_chain_e2e() -> Result<()> {
 /// 5. Both nodes end up with the same canonical chain through real P2P sync
 #[tokio::test]
 async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     const MIN_BLOCKS_FOR_PIPELINE_RUN: u64 = 32; // EPOCH_SLOTS from alloy-eips
 
@@ -360,7 +360,7 @@ async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Res
 /// Exercises the full `save_blocks` → `write_state` → static file changeset path with hashed keys.
 #[tokio::test]
 async fn test_engine_tree_fcu_canon_chain_insertion_v2_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(v2_engine_tree_setup())
@@ -379,7 +379,7 @@ async fn test_engine_tree_fcu_canon_chain_insertion_v2_e2e() -> Result<()> {
 /// Exercises `write_state_reverts` path with hashed changeset keys during CL-driven reorgs.
 #[tokio::test]
 async fn test_engine_tree_fcu_reorg_with_all_blocks_v2_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(v2_engine_tree_setup())
@@ -406,7 +406,7 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_v2_e2e() -> Result<()> {
 /// v2 variant: Verifies progressive canonical chain extension in v2 storage mode.
 #[tokio::test]
 async fn test_engine_tree_fcu_extends_canon_chain_v2_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(v2_engine_tree_setup())
@@ -486,7 +486,7 @@ fn disk_reorg_test() -> TestBuilder {
 /// Exercises `find_disk_reorg()` → `RemoveBlocksAbove` with v2 hashed key format.
 #[tokio::test]
 async fn test_engine_tree_disk_reorg_v2_e2e() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     disk_reorg_test().run(BaseNodeTestUtils::test_setup).await?;
     Ok(())
 }

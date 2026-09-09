@@ -392,7 +392,7 @@ mod tests {
             )))
         }
 
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Extension (Key = 0x0000000000000000000000000000000000000000000000000000000000000)
         // └── Branch (`branch_node_0`)

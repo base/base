@@ -10,7 +10,7 @@ use reth_exex::{
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
 use reth_provider::CanonStateSubscriptions;
-use reth_tracing::tracing::{debug, info};
+use base_common_observability_tracing::tracing::{debug, info};
 use tracing::Instrument;
 
 use crate::WithConfigs;
@@ -113,7 +113,7 @@ impl ExExLauncher {
             let executor = components.task_executor().clone();
             exexes.push(async move {
                 debug!(target: "reth::cli", id, "spawning exex");
-                let span = reth_tracing::tracing::info_span!("exex", id);
+                let span = base_common_observability_tracing::tracing::info_span!("exex", id);
 
                 // init the exex
                 let exex = exex.run(context);

@@ -127,13 +127,13 @@ impl LogConfig {
             #[cfg(feature = "otlp")]
             if let Some(mut endpoint) = trace_args.otlp.clone() {
                 trace_args.protocol.validate_endpoint(&mut endpoint)?;
-                let config = reth_tracing_otlp::OtlpConfig::new(
+                let config = base_common_observability_tracing::OtlpConfig::new(
                     trace_args.service_name.clone(),
                     endpoint,
                     trace_args.protocol,
                     trace_args.sample_ratio,
                 )?;
-                let layer = reth_tracing_otlp::span_layer(config)?
+                let layer = base_common_observability_tracing::span_layer(config)?
                     .with_filter(trace_args.otlp_filter.clone());
                 Some(Box::new(layer))
             } else {

@@ -10,7 +10,7 @@ use base_common_types_chain::BlockHeader;
 use base_common_types_payload::PayloadExtras;
 use base_execution_payload_types::ExecutionPayload;
 use futures::{Stream, StreamExt};
-use reth_tracing::tracing::{debug, warn};
+use base_common_observability_tracing::tracing::{debug, warn};
 use tokio::sync::mpsc::Sender;
 
 use crate::PayloadProvider;

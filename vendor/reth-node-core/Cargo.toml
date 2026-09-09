@@ -51,8 +51,6 @@ reth-discv4 = { workspace = true, features = ["default"] }
 reth-net-nat = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
-reth-tracing-otlp = { workspace = true, features = ["default"] }
-reth-tracing = { workspace = true, features = ["default", "std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 reth-primitives-traits = { workspace = true, features = ["rayon"] }
@@ -62,6 +60,7 @@ toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env", "string"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-types-payload = { workspace = true, features = ["std", "jwt-aws-lc-rs"] }
+base-common-observability-tracing = {workspace = true, features = ["default", "otlp", "std"]}
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -71,9 +70,9 @@ proptest = { workspace = true, features = ["default"] }
 jemalloc = ["reth-cli-util/jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global"]
-otlp = ["reth-tracing/otlp", "reth-tracing-otlp/otlp"]
-otlp-logs = ["reth-tracing/otlp-logs", "reth-tracing-otlp/otlp-logs"]
-tracy = ["reth-tracing/tracy"]
+otlp = ["base-common-observability-tracing/otlp"]
+otlp-logs = ["base-common-observability-tracing/otlp-logs"]
+tracy = ["base-common-observability-tracing/tracy"]
 
 min-error-logs = ["tracing/release_max_level_error"]
 min-warn-logs = ["tracing/release_max_level_warn"]

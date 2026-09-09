@@ -77,7 +77,6 @@ reth-stages-types = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
-reth-tracing = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
@@ -85,6 +84,7 @@ reth-network-types = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-discv4 = { workspace = true, features = ["default", "test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 
 [features]

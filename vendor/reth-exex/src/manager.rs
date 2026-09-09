@@ -21,7 +21,7 @@ use metrics::Gauge;
 use reth_chain_state::ForkChoiceStream;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::HeaderProvider;
-use reth_tracing::tracing::{debug, warn};
+use base_common_observability_tracing::tracing::{debug, warn};
 use tokio::sync::{
     mpsc::{self, UnboundedReceiver, UnboundedSender, error::SendError},
     watch,
@@ -1302,7 +1302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exex_wal() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut rng = generators::rng();
 

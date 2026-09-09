@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn prune_receipts_by_logs() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

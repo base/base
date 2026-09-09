@@ -1417,7 +1417,7 @@ mod tests {
 
     #[test]
     fn state_root_task_matches_serial_root() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let factory =
             create_test_provider_factory_with_chain_spec(Arc::new(BaseChainSpec::default()));

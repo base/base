@@ -26,7 +26,6 @@ page_size = { workspace = true, optional = true }
 sysinfo = { workspace = true, features = ["system"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
-reth-tracing = { workspace = true, features = ["default"] }
 reth-nippy-jar = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
@@ -35,6 +34,7 @@ quanta = { workspace = true, optional = true, features = ["default"] }
 rustc-hash = { workspace = true, features = ["std"], optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
 reth-libmdbx = { workspace = true, features = ["default", "return-borrowed", "read-tx-timeouts"], optional = true }
 

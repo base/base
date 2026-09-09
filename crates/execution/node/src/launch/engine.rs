@@ -19,7 +19,7 @@ use reth_node_events::node;
 use reth_provider::{BlockNumReader, StorageSettingsCache};
 use reth_storage_overlay::OverlayManager;
 use base_common_runtime_tasks::EventSender;
-use reth_tracing::tracing::{debug, error, info};
+use base_common_observability_tracing::tracing::{debug, error, info};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

@@ -21,7 +21,7 @@ use alloy_primitives::B256;
 pub use error::{WalError, WalResult};
 use parking_lot::{RwLock, RwLockReadGuard};
 use reth_exex_types::ExExNotification;
-use reth_tracing::tracing::{debug, instrument};
+use base_common_observability_tracing::tracing::{debug, instrument};
 
 /// WAL is a write-ahead log (WAL) that stores the notifications sent to ExExes.
 ///
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_wal() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut rng = generators::rng();
 

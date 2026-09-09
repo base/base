@@ -13,7 +13,7 @@ use futures::{Stream, StreamExt};
 use reth_exex_types::ExExHead;
 use reth_provider::{BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory};
 use reth_stages_api::ExecutionStageThresholds;
-use reth_tracing::tracing::debug;
+use base_common_observability_tracing::tracing::debug;
 use tokio::sync::mpsc::Receiver;
 
 use crate::{BackfillJobFactory, ExExNotification, StreamBackfillJob, WalHandle};
@@ -889,7 +889,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_notifications_ahead_of_head() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let mut rng = generators::rng();
 
         let temp_dir = tempfile::tempdir().unwrap();

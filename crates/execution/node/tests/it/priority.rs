@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_queued_transaction_included_after_nonce_gap_closes() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let genesis: Genesis = BaseNodeTestUtils::genesis();
     let chain_spec =

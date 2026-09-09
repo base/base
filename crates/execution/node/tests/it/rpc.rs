@@ -15,7 +15,7 @@ use reth_node_core::{
 // <https://github.com/paradigmxyz/reth/issues/19765>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_admin_external_ip() -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let exec = Runtime::test();
 

@@ -440,7 +440,7 @@ where
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_filter_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -449,7 +449,7 @@ async fn test_call_filter_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_admin_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -458,7 +458,7 @@ async fn test_call_admin_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_admin_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -467,7 +467,7 @@ async fn test_call_admin_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_admin_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -476,7 +476,7 @@ async fn test_call_admin_functions_http_and_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_eth_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -485,7 +485,7 @@ async fn test_call_eth_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_send_raw_transaction_sync_accepts_optional_timeout_arg() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -507,7 +507,7 @@ async fn test_eth_send_raw_transaction_sync_accepts_optional_timeout_arg() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_eth_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -516,7 +516,7 @@ async fn test_call_eth_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_eth_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -525,7 +525,7 @@ async fn test_call_eth_functions_http_and_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_debug_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -534,7 +534,7 @@ async fn test_call_debug_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_debug_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -543,7 +543,7 @@ async fn test_call_debug_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_debug_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -552,7 +552,7 @@ async fn test_call_debug_functions_http_and_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_net_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -561,7 +561,7 @@ async fn test_call_net_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_net_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -570,7 +570,7 @@ async fn test_call_net_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_net_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -579,7 +579,7 @@ async fn test_call_net_functions_http_and_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_trace_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -588,7 +588,7 @@ async fn test_call_trace_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_trace_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -597,7 +597,7 @@ async fn test_call_trace_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_trace_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -606,7 +606,7 @@ async fn test_call_trace_functions_http_and_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_web3_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -615,7 +615,7 @@ async fn test_call_web3_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_web3_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -624,7 +624,7 @@ async fn test_call_web3_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_web3_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -633,7 +633,7 @@ async fn test_call_web3_functions_http_and_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_otterscan_functions_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();
@@ -642,7 +642,7 @@ async fn test_call_otterscan_functions_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_otterscan_functions_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
@@ -651,7 +651,7 @@ async fn test_call_otterscan_functions_ws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_otterscan_functions_http_and_ws() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -661,7 +661,7 @@ async fn test_call_otterscan_functions_http_and_ws() {
 // <https://github.com/paradigmxyz/reth/issues/5830>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_logs_args() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
@@ -676,7 +676,7 @@ async fn test_eth_logs_args() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_block_by_number_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -704,7 +704,7 @@ async fn test_eth_get_block_by_number_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_block_by_hash_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -737,7 +737,7 @@ async fn test_eth_get_block_by_hash_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_code_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -795,7 +795,7 @@ async fn test_eth_get_code_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_block_number_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -816,7 +816,7 @@ async fn test_eth_block_number_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_chain_id_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -837,7 +837,7 @@ async fn test_eth_chain_id_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_syncing_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -858,7 +858,7 @@ async fn test_eth_syncing_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_protocol_version_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -879,7 +879,7 @@ async fn test_eth_protocol_version_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_coinbase_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -899,7 +899,7 @@ async fn test_eth_coinbase_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_accounts_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -920,7 +920,7 @@ async fn test_eth_accounts_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_block_transaction_count_by_hash_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -957,7 +957,7 @@ async fn test_eth_get_block_transaction_count_by_hash_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_block_transaction_count_by_number_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -998,7 +998,7 @@ async fn test_eth_get_block_transaction_count_by_number_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_uncle_count_by_block_hash_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1030,7 +1030,7 @@ async fn test_eth_get_uncle_count_by_block_hash_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_uncle_count_by_block_number_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1063,7 +1063,7 @@ async fn test_eth_get_uncle_count_by_block_number_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_block_receipts_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1104,7 +1104,7 @@ async fn test_eth_get_block_receipts_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_uncle_by_block_hash_and_index_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1145,7 +1145,7 @@ async fn test_eth_get_uncle_by_block_hash_and_index_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_uncle_by_block_number_and_index_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1182,7 +1182,7 @@ async fn test_eth_get_uncle_by_block_number_and_index_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_transaction_by_hash_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1219,7 +1219,7 @@ async fn test_eth_get_transaction_by_hash_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_transaction_by_block_hash_and_index_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1264,7 +1264,7 @@ async fn test_eth_get_transaction_by_block_hash_and_index_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_transaction_by_block_number_and_index_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1305,7 +1305,7 @@ async fn test_eth_get_transaction_by_block_number_and_index_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_transaction_receipt_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1346,7 +1346,7 @@ async fn test_eth_get_transaction_receipt_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_balance_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1396,7 +1396,7 @@ async fn test_eth_get_balance_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_storage_at_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1462,7 +1462,7 @@ async fn test_eth_get_storage_at_rpc_call() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_get_transaction_count_rpc_call() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1534,7 +1534,7 @@ fn test_rpc_registry_basic() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_fee_history_raw() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
     let handle = launch_http().await;
@@ -1551,7 +1551,7 @@ async fn test_eth_fee_history_raw() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_db_get() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_http().await;
     let client = handle.http_client().unwrap();

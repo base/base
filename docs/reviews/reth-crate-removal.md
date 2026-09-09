@@ -180,8 +180,8 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
 | [reth-testing-utils](../../vendor/reth-testing-utils/Cargo.toml) | Test support; retain or migrate |
 | [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
-| [reth-tracing](../../vendor/reth-tracing/Cargo.toml) | Retain shared infrastructure |
-| [reth-tracing-otlp](../../vendor/reth-tracing-otlp/Cargo.toml) | Retain shared infrastructure |
+| [base-common-observability-tracing](../../crates/common/observability/tracing/Cargo.toml) | Retain shared infrastructure |
+| [base-common-observability-tracing](../../crates/common/observability/tracing/Cargo.toml) | Retain shared infrastructure |
 | [reth-transaction-pool](../../vendor/reth-transaction-pool/Cargo.toml) | Retain shared infrastructure |
 | [reth-trie](../../vendor/reth-trie/Cargo.toml) | Retain shared infrastructure |
 | [reth-trie-common](../../vendor/reth-trie-common/Cargo.toml) | Retain shared infrastructure |

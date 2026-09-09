@@ -14,7 +14,7 @@ use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
-use reth_tracing::tracing::warn;
+use base_common_observability_tracing::tracing::warn;
 use reth_trie::{HashedStorage, updates::TrieUpdates};
 use serde::Serialize;
 

@@ -5,7 +5,7 @@ use reth_network_api::{
 };
 use reth_network_peers::{NodeRecord, PeerId};
 use base_common_runtime_tasks::EventStream;
-use reth_tracing::tracing::info;
+use base_common_observability_tracing::tracing::info;
 
 /// Helper for network operations
 #[derive(Debug)]

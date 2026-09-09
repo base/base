@@ -15,7 +15,7 @@ use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReader, Chain, StateProviderFactory};
 use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
-use reth_tracing::tracing::debug;
+use base_common_observability_tracing::tracing::debug;
 use tokio::task::JoinHandle;
 
 use super::job::BackfillJobResult;
@@ -259,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_blocks() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Create a key pair for the sender
         let key_pair = generators::generate_key(&mut generators::rng());
@@ -296,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Create a key pair for the sender
         let key_pair = generators::generate_key(&mut generators::rng());
@@ -389,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_parallel_range_advance() -> Result<()> {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Create a key pair for the sender
         let key_pair = generators::generate_key(&mut generators::rng());

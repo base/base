@@ -177,7 +177,7 @@ where
 /// When `storage_settings` is `Some`, the pipeline provider factory is configured with the given
 /// settings before genesis initialization (e.g. v2 storage mode).
 async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Generate a keypair for signing transactions
     let mut rng = generators::rng();

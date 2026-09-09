@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 #[ignore]
 #[tokio::test]
 async fn can_sync() -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let (mut nodes, wallet) = BaseNodeTestUtils::setup(3).await?;
     let wallet = Arc::new(Mutex::new(wallet));

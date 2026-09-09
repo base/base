@@ -40,7 +40,7 @@ pub fn should_run(start: &LazyLock<Instant>, last: &AtomicU64, duration_millis: 
 ///
 /// ```ignore
 /// use std::time::Duration;
-/// use reth_tracing::throttle;
+/// use base_common_observability_tracing::throttle;
 ///
 /// // Log at most once per second.
 /// throttle!(Duration::from_secs(1), || {

@@ -75,7 +75,7 @@ const TEST_CREATE2_SALT: B256 = B256::with_last_byte(0x42);
 ///    longer needed after Cancun semantics are active.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_selfdestruct_changesets_use_plain_slots() -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Build a 3-block scenario:
     // - block 1/2 are pre-Cancun (selfdestruct still clears storage)
@@ -158,7 +158,7 @@ async fn test_pipeline_v2_selfdestruct_changesets_use_plain_slots() -> eyre::Res
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_prefunded_create2_selfdestruct_does_not_wipe_storage() -> eyre::Result<()>
 {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let scenario = setup_create2_selfdestruct_scenario()?;
     let hashed_address = keccak256(scenario.child_contract);
@@ -195,7 +195,7 @@ async fn test_pipeline_v2_prefunded_create2_selfdestruct_does_not_wipe_storage()
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_single_batch_write_then_selfdestruct_changesets_plain_slots()
 -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let scenario = setup_selfdestruct_scenario()?;
     let (pipeline_provider_factory, pipeline_genesis) =
@@ -231,7 +231,7 @@ async fn test_pipeline_v2_single_batch_write_then_selfdestruct_changesets_plain_
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_single_batch_reverted_slot_then_selfdestruct_changesets_plain_slots()
 -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let scenario = setup_reverted_slot_selfdestruct_scenario()?;
     let (pipeline_provider_factory, pipeline_genesis) =
@@ -266,7 +266,7 @@ async fn test_pipeline_v2_single_batch_reverted_slot_then_selfdestruct_changeset
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_single_batch_same_address_double_wipe_changesets_plain_slots()
 -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let scenario = setup_same_address_double_wipe_scenario()?;
     let (pipeline_provider_factory, pipeline_genesis) =
@@ -309,7 +309,7 @@ async fn test_pipeline_v2_single_batch_same_address_double_wipe_changesets_plain
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_single_batch_same_address_recreate_and_write_same_block_then_wipe_plain_slots()
 -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let scenario = setup_same_address_recreate_and_write_same_block_then_wipe_scenario()?;
     let (pipeline_provider_factory, pipeline_genesis) =
@@ -350,7 +350,7 @@ async fn test_pipeline_v2_single_batch_same_address_recreate_and_write_same_bloc
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_single_block_intra_block_and_intra_tx_wipes_use_plain_slots()
 -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let scenario = setup_intra_block_and_intra_tx_selfdestruct_scenario()?;
     let (pipeline_provider_factory, pipeline_genesis) =

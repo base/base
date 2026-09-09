@@ -3290,7 +3290,7 @@ mod tests {
             delete_pct in 0.0..=0.33f64, // percent of overlapping changeset which are deletes
             shuffle_seed in arb::<u64>(),
         ) {
-            reth_tracing::init_test_tracing();
+            base_common_observability_tracing::init_test_tracing();
             info!(target: TRACE_TARGET, ?shuffle_seed, "PROPTEST START");
 
             // Filter out zero-valued entries from the initial dataset (zeros mean "absent").

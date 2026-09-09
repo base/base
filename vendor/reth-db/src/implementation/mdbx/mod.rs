@@ -22,7 +22,7 @@ use reth_libmdbx::{
     MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
 };
 use reth_storage_errors::db::LogLevel;
-use reth_tracing::tracing::error;
+use base_common_observability_tracing::tracing::error;
 use tx::Tx;
 
 use crate::{
@@ -470,7 +470,7 @@ impl DatabaseEnv {
                     "External process has a long-lived database transaction that grows the database file. \
                      Use shorter-lived read transactions or shut down the node."
                 };
-                reth_tracing::tracing::warn!(
+                base_common_observability_tracing::tracing::warn!(
                     target: "storage::db::mdbx",
                     ?process_id,
                     ?thread_id,

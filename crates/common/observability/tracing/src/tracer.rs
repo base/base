@@ -1,91 +1,7 @@
-//!  The `tracing` module provides functionalities for setting up and configuring logging.
-//!
-//!  It includes structures and functions to create and manage various logging layers: stdout,
-//!  file, or journald. The module's primary entry point is the `Tracer` struct, which can be
-//!  configured to use different logging formats and destinations. If no layer is specified, it will
-//!  default to stdout.
-//!
-//!  # Examples
-//!
-//!  Basic usage:
-//!
-//!  ```
-//!  use reth_tracing::{
-//!      LayerInfo, RethTracer, Tracer,
-//!      tracing::level_filters::LevelFilter,
-//!      LogFormat,
-//!  };
-//!
-//!  fn main() -> eyre::Result<()> {
-//!      let tracer = RethTracer::new().with_stdout(LayerInfo::new(
-//!          LogFormat::Json,
-//!          LevelFilter::INFO.to_string(),
-//!          "debug".to_string(),
-//!          None,
-//!      ));
-//!
-//!      tracer.init()?;
-//!
-//!      // Your application logic here
-//!
-//!      Ok(())
-//!  }
-//!  ```
-//!
-//! This example sets up a tracer with JSON format logging to stdout.
+//! Application log layers and tracing initialization.
 
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-// Re-export tracing crates
-pub use tracing;
-#[cfg(feature = "std")]
-pub use tracing_appender;
-#[cfg(feature = "std")]
-pub use tracing_subscriber;
-
-#[cfg(all(feature = "tracy", feature = "std"))]
-tracy_client::register_demangler!();
-
-// Re-export our types
-#[cfg(feature = "std")]
-pub use formatter::LogFormat;
-#[cfg(feature = "std")]
-pub use layers::{FileInfo, FileWorkerGuard, Layers, TracingGuards};
-#[cfg(feature = "std")]
-pub use log_handle::{
-    LogFilterReloadHandle, install_log_handle, log_handle_available, set_log_verbosity,
-    set_log_vmodule,
-};
-#[cfg(feature = "std")]
-pub use test_tracer::TestTracer;
-
-#[cfg(feature = "std")]
-#[doc(hidden)]
-pub mod __private {
-    pub use super::throttle::*;
-}
-
-#[cfg(feature = "std")]
-mod formatter;
-#[cfg(feature = "std")]
-mod layers;
-#[cfg(feature = "std")]
-pub mod log_handle;
-#[cfg(feature = "std")]
-mod test_tracer;
-#[cfg(feature = "std")]
-mod throttle;
-
-#[cfg(feature = "std")]
+use crate::{FileInfo, Layers, LogFormat, TestTracer, TracingGuards, install_log_handle};
 use tracing::level_filters::LevelFilter;
-#[cfg(feature = "std")]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 ///  Tracer for application logging.
@@ -194,10 +110,14 @@ impl Default for RethTracer {
 #[cfg(feature = "std")]
 #[derive(Debug, Clone)]
 pub struct LayerInfo {
-    format: LogFormat,
-    default_directive: String,
-    filters: String,
-    color: Option<String>,
+    /// Output format for this layer.
+    pub format: LogFormat,
+    /// Fallback filter directive.
+    pub default_directive: String,
+    /// Additional filter directives.
+    pub filters: String,
+    /// Terminal coloring mode.
+    pub color: Option<String>,
 }
 
 #[cfg(feature = "std")]

@@ -165,7 +165,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn download_one_by_one_on_task() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let p3 = SealedHeader::default();
         let p2 = child_header(&p3);

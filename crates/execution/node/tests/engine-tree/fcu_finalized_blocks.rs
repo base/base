@@ -38,7 +38,7 @@ fn default_engine_tree_setup() -> Setup {
 /// of the ancestor whose block eventually reorgs out the current head.
 #[tokio::test]
 async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())

@@ -16,7 +16,7 @@ use reth_e2e_test_utils::{
 
 #[tokio::test]
 async fn test_testsuite_op_assert_mine_block() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_chain_spec(Arc::new(
@@ -65,7 +65,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
 
 #[tokio::test]
 async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_chain_spec(Arc::new(

@@ -211,7 +211,7 @@ fn valid_bal(address: Address) -> (Bytes, B256) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn account_range_roundtrip_carries_slim_encoding_and_proof() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let factory = genesis_provider_factory();
     let accounts: Vec<(Address, Account)> = (0..5u64)
@@ -285,7 +285,7 @@ async fn account_range_roundtrip_carries_slim_encoding_and_proof() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn account_range_bounded_by_response_bytes_excludes_trailing_account() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let factory = genesis_provider_factory();
     let accounts: Vec<(Address, Account)> = (0..5u64)
@@ -350,7 +350,7 @@ async fn account_range_bounded_by_response_bytes_excludes_trailing_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_range_roundtrip_carries_rlp_values_and_proof() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let factory = genesis_provider_factory();
     let address = Address::random();
@@ -420,7 +420,7 @@ async fn storage_range_roundtrip_carries_rlp_values_and_proof() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_range_empty_window_returns_boundary_slot() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let factory = genesis_provider_factory();
     let address = Address::random();
@@ -487,7 +487,7 @@ async fn storage_range_empty_window_returns_boundary_slot() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_ranges_multi_account_bounds_only_first_account() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let factory = genesis_provider_factory();
     let (address_a, account_a) =
@@ -593,7 +593,7 @@ async fn storage_ranges_multi_account_bounds_only_first_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn retained_and_expired_account_range_requests_resolve_without_hanging() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Covers request routing only, not changeset reversion.
     let factory = create_test_provider_factory();
@@ -715,7 +715,7 @@ async fn retained_and_expired_account_range_requests_resolve_without_hanging() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn block_access_lists_roundtrip_preserves_positions_and_request_id() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let bal_store = BalStoreHandle::new(InMemoryBalStore::default());
     let mut provider = MockEthProvider::default();
@@ -770,7 +770,7 @@ async fn block_access_lists_roundtrip_preserves_positions_and_request_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn block_access_lists_roundtrip_honors_request_soft_limit() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let bal_store = BalStoreHandle::new(InMemoryBalStore::default());
     let mut provider = MockEthProvider::default();
@@ -844,7 +844,7 @@ async fn block_access_lists_roundtrip_honors_request_soft_limit() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn byte_codes_roundtrip_preserves_found_code_order() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let provider = Arc::new(MockEthProvider::default());
     let code_a = Bytes::from_static(&[0x60, 0x01, 0x60, 0x02, 0x01]);

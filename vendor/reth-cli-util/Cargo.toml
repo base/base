@@ -23,28 +23,27 @@ reth-fs-util = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-tracing = { workspace = true, optional = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 tracy-client = { workspace = true, features = ["default", "demangle"], optional = true }
+base-common-observability-tracing = { workspace = true, optional = true, features = ["default"] }
+
 [dev-dependencies]
 rand = { workspace = true, features = ["default"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
 tikv-jemalloc-sys = { workspace = true, optional = true, features = ["default"] }
 tikv-jemallocator = { workspace = true, optional = true, features = ["default"] }
 snmalloc-rs = { workspace = true, features = ["default", "build_cc"], optional = true }
+
 [features]
-jemalloc = [
-    "dep:tikv-jemallocator",
-    "dep:tikv-jemalloc-sys",
-    "tikv-jemallocator?/override_allocator_on_supported_platforms",
-]
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys", "tikv-jemallocator?/override_allocator_on_supported_platforms"]
 
 # Enables jemalloc profiling features
 jemalloc-prof = ["jemalloc", "tikv-jemallocator?/profiling"]
 
 # Wraps the selected allocator in the tracy profiling allocator
-tracy-allocator = ["dep:tracy-client", "dep:reth-tracing"]
+tracy-allocator = ["dep:tracy-client", "dep:base-common-observability-tracing"]
 
 snmalloc = ["dep:snmalloc-rs"]
 

@@ -29,7 +29,7 @@ use reth_network_peers::NodeRecord;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
-use reth_tracing::tracing::{debug, info};
+use base_common_observability_tracing::tracing::{debug, info};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{

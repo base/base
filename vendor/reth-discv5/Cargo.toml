@@ -37,7 +37,7 @@ base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 alloy-hardforks = { workspace = true }
 base-common-chain-config = { workspace = true }
 rand_08 = { workspace = true, features = ["default"] }
-reth-tracing = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "rand"] }

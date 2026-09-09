@@ -4,7 +4,7 @@ use std::path::Path;
 
 use eyre::Context;
 pub use reth_libmdbx::*;
-use reth_tracing::tracing::{info, warn};
+use base_common_observability_tracing::tracing::{info, warn};
 
 pub use crate::implementation::mdbx::*;
 use crate::{TableSet, Tables, is_database_empty};
@@ -126,7 +126,7 @@ fn drop_orphan_tables(db: &DatabaseEnv) {
             }
             Ok(false) => {}
             Err(e) => {
-                reth_tracing::tracing::warn!(
+                base_common_observability_tracing::tracing::warn!(
                     target: "reth::db",
                     table = %table_name,
                     %e,

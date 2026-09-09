@@ -2170,7 +2170,7 @@ mod tests {
     /// could cause a `usize` underflow panic in `pop_branch`.
     #[test]
     fn test_proof_calculator_reuse_after_error() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let slots = [
             B256::right_padding_from(&[0x10]),
@@ -2324,7 +2324,7 @@ mod tests {
                         (Just(storage), targets_strategy)
                     })
             ) {
-                reth_tracing::init_test_tracing();
+                base_common_observability_tracing::init_test_tracing();
                 let harness = ProofTestHarness::new(storage);
 
                 harness.assert_proof(targets).expect("Proof generation failed");
@@ -2334,7 +2334,7 @@ mod tests {
 
     #[test]
     fn test_exact_subtrie_targets_with_root_target() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let slot_80 = B256::right_padding_from(&[0x80]);
         let slot_82 = B256::right_padding_from(&[0x82]);
@@ -2561,7 +2561,7 @@ mod tests {
     fn test_big_trie() {
         use rand::prelude::*;
 
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let mut rng = rand::rngs::SmallRng::seed_from_u64(1);
 
         let mut rand_b256 = || {
@@ -2595,7 +2595,7 @@ mod tests {
 
     #[test]
     fn test_node_with_masked_empty_child() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(42u64);
 
@@ -2651,7 +2651,7 @@ mod tests {
     /// Since `0x7` is past `0x6`, all remaining children are skipped and the branch is popped.
     #[test]
     fn test_node_with_masked_empty_child_lower_bound_past_branch() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(42u64);
 
@@ -2705,7 +2705,7 @@ mod tests {
     /// is discovered and its subtrie is recalculated from leaves.
     #[test]
     fn test_prefix_set_adds_child_nibbles() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(42u64);
         let slot_60 = B256::right_padding_from(&[0x60]);
@@ -2756,7 +2756,7 @@ mod tests {
     /// and the subtrie is recalculated from the updated leaf data.
     #[test]
     fn test_prefix_set_invalidates_cached_hash() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let original_val = U256::from(42u64);
         let updated_val = U256::from(9999u64);
@@ -2827,7 +2827,7 @@ mod tests {
     /// (nibble 0) comes before the remaining child (nibble 1).
     #[test]
     fn test_branch_collapse_removed_child_before_remaining() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(1u64);
 
@@ -2916,7 +2916,7 @@ mod tests {
     /// remaining child (nibble 4).
     #[test]
     fn test_branch_collapse_removed_child_after_remaining() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(1u64);
 
@@ -2997,7 +2997,7 @@ mod tests {
 
     #[test]
     fn test_cached_branch_extension_skips_diverging_target() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(100u64);
 
@@ -3112,7 +3112,7 @@ mod tests {
 
     #[test]
     fn test_cached_branch_extension_skips_diverging_target_before() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(100u64);
 
@@ -3223,7 +3223,7 @@ mod tests {
 
     #[test]
     fn test_skipped_parent_branch_with_unskipped_child() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let val = U256::from(1u64);
         let updated_val = U256::from(2u64);
@@ -3291,7 +3291,7 @@ mod tests {
 
     #[test]
     fn test_cached_hash_with_deleted_leaf() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Use different values to ensure distinct leaf hashes.
         let val_3 = U256::from(111u64);

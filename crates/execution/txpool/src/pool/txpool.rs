@@ -3277,7 +3277,7 @@ mod tests {
     #[test]
     fn discard_with_parked_large_txs() {
         // init tracing
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // this test adds large txs to the parked pool, then attempting to discard worst
         let mut f = MockTransactionFactory::default();

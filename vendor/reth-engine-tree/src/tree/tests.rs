@@ -1151,7 +1151,7 @@ fn test_backpressure_excludes_in_memory_buffer() {
 
 #[tokio::test]
 async fn test_tree_state_on_new_head_reorg() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
 
     // Set persistence_threshold to 1
@@ -1276,7 +1276,7 @@ async fn test_tree_state_on_new_head_reorg() {
 
 #[test]
 fn test_tree_state_on_new_head_deep_fork() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
@@ -1482,7 +1482,7 @@ async fn test_engine_tree_fcu_missing_head() {
 
 #[tokio::test]
 async fn test_engine_tree_live_sync_transition_required_blocks_requested() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
@@ -1557,7 +1557,7 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
     // Test for issue where FCU with canonical ancestor doesn't update Latest block state
     // This was causing "nonce too low" errors when discard_reorged_transactions is enabled
 
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
 
     // Create test harness
@@ -1635,7 +1635,7 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
 
 #[tokio::test]
 async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
@@ -1714,7 +1714,7 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
 #[tokio::test]
 async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
@@ -1767,7 +1767,7 @@ async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build()
 /// Test that verifies the happy path where a new payload extends the canonical chain
 #[test]
 fn test_on_new_payload_canonical_insertion() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Use test data similar to test_disconnected_payload
     let s = include_str!("../../test-data/holesky/1.rlp");
@@ -1806,7 +1806,7 @@ fn test_on_new_payload_canonical_insertion() {
 /// Test that ensures payloads are rejected when linking to a known-invalid ancestor
 #[test]
 fn test_on_new_payload_invalid_ancestor() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Use Holesky test data
     let mut test_harness =
@@ -1872,7 +1872,7 @@ fn test_on_new_payload_invalid_ancestor() {
 /// Test that confirms payloads received during backfill sync are buffered and reported as syncing
 #[test]
 fn test_on_new_payload_backfill_buffering() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Use a test data file similar to test_holesky_payload
     let s = include_str!("../../test-data/holesky/1.rlp");
@@ -1917,7 +1917,7 @@ fn test_on_new_payload_backfill_buffering() {
 /// Test that captures the Engine-API rule where malformed payloads report latestValidHash = None
 #[test]
 fn test_on_new_payload_malformed_payload() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let mut test_harness =
         TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()));
@@ -1966,7 +1966,7 @@ fn test_on_new_payload_malformed_payload() {
 /// Test different state-root job paths: the sparse-trie job and the synchronous fallback.
 #[test]
 fn test_state_root_strategy_paths() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let mut test_harness =
         TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
@@ -2037,7 +2037,7 @@ fn test_state_root_strategy_paths() {
 /// Test `Synchronous` strategy when persistence is active
 #[test]
 fn test_validate_block_synchronous_strategy_during_persistence() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let mut test_harness = ValidatorTestHarness::new(std::sync::Arc::new(
         base_common_chain_config::BaseChainSpec::mainnet(),
@@ -2068,7 +2068,7 @@ fn test_validate_block_synchronous_strategy_during_persistence() {
 /// blocks with proper result validation
 #[test]
 fn test_validate_block_multiple_scenarios() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // Test multiple scenarios to ensure comprehensive coverage
     let mut test_harness = ValidatorTestHarness::new(std::sync::Arc::new(
@@ -2110,7 +2110,7 @@ mod check_invalid_ancestors_tests {
     /// Test that `find_invalid_ancestor` returns None when no invalid ancestors exist
     #[test]
     fn test_find_invalid_ancestor_no_invalid() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2138,7 +2138,7 @@ mod check_invalid_ancestors_tests {
     /// Test that `find_invalid_ancestor` detects an invalid parent
     #[test]
     fn test_find_invalid_ancestor_with_invalid_parent() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2190,7 +2190,7 @@ mod check_invalid_ancestors_tests {
     /// Test genesis block handling (`parent_hash` = `B256::ZERO`)
     #[test]
     fn test_genesis_block_handling() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2216,7 +2216,7 @@ mod check_invalid_ancestors_tests {
     /// Test malformed payload with invalid ancestor scenario
     #[test]
     fn test_malformed_payload_with_invalid_ancestor() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2249,7 +2249,7 @@ mod check_invalid_ancestors_tests {
     /// Test that `find_invalid_ancestor` detects the block itself in the invalid cache
     #[test]
     fn test_find_invalid_ancestor_detects_block_itself() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2318,7 +2318,7 @@ mod payload_execution_tests {
     /// Test `try_insert_payload` with different `InsertPayloadOk` variants
     #[test]
     fn test_try_insert_payload_variants() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2345,7 +2345,7 @@ mod payload_execution_tests {
     /// Test `try_buffer_payload` with validation errors
     #[test]
     fn test_buffer_payload_validation_errors() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2367,7 +2367,7 @@ mod payload_execution_tests {
     /// Test `try_buffer_payload` with valid payload
     #[test]
     fn test_buffer_payload_valid_payload() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::sepolia(),
@@ -2574,7 +2574,7 @@ mod forkchoice_updated_tests {
     /// Test the complete `on_forkchoice_updated` flow with all helper methods
     #[tokio::test]
     async fn test_on_forkchoice_updated_integration() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
@@ -2799,7 +2799,7 @@ mod forkchoice_updated_tests {
 ///    No Transactions: Timeout while waiting for secondary client to sync"
 #[test]
 fn test_on_valid_downloaded_non_head_sync_target_continues_to_head() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
@@ -2867,7 +2867,7 @@ fn test_on_valid_downloaded_non_head_sync_target_continues_to_head() {
 /// IS the sync target head (the normal non-buggy path).
 #[test]
 fn test_on_valid_downloaded_head_sync_target_returns_make_canonical() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
@@ -2912,7 +2912,7 @@ fn test_on_valid_downloaded_head_sync_target_returns_make_canonical() {
 /// block from the original `SYNCING` forkchoice state.
 #[test]
 fn test_canonicalizing_downloaded_sync_target_head_updates_finalized() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
@@ -3164,7 +3164,7 @@ fn test_on_disconnected_downloaded_block_eth_zero_finalized_targets_head() {
 /// Stack, finalized on Ethereum — when that block is buffered far ahead of where the
 /// just-finished pipeline landed.
 async fn assert_post_backfill_recheck_retriggers_to_buffered_target(engine_kind: EngineApiKind) {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());

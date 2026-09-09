@@ -4,7 +4,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::{Response, ResponsePayload};
 use base_execution_payload_types::ExecutionPayload;
 use reqwest::Client;
-use reth_tracing::tracing::{debug, warn};
+use base_common_observability_tracing::tracing::{debug, warn};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::{sync::mpsc, time::interval};
 

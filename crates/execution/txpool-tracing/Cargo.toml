@@ -17,15 +17,15 @@ reth-provider = { workspace = true }
 alloy-primitives = { workspace = true }
 base-execution-txpool = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-common-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-events = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 derive_more = { workspace = true, features = ["display"] }
-reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 base-testing-support = { workspace = true }

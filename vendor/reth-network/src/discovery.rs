@@ -561,7 +561,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn discv5_and_discv4_same_pk() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // set up test
         let mut node_1 = start_discovery_node(40014, 40015).await;
@@ -676,7 +676,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_shared_port_setup() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Use port 0 so the OS picks a free port
         let node = start_shared_port_node(0).await;
@@ -688,7 +688,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_shared_port_discv5_discovery() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut node_1 = start_shared_port_node(0).await;
         let mut node_2 = start_shared_port_node(0).await;
@@ -751,7 +751,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_shared_port_discv4_discovery() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut node_1 = start_shared_port_node(0).await;
         let mut node_2 = start_shared_port_node(0).await;
@@ -789,7 +789,7 @@ mod tests {
     /// with the IPv6 socket bound to the same port.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_shared_port_dual_stack() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Find a port that's free on the v4 wildcard so we can use it for both v4 and v6.
         let probe = UdpSocket::bind("0.0.0.0:0").await.expect("probe bind");

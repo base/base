@@ -192,8 +192,7 @@ members = [
   "vendor/reth-storage-errors",
   "vendor/reth-storage-overlay",
   "vendor/reth-testing-utils",
-  "vendor/reth-tracing",
-  "vendor/reth-tracing-otlp",
+  "crates/common/observability/tracing",
   "vendor/reth-trie",
   "vendor/reth-trie-common",
   "vendor/reth-trie-sparse",
@@ -488,7 +487,7 @@ reth-db-api = { path = "vendor/reth-db-api", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }
-reth-tracing = { path = "vendor/reth-tracing", default-features = false }
+base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 reth-network = { path = "vendor/reth-network", default-features = false }
 reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }
 reth-fs-util = { path = "vendor/reth-fs-util", default-features = false }
@@ -521,7 +520,6 @@ reth-net-banlist = { path = "vendor/reth-net-banlist", default-features = false 
 reth-payload-util = { path = "vendor/reth-payload-util", default-features = false }
 reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }
 reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
-reth-tracing-otlp = { path = "vendor/reth-tracing-otlp", default-features = false }
 reth-stages-types = { path = "vendor/reth-stages-types", default-features = false }
 reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }
 reth-network-peers = { path = "vendor/reth-network-peers", default-features = false }

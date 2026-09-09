@@ -18,7 +18,7 @@ async fn launch_ws_eth() -> reth_rpc_builder::RpcServerHandle {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_all_supported_kinds_accept() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws_eth().await;
     let client = handle.ws_client().await.unwrap();
@@ -68,7 +68,7 @@ async fn test_eth_subscribe_all_supported_kinds_accept() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_syncing_delivers_initial_status() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws_eth().await;
     let client = handle.ws_client().await.unwrap();
@@ -92,7 +92,7 @@ async fn test_eth_subscribe_syncing_delivers_initial_status() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_invalid_kind_rejected() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws_eth().await;
     let client = handle.ws_client().await.unwrap();
@@ -106,7 +106,7 @@ async fn test_eth_subscribe_invalid_kind_rejected() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_server_survives_client_disconnect() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let handle = launch_ws_eth().await;
 
@@ -131,7 +131,7 @@ async fn test_eth_subscribe_server_survives_client_disconnect() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_not_available_over_http() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let mut registry = test_rpc_registry().await;
     let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http());
@@ -151,7 +151,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use base_execution_txpool::{TransactionOrigin, TransactionPool};
     use reth_rpc_builder::RpcRegistryInner;
 
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let signed = base_execution_txpool::test_utils::TransactionBuilder::default()
         .chain_id(8453)

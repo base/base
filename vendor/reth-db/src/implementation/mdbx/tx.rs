@@ -17,7 +17,7 @@ use reth_db_api::{
 };
 use reth_libmdbx::{CommitLatency, RW, Transaction, TransactionKind, WriteFlags, ffi::MDBX_dbi};
 use reth_storage_errors::db::{DatabaseWriteError, DatabaseWriteOperation};
-use reth_tracing::tracing::{debug, instrument, trace, warn};
+use base_common_observability_tracing::tracing::{debug, instrument, trace, warn};
 
 use super::{cursor::Cursor, utils::*};
 use crate::{

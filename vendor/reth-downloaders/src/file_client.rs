@@ -767,7 +767,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_headers_at_fork_head() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let p3 = SealedHeader::default();
         let p2 = child_header(&p3);
@@ -802,7 +802,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_headers_from_file() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Generate some random blocks
         let (file, headers, _) = generate_bodies_file(0..=19).await;
@@ -906,7 +906,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_chunk_download_headers_from_file() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Generate some random blocks
         let (file, headers, _) = generate_bodies_file(0..=14).await;
@@ -955,7 +955,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_chunk_download_headers_from_gzip_file() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Generate some random blocks
         let (file, headers, _) = generate_bodies_file(0..=14).await;

@@ -2430,7 +2430,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_ignored_tx_broadcasts_while_initially_syncing() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let net = Testnet::create(3).await;
 
         let mut handles = net.handles();
@@ -2500,7 +2500,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_tx_broadcasts_through_two_syncs() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let net = Testnet::create(3).await;
 
         let mut handles = net.handles();
@@ -2577,7 +2577,7 @@ mod tests {
     // event and is able to retrieve the corresponding transactions.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_incoming_transactions_hashes() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
         let client = NoopProvider::default();
@@ -2673,7 +2673,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_handle_incoming_transactions() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let net = Testnet::create(3).await;
 
         let mut handles = net.handles();
@@ -2854,7 +2854,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_on_get_pooled_transactions_network() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let net = Testnet::create(2).await;
 
         let mut handles = net.handles();
@@ -2936,7 +2936,7 @@ mod tests {
     // re-buffered.
     #[tokio::test]
     async fn test_partially_tx_response() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut tx_manager = new_tx_manager().await.0;
         let tx_fetcher = &mut tx_manager.transaction_fetcher;
@@ -3049,7 +3049,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_max_retries_tx_request() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut tx_manager = new_tx_manager().await.0;
         let tx_fetcher = &mut tx_manager.transaction_fetcher;
@@ -3228,7 +3228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_propagate_full() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let (mut tx_manager, network) = new_base_tx_manager().await;
         let peer_id = PeerId::random();
@@ -3295,7 +3295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_truncated_hash_announcement_not_marked_seen() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let (mut tx_manager, network) = new_base_tx_manager().await;
         // all peers receive hash announcements only
@@ -3332,7 +3332,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_propagate_pending_txs_while_initially_syncing() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let (mut tx_manager, network) = new_base_tx_manager().await;
         let peer_id = PeerId::random();
@@ -3362,7 +3362,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relaxed_filter_ignores_unknown_tx_types() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let transactions_manager_config = TransactionsManagerConfig::default();
 

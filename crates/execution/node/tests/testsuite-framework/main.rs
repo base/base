@@ -24,7 +24,7 @@ use reth_engine_primitives::TreeConfig;
 
 #[tokio::test]
 async fn test_testsuite_produce_blocks() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
@@ -49,7 +49,7 @@ async fn test_testsuite_produce_blocks() -> Result<()> {
 
 #[tokio::test]
 async fn test_testsuite_create_fork() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
@@ -75,7 +75,7 @@ async fn test_testsuite_create_fork() -> Result<()> {
 
 #[tokio::test]
 async fn test_testsuite_reorg_with_tagging() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
@@ -113,7 +113,7 @@ async fn test_testsuite_reorg_with_tagging() -> Result<()> {
 
 #[tokio::test]
 async fn test_testsuite_deep_reorg() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
@@ -159,7 +159,7 @@ async fn test_testsuite_deep_reorg() -> Result<()> {
 /// - Node-specific state is properly tracked
 #[tokio::test]
 async fn test_testsuite_multinode_block_production() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let setup = Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
@@ -198,7 +198,7 @@ async fn test_testsuite_multinode_block_production() -> Result<()> {
 
 #[tokio::test]
 async fn test_setup_builder_with_custom_tree_config() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let chain_spec = Arc::new(
         BaseChainSpecBuilder::default()

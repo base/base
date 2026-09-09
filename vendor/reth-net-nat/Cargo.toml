@@ -23,9 +23,11 @@ tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["attributes"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
-reth-tracing = { workspace = true, features = ["default"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
+
 [features]
 default = ["serde"]
 serde = ["dep:serde_with"]

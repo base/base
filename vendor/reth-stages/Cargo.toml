@@ -65,7 +65,6 @@ reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
-reth-tracing = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
@@ -74,6 +73,7 @@ tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
 
 [features]

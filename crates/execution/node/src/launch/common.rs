@@ -84,7 +84,7 @@ use reth_stages::{
 };
 use reth_static_file::{StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance};
 use reth_storage_overlay::OverlayManager;
-use reth_tracing::{
+use base_common_observability_tracing::{
     throttle,
     tracing::{debug, error, info, warn},
 };

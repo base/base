@@ -21,17 +21,17 @@ alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 base-common-types-chain = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
-serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive"] }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 serde_json = { workspace = true, features = ["alloc"] }
 ringbuffer = { workspace = true, features = ["default"] }
-reth-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "query"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 
 [dependencies.reth-engine-primitives]
 workspace = true

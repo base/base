@@ -9,7 +9,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "tracy-allocator")]
-use reth_tracing as _;
+use base_common_observability_tracing as _;
 #[cfg(feature = "tracy-allocator")]
 use tracy_client as _;
 

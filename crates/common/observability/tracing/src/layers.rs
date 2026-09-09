@@ -5,9 +5,9 @@ use std::{
 };
 
 #[cfg(feature = "otlp")]
-use reth_tracing_otlp::{OtlpConfig, span_layer};
+use crate::{OtlpConfig, span_layer};
 #[cfg(feature = "otlp-logs")]
-use reth_tracing_otlp::{OtlpLogsConfig, log_layer};
+use crate::{OtlpLogsConfig, log_layer};
 use rolling_file::{RollingConditionBasic, RollingFileAppender};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, Layer, Registry, filter::Directive, reload};
@@ -238,8 +238,8 @@ impl Layers {
 
         struct Config(TracyFields);
         impl tracing_tracy::Config for Config {
-            type Formatter<'_> = TracyFields;
-            fn formatter(&self) -> &Self::Formatter<'_> {
+            type Formatter = TracyFields;
+            fn formatter(&self) -> &Self::Formatter {
                 &self.0
             }
             fn format_fields_in_zone_name(&self) -> bool {

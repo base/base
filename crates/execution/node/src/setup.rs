@@ -19,7 +19,7 @@ use reth_network_p2p::{
 use reth_provider::ProviderFactory;
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use reth_static_file::StaticFileProducer;
-use reth_tracing::tracing::debug;
+use base_common_observability_tracing::tracing::debug;
 use tokio::sync::watch;
 
 /// Constructs a [Pipeline] that's wired to the network

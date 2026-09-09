@@ -4,7 +4,7 @@ use std::{
 };
 
 use reth_exex_types::ExExNotification;
-use reth_tracing::tracing::debug;
+use base_common_observability_tracing::tracing::debug;
 use tracing::instrument;
 
 use crate::wal::{WalError, WalResult};

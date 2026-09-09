@@ -47,7 +47,7 @@ impl TestPipelineBuilder {
 
     /// Builds the pipeline.
     pub fn build(self, chain_spec: Arc<BaseChainSpec>) -> Pipeline {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Setup pipeline
         let (tip_tx, _tip_rx) = watch::channel(B256::default());

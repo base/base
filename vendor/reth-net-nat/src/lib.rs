@@ -277,7 +277,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn get_external_ip() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let ip = external_ip().await;
         dbg!(ip);
     }
@@ -285,7 +285,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn get_external_ip_interval() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let mut interval = ResolveNatInterval::interval(Default::default(), Duration::from_secs(5));
 
         let ip = interval.tick().await;

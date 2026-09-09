@@ -29,7 +29,7 @@ metrics-process = { workspace = true, features = ["metrics-rs"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
-reth-tracing-otlp = { workspace = true, optional = true, features = ["default"] }
+base-common-observability-tracing = { workspace = true, optional = true, features = ["otlp"] }
 tokio = { workspace = true, features = ["default", "full", "macros", "rt-multi-thread", "signal"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter", "json", "tracing-log"] }
 
@@ -42,4 +42,4 @@ libc = { workspace = true, features = ["default"] }
 backtrace = { workspace = true, features = ["default"] }
 
 [features]
-otlp = ["dep:reth-tracing-otlp", "reth-node-core/otlp", "reth-tracing-otlp/otlp"]
+otlp = ["dep:base-common-observability-tracing", "reth-node-core/otlp", "base-common-observability-tracing/otlp"]

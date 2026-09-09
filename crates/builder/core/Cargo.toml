@@ -44,7 +44,6 @@ nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
-base-common-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
@@ -65,6 +64,7 @@ alloy-serde = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default"] }
 testcontainers = { workspace = true, optional = true }
+base-common-observability-events = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 base-node-runner = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"] }
@@ -79,7 +79,6 @@ base-node-core = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
-reth-tracing-otlp = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
@@ -99,6 +98,7 @@ base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
+base-common-observability-tracing = { workspace = true, features = ["otlp"] }
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }

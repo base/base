@@ -24,7 +24,7 @@ use reth_rpc_builder::{
 };
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use reth_storage_overlay::OverlayManager;
-use reth_tracing::tracing::{debug, info};
+use base_common_observability_tracing::tracing::{debug, info};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 

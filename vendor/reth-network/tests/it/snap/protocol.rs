@@ -14,7 +14,7 @@ use reth_provider::test_utils::MockEthProvider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unsupported_satellite_does_not_disable_native_snap_requests() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let les_protocol = Protocol::new(Capability::new_static("les", 1), 1);
     let protocols = vec![EthVersion::Eth71.into(), Protocol::snap_2(), les_protocol.clone()];

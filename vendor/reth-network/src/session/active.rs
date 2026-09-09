@@ -1616,7 +1616,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_send_many_messages() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let mut builder = SessionBuilder::default();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1650,7 +1650,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_request_timeout() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let mut builder = SessionBuilder::default();
 

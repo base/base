@@ -4,8 +4,8 @@ use std::sync::OnceLock;
 
 use clap::{Parser, builder::Resettable};
 use eyre::WrapErr;
-use reth_tracing::{Layers, tracing_subscriber::EnvFilter};
-use reth_tracing_otlp::OtlpProtocol;
+use base_common_observability_tracing::{Layers, tracing_subscriber::EnvFilter};
+use base_common_observability_tracing::OtlpProtocol;
 use url::Url;
 
 static TRACE_DEFAULTS: OnceLock<DefaultTraceValues> = OnceLock::new();
@@ -307,7 +307,7 @@ impl TraceArgs {
             #[cfg(feature = "otlp")]
             {
                 {
-                    let mut config = reth_tracing_otlp::OtlpConfig::new(
+                    let mut config = base_common_observability_tracing::OtlpConfig::new(
                         self.service_name.clone(),
                         endpoint.clone(),
                         self.protocol,
@@ -343,7 +343,7 @@ impl TraceArgs {
 
             #[cfg(feature = "otlp-logs")]
             {
-                let mut config = reth_tracing_otlp::OtlpLogsConfig::new(
+                let mut config = base_common_observability_tracing::OtlpLogsConfig::new(
                     self.service_name.clone(),
                     endpoint.clone(),
                     self.protocol,
@@ -395,7 +395,7 @@ fn parse_otlp_endpoint(arg: &str) -> eyre::Result<Url> {
 
 #[cfg(test)]
 mod tests {
-    use reth_tracing_otlp::OtlpProtocol;
+    use base_common_observability_tracing::OtlpProtocol;
 
     use super::{DefaultTraceValues, TraceArgs};
 

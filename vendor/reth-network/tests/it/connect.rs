@@ -23,14 +23,14 @@ use reth_network_p2p::{
 use reth_network_peers::{NodeRecord, TrustedPeer, mainnet_nodes};
 use reth_provider::test_utils::MockEthProvider;
 use reth_storage_api::noop::NoopProvider;
-use reth_tracing::init_test_tracing;
+use base_common_observability_tracing::init_test_tracing;
 use secp256k1::SecretKey;
 use tokio::task;
 use url::Host;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_establish_connections() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     for _ in 0..3 {
         let net = Testnet::create(3).await;
@@ -89,7 +89,7 @@ async fn test_establish_connections() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_already_connected() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut net = Testnet::default();
 
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -133,7 +133,7 @@ async fn test_already_connected() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_peer() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let mut net = Testnet::default();
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -167,7 +167,7 @@ async fn test_get_peer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_peer_by_id() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut net = Testnet::default();
 
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -202,7 +202,7 @@ async fn test_get_peer_by_id() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_connect_with_boot_nodes() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let mut discv4 = Discv4Config::builder();
     discv4.add_boot_nodes(mainnet_nodes());
@@ -224,7 +224,7 @@ async fn test_connect_with_boot_nodes() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_connect_with_builder() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let mut discv4 = Discv4Config::builder();
     discv4.add_boot_nodes(mainnet_nodes());
@@ -263,7 +263,7 @@ async fn test_connect_with_builder() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_connect_to_trusted_peer() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let discv4 = Discv4Config::builder();
 
@@ -319,7 +319,7 @@ async fn test_connect_to_trusted_peer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_shutdown() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let net = Testnet::create(3).await;
 
     let mut handles = net.handles();
@@ -557,7 +557,7 @@ async fn test_disconnect_incoming_when_exceeded_incoming_connections() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_always_accept_incoming_connections_from_trusted_peers() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let peer1 = new_random_peer(10, vec![]).await;
     let peer2 = new_random_peer(0, vec![]).await;
 
@@ -602,7 +602,7 @@ async fn test_always_accept_incoming_connections_from_trusted_peers() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rejected_by_already_connect() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let other_peer1 = new_random_peer(10, vec![]).await;
     let other_peer2 = new_random_peer(10, vec![]).await;
 
@@ -658,7 +658,7 @@ async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_connect_many() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let provider = MockEthProvider::default().with_genesis_block();
     let net = Testnet::create_with(5, provider).await;
@@ -677,7 +677,7 @@ async fn test_connect_many() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_disconnect_then_connect() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let net = Testnet::create(2).await;
 
@@ -707,7 +707,7 @@ async fn test_disconnect_then_connect() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_connect_peer_in_different_network_should_fail() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     // peer in mainnet.
     let peer = new_random_peer(10, vec![]).await;
@@ -747,7 +747,7 @@ async fn test_connect_peer_in_different_network_should_fail() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reconnect_trusted() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let net = Testnet::create(2).await;
 

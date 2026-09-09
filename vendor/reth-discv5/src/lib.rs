@@ -807,7 +807,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn discv5_releases_port_on_drop() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let secret_key = SecretKey::new(&mut thread_rng());
         let port = unused_udp_port();
@@ -825,7 +825,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn discv5() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // rig test
 
@@ -882,7 +882,7 @@ mod test {
 
     #[test]
     fn discovered_enr_disc_socket_missing() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // rig test
         const REMOTE_RLPX_PORT: u16 = 30303;

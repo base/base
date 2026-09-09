@@ -20,7 +20,7 @@ use tokio::join;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_gossip() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let provider = MockEthProvider::default().with_genesis_block();
     let net = Testnet::create_with(2, provider.clone()).await;
@@ -59,7 +59,7 @@ async fn test_tx_gossip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_propagation_policy_trusted_only() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let provider = MockEthProvider::default().with_genesis_block();
 
@@ -127,7 +127,7 @@ async fn test_tx_propagation_policy_trusted_only() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_ingress_policy_trusted_only() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
 
     let provider = MockEthProvider::default().with_genesis_block();
 
@@ -229,7 +229,7 @@ async fn rejects_blob_transaction_gossip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sending_invalid_transactions() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let provider = MockEthProvider::default().with_genesis_block();
     let net = Testnet::create_with(2, provider.clone()).await;
     // install request handlers

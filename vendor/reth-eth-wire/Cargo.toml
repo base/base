@@ -50,10 +50,10 @@ rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 proptest = { workspace = true, features = ["default"] }
-reth-tracing = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 reth-eth-wire-types = { workspace = true, features = ["default", "arbitrary"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 
 [[test]]

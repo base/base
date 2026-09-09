@@ -31,7 +31,7 @@ type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>, TestPool>;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_body() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
     let mut tx_gen = TransactionGenerator::new(rand::rng());
@@ -74,7 +74,7 @@ async fn test_get_body() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_body_range() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
     let mut tx_gen = TransactionGenerator::new(rand::rng());
@@ -128,7 +128,7 @@ async fn test_get_body_range() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_header() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
@@ -174,7 +174,7 @@ async fn test_get_header() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_header_range() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
@@ -232,7 +232,7 @@ async fn test_get_header_range() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_header_range_falling() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
@@ -292,7 +292,7 @@ async fn test_get_header_range_falling() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth68_get_receipts() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
@@ -363,7 +363,7 @@ async fn test_eth68_get_receipts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth69_get_headers() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
@@ -415,7 +415,7 @@ async fn test_eth69_get_headers() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth69_get_bodies() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
     let mut tx_gen = TransactionGenerator::new(rand::rng());
@@ -464,7 +464,7 @@ async fn test_eth69_get_bodies() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth69_get_receipts() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
@@ -539,7 +539,7 @@ async fn test_eth69_get_receipts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_get_block_access_lists() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, bal_store) = spawn_eth71_bal_testnet().await;
 
     let hash0 = B256::random();
@@ -558,7 +558,7 @@ async fn test_eth71_get_block_access_lists() {
 // Ensures BAL responses stop at the soft response limit while keeping the item that crosses it.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_get_block_access_lists_respects_response_soft_limit() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, bal_store) = spawn_eth71_bal_testnet().await;
 
     let hash0 = B256::random();
@@ -581,7 +581,7 @@ async fn test_eth71_get_block_access_lists_respects_response_soft_limit() {
 // Ensures a single BAL larger than the soft limit is still returned.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_get_block_access_lists_returns_single_oversized_bal() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, bal_store) = spawn_eth71_bal_testnet().await;
 
     let hash0 = B256::random();
@@ -600,7 +600,7 @@ async fn test_eth71_get_block_access_lists_returns_single_oversized_bal() {
 // Ensures an empty BAL request roundtrips to an empty response.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_get_block_access_lists_empty_request() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, _) = spawn_eth71_bal_testnet().await;
 
     let response = request_block_access_lists(&net, Vec::new()).await;
@@ -611,7 +611,7 @@ async fn test_eth71_get_block_access_lists_empty_request() {
 // Ensures BAL responses are capped at MAX_BLOCK_ACCESS_LISTS_SERVE entries.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_get_block_access_lists_caps_count() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, bal_store) = spawn_eth71_bal_testnet().await;
 
     // Request more hashes than the count cap.
@@ -631,7 +631,7 @@ async fn test_eth71_get_block_access_lists_caps_count() {
 // Ensures the fetch client can request BALs through an eth/71 peer.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_fetch_client_get_block_access_lists() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, bal_store) = spawn_eth71_bal_testnet().await;
 
     let hash0 = B256::random();
@@ -650,7 +650,7 @@ async fn test_eth71_fetch_client_get_block_access_lists() {
 // entries.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth71_get_block_access_lists_returns_empty_on_store_error() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, _) = spawn_bal_testnet_with_store(
         [EthVersion::Eth71, EthVersion::Eth71],
         BalStoreHandle::new(FailingLookupBalStore),
@@ -665,7 +665,7 @@ async fn test_eth71_get_block_access_lists_returns_empty_on_store_error() {
 // Ensures default fetch client BAL requests are rejected when no eth/71 peer is available.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth70_fetch_client_rejects_default_block_access_lists_request() {
-    reth_tracing::init_test_tracing();
+    base_common_observability_tracing::init_test_tracing();
     let (net, _) = spawn_bal_testnet([EthVersion::Eth70, EthVersion::Eth70]).await;
 
     let fetch = net.peers()[0].network().fetch_client().await.unwrap();

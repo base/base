@@ -327,7 +327,7 @@ mod tests {
     /// its `BlockAccessLists` response round-trip over live [`EthSnapStream`]s.
     #[tokio::test(flavor = "multi_thread")]
     async fn snap_request_response_round_trips_over_the_wire() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
         let (status, fork_filter) = eth_handshake();
@@ -401,7 +401,7 @@ mod tests {
     /// than being decoded as trie-node requests or responses.
     #[tokio::test(flavor = "multi_thread")]
     async fn snap_two_rejects_removed_trie_node_messages_over_the_wire() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         for removed_snap_id in [0x06, 0x07] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

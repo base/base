@@ -1,5 +1,3 @@
-#![cfg(feature = "otlp")]
-
 //! Provides tracing layers for `OpenTelemetry` that export spans, logs, and metrics to an OTLP
 //! endpoint.
 //!

@@ -967,7 +967,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_disconnect() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
 
@@ -1005,7 +1005,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_disconnect_weird_disconnect_encoding() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let local_addr = listener.local_addr().unwrap();
 

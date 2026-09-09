@@ -602,7 +602,7 @@ mod tests {
                 post_state_nodes in sorted_post_state_nodes_strategy(),
                 op_choices in prop::collection::vec(any::<u8>(), 10..500),
             ) {
-                reth_tracing::init_test_tracing();
+                base_common_observability_tracing::init_test_tracing();
                 use tracing::debug;
 
                 debug!("Starting proptest!");

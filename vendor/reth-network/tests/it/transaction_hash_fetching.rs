@@ -5,7 +5,7 @@ use reth_network::{
     transactions::{TransactionPropagationMode::Max, TransactionsManagerConfig},
 };
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use reth_tracing::init_test_tracing;
+use base_common_observability_tracing::init_test_tracing;
 use tokio::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]

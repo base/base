@@ -1537,7 +1537,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_at_fork_head() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let client = Arc::new(TestHeadersClient::default());
 
@@ -1571,7 +1571,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_one_by_one() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let p3 = SealedHeader::default();
         let p2 = child_header(&p3);
         let p1 = child_header(&p2);
@@ -1614,7 +1614,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_one_by_one_larger_request_limit() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let p3 = SealedHeader::default();
         let p2 = child_header(&p3);
         let p1 = child_header(&p2);

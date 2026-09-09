@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_pruner_prunes_bal_store() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let old_hash = B256::random();
         let retained_hash = B256::random();
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_pruner_ignores_bal_store_prune_error() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let provider = create_test_provider_factory()
             .with_bal_store(BalStoreHandle::new(FailingPruneBalStore));
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_save_blocks_single_block() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let handle = default_persistence_handle();
         let block_number = 1;
         let mut test_block_builder = TestBlockBuilder::eth();
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_save_blocks_multiple_blocks() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let handle = default_persistence_handle();
 
         let mut test_block_builder = TestBlockBuilder::eth();
@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_save_blocks_multiple_calls() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
         let handle = default_persistence_handle();
 
         let ranges = [1..2, 2..3, 3..5, 5..6];
@@ -601,7 +601,7 @@ mod tests {
         use reth_db::{BlockNumberList, models::ShardedKey, tables};
         use reth_provider::RocksDBProviderFactory;
 
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let provider_factory = create_test_provider_factory();
         let tracked_addr = alloy_primitives::Address::from([0xBE; 20]);
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_read_only_consistency_across_reorg() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         let provider_factory = create_test_provider_factory();
         provider_factory.set_storage_settings_cache(reth_provider::StorageSettings::v2());

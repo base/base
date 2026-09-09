@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn take_trie_updates() {
-        reth_tracing::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // let mut rng = generators::rng();
         let mut rng = StdRng::seed_from_u64(1);

@@ -220,7 +220,7 @@ mod test {
     };
     use alloy_rlp::{Decodable, RlpDecodable};
     use base_common_types_chain::{EthereumReceipt as Receipt, TxType};
-    use reth_tracing::init_test_tracing;
+    use base_common_observability_tracing::init_test_tracing;
     use tokio_util::codec::Decoder;
 
     use super::{FromReceiptReader, ReceiptFileClient, ReceiptWithBlockNumber};
