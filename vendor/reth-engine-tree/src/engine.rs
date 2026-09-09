@@ -9,6 +9,8 @@ use alloy_primitives::{B256, map::B256Set};
 use base_execution_payload_types::BuiltPayloadExecutedBlock;
 use crossbeam_channel::Sender;
 use futures::{Stream, StreamExt};
+use base_common_consensus::BaseBlock;
+use reth_network_p2p::BlockClient;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
 use reth_primitives_traits::SealedBlock;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -17,24 +19,24 @@ use crate::{
     backfill::BackfillAction,
     chain::FromOrchestrator,
     chain::HandlerEvent,
-    download::{BlockDownloader, DownloadAction, DownloadOutcome},
+    download::{BasicBlockDownloader, DownloadAction, DownloadOutcome},
 };
 
 /// Routes consensus requests to the execution tree and downloads missing blocks.
 #[derive(Debug)]
-pub struct EngineHandler<S, D> {
+pub struct EngineHandler<S, Client: BlockClient<Block = BaseBlock> + 'static> {
     to_tree: Sender<FromEngine>,
     from_tree: UnboundedReceiver<EngineApiEvent>,
     incoming_requests: S,
-    downloader: D,
+    downloader: BasicBlockDownloader<Client>,
 }
 
-impl<S, D> EngineHandler<S, D> {
+impl<S, Client: BlockClient<Block = BaseBlock> + 'static> EngineHandler<S, Client> {
     /// Connects the execution tree, consensus stream, and downloader.
     pub const fn new(
         to_tree: Sender<FromEngine>,
         from_tree: UnboundedReceiver<EngineApiEvent>,
-        downloader: D,
+        downloader: BasicBlockDownloader<Client>,
         incoming_requests: S,
     ) -> Self {
         Self { to_tree, from_tree, incoming_requests, downloader }
@@ -46,10 +48,9 @@ impl<S, D> EngineHandler<S, D> {
     }
 }
 
-impl<S, D> EngineHandler<S, D>
+impl<S, Client: BlockClient<Block = BaseBlock> + 'static> EngineHandler<S, Client>
 where
     S: Stream<Item = BeaconEngineMessage> + Unpin,
-    D: BlockDownloader,
 {
     /// Advances tree events, consensus requests, and block downloads.
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<HandlerEvent> {

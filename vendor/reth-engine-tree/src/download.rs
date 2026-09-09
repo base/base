@@ -16,22 +16,10 @@ use reth_network_p2p::{
     BlockClient,
     full_block::{FetchFullBlockFuture, FetchFullBlockRangeFuture, FullBlockClient},
 };
-use reth_primitives_traits::{Block, SealedBlock};
+use reth_primitives_traits::SealedBlock;
 use tracing::trace;
 
 use crate::{engine::DownloadRequest, metrics::BlockDownloaderMetrics};
-
-/// A trait that can download blocks on demand.
-pub trait BlockDownloader: Send + Sync {
-    /// Type of the block being downloaded.
-    type Block: Block;
-
-    /// Handle an action.
-    fn on_action(&mut self, action: DownloadAction);
-
-    /// Advance in progress requests if any
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome>;
-}
 
 /// Actions that can be performed by the block downloader.
 #[derive(Debug)]
@@ -56,8 +44,7 @@ pub enum DownloadOutcome {
     },
 }
 
-/// Basic [`BlockDownloader`].
-#[expect(missing_debug_implementations)]
+/// Downloads Base blocks from the peer-to-peer network.
 pub struct BasicBlockDownloader<Client>
 where
     Client: BlockClient + 'static,
@@ -75,6 +62,17 @@ where
     metrics: BlockDownloaderMetrics,
     /// Pending events to be emitted.
     pending_events: VecDeque<DownloadOutcome>,
+}
+
+impl<Client: BlockClient + 'static> std::fmt::Debug for BasicBlockDownloader<Client> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BasicBlockDownloader")
+            .field("inflight_blocks", &self.inflight_full_block_requests.len())
+            .field("inflight_ranges", &self.inflight_block_range_requests.len())
+            .field("buffered_blocks", &self.set_buffered_blocks.len())
+            .field("pending_events", &self.pending_events.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<Client> BasicBlockDownloader<Client>
@@ -189,14 +187,12 @@ where
     }
 }
 
-impl<Client> BlockDownloader for BasicBlockDownloader<Client>
+impl<Client> BasicBlockDownloader<Client>
 where
     Client: BlockClient<Block = base_common_consensus::BaseBlock>,
 {
-    type Block = base_common_consensus::BaseBlock;
-
     /// Handles incoming download actions.
-    fn on_action(&mut self, action: DownloadAction) {
+    pub fn on_action(&mut self, action: DownloadAction) {
         match action {
             DownloadAction::Clear => self.clear(),
             DownloadAction::Download(request) => self.download(request),
@@ -204,7 +200,7 @@ where
     }
 
     /// Advances the download process.
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome> {
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome> {
         if let Some(pending_event) = self.pop_pending_event() {
             return Poll::Ready(pending_event);
         }
@@ -283,21 +279,6 @@ impl From<SealedBlock> for OrderedSealedBlock {
 impl From<OrderedSealedBlock> for SealedBlock {
     fn from(value: OrderedSealedBlock) -> Self {
         value.0
-    }
-}
-
-/// A [`BlockDownloader`] that does nothing.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct NoopBlockDownloader<B>(core::marker::PhantomData<B>);
-
-impl BlockDownloader for NoopBlockDownloader<base_common_consensus::BaseBlock> {
-    type Block = base_common_consensus::BaseBlock;
-
-    fn on_action(&mut self, _event: DownloadAction) {}
-
-    fn poll(&mut self, _cx: &mut Context<'_>) -> Poll<DownloadOutcome> {
-        Poll::Pending
     }
 }
 

@@ -5,9 +5,11 @@ use std::{
 };
 
 use futures::Stream;
+use base_common_consensus::BaseBlock;
+use reth_network_p2p::BlockClient;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
 
-use crate::{download::BlockDownloader, engine::EngineHandler};
+use crate::engine::EngineHandler;
 use reth_stages_api::{ControlFlow, PipelineTarget};
 use tracing::*;
 
@@ -35,31 +37,30 @@ use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};
 /// [`EngineHandler::on_event`].
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct ChainOrchestrator<S, D>
+pub struct ChainOrchestrator<S, Client: BlockClient<Block = BaseBlock> + 'static>
 {
     /// The handler for advancing the chain.
-    handler: EngineHandler<S, D>,
+    handler: EngineHandler<S, Client>,
     /// Controls backfill sync.
     backfill_sync: PipelineSync,
 }
 
-impl<S, D> ChainOrchestrator<S, D>
+impl<S, Client: BlockClient<Block = BaseBlock> + 'static> ChainOrchestrator<S, Client>
 where
     S: Stream<Item = BeaconEngineMessage> + Unpin,
-    D: BlockDownloader + Unpin,
 {
     /// Creates a new [`ChainOrchestrator`] with the given handler and backfill sync.
-    pub const fn new(handler: EngineHandler<S, D>, backfill_sync: PipelineSync) -> Self {
+    pub const fn new(handler: EngineHandler<S, Client>, backfill_sync: PipelineSync) -> Self {
         Self { handler, backfill_sync }
     }
 
     /// Returns the handler
-    pub const fn handler(&self) -> &EngineHandler<S, D> {
+    pub const fn handler(&self) -> &EngineHandler<S, Client> {
         &self.handler
     }
 
     /// Returns a mutable reference to the handler
-    pub const fn handler_mut(&mut self) -> &mut EngineHandler<S, D> {
+    pub const fn handler_mut(&mut self) -> &mut EngineHandler<S, Client> {
         &mut self.handler
     }
 
@@ -141,10 +142,9 @@ where
     }
 }
 
-impl<S, D> Stream for ChainOrchestrator<S, D>
+impl<S, Client: BlockClient<Block = BaseBlock> + 'static> Stream for ChainOrchestrator<S, Client>
 where
     S: Stream<Item = BeaconEngineMessage> + Unpin,
-    D: BlockDownloader + Unpin,
 {
     type Item = ChainEvent;
 

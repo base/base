@@ -65,7 +65,7 @@ pub fn build_engine_orchestrator<Client, S, V>(
     evm_config: BaseEvmConfig,
     runtime: Runtime,
 ) -> ChainOrchestrator<
-    S, BasicBlockDownloader<Client>,
+    S, Client,
 >
 where
     Client: BlockClient<Block = BaseBlock> + 'static,
