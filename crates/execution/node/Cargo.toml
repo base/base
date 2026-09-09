@@ -70,11 +70,11 @@ reth-downloaders = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
-base-execution-trie = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-state-tasks = { workspace = true, features = ["metrics"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-network-types = { workspace = true, features = ["default"] }

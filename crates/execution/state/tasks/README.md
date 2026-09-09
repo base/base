@@ -1,4 +1,4 @@
-# `base-execution-trie`
+# `base-execution-state-tasks`
 
 Trie implementation for Base.
 
@@ -20,11 +20,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-execution-trie = { workspace = true }
+base-execution-state-tasks = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_trie::{BaseProofStoragePruner, RocksdbProofsStorage};
+use base_execution_state_tasks::{BaseProofStoragePruner, RocksdbProofsStorage};
 
 let storage = RocksdbProofsStorage::new(db_path)?;
 let pruner = BaseProofStoragePruner::new(storage.clone(), retention_blocks);

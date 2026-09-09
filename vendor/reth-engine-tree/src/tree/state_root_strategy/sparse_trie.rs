@@ -11,7 +11,7 @@ use base_common_observability_metrics::Metrics;
 use base_common_runtime_tasks::Runtime;
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
-use base_execution_trie::{
+use base_execution_state_tasks::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
     ProofWorkerHandle, StateRootTaskError,
 };
@@ -1118,7 +1118,7 @@ enum SparseTrieTaskMessage {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
-    use base_execution_trie::ProofTaskCtx;
+    use base_execution_state_tasks::ProofTaskCtx;
     use reth_db_common::init::init_genesis;
     use reth_provider::test_utils::create_test_provider_factory;
     use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};

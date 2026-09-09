@@ -31,7 +31,7 @@ use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, Payl
 use base_execution_state_api::{BlockReader, ProviderError, StateProvider, StateProviderFactory};
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ExecutionWitnessMode;
-use base_execution_trie::PayloadStateRootHandle;
+use base_execution_state_tasks::PayloadStateRootHandle;
 use base_execution_txpool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PredicateContext, TransactionPool,
@@ -1375,7 +1375,7 @@ mod tests {
     use base_execution_payload_types::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
-    use base_execution_trie::{
+    use base_execution_state_tasks::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,
     };

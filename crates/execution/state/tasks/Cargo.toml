@@ -1,5 +1,5 @@
 [package]
-name = "base-execution-trie"
+name = "base-execution-state-tasks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

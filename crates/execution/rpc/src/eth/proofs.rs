@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use alloy_serde::JsonStorageKey;
 use async_trait::async_trait;
 use base_common_types_rpc::EIP1186AccountProofResponse;
-use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
+use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::{ErrorCode, ErrorObject};

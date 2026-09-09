@@ -17,7 +17,7 @@ use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadBuilderError, PayloadEvents,
     PayloadKind,
 };
-use base_execution_trie::PayloadStateRootHandle;
+use base_execution_state_tasks::PayloadStateRootHandle;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;

@@ -14,7 +14,7 @@ use base_execution_evm_blocks::ExecutionWitnessRecord;
 use base_execution_evm_runtime::{Database, database::State};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ExecutionWitnessMode;
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
     provider::BaseProofsStateProviderRef,
 };

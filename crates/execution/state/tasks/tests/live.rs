@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_chain::{
@@ -12,7 +11,7 @@ use base_common_types_chain::{
     constants::ETH_TO_WEI,
 };
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
 };
@@ -138,7 +137,7 @@ fn create_block_from_spec(
             receipts_root: alloy_primitives::b256!(
                 "0xd3a6acf9a244d78b33831df95d472c4128ea85bf079a1d41e32ed0b7d2244c9e"
             ),
-            difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
+            difficulty: U256::ZERO,
             number: block_number,
             gas_limit: gas_total.max(21_000u64),
             gas_used: gas_total,

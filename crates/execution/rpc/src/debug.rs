@@ -16,7 +16,7 @@ use base_execution_payload_builder::{
     builder::{BasePayloadBuilderCtx, Builder},
 };
 use base_execution_payload_types::PayloadBuilderError;
-use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
+use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
 use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;

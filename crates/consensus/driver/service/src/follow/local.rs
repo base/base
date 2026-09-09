@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use base_common_client_ethereum::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_consensus_source_providers::LocalL2Provider;
-use base_execution_trie::ProofsProgress;
+use base_execution_state_tasks::ProofsProgress;
 use base_consensus_batch_types::L2BlockInfo;
 
 use crate::follow::error::FollowError;

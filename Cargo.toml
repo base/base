@@ -66,7 +66,7 @@ members = [
   "crates/execution/runner",
   "crates/execution/shadow-indexer",
   "crates/execution/shadow-indexer-db",
-  "crates/execution/trie",
+  "crates/execution/state/tasks",
   "crates/execution/tx-forwarding",
   "crates/execution/txpool",
   "crates/execution/txpool-rpc",
@@ -334,7 +334,7 @@ base-execution-rpc = { path = "crates/execution/rpc", default-features = false }
 base-metering = { path = "crates/execution/metering", default-features = false }
 base-node-runner = { path = "crates/execution/runner", default-features = false }
 base-execution-exex = { path = "crates/execution/exex", default-features = false }
-base-execution-trie = { path = "crates/execution/trie", default-features = false }
+base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc", default-features = false }
 base-execution-txpool = { path = "crates/execution/txpool", default-features = false }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }

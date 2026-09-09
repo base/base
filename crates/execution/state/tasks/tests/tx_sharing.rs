@@ -25,7 +25,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
 };
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
     provider::BaseProofsStateProviderRef,
 };

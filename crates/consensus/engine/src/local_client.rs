@@ -29,7 +29,7 @@ pub struct LocalEngineClient {
     /// Execution driver and payload builder.
     pub execution: BaseExecutionHandle,
     /// Committed proofs-history progress, when that extension is enabled.
-    pub proofs_progress: Option<base_execution_trie::ProofsProgress>,
+    pub proofs_progress: Option<base_execution_state_tasks::ProofsProgress>,
     /// Execution synchronization status.
     pub network: NetworkHandle,
 }

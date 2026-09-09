@@ -24,10 +24,10 @@ alloy-genesis = { workspace = true }
 libp2p-stream = { workspace = true }
 alloy-transport = { workspace = true }
 base-consensus-engine = {workspace = true}
-base-execution-trie = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = {features = ["std"], workspace = true}
+base-execution-state-tasks = { workspace = true }
 thiserror = {features = ["std"], workspace = true}
 url = { workspace = true, features = ["default"] }
 backon = {workspace = true, features = ["default"]}

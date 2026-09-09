@@ -22,7 +22,7 @@ eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["default"] }
-base-execution-trie = { workspace = true, features = ["serde-bincode-compat"] }
+base-execution-state-tasks = { workspace = true, features = ["serde-bincode-compat"] }
 
 [dev-dependencies]
 reth-exex-test-utils = { workspace = true }
@@ -49,4 +49,4 @@ test-utils = [
     "reth-provider/test-utils",
     "reth-trie/test-utils",
 ]
-metrics = ["base-execution-trie/metrics", "reth-trie/metrics"]
+metrics = ["base-execution-state-tasks/metrics", "reth-trie/metrics"]

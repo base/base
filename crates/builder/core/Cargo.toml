@@ -112,8 +112,8 @@ nanoid = { workspace = true }
 rlimit = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-execution-trie = { workspace = true }
 base-testing-support = { workspace = true }
+base-execution-state-tasks = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 ctor = { workspace = true, features = ["default"] }
 hyper = { workspace = true, features = ["default"] }

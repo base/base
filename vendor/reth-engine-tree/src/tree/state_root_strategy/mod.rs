@@ -68,12 +68,12 @@ use alloy_primitives::B256;
 use base_common_runtime_tasks::utils::increase_thread_priority;
 use base_execution_evm_blocks::OnStateHook;
 use base_execution_state_types::ProviderResult;
-pub use base_execution_trie::{
+pub use base_execution_state_tasks::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
 };
-use base_execution_trie::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
+use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_primitives_traits::{

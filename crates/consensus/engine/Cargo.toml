@@ -18,12 +18,12 @@ alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-network-api = { workspace = true }
-base-execution-trie = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
+base-execution-state-tasks = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }

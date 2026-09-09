@@ -1,6 +1,6 @@
 # Proof History Database Schema
 
-> Location: `crates/execution/trie/src/db`
+> Location: `crates/execution/state/tasks/src/db`
 > Backend: **MDBX** (via `reth-db`)
 > Purpose: Serve **historical `eth_getProof`** by storing versioned trie data in a bounded window.
 

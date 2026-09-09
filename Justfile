@@ -208,11 +208,11 @@ bench-node-runner:
 
 # Runs execution trie witness read benchmarks
 bench-execution-trie-witness-reads:
-    cargo bench -p base-execution-trie --bench witness_reads
+    cargo bench -p base-execution-state-tasks --bench witness_reads
 
 # Runs execution trie deep history read benchmarks
 bench-execution-trie-deep-history-reads:
-    cargo bench -p base-execution-trie --bench deep_history_reads
+    cargo bench -p base-execution-state-tasks --bench deep_history_reads
 
 # Run basectl TUI dashboard
 basectl:

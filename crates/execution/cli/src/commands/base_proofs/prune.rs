@@ -3,7 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
     RocksdbProofsStorage,
 };

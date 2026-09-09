@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use alloy_eips::{NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsStore, BlockStateDiff,
     MdbxProofsStorage,
 };
@@ -58,7 +58,7 @@ fn batch_session_aborts_on_error() {
     let result: Result<(), _> = store.with_batch_session(|session| {
         session.store_trie_updates(block(1), BlockStateDiff::default())?;
         session.store_trie_updates(block(2), BlockStateDiff::default())?;
-        Err(base_execution_trie::BaseProofsStorageError::NoBlocksFound)
+        Err(base_execution_state_tasks::BaseProofsStorageError::NoBlocksFound)
     });
     assert!(result.is_err());
 
@@ -210,7 +210,7 @@ fn batch_session_rejects_out_of_order_block() {
     });
     assert!(matches!(
         result,
-        Err(base_execution_trie::BaseProofsStorageError::OutOfOrder { block_number: 2, .. })
+        Err(base_execution_state_tasks::BaseProofsStorageError::OutOfOrder { block_number: 2, .. })
     ));
 
     let (latest, _) = store.get_latest_block_number().expect("latest").expect("some");

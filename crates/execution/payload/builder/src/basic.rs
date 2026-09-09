@@ -17,7 +17,7 @@ use base_execution_payload_types::{
 };
 use base_execution_state_api::{BlockReaderIdExt, StateProviderFactory};
 use base_execution_state_memory::CachedReads;
-use base_execution_trie::PayloadStateRootHandle;
+use base_execution_state_tasks::PayloadStateRootHandle;
 use base_execution_txpool::TransactionPool;
 use futures_core::ready;
 use futures_util::FutureExt;

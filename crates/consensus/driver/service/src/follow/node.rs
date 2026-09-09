@@ -6,7 +6,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::RootProvider;
 use base_consensus_engine::{EngineClient, LocalEngineClient};
 use base_consensus_source_providers::LocalL2Provider;
-use base_execution_trie::ProofsProgress;
+use base_execution_state_tasks::ProofsProgress;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 

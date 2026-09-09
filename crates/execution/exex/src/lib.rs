@@ -14,8 +14,8 @@ use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
 use base_execution_state_types::Chain;
 #[cfg(feature = "metrics")]
-use base_execution_trie::BaseProofsStore;
-use base_execution_trie::{
+use base_execution_state_tasks::BaseProofsStore;
+use base_execution_state_tasks::{
     BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage,
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
@@ -635,7 +635,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_common_types_chain::private::alloy_primitives::B256;
     use base_execution_state_types::{Chain, ExecutionOutcome};
-    use base_execution_trie::{
+    use base_execution_state_tasks::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;

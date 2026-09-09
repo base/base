@@ -20,7 +20,7 @@ use alloy_primitives::{Address, B256, U256, keccak256};
 use base_execution_evm_runtime::{Database, database::State};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,
 };

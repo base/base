@@ -17,7 +17,7 @@ use base_execution_evm_blocks::{
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
 };
 use base_execution_evm_runtime::database::BundleState;
-pub use base_execution_trie::{
+pub use base_execution_state_tasks::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,

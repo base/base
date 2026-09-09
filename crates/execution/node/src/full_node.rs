@@ -7,7 +7,7 @@ use std::{
 use base_common_chain_config::BaseChainSpec;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::{BaseExecutionHandle, PayloadBuilderHandle};
-use base_execution_trie::ProofsProgress;
+use base_execution_state_tasks::ProofsProgress;
 use reth_engine_primitives::ConsensusEngineEvent;
 // re-export the node api types
 use base_common_runtime_tasks::EventSender;

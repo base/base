@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::ChainInfo;
-use base_execution_trie::{
+use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
     MdbxProofsStorage, RocksdbProofsStorage,
 };
