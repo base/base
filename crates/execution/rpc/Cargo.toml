@@ -62,7 +62,6 @@ tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
-base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
@@ -80,6 +79,7 @@ reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
+base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"]}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }

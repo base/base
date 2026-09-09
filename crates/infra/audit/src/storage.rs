@@ -12,7 +12,7 @@ use aws_sdk_s3::{
     },
     primitives::ByteStream,
 };
-use base_bundles::{AcceptedBundle, BundleExtensions, RejectedTransaction};
+use base_execution_payload_types::{AcceptedBundle, BundleExtensions, RejectedTransaction};
 use futures::future;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
@@ -496,7 +496,7 @@ impl BundleEventS3Reader for S3EventReaderWriter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::TxHash;
-    use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
+    use base_execution_payload_types::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use uuid::Uuid;
 
     use super::*;

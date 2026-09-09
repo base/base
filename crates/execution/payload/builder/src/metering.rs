@@ -13,7 +13,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use base_bundles::MeterBundleResponse;
+use base_execution_payload_types::MeterBundleResponse;
 use moka::{notification::RemovalCause, policy::EvictionPolicy, sync::Cache};
 
 use crate::BuilderMetrics;

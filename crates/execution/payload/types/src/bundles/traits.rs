@@ -1,9 +1,9 @@
 //! Traits for bundle operations.
 
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, TxHash, keccak256};
-use alloy_provider::network::eip2718::Encodable2718;
-use base_common_types_chain::{BaseTxEnvelope, Transaction, transaction::Recovered};
 use base_common_flz::tx_estimated_size_fjord_bytes;
+use base_common_types_chain::{BaseTxEnvelope, Transaction, transaction::Recovered};
 
 use crate::{AcceptedBundle, ParsedBundle};
 
@@ -68,8 +68,8 @@ impl BundleTxs for AcceptedBundle {
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Keccak256, U256};
-    use alloy_provider::network::eip2718::Encodable2718;
     use base_common_network::PrivateKeySigner;
 
     use super::*;

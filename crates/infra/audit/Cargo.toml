@@ -12,40 +12,41 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-base-bundles = { workspace = true }
 jsonrpsee-types = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
+base-execution-payload-types = { workspace = true }
 bytes = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["std", "derive"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 moka = { workspace = true, features = ["default", "sync"] }
-tokio = { workspace = true, features = ["default", "full"] }
 anyhow = { workspace = true, features = ["default", "std"] }
+tokio = { workspace = true, features = ["default", "full"] }
 chrono = { workspace = true, features = ["default", "serde"] }
-base-common-types-chain = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 uuid = { workspace = true, features = ["default", "v5", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 jsonrpsee = { workspace = true, features = ["server", "macros", "http-client"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
+
 [dev-dependencies]
 testcontainers = { workspace = true, features = ["blocking"] }
-base-bundles = { workspace = true, features = ["test-utils"] }
+base-execution-payload-types = { workspace = true, features = ["test-utils"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "minio"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 [features]
-default = [ "metrics" ]
+default = ["metrics"]
 metrics = [
-	"base-metrics/metrics",
-	"base-observability-events/metrics",
-	"dep:metrics",
-	"tower-http/metrics",
+    "base-metrics/metrics",
+    "base-observability-events/metrics",
+    "dep:metrics",
+    "tower-http/metrics",
 ]

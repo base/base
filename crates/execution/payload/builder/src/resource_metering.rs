@@ -17,8 +17,8 @@
 use std::{collections::HashMap, fmt, fs, path::Path};
 
 use alloy_primitives::{Address, TxHash};
-use base_bundles::{MeterBundleResponse, OpcodeGas};
 use base_execution_evm_runtime::state::EvmState;
+use base_execution_payload_types::{MeterBundleResponse, OpcodeGas};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -1265,7 +1265,7 @@ mod tests {
     ) -> MeterBundleResponse {
         MeterBundleResponse {
             total_gas_used: gas_used.saturating_mul(2),
-            results: vec![base_bundles::TransactionResult {
+            results: vec![base_execution_payload_types::TransactionResult {
                 coinbase_diff: U256::ZERO,
                 eth_sent_to_coinbase: U256::ZERO,
                 from_address: Address::ZERO,
@@ -1528,7 +1528,7 @@ mod tests {
         let second = TxHash::repeat_byte(0x22);
         let mut meter = meter_response(first, 21_000, vec![opcode_gas("SSTORE", 1, 10)]);
         meter.total_gas_used = 99_999;
-        meter.results.push(base_bundles::TransactionResult {
+        meter.results.push(base_execution_payload_types::TransactionResult {
             coinbase_diff: U256::ZERO,
             eth_sent_to_coinbase: U256::ZERO,
             from_address: Address::ZERO,

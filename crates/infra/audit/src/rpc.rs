@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use base_bundles::RejectedTransaction;
+use base_execution_payload_types::RejectedTransaction;
 use futures::stream::{self, StreamExt};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::error::ErrorObjectOwned};
 use jsonrpsee_types::error::ErrorCode;
@@ -345,7 +345,7 @@ fn internal_rpc_error(error: anyhow::Error) -> ErrorObjectOwned {
 mod tests {
     use std::time::Duration;
 
-    use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
+    use base_execution_payload_types::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use moka::sync::Cache;
     use tokio::sync::mpsc;
     use uuid::Uuid;

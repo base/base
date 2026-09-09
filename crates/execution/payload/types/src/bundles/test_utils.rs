@@ -1,9 +1,10 @@
 //! Test utilities for bundle types.
 
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
-use alloy_provider::network::{TxSignerSync, eip2718::Encodable2718};
-use base_common_types_chain::{BaseTxEnvelope, SignableTransaction};
 use base_common_network::PrivateKeySigner;
+use base_common_network::TxSignerSync;
+use base_common_types_chain::{BaseTxEnvelope, SignableTransaction};
 use base_common_types_rpc::BaseTransactionRequest;
 
 use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
@@ -79,7 +80,7 @@ mod tests {
     use base_common_types_chain::Transaction;
 
     use super::*;
-    use crate::traits::BundleExtensions;
+    use crate::BundleExtensions;
 
     #[test]
     fn test_create_bundle_from_txn_data() {

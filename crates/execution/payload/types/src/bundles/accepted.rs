@@ -41,8 +41,8 @@ impl From<AcceptedBundle> for ParsedBundle {
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::U256;
-    use alloy_provider::network::eip2718::Encodable2718;
     use base_common_network::PrivateKeySigner;
 
     use super::*;

@@ -21,7 +21,6 @@ reth-trie = { workspace = true }
 reth-tasks = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-base-bundles = { workspace = true }
 base-metrics = { workspace = true }
 reth-cli-util = { workspace = true }
 reth-provider = { workspace = true }
@@ -95,9 +94,9 @@ hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
+base-execution-payload-types = {features = ["default"], workspace = true}
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
-base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
@@ -149,7 +148,7 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 test-utils = [
-    "base-bundles/test-utils",
+    "base-execution-payload-types/test-utils",
     "base-common-chain-config/test-utils",
     "base-execution-evm-precompiles/test-utils",
     "base-execution-rpc/client",

@@ -3,12 +3,12 @@
 use core::time::Duration;
 use std::path::PathBuf;
 
+use base_builder_core::MeteringStore;
 use base_builder_core::{
     BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig,
     SharedMeteringStore,
 };
 use base_execution_cli::ShadowIndexerArgs;
-use base_builder_core::MeteringStore;
 use base_node_core::RollupArgs;
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -299,7 +299,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{B256, TxHash, U256};
-    use base_bundles::MeterBundleResponse;
+    use base_execution_payload_types::MeterBundleResponse;
     use clap::Parser;
     use rstest::rstest;
 

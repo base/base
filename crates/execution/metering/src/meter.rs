@@ -6,7 +6,6 @@ use alloy_primitives::{
     Address, B256, U256,
     map::{HashMap, HashSet},
 };
-use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Transaction as _};
 use base_execution_evm_blocks::{
@@ -23,6 +22,9 @@ use base_execution_evm_runtime::{
     database::State,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::EvmState,
+};
+use base_execution_payload_types::{
+    BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult,
 };
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
@@ -865,7 +867,6 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
-    use base_bundles::{Bundle, ParsedBundle};
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
     use base_execution_evm_precompiles::{
@@ -874,6 +875,7 @@ mod tests {
     use base_execution_evm_runtime::state::{
         Account as RevmAccount, EvmStorageSlot, TransactionId,
     };
+    use base_execution_payload_types::{Bundle, ParsedBundle};
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_testing_support::{

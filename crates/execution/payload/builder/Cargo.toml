@@ -19,7 +19,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 serde_json = { workspace = true }
-base-bundles = { workspace = true }
 base-metrics = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
@@ -50,8 +49,8 @@ reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
+base-execution-payload-types = {features = ["default"], workspace = true}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
-base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace = true}
 
 [dev-dependencies]

@@ -1,8 +1,8 @@
 //! RPC extensions for the metering store.
 
 use alloy_primitives::TxHash;
-use base_bundles::MeterBundleResponse;
 use base_execution_payload_builder::SharedMeteringStore;
+use base_execution_payload_types::MeterBundleResponse;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,

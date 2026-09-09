@@ -1,6 +1,6 @@
 //! Parsed bundle type with decoded transactions.
 
-use alloy_provider::network::eip2718::Decodable2718;
+use alloy_eips::eip2718::Decodable2718;
 use base_common_types_chain::{
     BaseTxEnvelope,
     transaction::{Recovered, SignerRecoverable},
@@ -41,8 +41,8 @@ impl TryFrom<Bundle> for ParsedBundle {
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::U256;
-    use alloy_provider::network::eip2718::Encodable2718;
     use base_common_network::PrivateKeySigner;
 
     use super::*;

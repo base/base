@@ -2,7 +2,7 @@
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_bundles::{Bundle, MeterBundleResponse};
+use base_execution_payload_types::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::MeterBlockResponse;

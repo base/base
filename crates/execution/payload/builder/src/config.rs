@@ -413,8 +413,8 @@ mod tests {
     use std::{collections::HashMap, path::Path};
 
     use alloy_primitives::TxHash;
-    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_execution_evm_runtime::state::EvmState;
+    use base_execution_payload_types::{MeterBundleResponse, OpcodeGas, TransactionResult};
 
     use super::*;
     use crate::{ResourceMeteringDimension, ResourceMeteringOperation};

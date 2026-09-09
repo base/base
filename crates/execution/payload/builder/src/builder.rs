@@ -1360,7 +1360,6 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
-    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chain_config::BaseUpgrade;
     use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_types_chain::{
@@ -1372,6 +1371,7 @@ mod tests {
     };
     use base_execution_evm_runtime::BaseTime;
     use base_execution_evm_runtime::{database::State, state::EvmState};
+    use base_execution_payload_types::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_execution_trie::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,

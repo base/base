@@ -1562,8 +1562,8 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "axum",
- "base-bundles",
  "base-common-types-chain",
+ "base-execution-payload-types",
  "base-metrics",
  "base-observability-events",
  "bytes",
@@ -2436,8 +2436,8 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "base-builder-core",
- "base-bundles",
  "base-execution-cli",
+ "base-execution-payload-types",
  "base-node-core",
  "base-observability-events",
  "clap",
@@ -2464,7 +2464,6 @@ dependencies = [
  "alloy-transport-http",
  "async-trait",
  "base-builder-core",
- "base-bundles",
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-flz",
@@ -2552,21 +2551,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
-]
-
-[[package]]
-name = "base-bundles"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-provider",
- "base-common-flz",
- "base-common-network",
- "base-common-types-chain",
- "base-common-types-rpc",
- "serde",
- "serde_json",
  "uuid",
 ]
 
@@ -3522,7 +3506,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-debug",
- "base-bundles",
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-payload",
@@ -3571,8 +3554,11 @@ dependencies = [
  "alloy-rlp",
  "assert_matches",
  "base-common-chain-config",
+ "base-common-flz",
+ "base-common-network",
  "base-common-types-chain",
  "base-common-types-payload",
+ "base-common-types-rpc",
  "base-execution-evm-runtime",
  "either",
  "pin-project",
@@ -3587,6 +3573,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3901,7 +3888,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-client",
  "alloy-sol-types",
- "base-bundles",
  "base-common-chain-config",
  "base-common-network",
  "base-common-types-chain",
@@ -3913,6 +3899,7 @@ dependencies = [
  "base-execution-evm-primitives",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
+ "base-execution-payload-types",
  "base-execution-txpool",
  "base-node-core",
  "base-node-runner",

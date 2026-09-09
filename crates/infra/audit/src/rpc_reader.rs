@@ -43,7 +43,7 @@ impl EventReader for RpcEventReader {
 
 #[cfg(test)]
 mod tests {
-    use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
+    use base_execution_payload_types::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use tokio::sync::mpsc;
     use uuid::Uuid;
 

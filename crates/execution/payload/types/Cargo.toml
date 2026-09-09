@@ -16,10 +16,10 @@ workspace = true
 
 [dependencies]
 sha2 = { workspace = true }
-serde = { workspace = true }
 either = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
+base-common-flz = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
@@ -27,17 +27,23 @@ reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 tokio = { workspace = true, features = ["sync"] }
 pin-project = { workspace = true, optional = true}
+serde = {features = ["derive", "std"], workspace = true}
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-network = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["default", "v4", "serde"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 tracing = { workspace = true, features = ["attributes"], optional = true}
+alloy-primitives = {features = ["map-foldhash", "serde"], workspace = true}
 tokio-stream = { workspace = true, features = ["default", "sync"], optional = true}
+base-common-types-chain = {features = ["k256", "reth", "serde", "std"], workspace = true}
+base-common-types-rpc = { workspace = true, features = ["default", "std"], optional = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+base-common-network = { workspace = true }
 base-common-chain-config = {workspace = true}
-serde_json = { workspace = true, features = ["alloc"] }
+serde_json = {features = ["alloc", "std"], workspace = true}
+base-common-types-rpc = { workspace = true, features = ["default", "std"] }
 
 [features]
 default = ["std"]
@@ -59,3 +65,4 @@ std = [
     "dep:tracing",
     "dep:tokio-stream",
 ]
+test-utils = ["dep:base-common-network", "dep:base-common-types-rpc"]

@@ -19,7 +19,8 @@ base-node-core = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+
 [dev-dependencies]
-base-bundles = { workspace = true }
 alloy-primitives = { workspace = true }
+base-execution-payload-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }

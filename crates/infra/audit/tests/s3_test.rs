@@ -7,7 +7,7 @@ use audit_archiver_lib::{
 use uuid::Uuid;
 
 mod common;
-use base_bundles::{
+use base_execution_payload_types::{
     BundleExtensions,
     test_utils::{TXN_HASH, create_bundle_from_txn_data},
 };
