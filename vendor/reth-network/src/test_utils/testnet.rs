@@ -198,7 +198,7 @@ where
             );
             peer.map_transactions_manager(base_execution_txpool::Pool::new(
                 pool,
-                base_execution_txpool::CoinbaseTipOrdering::default(),
+                base_execution_txpool::BaseOrdering::default(),
                 blob_store,
                 Default::default(),
             ))
@@ -230,7 +230,7 @@ where
             peer.map_transactions_manager_with(
                 base_execution_txpool::Pool::new(
                     pool,
-                    base_execution_txpool::CoinbaseTipOrdering::default(),
+                    base_execution_txpool::BaseOrdering::default(),
                     blob_store,
                     Default::default(),
                 ),

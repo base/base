@@ -157,7 +157,7 @@ pub async fn test_exex_context_with_chain_spec(
         evm_config.clone(),
     )
     .no_eip4844()
-    .build_with_tasks(runtime.clone(), blob_store.clone())
+    .build_with_tasks(runtime.clone())
     .map(base_execution_txpool::BaseTransactionValidator::new);
     let ordering = base_execution_txpool::BaseOrdering::default();
     let transaction_pool = base_execution_txpool::BaseTransactionPool::new(

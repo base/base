@@ -16,11 +16,11 @@ use tokio::sync::mpsc::Receiver;
 use tracing::{instrument, trace};
 
 use crate::{
+    BaseOrdering,
     blobstore::{BlobStore, BlobStoreError},
     config::PoolConfig,
     error::PoolResult,
     identifier::TransactionId,
-    ordering::{CoinbaseTipOrdering, TransactionOrdering},
     pool::{
         AddedTransactionOutcome, AllTransactionsEvents, NewTransactionEvent, PoolInner,
         TransactionEvents, TransactionListenerKind,
@@ -32,34 +32,35 @@ use crate::{
     },
 };
 
-pub type EthTransactionPool<Client, S> = Pool<
-    TransactionValidationTaskExecutor<EthTransactionValidator<Client>>,
-    CoinbaseTipOrdering,
-    S,
->;
+pub type EthTransactionPool<Client, S> =
+    Pool<TransactionValidationTaskExecutor<EthTransactionValidator<Client>>, S>;
 
 /// A shareable, generic, customizable `TransactionPool` implementation.
 #[derive(Debug)]
-pub struct Pool<V, T: TransactionOrdering, S> {
+pub struct Pool<V, S> {
     /// Arc'ed instance of the pool internals
-    pub pool: Arc<PoolInner<V, T, S>>,
+    pub pool: Arc<PoolInner<V, S>>,
 }
 
 // === impl Pool ===
 
-impl<V, T, S> Pool<V, T, S>
+impl<V, S> Pool<V, S>
 where
     V: TransactionValidator,
-    T: TransactionOrdering,
     S: BlobStore,
 {
     /// Create a new transaction pool instance.
-    pub fn new(validator: V, ordering: T, blob_store: S, config: PoolConfig) -> Self {
+    pub fn new(
+        validator: V,
+        ordering: crate::BaseOrdering,
+        blob_store: S,
+        config: PoolConfig,
+    ) -> Self {
         Self { pool: Arc::new(PoolInner::new(validator, ordering, blob_store, config)) }
     }
 
     /// Returns the wrapped pool internals.
-    pub fn inner(&self) -> &PoolInner<V, T, S> {
+    pub fn inner(&self) -> &PoolInner<V, S> {
         &self.pool
     }
 
@@ -109,7 +110,7 @@ where
     S: BlobStore,
 {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when
-    /// validating [`BasePooledTransaction`]s and ords via [`CoinbaseTipOrdering`]
+    /// validating [`BasePooledTransaction`]s and ords via [`BaseOrdering`]
     ///
     /// # Example
     ///
@@ -146,15 +147,14 @@ where
         blob_store: S,
         config: PoolConfig,
     ) -> Self {
-        Self::new(validator, CoinbaseTipOrdering::default(), blob_store, config)
+        Self::new(validator, BaseOrdering::default(), blob_store, config)
     }
 }
 
 /// implements the `TransactionPool` interface for various transaction pool API consumers.
-impl<V, T, S> TransactionPool for Pool<V, T, S>
+impl<V, S> TransactionPool for Pool<V, S>
 where
     V: TransactionValidator,
-    T: TransactionOrdering,
     S: BlobStore + Clone,
 {
     fn pool_size(&self) -> PoolSize {
@@ -492,10 +492,9 @@ where
     }
 }
 
-impl<V, T, S> TransactionPoolExt for Pool<V, T, S>
+impl<V, S> TransactionPoolExt for Pool<V, S>
 where
     V: TransactionValidator,
-    T: TransactionOrdering,
     S: BlobStore + Clone,
 {
     type Block = V::Block;
@@ -527,10 +526,9 @@ where
     }
 }
 
-impl<V, T, S> ValidatingPool for Pool<V, T, S>
+impl<V, S> ValidatingPool for Pool<V, S>
 where
     V: TransactionValidator,
-    T: TransactionOrdering,
     S: BlobStore + Clone,
 {
     type Validator = V;
@@ -540,7 +538,7 @@ where
     }
 }
 
-impl<V, T: TransactionOrdering, S> Clone for Pool<V, T, S> {
+impl<V, S> Clone for Pool<V, S> {
     fn clone(&self) -> Self {
         Self { pool: Arc::clone(&self.pool) }
     }

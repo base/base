@@ -3,8 +3,8 @@
 use alloy_primitives::map::AddressSet;
 use base_common_consensus::BaseBlock;
 use base_execution_txpool::{
-    BlobStore, CoinbaseTipOrdering, DiskFileBlobStore, PoolConfig, SubPoolLimit,
-    TransactionOrdering, TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
+    BaseOrdering, BlobStore, DiskFileBlobStore, PoolConfig, SubPoolLimit, TransactionPool,
+    TransactionValidationTaskExecutor, TransactionValidator,
 };
 use reth_chain_state::CanonStateSubscriptions;
 
@@ -102,14 +102,14 @@ where
         self,
         blob_store: BS,
         pool_config: PoolConfig,
-    ) -> base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, CoinbaseTipOrdering, BS>
+    ) -> base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, BS>
     where
         BS: BlobStore,
     {
         let TxPoolBuilder { validator, .. } = self;
         base_execution_txpool::Pool::new(
             validator,
-            CoinbaseTipOrdering::default(),
+            BaseOrdering::default(),
             blob_store,
             pool_config,
         )
@@ -121,30 +121,27 @@ where
         self,
         blob_store: BS,
         pool_config: PoolConfig,
-    ) -> eyre::Result<
-        base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, CoinbaseTipOrdering, BS>,
-    >
+    ) -> eyre::Result<base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, BS>>
     where
         BS: BlobStore + Clone,
     {
         self.build_with_ordering_and_spawn_maintenance_task(
-            CoinbaseTipOrdering::default(),
+            BaseOrdering::default(),
             blob_store,
             pool_config,
         )
     }
 
-    /// Build the transaction pool with a custom [`TransactionOrdering`] and spawn its maintenance
+    /// Build the transaction pool with a custom [`BaseOrdering`] and spawn its maintenance
     /// tasks.
-    pub fn build_with_ordering_and_spawn_maintenance_task<BS, O>(
+    pub fn build_with_ordering_and_spawn_maintenance_task<BS>(
         self,
-        ordering: O,
+        ordering: base_execution_txpool::BaseOrdering,
         blob_store: BS,
         pool_config: PoolConfig,
-    ) -> eyre::Result<base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, O, BS>>
+    ) -> eyre::Result<base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, BS>>
     where
         BS: BlobStore + Clone,
-        O: TransactionOrdering,
     {
         let TxPoolBuilder { ctx, validator, .. } = self;
 

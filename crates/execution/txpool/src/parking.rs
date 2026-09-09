@@ -10,8 +10,8 @@ use alloy_primitives::{
     map::{HashMap, hash_map::Entry},
 };
 use base_execution_txpool::{
-    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionOrdering,
-    TransactionPool, ValidPoolTransaction,
+    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
+    ValidPoolTransaction,
 };
 
 use crate::BestTransactionPriority;
@@ -82,25 +82,23 @@ where
 /// The inner iterator remains responsible for nonce contiguity and source ordering. This adapter
 /// only buffers descendants that the inner iterator unlocks while an earlier member of their lane
 /// is parked or waiting for an execution outcome.
-pub struct ParkedBestTransactions<I, O>
+pub struct ParkedBestTransactions<I>
 where
     I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
-    O: TransactionOrdering,
 {
     inner: I,
-    ordering: O,
+    ordering: crate::BaseOrdering,
     base_fee: u64,
     source_head: Option<Arc<ValidPoolTransaction>>,
     lanes: HashMap<BestTransactionLane, BestTransactionLaneState>,
     parked: HashMap<TxHash, Arc<ValidPoolTransaction>>,
     ready: HashMap<TxHash, Arc<ValidPoolTransaction>>,
-    ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
+    ready_heap: BinaryHeap<(BestTransactionPriority, TxHash)>,
 }
 
-impl<I, O> std::fmt::Debug for ParkedBestTransactions<I, O>
+impl<I> std::fmt::Debug for ParkedBestTransactions<I>
 where
     I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
-    O: TransactionOrdering,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParkedBestTransactions")
@@ -111,13 +109,12 @@ where
     }
 }
 
-impl<I, O> ParkedBestTransactions<I, O>
+impl<I> ParkedBestTransactions<I>
 where
     I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
-    O: TransactionOrdering,
 {
     /// Creates a lane-aware parking adapter.
-    pub fn new(inner: I, ordering: O, base_fee: u64) -> Self {
+    pub fn new(inner: I, ordering: crate::BaseOrdering, base_fee: u64) -> Self {
         Self {
             inner,
             ordering,
@@ -131,10 +128,7 @@ where
     }
 
     /// Returns a complete priority key for a transaction.
-    pub fn priority(
-        &self,
-        transaction: &Arc<ValidPoolTransaction>,
-    ) -> BestTransactionPriority<O::PriorityValue> {
+    pub fn priority(&self, transaction: &Arc<ValidPoolTransaction>) -> BestTransactionPriority {
         BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
     }
 
@@ -220,7 +214,7 @@ where
     }
 
     /// Removes stale heap entries and returns the highest-priority ready key.
-    pub fn ready_priority(&mut self) -> Option<&BestTransactionPriority<O::PriorityValue>> {
+    pub fn ready_priority(&mut self) -> Option<&BestTransactionPriority> {
         while self.ready_heap.peek().is_some_and(|(_, hash)| !self.ready.contains_key(hash)) {
             self.ready_heap.pop();
         }
@@ -251,10 +245,9 @@ where
     }
 }
 
-impl<I, O> Iterator for ParkedBestTransactions<I, O>
+impl<I> Iterator for ParkedBestTransactions<I>
 where
     I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
-    O: TransactionOrdering,
 {
     type Item = Arc<ValidPoolTransaction>;
 
@@ -279,10 +272,9 @@ where
     }
 }
 
-impl<I, O> BestTransactions for ParkedBestTransactions<I, O>
+impl<I> BestTransactions for ParkedBestTransactions<I>
 where
     I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
-    O: TransactionOrdering,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
         if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
@@ -300,10 +292,9 @@ where
     }
 }
 
-impl<I, O> ParkableBestTransactions for ParkedBestTransactions<I, O>
+impl<I> ParkableBestTransactions for ParkedBestTransactions<I>
 where
     I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
-    O: TransactionOrdering,
 {
     fn park(&mut self, transaction: &Arc<ValidPoolTransaction>) {
         let hash = *transaction.hash();

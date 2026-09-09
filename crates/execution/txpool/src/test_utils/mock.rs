@@ -32,7 +32,7 @@ use reth_primitives_traits::{
 };
 
 use crate::{
-    CoinbaseTipOrdering, EthBlobTransactionSidecar, TxPool, ValidPoolTransaction,
+    BaseOrdering, EthBlobTransactionSidecar, TxPool, ValidPoolTransaction,
     identifier::{SenderIdentifiers, TransactionId},
     traits::TransactionOrigin,
 };
@@ -40,7 +40,7 @@ use crate::{
 /// A transaction pool implementation using [`MockOrdering`] for transaction ordering.
 ///
 /// This type is an alias for [`TxPool<MockOrdering>`].
-pub type MockTxPool = TxPool<MockOrdering>;
+pub type MockTxPool = TxPool;
 
 /// A validated transaction in the transaction pool, using [`MockTransaction`] as the transaction
 /// type.
@@ -1518,8 +1518,8 @@ impl MockTransactionFactory {
     }
 }
 
-/// `MockOrdering` is just a `CoinbaseTipOrdering` with `MockTransaction`
-pub type MockOrdering = CoinbaseTipOrdering;
+/// `MockOrdering` is just a `BaseOrdering` with `MockTransaction`
+pub type MockOrdering = BaseOrdering;
 
 /// A ratio of each of the configured transaction types. The percentages sum up to 100, this is
 /// enforced in [`MockTransactionRatio::new`] by an assert.
@@ -1906,8 +1906,6 @@ impl IntoIterator for MockTransactionSet {
 
 #[test]
 fn test_mock_priority() {
-    use crate::TransactionOrdering;
-
     let o = MockOrdering::default();
     let lo = MockTransaction::eip1559().with_gas_limit(100_000);
     let hi = lo.next().inc_price();

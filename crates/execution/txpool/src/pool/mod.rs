@@ -13,7 +13,7 @@
 //!
 //! The transaction pool is responsible for storing new, valid transactions and providing the next
 //! best transactions sorted by their priority. Where priority is determined by the transaction's
-//! score ([`TransactionOrdering`]).
+//! score ([`BaseOrdering`]).
 //!
 //! Furthermore, the following characteristics fall under (3.):
 //!
@@ -90,7 +90,7 @@ use tracing::{debug, trace, warn};
 pub use txpool::{SenderInfo, TxPool};
 
 use crate::{
-    CanonicalStateUpdate, PoolConfig, TransactionOrdering, TransactionValidator,
+    CanonicalStateUpdate, PoolConfig, TransactionValidator,
     blobstore::{BlobStore, PooledBlobSidecar},
     error::{PoolError, PoolErrorKind, PoolResult},
     identifier::{SenderId, SenderIdentifiers, TransactionId},
@@ -134,10 +134,7 @@ pub const NEW_TX_LISTENER_BUFFER_SIZE: usize = 1024;
 const BLOB_SIDECAR_LISTENER_BUFFER_SIZE: usize = 512;
 
 /// Transaction pool internals.
-pub struct PoolInner<V, T, S>
-where
-    T: TransactionOrdering,
-{
+pub struct PoolInner<V, S> {
     /// Internal mapping of addresses to plain ints.
     identifiers: RwLock<SenderIdentifiers>,
     /// Transaction validator.
@@ -145,7 +142,7 @@ where
     /// Storage for blob transactions
     blob_store: S,
     /// The internal pool that manages all transactions.
-    pool: RwLock<TxPool<T>>,
+    pool: RwLock<TxPool>,
     /// Pool settings.
     config: PoolConfig,
     /// Manages listeners for transaction state change events.
@@ -164,14 +161,18 @@ where
 
 // === impl PoolInner ===
 
-impl<V, T, S> PoolInner<V, T, S>
+impl<V, S> PoolInner<V, S>
 where
     V: TransactionValidator,
-    T: TransactionOrdering,
     S: BlobStore,
 {
     /// Create a new transaction pool instance.
-    pub fn new(validator: V, ordering: T, blob_store: S, config: PoolConfig) -> Self {
+    pub fn new(
+        validator: V,
+        ordering: crate::BaseOrdering,
+        blob_store: S,
+        config: PoolConfig,
+    ) -> Self {
         Self {
             identifiers: Default::default(),
             validator,
@@ -357,7 +358,7 @@ where
     }
 
     /// Returns a read lock to the pool's data.
-    pub fn get_pool_data(&self) -> RwLockReadGuard<'_, TxPool<T>> {
+    pub fn get_pool_data(&self) -> RwLockReadGuard<'_, TxPool> {
         self.pool.read()
     }
 
@@ -543,7 +544,7 @@ where
     /// come in through that function, either as a batch or `std::iter::once`.
     fn add_transaction(
         &self,
-        pool: &mut RwLockWriteGuard<'_, TxPool<T>>,
+        pool: &mut RwLockWriteGuard<'_, TxPool>,
         origin: TransactionOrigin,
         tx: TransactionValidationOutcome,
     ) -> (PoolResult<AddedTransactionOutcome>, Option<AddedTransactionMeta>) {
@@ -978,7 +979,7 @@ where
     }
 
     /// Returns an iterator that yields transactions that are ready to be included in the block.
-    pub fn best_transactions(&self) -> BestTransactions<T> {
+    pub fn best_transactions(&self) -> BestTransactions {
         self.get_pool_data().best_transactions()
     }
 
@@ -1292,7 +1293,7 @@ where
     }
 }
 
-impl<V, T: TransactionOrdering, S> fmt::Debug for PoolInner<V, T, S> {
+impl<V, S> fmt::Debug for PoolInner<V, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PoolInner").field("config", &self.config).finish_non_exhaustive()
     }

@@ -13,7 +13,7 @@ use tokio::sync::broadcast::{Receiver, error::TryRecvError};
 use tracing::debug;
 
 use crate::{
-    Priority, TransactionOrdering, ValidPoolTransaction,
+    Priority, ValidPoolTransaction,
     error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
     identifier::{SenderId, TransactionId},
     pool::pending::PendingTransaction,
@@ -29,13 +29,13 @@ const MAX_NEW_TRANSACTIONS_PER_BATCH: usize = 16;
 /// This iterator guarantees that all transactions it returns satisfy both the base fee and blob
 /// fee!
 #[derive(Debug)]
-pub struct BestTransactionsWithFees<T: TransactionOrdering> {
-    pub best: BestTransactions<T>,
+pub struct BestTransactionsWithFees {
+    pub best: BestTransactions,
     pub base_fee: u64,
     pub base_fee_per_blob_gas: u64,
 }
 
-impl<T: TransactionOrdering> crate::traits::BestTransactions for BestTransactionsWithFees<T> {
+impl crate::traits::BestTransactions for BestTransactionsWithFees {
     fn mark_invalid(&mut self, tx: &Self::Item, kind: InvalidPoolTransactionError) {
         BestTransactions::mark_invalid(&mut self.best, tx, kind)
     }
@@ -57,7 +57,7 @@ impl<T: TransactionOrdering> crate::traits::BestTransactions for BestTransaction
     }
 }
 
-impl<T: TransactionOrdering> Iterator for BestTransactionsWithFees<T> {
+impl Iterator for BestTransactionsWithFees {
     type Item = Arc<ValidPoolTransaction>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -96,15 +96,15 @@ impl<T: TransactionOrdering> Iterator for BestTransactionsWithFees<T> {
 /// now. While it contains all gapless transactions of a sender, it _always_ only returns the
 /// transaction with the current on chain nonce.
 #[derive(Debug)]
-pub struct BestTransactions<T: TransactionOrdering> {
+pub struct BestTransactions {
     /// Contains a copy of _all_ transactions of the pending pool at the point in time this
     /// iterator was created.
-    pub all: OrdMap<TransactionId, PendingTransaction<T>>,
+    pub all: OrdMap<TransactionId, PendingTransaction>,
     /// Transactions that can be executed right away: these have the expected nonce.
     ///
     /// Once an `independent` transaction with the nonce `N` is returned, it unlocks `N+1`, which
     /// then can be moved from the `all` set to the `independent` set.
-    pub independent: BTreeSet<PendingTransaction<T>>,
+    pub independent: BTreeSet<PendingTransaction>,
     /// There might be the case where a yielded transactions is invalid, this will track it.
     pub invalid: FxHashSet<SenderId>,
     /// Used to receive any new pending transactions that have been added to the pool after this
@@ -112,18 +112,18 @@ pub struct BestTransactions<T: TransactionOrdering> {
     ///
     /// These new pending transactions are inserted into this iterator's pool before yielding the
     /// next value
-    pub new_transaction_receiver: Option<Receiver<PendingTransaction<T>>>,
+    pub new_transaction_receiver: Option<Receiver<PendingTransaction>>,
     /// The priority value of most recently yielded transaction.
     ///
     /// This is required if new pending transactions are fed in while it yields new values.
-    pub last_priority: Option<Priority<T::PriorityValue>>,
+    pub last_priority: Option<Priority<crate::BasePriority>>,
     /// Flag to control whether to skip blob transactions (EIP4844).
     pub skip_blobs: bool,
     /// Whether live updates can be yielded after a lower-priority transaction.
     pub allow_updates_out_of_order: bool,
 }
 
-impl<T: TransactionOrdering> BestTransactions<T> {
+impl BestTransactions {
     /// Mark the transaction and its descendants as invalid.
     pub fn mark_invalid(
         &mut self,
@@ -137,12 +137,12 @@ impl<T: TransactionOrdering> BestTransactions<T> {
     ///
     /// Note: for a transaction with nonce higher than the current on chain nonce this will always
     /// return an ancestor since all transactions in this pool are gapless.
-    pub fn ancestor(&self, id: &TransactionId) -> Option<&PendingTransaction<T>> {
+    pub fn ancestor(&self, id: &TransactionId) -> Option<&PendingTransaction> {
         self.all.get(&id.unchecked_ancestor()?)
     }
 
     /// Non-blocking read on the new pending transactions subscription channel
-    fn try_recv(&mut self) -> Option<IncomingTransaction<T>> {
+    fn try_recv(&mut self) -> Option<IncomingTransaction> {
         loop {
             match self.new_transaction_receiver.as_mut()?.try_recv() {
                 Ok(tx) => {
@@ -175,7 +175,7 @@ impl<T: TransactionOrdering> BestTransactions<T> {
 
     /// Removes the currently best independent transaction from the independent set and the total
     /// set.
-    fn pop_best(&mut self) -> Option<PendingTransaction<T>> {
+    fn pop_best(&mut self) -> Option<PendingTransaction> {
         self.independent.pop_last().inspect(|best| {
             self.all.remove(best.transaction.id());
         })
@@ -211,7 +211,7 @@ impl<T: TransactionOrdering> BestTransactions<T> {
     #[expect(clippy::type_complexity)]
     pub fn next_tx_and_priority(
         &mut self,
-    ) -> Option<(Arc<ValidPoolTransaction>, Priority<T::PriorityValue>)> {
+    ) -> Option<(Arc<ValidPoolTransaction>, Priority<crate::BasePriority>)> {
         loop {
             self.add_new_transactions();
             // Remove the next independent tx with the highest priority
@@ -256,14 +256,14 @@ impl<T: TransactionOrdering> BestTransactions<T> {
 ///
 /// This enum determines how a newly received transaction should be handled based on its priority
 /// relative to transactions already yielded by the iterator.
-enum IncomingTransaction<T: TransactionOrdering> {
+enum IncomingTransaction {
     /// Process the transaction normally: add to both `all` map and potentially to `independent`
     /// set (if it has no ancestor).
     ///
     /// This variant is used when the transaction's priority is lower than or equal to the last
     /// yielded transaction, meaning it can be safely processed without breaking the descending
     /// priority order.
-    Process(PendingTransaction<T>),
+    Process(PendingTransaction),
 
     /// Stash the transaction: add only to the `all` map, but NOT to the `independent` set.
     ///
@@ -276,10 +276,10 @@ enum IncomingTransaction<T: TransactionOrdering> {
     /// Without stashing, if a child of this transaction arrives later, it would fail to find its
     /// parent in `all`, be marked as `independent`, and be yielded out of order (before its
     /// parent), causing nonce gaps.
-    Stash(PendingTransaction<T>),
+    Stash(PendingTransaction),
 }
 
-impl<T: TransactionOrdering> crate::traits::BestTransactions for BestTransactions<T> {
+impl crate::traits::BestTransactions for BestTransactions {
     fn mark_invalid(&mut self, tx: &Self::Item, kind: InvalidPoolTransactionError) {
         Self::mark_invalid(self, tx, kind)
     }
@@ -302,7 +302,7 @@ impl<T: TransactionOrdering> crate::traits::BestTransactions for BestTransaction
     }
 }
 
-impl<T: TransactionOrdering> Iterator for BestTransactions<T> {
+impl Iterator for BestTransactions {
     type Item = Arc<ValidPoolTransaction>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -481,6 +481,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
+
     use super::*;
     use crate::{
         BestTransactions, Priority,
@@ -720,8 +722,7 @@ mod tests {
         let mut best = pool.best();
 
         // Use a broadcast channel for transaction updates
-        let (tx_sender, tx_receiver) =
-            tokio::sync::broadcast::channel::<PendingTransaction<MockOrdering>>(1000);
+        let (tx_sender, tx_receiver) = tokio::sync::broadcast::channel::<PendingTransaction>(1000);
         best.new_transaction_receiver = Some(tx_receiver);
 
         // Create a new transaction with nonce 5 and validate it
@@ -732,7 +733,9 @@ mod tests {
         let pending_tx = PendingTransaction {
             submission_id: 10,
             transaction: Arc::new(valid_new_tx.clone()),
-            priority: Priority::Value(1000),
+            priority: Priority::Value(crate::BasePriority::Unified(
+                crate::UnifiedTipPriority::new(U256::from(1000), 1, 0),
+            )),
         };
         tx_sender.send(pending_tx.clone()).unwrap();
 
@@ -767,8 +770,7 @@ mod tests {
         let mut best = pool.best();
 
         // Use a broadcast channel for transaction updates
-        let (tx_sender, tx_receiver) =
-            tokio::sync::broadcast::channel::<PendingTransaction<MockOrdering>>(1000);
+        let (tx_sender, tx_receiver) = tokio::sync::broadcast::channel::<PendingTransaction>(1000);
         best.new_transaction_receiver = Some(tx_receiver);
 
         // Create a new transaction with nonce 5 and validate it
@@ -779,7 +781,9 @@ mod tests {
         let pending_tx1 = PendingTransaction {
             submission_id: 10,
             transaction: Arc::new(valid_new_tx1.clone()),
-            priority: Priority::Value(1000),
+            priority: Priority::Value(crate::BasePriority::Unified(
+                crate::UnifiedTipPriority::new(U256::from(1000), 1, 0),
+            )),
         };
         tx_sender.send(pending_tx1.clone()).unwrap();
 
@@ -802,7 +806,9 @@ mod tests {
         let pending_tx2 = PendingTransaction {
             submission_id: 11, // Different submission ID
             transaction: Arc::new(valid_new_tx2.clone()),
-            priority: Priority::Value(1000),
+            priority: Priority::Value(crate::BasePriority::Unified(
+                crate::UnifiedTipPriority::new(U256::from(1000), 1, 0),
+            )),
         };
         tx_sender.send(pending_tx2.clone()).unwrap();
 
@@ -938,8 +944,7 @@ mod tests {
         let mut best = pool.best();
 
         // Use a broadcast channel for transaction updates
-        let (_tx_sender, tx_receiver) =
-            tokio::sync::broadcast::channel::<PendingTransaction<MockOrdering>>(1000);
+        let (_tx_sender, tx_receiver) = tokio::sync::broadcast::channel::<PendingTransaction>(1000);
         best.new_transaction_receiver = Some(tx_receiver);
 
         // Ensure receiver is set
@@ -987,8 +992,7 @@ mod tests {
         let mut best = pool.best();
 
         // Use a broadcast channel for transaction updates
-        let (tx_sender, tx_receiver) =
-            tokio::sync::broadcast::channel::<PendingTransaction<MockOrdering>>(1000);
+        let (tx_sender, tx_receiver) = tokio::sync::broadcast::channel::<PendingTransaction>(1000);
         best.new_transaction_receiver = Some(tx_receiver);
 
         // yield one tx, effectively locking in the highest prio
@@ -1002,7 +1006,9 @@ mod tests {
         let pending_tx = PendingTransaction {
             submission_id: 10,
             transaction: Arc::new(valid_new_higher_fee_tx.clone()),
-            priority: Priority::Value(u128::MAX),
+            priority: Priority::Value(crate::BasePriority::Unified(
+                crate::UnifiedTipPriority::new(U256::from(u128::MAX), 1, 0),
+            )),
         };
         tx_sender.send(pending_tx).unwrap();
 

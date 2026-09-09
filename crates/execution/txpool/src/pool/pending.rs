@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tokio::sync::broadcast;
 
 use crate::{
-    Priority, SubPoolLimit, TransactionOrdering, ValidPoolTransaction,
+    Priority, SubPoolLimit, ValidPoolTransaction,
     identifier::{SenderId, TransactionId},
     pool::{
         best::{BestTransactions, BestTransactionsWithFees},
@@ -26,40 +26,40 @@ use crate::{
 /// Once an `independent` transaction was executed it *unlocks* the next nonce, if this transaction
 /// is also pending, then this will be moved to the `independent` queue.
 #[derive(Debug, Clone)]
-pub struct PendingPool<T: TransactionOrdering> {
+pub struct PendingPool {
     /// How to order transactions.
-    ordering: T,
+    ordering: crate::BaseOrdering,
     /// Keeps track of transactions inserted in the pool.
     ///
     /// This way we can determine when transactions were submitted to the pool.
     submission_id: u64,
     /// _All_ Transactions that are currently inside the pool grouped by their identifier.
-    by_id: OrdMap<TransactionId, PendingTransaction<T>>,
+    by_id: OrdMap<TransactionId, PendingTransaction>,
     /// The highest nonce transactions for each sender - like the `independent` set, but the
     /// highest instead of lowest nonce.
-    highest_nonces: FxHashMap<SenderId, PendingTransaction<T>>,
+    highest_nonces: FxHashMap<SenderId, PendingTransaction>,
     /// Independent transactions that can be included directly and don't require other
     /// transactions.
-    independent_transactions: FxHashMap<SenderId, PendingTransaction<T>>,
+    independent_transactions: FxHashMap<SenderId, PendingTransaction>,
     /// Keeps track of the size of this pool.
     ///
     /// See also [`reth_primitives_traits::InMemorySize::size`].
     size_of: SizeTracker,
     /// Used to broadcast new transactions that have been added to the `PendingPool` to existing
     /// `static_files` of this pool.
-    new_transaction_notifier: broadcast::Sender<PendingTransaction<T>>,
+    new_transaction_notifier: broadcast::Sender<PendingTransaction>,
 }
 
 // === impl PendingPool ===
 
-impl<T: TransactionOrdering> PendingPool<T> {
+impl PendingPool {
     /// Create a new pending pool instance.
-    pub fn new(ordering: T) -> Self {
+    pub fn new(ordering: crate::BaseOrdering) -> Self {
         Self::with_buffer(ordering, 200)
     }
 
     /// Create a new pool instance with the given buffer capacity.
-    pub fn with_buffer(ordering: T, buffer_capacity: usize) -> Self {
+    pub fn with_buffer(ordering: crate::BaseOrdering, buffer_capacity: usize) -> Self {
         let (new_transaction_notifier, _) = broadcast::channel(buffer_capacity);
         Self {
             ordering,
@@ -78,7 +78,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// # Returns
     ///
     /// Returns all transactions by id.
-    fn clear_transactions(&mut self) -> OrdMap<TransactionId, PendingTransaction<T>> {
+    fn clear_transactions(&mut self) -> OrdMap<TransactionId, PendingTransaction> {
         self.independent_transactions.clear();
         self.highest_nonces.clear();
         self.size_of.reset();
@@ -103,7 +103,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// provides a way to mark transactions that the consumer of this iterator considers invalid. In
     /// which case the transaction's subgraph is also automatically marked invalid, See (1.).
     /// Invalid transactions are skipped.
-    pub fn best(&self) -> BestTransactions<T> {
+    pub fn best(&self) -> BestTransactions {
         BestTransactions {
             all: self.by_id.clone(),
             independent: self.independent_transactions.values().cloned().collect(),
@@ -120,7 +120,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
         &self,
         base_fee: u64,
         base_fee_per_blob_gas: u64,
-    ) -> BestTransactionsWithFees<T> {
+    ) -> BestTransactionsWithFees {
         BestTransactionsWithFees { best: self.best(), base_fee, base_fee_per_blob_gas }
     }
 
@@ -139,7 +139,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
         unlocked: Vec<Arc<ValidPoolTransaction>>,
         base_fee: u64,
         base_fee_per_blob_gas: u64,
-    ) -> BestTransactionsWithFees<T> {
+    ) -> BestTransactionsWithFees {
         let mut best = self.best();
         for (submission_id, tx) in (self.submission_id + 1..).zip(unlocked) {
             debug_assert!(!best.all.contains_key(tx.id()), "transaction already included");
@@ -244,7 +244,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
 
     /// Updates the independent transaction and highest nonces set, assuming the given transaction
     /// is being _added_ to the pool.
-    fn update_independents_and_highest_nonces(&mut self, tx: &PendingTransaction<T>) {
+    fn update_independents_and_highest_nonces(&mut self, tx: &PendingTransaction) {
         match self.highest_nonces.entry(tx.transaction.sender_id()) {
             Entry::Occupied(mut entry) => {
                 if entry.get().transaction.nonce() < tx.transaction.nonce() {
@@ -526,17 +526,17 @@ impl<T: TransactionOrdering> PendingPool<T> {
     }
 
     /// All transactions grouped by id
-    pub const fn by_id(&self) -> &OrdMap<TransactionId, PendingTransaction<T>> {
+    pub const fn by_id(&self) -> &OrdMap<TransactionId, PendingTransaction> {
         &self.by_id
     }
 
     /// Independent transactions
-    pub const fn independent_transactions(&self) -> &FxHashMap<SenderId, PendingTransaction<T>> {
+    pub const fn independent_transactions(&self) -> &FxHashMap<SenderId, PendingTransaction> {
         &self.independent_transactions
     }
 
     /// Subscribes to new transactions
-    pub fn new_transaction_receiver(&self) -> broadcast::Receiver<PendingTransaction<T>> {
+    pub fn new_transaction_receiver(&self) -> broadcast::Receiver<PendingTransaction> {
         self.new_transaction_notifier.subscribe()
     }
 
@@ -577,13 +577,13 @@ impl<T: TransactionOrdering> PendingPool<T> {
     }
 
     /// Retrieves a transaction with the given ID from the pool, if it exists.
-    fn get(&self, id: &TransactionId) -> Option<&PendingTransaction<T>> {
+    fn get(&self, id: &TransactionId) -> Option<&PendingTransaction> {
         self.by_id.get(id)
     }
 
     /// Returns a reference to the independent transactions in the pool
     #[cfg(test)]
-    pub const fn independent(&self) -> &FxHashMap<SenderId, PendingTransaction<T>> {
+    pub const fn independent(&self) -> &FxHashMap<SenderId, PendingTransaction> {
         &self.independent_transactions
     }
 
@@ -608,23 +608,23 @@ impl<T: TransactionOrdering> PendingPool<T> {
 
 /// A transaction that is ready to be included in a block.
 #[derive(Debug)]
-pub struct PendingTransaction<T: TransactionOrdering> {
+pub struct PendingTransaction {
     /// Identifier that tags when transaction was submitted in the pool.
     pub submission_id: u64,
     /// Actual transaction.
     pub transaction: Arc<ValidPoolTransaction>,
     /// The priority value assigned by the used `Ordering` function.
-    pub priority: Priority<T::PriorityValue>,
+    pub priority: Priority<crate::BasePriority>,
 }
 
-impl<T: TransactionOrdering> PendingTransaction<T> {
+impl PendingTransaction {
     /// The next transaction of the sender: `nonce + 1`
     pub fn unlocks(&self) -> TransactionId {
         self.transaction.transaction_id.descendant()
     }
 }
 
-impl<T: TransactionOrdering> Clone for PendingTransaction<T> {
+impl Clone for PendingTransaction {
     fn clone(&self) -> Self {
         Self {
             submission_id: self.submission_id,
@@ -634,21 +634,21 @@ impl<T: TransactionOrdering> Clone for PendingTransaction<T> {
     }
 }
 
-impl<T: TransactionOrdering> Eq for PendingTransaction<T> {}
+impl Eq for PendingTransaction {}
 
-impl<T: TransactionOrdering> PartialEq<Self> for PendingTransaction<T> {
+impl PartialEq<Self> for PendingTransaction {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<T: TransactionOrdering> PartialOrd<Self> for PendingTransaction<T> {
+impl PartialOrd<Self> for PendingTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T: TransactionOrdering> Ord for PendingTransaction<T> {
+impl Ord for PendingTransaction {
     fn cmp(&self, other: &Self) -> Ordering {
         // This compares by `priority` and only if two tx have the exact same priority this compares
         // the unique `submission_id`. This ensures that transactions with same priority are not
@@ -931,7 +931,7 @@ mod tests {
 
     #[test]
     fn test_empty_pool_behavior() {
-        let mut pool = PendingPool::<MockOrdering>::new(MockOrdering::default());
+        let mut pool = PendingPool::new(MockOrdering::default());
 
         // Ensure the pool is empty
         assert!(pool.is_empty());

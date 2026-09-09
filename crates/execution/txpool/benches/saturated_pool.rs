@@ -13,7 +13,7 @@ use codspeed_criterion_compat::{BatchSize, Criterion, criterion_group, criterion
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::SealedBlock;
 
-type BenchPool = PoolInner<MockTransactionValidator, MockOrdering, InMemoryBlobStore>;
+type BenchPool = PoolInner<MockTransactionValidator, InMemoryBlobStore>;
 
 /// Base fee the pool is initialized with.
 const BASE_FEE: u64 = 100;

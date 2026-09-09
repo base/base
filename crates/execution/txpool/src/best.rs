@@ -2,34 +2,26 @@
 
 use std::sync::Arc;
 
-use base_execution_txpool::{
-    BestTransactions, InvalidPoolTransactionError, TransactionOrdering, ValidPoolTransaction,
-};
+use base_execution_txpool::{BestTransactions, InvalidPoolTransactionError, ValidPoolTransaction};
 
 use crate::BestTransactionPriority;
 
 /// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
-pub struct MergeBestTransactions<O>
-where
-    O: TransactionOrdering,
-{
+pub struct MergeBestTransactions {
     protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
     sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
-    ordering: O,
+    ordering: crate::BaseOrdering,
     base_fee: u64,
     next_protocol: Option<Arc<ValidPoolTransaction>>,
     next_sidecar: Option<Arc<ValidPoolTransaction>>,
 }
 
-impl<O> MergeBestTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl MergeBestTransactions {
     /// Creates a merged iterator from the protocol pool and 2D nonce sidecar.
     pub fn new(
         protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
         sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
-        ordering: O,
+        ordering: crate::BaseOrdering,
         base_fee: u64,
     ) -> Self {
         Self { protocol, sidecar, ordering, base_fee, next_protocol: None, next_sidecar: None }
@@ -62,19 +54,13 @@ where
     }
 }
 
-impl<O> std::fmt::Debug for MergeBestTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl std::fmt::Debug for MergeBestTransactions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MergeBestTransactions").finish_non_exhaustive()
     }
 }
 
-impl<O> Iterator for MergeBestTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl Iterator for MergeBestTransactions {
     type Item = Arc<ValidPoolTransaction>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -96,10 +82,7 @@ where
     }
 }
 
-impl<O> BestTransactions for MergeBestTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl BestTransactions for MergeBestTransactions {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
         if transaction.transaction.is_eip8130_sidecar_transaction() {
             self.next_sidecar = None;

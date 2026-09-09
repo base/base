@@ -682,8 +682,7 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BasePooledTransaction, CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator,
-        Pool,
+        BaseOrdering, BasePooledTransaction, InMemoryBlobStore, MockTransactionValidator, Pool,
     };
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::Runtime;
@@ -712,7 +711,7 @@ mod tests {
                 );
                 let pool = Pool::new(
                     MockTransactionValidator::default(),
-                    CoinbaseTipOrdering::default(),
+                    BaseOrdering::default(),
                     InMemoryBlobStore::default(),
                     Default::default(),
                 );

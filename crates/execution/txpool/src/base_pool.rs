@@ -73,14 +73,13 @@ impl AccountStateDiff {
 }
 
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
-pub struct BaseTransactionPool<Client, S, O = crate::BaseOrdering>
+pub struct BaseTransactionPool<Client, S>
 where
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
-    protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, O, S>,
-    ordering: O,
+    protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S>,
+    ordering: crate::BaseOrdering,
     nonce_pool: Arc<RwLock<TwoDNoncePool>>,
     listeners: Arc<RwLock<SidecarListeners>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
@@ -95,11 +94,10 @@ where
     protocol_admission_lock: Arc<Mutex<()>>,
 }
 
-impl<Client, S, O> fmt::Debug for BaseTransactionPool<Client, S, O>
+impl<Client, S> fmt::Debug for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -107,11 +105,10 @@ where
     }
 }
 
-impl<Client, S, O> Clone for BaseTransactionPool<Client, S, O>
+impl<Client, S> Clone for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn clone(&self) -> Self {
@@ -127,30 +124,24 @@ where
     }
 }
 
-impl<Client, S, O> Unpin for BaseTransactionPool<Client, S, O>
+impl<Client, S> Unpin for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
 }
 
-impl<Client, S, O> BaseTransactionPool<Client, S, O>
+impl<Client, S> BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     /// Creates a new wrapper around the reth protocol pool.
     pub fn new(
-        protocol_pool: Pool<
-            TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>,
-            O,
-            S,
-        >,
-        ordering: O,
+        protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S>,
+        ordering: crate::BaseOrdering,
     ) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
         Self {
@@ -193,7 +184,7 @@ where
     /// Returns the wrapped reth pool.
     pub const fn protocol_pool(
         &self,
-    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, O, S> {
+    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S> {
         &self.protocol_pool
     }
 
@@ -793,11 +784,10 @@ where
     }
 }
 
-impl<Client, S, O> StateDiffInvalidation for BaseTransactionPool<Client, S, O>
+impl<Client, S> StateDiffInvalidation for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
@@ -809,11 +799,10 @@ where
     }
 }
 
-impl<Client, S, O> TransactionPool for BaseTransactionPool<Client, S, O>
+impl<Client, S> TransactionPool for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn pool_size(&self) -> PoolSize {
@@ -1395,11 +1384,10 @@ where
     }
 }
 
-impl<Client, S, O> ParkableTransactionPool for BaseTransactionPool<Client, S, O>
+impl<Client, S> ParkableTransactionPool for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn best_transactions_with_attributes_and_parking(
@@ -1417,11 +1405,10 @@ where
     }
 }
 
-impl<Client, S, O> TransactionPoolExt for BaseTransactionPool<Client, S, O>
+impl<Client, S> TransactionPoolExt for BaseTransactionPool<Client, S>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator,
-    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client>> as TransactionValidator>::Block;

@@ -30,7 +30,7 @@ use smallvec::SmallVec;
 use tracing::{trace, warn};
 
 use crate::{
-    PoolConfig, PoolResult, PoolUpdateKind, PriceBumpConfig, SubPool, TransactionOrdering, TxState,
+    PoolConfig, PoolResult, PoolUpdateKind, PriceBumpConfig, SubPool, TxState,
     ValidPoolTransaction,
     config::{LocalTransactionConfig, TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER},
     error::{
@@ -92,11 +92,11 @@ use crate::{
 ///   B3 --> |promote| B2
 ///   new --> |apply state changes| pool
 /// ```
-pub struct TxPool<T: TransactionOrdering> {
+pub struct TxPool {
     /// pending subpool
     ///
     /// Holds transactions that are ready to be executed on the current state.
-    pending_pool: PendingPool<T>,
+    pending_pool: PendingPool,
     /// Pool settings to enforce limits etc.
     config: PoolConfig,
     /// queued subpool
@@ -126,9 +126,9 @@ pub struct TxPool<T: TransactionOrdering> {
 
 // === impl TxPool ===
 
-impl<T: TransactionOrdering> TxPool<T> {
+impl TxPool {
     /// Create a new graph pool instance.
-    pub fn new(ordering: T, config: PoolConfig) -> Self {
+    pub fn new(ordering: crate::BaseOrdering, config: PoolConfig) -> Self {
         Self {
             pending_pool: PendingPool::with_buffer(
                 ordering,
@@ -380,7 +380,7 @@ impl<T: TransactionOrdering> TxPool<T> {
 
     /// Returns an iterator that yields transactions that are ready to be included in the block with
     /// the tracked fees.
-    pub fn best_transactions(&self) -> BestTransactions<T> {
+    pub fn best_transactions(&self) -> BestTransactions {
         self.pending_pool.best()
     }
 
@@ -1296,7 +1296,7 @@ impl<T: TransactionOrdering> TxPool<T> {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl TxPool<crate::test_utils::MockOrdering> {
+impl TxPool {
     /// Creates a mock instance for testing.
     pub fn mock() -> Self {
         Self::new(crate::test_utils::MockOrdering::default(), PoolConfig::default())
@@ -1304,15 +1304,15 @@ impl TxPool<crate::test_utils::MockOrdering> {
 }
 
 #[cfg(test)]
-impl<T: TransactionOrdering> Drop for TxPool<T> {
+impl Drop for TxPool {
     fn drop(&mut self) {
         self.assert_invariants();
     }
 }
 
-impl<T: TransactionOrdering> TxPool<T> {
+impl TxPool {
     /// Pending subpool
-    pub const fn pending(&self) -> &PendingPool<T> {
+    pub const fn pending(&self) -> &PendingPool {
         &self.pending_pool
     }
 
@@ -1327,7 +1327,7 @@ impl<T: TransactionOrdering> TxPool<T> {
     }
 }
 
-impl<T: TransactionOrdering> fmt::Debug for TxPool<T> {
+impl fmt::Debug for TxPool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TxPool").field("config", &self.config).finish_non_exhaustive()
     }

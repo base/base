@@ -16,7 +16,7 @@ mod okvalidator;
 pub use okvalidator::*;
 
 /// A [Pool] used for testing
-pub type TestPool = Pool<MockTransactionValidator, MockOrdering, InMemoryBlobStore>;
+pub type TestPool = Pool<MockTransactionValidator, InMemoryBlobStore>;
 
 /// Structure encapsulating a [`TestPool`] used for testing
 #[derive(Debug, Clone)]

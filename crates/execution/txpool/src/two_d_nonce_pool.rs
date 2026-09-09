@@ -13,7 +13,7 @@ use base_common_consensus::Eip8130Constants;
 use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, BestTransactions, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolResult, PriceBumpConfig, QueuedReason, SenderIdentifiers,
-    TransactionId, TransactionOrdering, ValidPoolTransaction,
+    TransactionId, ValidPoolTransaction,
 };
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
@@ -449,10 +449,11 @@ impl TwoDNoncePool {
     }
 
     /// Returns a best-transactions iterator snapshot.
-    pub fn best_transactions<O>(&self, ordering: O, base_fee: u64) -> BestTwoDTransactions<O>
-    where
-        O: TransactionOrdering,
-    {
+    pub fn best_transactions(
+        &self,
+        ordering: crate::BaseOrdering,
+        base_fee: u64,
+    ) -> BestTwoDTransactions {
         BestTwoDTransactions::new(&self.lanes, &self.nonce_free, ordering, base_fee)
     }
 
@@ -497,15 +498,12 @@ impl TwoDNoncePool {
 /// Each finite channel contributes its contiguous head and each nonce-free
 /// transaction contributes an independent one-item candidate.
 #[derive(Debug)]
-pub struct BestTwoDTransactions<O>
-where
-    O: TransactionOrdering,
-{
+pub struct BestTwoDTransactions {
     lanes: Vec<LaneIterator>,
-    candidates: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, usize)>,
+    candidates: BinaryHeap<(BestTransactionPriority, usize)>,
     lane_indexes: HashMap<LaneId, usize>,
     nonce_free_indexes: HashMap<TxHash, usize>,
-    ordering: O,
+    ordering: crate::BaseOrdering,
     base_fee: u64,
 }
 
@@ -517,14 +515,11 @@ struct LaneIterator {
     invalidated: bool,
 }
 
-impl<O> BestTwoDTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl BestTwoDTransactions {
     fn new(
         lanes: &HashMap<LaneId, NonceLane>,
         nonce_free: &B256Map<Arc<ValidPoolTransaction>>,
-        ordering: O,
+        ordering: crate::BaseOrdering,
         base_fee: u64,
     ) -> Self {
         let mut lanes: Vec<_> = lanes
@@ -579,10 +574,7 @@ where
         Self { candidates, lanes, lane_indexes, nonce_free_indexes, ordering, base_fee }
     }
 
-    fn priority_key(
-        &self,
-        transaction: &Arc<ValidPoolTransaction>,
-    ) -> BestTransactionPriority<O::PriorityValue> {
+    fn priority_key(&self, transaction: &Arc<ValidPoolTransaction>) -> BestTransactionPriority {
         BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
     }
 
@@ -596,10 +588,7 @@ where
     }
 }
 
-impl<O> Iterator for BestTwoDTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl Iterator for BestTwoDTransactions {
     type Item = Arc<ValidPoolTransaction>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -617,10 +606,7 @@ where
     }
 }
 
-impl<O> BestTransactions for BestTwoDTransactions<O>
-where
-    O: TransactionOrdering,
-{
+impl BestTransactions for BestTwoDTransactions {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
         let index = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {
             self.lane_indexes.get(&(transaction.sender(), nonce_key)).copied()
@@ -639,10 +625,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::atomic::{AtomicUsize, Ordering},
-        time::Instant,
-    };
+    use std::time::Instant;
 
     use alloy_primitives::Bytes;
     use alloy_signer::SignerSync;
@@ -652,28 +635,10 @@ mod tests {
         transaction::Recovered,
     };
     use base_common_network::PrivateKeySigner;
-    use base_execution_txpool::{PriceBumpConfig, Priority, TransactionOrigin};
+    use base_execution_txpool::{PriceBumpConfig, TransactionOrigin};
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};
-
-    #[derive(Clone, Debug, Default)]
-    struct CountingOrdering {
-        priority_evaluations: Arc<AtomicUsize>,
-    }
-
-    impl TransactionOrdering for CountingOrdering {
-        type PriorityValue = u128;
-
-        fn priority(
-            &self,
-            transaction: &crate::BasePooledTransaction,
-            base_fee: u64,
-        ) -> Priority<Self::PriorityValue> {
-            self.priority_evaluations.fetch_add(1, Ordering::Relaxed);
-            transaction.effective_tip_per_gas(base_fee).into()
-        }
-    }
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -766,25 +731,30 @@ mod tests {
         }
     }
 
-    fn best_transaction_priority_evaluations(lane_count: usize) -> usize {
+    fn assert_best_transactions_by_lane(lane_count: usize) {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
         let signer = signer();
         for nonce_key in 1..=lane_count {
-            let transaction = valid_pool_transaction(signed_channel_tx(
+            let transaction = valid_pool_transaction(signed_channel_tx_with_tip(
                 &signer,
                 U256::from(nonce_key),
                 0,
+                nonce_key as u128,
                 nonce_key as u128,
             ));
             pool.insert_validated(transaction, 0).unwrap();
         }
 
-        let ordering = CountingOrdering::default();
-        let priority_evaluations = Arc::clone(&ordering.priority_evaluations);
-        let yielded = pool.best_transactions(ordering, 0).count();
-
-        assert_eq!(yielded, lane_count);
-        priority_evaluations.load(Ordering::Relaxed)
+        let transactions: Vec<_> =
+            pool.best_transactions(BaseOrdering::coinbase_tip(), 0).collect();
+        assert_eq!(transactions.len(), lane_count);
+        let mut hashes = std::collections::HashSet::new();
+        for transaction in &transactions {
+            assert!(hashes.insert(*transaction.hash()), "each lane must appear once");
+        }
+        for pair in transactions.windows(2) {
+            assert!(pair[0].max_fee_per_gas() >= pair[1].max_fee_per_gas());
+        }
     }
 
     fn run_best_transactions_wall_clock(lane_count: usize) {
@@ -839,15 +809,12 @@ mod tests {
     }
 
     #[test]
-    fn best_transactions_evaluates_each_lane_head_once() {
+    fn best_transactions_yields_each_lane_head_once() {
         const SMALL_LANE_COUNT: usize = 16;
         const LARGE_LANE_COUNT: usize = SMALL_LANE_COUNT * 2;
 
-        let small_evaluations = best_transaction_priority_evaluations(SMALL_LANE_COUNT);
-        let large_evaluations = best_transaction_priority_evaluations(LARGE_LANE_COUNT);
-
-        assert_eq!(small_evaluations, SMALL_LANE_COUNT);
-        assert_eq!(large_evaluations, LARGE_LANE_COUNT);
+        assert_best_transactions_by_lane(SMALL_LANE_COUNT);
+        assert_best_transactions_by_lane(LARGE_LANE_COUNT);
     }
 
     #[test]

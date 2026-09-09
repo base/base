@@ -342,8 +342,7 @@ impl BasePoolBuilder {
         self,
         ctx: &BuilderContext,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<BaseTransactionPool<BlockchainProvider, DiskFileBlobStore, BaseOrdering>>
-    {
+    ) -> eyre::Result<BaseTransactionPool<BlockchainProvider, DiskFileBlobStore>> {
         let Self {
             pool_config_overrides,
             ordering,

@@ -1402,8 +1402,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BasePooledTransaction, CoinbaseTipOrdering, Pool, TransactionPool,
-        blobstore::InMemoryBlobStore, error::PoolErrorKind, test_utils::TransactionBuilder,
+        BaseOrdering, BasePooledTransaction, Pool, TransactionPool, blobstore::InMemoryBlobStore,
+        error::PoolErrorKind, test_utils::TransactionBuilder,
     };
 
     fn test_evm_config() -> BaseEvmConfig {
@@ -1527,8 +1527,7 @@ mod tests {
 
         assert!(outcome.is_valid());
 
-        let pool =
-            Pool::new(validator, CoinbaseTipOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new(validator, BaseOrdering::default(), blob_store, Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_ok());
@@ -1608,8 +1607,7 @@ mod tests {
 
         assert!(outcome.is_invalid());
 
-        let pool =
-            Pool::new(validator, CoinbaseTipOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new(validator, BaseOrdering::default(), blob_store, Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_err());
@@ -1650,8 +1648,7 @@ mod tests {
             ));
         }
 
-        let pool =
-            Pool::new(validator, CoinbaseTipOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new(validator, BaseOrdering::default(), blob_store, Default::default());
         let res = pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await;
         assert!(res.is_err());
         assert!(matches!(
@@ -1719,8 +1716,7 @@ mod tests {
         let outcome = validator.validate_one(TransactionOrigin::External, transaction.clone());
         assert!(outcome.is_invalid());
 
-        let pool =
-            Pool::new(validator, CoinbaseTipOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new(validator, BaseOrdering::default(), blob_store, Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_err());
@@ -1829,8 +1825,7 @@ mod tests {
 
         // Test pool integration
         let blob_store = InMemoryBlobStore::default();
-        let pool =
-            Pool::new(validator, CoinbaseTipOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new(validator, BaseOrdering::default(), blob_store, Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_err());

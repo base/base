@@ -1,12 +1,12 @@
 //! Pools using real Base transaction representations and the shared mock validator.
 
 use base_execution_txpool::{
-    CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
+    BaseOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
     test_utils::BaseTestTransaction,
 };
 
 /// Pool accepting Base transactions for network tests.
-pub type TestPool = Pool<MockTransactionValidator, CoinbaseTipOrdering, InMemoryBlobStore>;
+pub type TestPool = Pool<MockTransactionValidator, InMemoryBlobStore>;
 
 /// Constructs Base fixtures for networking tests.
 #[derive(Debug)]
@@ -17,7 +17,7 @@ impl NetworkTestData {
     pub fn pool() -> TestPool {
         Pool::new(
             MockTransactionValidator::default(),
-            CoinbaseTipOrdering::default(),
+            BaseOrdering::default(),
             InMemoryBlobStore::default(),
             Default::default(),
         )

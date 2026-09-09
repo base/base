@@ -745,8 +745,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BasePooledTransaction, CoinbaseTipOrdering, Pool, TransactionOrigin,
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        BaseOrdering, BasePooledTransaction, Pool, TransactionOrigin, blobstore::InMemoryBlobStore,
+        validate::EthTransactionValidatorBuilder,
     };
 
     #[test]
@@ -784,12 +784,8 @@ mod tests {
         )
         .build();
 
-        let txpool = Pool::new(
-            validator,
-            CoinbaseTipOrdering::default(),
-            blob_store.clone(),
-            Default::default(),
-        );
+        let txpool =
+            Pool::new(validator, BaseOrdering::default(), blob_store.clone(), Default::default());
 
         txpool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
 

@@ -1,6 +1,4 @@
-use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
-
-use base_common_consensus::Transaction;
+use std::cmp::Ordering;
 
 /// Priority of the transaction that can be missing.
 ///
@@ -34,62 +32,6 @@ impl<T: Ord + Clone> Ord for Priority<T> {
             (Self::None, Self::Value(_)) => Ordering::Less,
             (Self::None, Self::None) => Ordering::Equal,
         }
-    }
-}
-
-/// Transaction ordering trait to determine the order of transactions.
-///
-/// Decides how transactions should be ordered within the pool, depending on a `Priority` value.
-///
-/// The returned priority must reflect [total order](https://en.wikipedia.org/wiki/Total_order).
-pub trait TransactionOrdering: Debug + Send + Sync + 'static {
-    /// Priority of a transaction.
-    ///
-    /// Higher is better.
-    type PriorityValue: Ord + Clone + Default + Debug + Send + Sync;
-
-    /// The transaction type to determine the priority of.
-
-    /// Returns the priority score for the given transaction.
-    fn priority(
-        &self,
-        transaction: &crate::BasePooledTransaction,
-        base_fee: u64,
-    ) -> Priority<Self::PriorityValue>;
-}
-
-/// Default ordering for the pool.
-///
-/// The transactions are ordered by their coinbase tip.
-/// The higher the coinbase tip is, the higher the priority of the transaction.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct CoinbaseTipOrdering(PhantomData<crate::BasePooledTransaction>);
-
-impl TransactionOrdering for CoinbaseTipOrdering {
-    type PriorityValue = u128;
-
-    /// Source: <https://github.com/ethereum/go-ethereum/blob/7f756dc1185d7f1eeeacb1d12341606b7135f9ea/core/txpool/legacypool/list.go#L469-L482>.
-    ///
-    /// NOTE: The implementation is incomplete for missing base fee.
-    fn priority(
-        &self,
-        transaction: &crate::BasePooledTransaction,
-        base_fee: u64,
-    ) -> Priority<Self::PriorityValue> {
-        transaction.effective_tip_per_gas(base_fee).into()
-    }
-}
-
-impl Default for CoinbaseTipOrdering {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-impl Clone for CoinbaseTipOrdering {
-    fn clone(&self) -> Self {
-        Self::default()
     }
 }
 

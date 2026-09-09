@@ -45,10 +45,7 @@ mod transaction;
 pub use transaction::{BasePooledTransaction, unix_time_millis};
 
 mod base_ordering;
-pub use base_ordering::{
-    BaseOrdering, BasePriority, BestTransactionPriority, TimestampOrdering, UnifiedTipOrdering,
-    UnifiedTipPriority,
-};
+pub use base_ordering::{BaseOrdering, BasePriority, BestTransactionPriority, UnifiedTipPriority};
 
 mod parking;
 pub use parking::{

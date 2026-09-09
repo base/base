@@ -2342,7 +2342,7 @@ mod tests {
         BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
     };
     use base_execution_txpool::{
-        BasePooledTransaction, CoinbaseTipOrdering, Eip4844PoolTransactionError, InMemoryBlobStore,
+        BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError, InMemoryBlobStore,
         InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
         ValidPoolTransaction,
         test_utils::{
@@ -2371,7 +2371,7 @@ mod tests {
         transactions::config::RelaxedEthAnnouncementFilter,
     };
 
-    type BaseTestPool = Pool<OkValidator, CoinbaseTipOrdering, InMemoryBlobStore>;
+    type BaseTestPool = Pool<OkValidator, InMemoryBlobStore>;
 
     async fn new_base_tx_manager() -> (TransactionsManager<BaseTestPool>, NetworkManager) {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -2384,7 +2384,7 @@ mod tests {
 
         let pool = Pool::new(
             OkValidator::default(),
-            CoinbaseTipOrdering::default(),
+            BaseOrdering::default(),
             InMemoryBlobStore::default(),
             Default::default(),
         );
