@@ -7,12 +7,14 @@ use base_execution_state_types::{
     updates::{StorageTrieUpdates, TrieUpdates},
 };
 use either::Either;
-#[cfg(feature = "std")]
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+use reth_primitives_traits::ParallelBridgeBuffered;
+
 use tracing::debug;
 use tracing::instrument;
 
 #[cfg(feature = "trie-debug")]
-use crate::debug_recorder::TrieDebugRecorder;
+use crate::sparse::debug_recorder::TrieDebugRecorder;
 use crate::{ArenaParallelSparseTrie, RevealableSparseTrie, TrieNodeEpoch};
 
 /// Holds data that should be dropped after any locks are released.
@@ -38,7 +40,7 @@ pub struct SparseStateTrie {
     deferred_drops: DeferredDrops,
     /// Metrics for the sparse state trie.
     #[cfg(feature = "metrics")]
-    metrics: crate::metrics::SparseStateTrieMetrics,
+    metrics: crate::sparse::metrics::SparseStateTrieMetrics,
 }
 
 impl Default for SparseStateTrie {
@@ -274,23 +276,7 @@ impl SparseStateTrie {
 
         let retain_updates = self.retain_updates;
 
-        #[cfg(not(feature = "std"))]
-        let results: Vec<_> = targets
-            .into_iter()
-            .map(|(_, target, mut nodes)| {
-                let result = match target {
-                    Either::Left(trie) => trie.reveal_v2_proof_nodes(&mut nodes, retain_updates),
-                    Either::Right(trie) => trie.reveal_v2_proof_nodes(&mut nodes, retain_updates),
-                };
-                (result, nodes)
-            })
-            .collect();
-
-        #[cfg(feature = "std")]
         let results: Vec<_> = {
-            use rayon::iter::ParallelIterator;
-            use reth_primitives_traits::ParallelBridgeBuffered;
-
             let parent_span = tracing::Span::current();
             targets
                 .into_iter()
@@ -451,7 +437,7 @@ impl SparseStateTrie {
     /// Modified account and storage tries must already have computed hashes via `root()` /
     /// `storage_root()` for their current state. Unmodified storage roots revealed only by
     /// prewarming are treated as epoch zero.
-    #[cfg(feature = "std")]
+
     #[instrument(
         level = "debug",
         name = "SparseStateTrie::prune",
@@ -504,12 +490,9 @@ struct StorageTries {
     default_trie: RevealableSparseTrie,
 }
 
-#[cfg(feature = "std")]
 impl StorageTries {
     /// Prunes storage tries by epoch, returning fully old tries to the reuse pool.
     fn prune(&mut self, prune_before: TrieNodeEpoch, parent_span: &tracing::Span) -> usize {
-        use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-
         let addresses_to_evict: Vec<B256> = self
             .tries
             .par_iter_mut()
@@ -574,15 +557,13 @@ impl StorageTries {
 
 #[cfg(test)]
 mod tests {
+    use crate::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
     use alloy_primitives::{
         U256, b256,
         map::{HashMap, HashSet},
     };
     use arbitrary::Arbitrary;
     use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_trie::{
-        EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates,
-    };
     use base_execution_state_types::{
         BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode,
         SparseStateTrieErrorKind, SparseTrieErrorKind, StorageMultiProof, TrieAccount, TrieMask,

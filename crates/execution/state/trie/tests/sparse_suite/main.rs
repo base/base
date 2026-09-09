@@ -24,7 +24,11 @@ use alloy_rlp::{Decodable, encode_fixed_size};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_execution_state_trie::test_utils::TrieTestHarness;
 use base_execution_state_types::{Nibbles, ProofV2Target, TrieNodeV2};
-use {reth_trie_sparse::ArenaParallelSparseTrie,base_execution_state_types::LeafLookup,base_execution_state_types::LeafLookupError,base_execution_state_types::LeafUpdate,base_execution_state_types::TrieNodeEpoch};
+use {
+    base_execution_state_trie::ArenaParallelSparseTrie, base_execution_state_types::LeafLookup,
+    base_execution_state_types::LeafLookupError, base_execution_state_types::LeafUpdate,
+    base_execution_state_types::TrieNodeEpoch,
+};
 
 mod find_leaf;
 mod get_leaf_value;
@@ -156,7 +160,7 @@ impl SuiteTestHarness {
 macro_rules! sparse_trie_tests {
     ( $( $test_fn:ident ),* $(,)? ) => {
         mod arena_parallel_sparse_trie {
-            use reth_trie_sparse::{ArenaParallelSparseTrie};
+            use base_execution_state_trie::{ArenaParallelSparseTrie};
 
             $(
                 #[test]
@@ -167,7 +171,7 @@ macro_rules! sparse_trie_tests {
         }
 
         mod arena_parallel_sparse_trie_always_parallel {
-            use reth_trie_sparse::{ArenaParallelSparseTrie,ArenaParallelismThresholds};
+            use base_execution_state_trie::{ArenaParallelSparseTrie,ArenaParallelismThresholds};
 
             $(
                 #[test]

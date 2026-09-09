@@ -48,7 +48,7 @@ pub struct StateRootComputeOutcome {
     /// Debug recorders taken from the sparse tries, keyed by `None` for account trie
     /// and `Some(address)` for storage tries.
     #[cfg(feature = "trie-debug")]
-    pub debug_recorders: Vec<(Option<B256>, reth_trie_sparse::debug_recorder::TrieDebugRecorder)>,
+    pub debug_recorders: Vec<(Option<B256>, base_execution_state_trie::TrieDebugRecorder)>,
 }
 
 /// Handle to a background sparse trie state root computation.

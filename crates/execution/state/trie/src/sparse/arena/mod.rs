@@ -1,3 +1,4 @@
+//! Arena-backed sparse trie storage and traversal.
 mod branch_child_idx;
 mod cursor;
 mod nodes;
@@ -21,7 +22,9 @@ use smallvec::SmallVec;
 use tracing::{instrument, trace};
 
 #[cfg(feature = "trie-debug")]
-use crate::debug_recorder::{LeafUpdateRecord, ProofTrieNodeRecord, RecordedOp, TrieDebugRecorder};
+use crate::sparse::debug_recorder::{
+    LeafUpdateRecord, ProofTrieNodeRecord, RecordedOp, TrieDebugRecorder,
+};
 use crate::{LeafLookup, LeafLookupError, LeafUpdate, SparseTrieUpdates, TrieNodeEpoch};
 
 /// Alias for the slotmap key type used as node references throughout the arena trie.
@@ -623,13 +626,13 @@ impl ArenaParallelSparseTrie {
     /// ops, representing the initial state at the beginning of a block (after pruning).
     ///
     /// Walks the upper arena and all subtries depth-first using the cursor, converting each
-    /// node into a [`crate::debug_recorder::ProofTrieNodeRecord`].
+    /// node into a [`crate::sparse::debug_recorder::ProofTrieNodeRecord`].
     #[cfg(feature = "trie-debug")]
     fn record_initial_state(&mut self) {
         use alloy_primitives::hex;
         use alloy_trie::nodes::{BranchNode, TrieNode};
 
-        use crate::debug_recorder::{NodeStateRecord, TrieNodeRecord};
+        use crate::sparse::debug_recorder::{NodeStateRecord, TrieNodeRecord};
 
         fn state_to_record(state: &ArenaSparseNodeState) -> NodeStateRecord {
             match state {
@@ -3274,8 +3277,8 @@ impl ArenaParallelSparseTrie {
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::test_utils::TrieTestHarness;
     use alloy_primitives::{B256, U256, map::B256Map};
-    use base_execution_state_trie::test_utils::TrieTestHarness;
     use base_execution_state_types::ProofV2Target;
     use rand::{Rng, SeedableRng, seq::SliceRandom};
     use tracing::{info, trace};

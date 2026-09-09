@@ -23,8 +23,14 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use reth_primitives_traits::FastInstant as Instant;
-use {reth_trie_sparse::DeferredDrops,base_execution_state_types::LeafUpdate,reth_trie_sparse::RevealableSparseTrie,reth_trie_sparse::SparseStateTrie,base_execution_state_types::TrieNodeEpoch,reth_trie_sparse::errors::SparseStateTrieErrorKind,reth_trie_sparse::errors::SparseTrieErrorKind,reth_trie_sparse::errors::SparseTrieResult};
 use tracing::{debug, debug_span, error, instrument, trace_span};
+use {
+    base_execution_state_trie::DeferredDrops, base_execution_state_trie::RevealableSparseTrie,
+    base_execution_state_trie::SparseStateTrie, base_execution_state_types::LeafUpdate,
+    base_execution_state_types::SparseStateTrieErrorKind,
+    base_execution_state_types::SparseTrieErrorKind, base_execution_state_types::SparseTrieResult,
+    base_execution_state_types::TrieNodeEpoch,
+};
 
 use super::{StateRootComputeOutcome, StateRootMessage, evm_state_to_hashed_post_state};
 
@@ -1113,8 +1119,8 @@ mod tests {
     use base_execution_state_provider::test_utils::create_test_provider_factory;
     use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
     use base_execution_state_tasks::ProofTaskCtx;
+    use base_execution_state_trie::ArenaParallelSparseTrie;
     use reth_db_common::init::init_genesis;
-    use reth_trie_sparse::ArenaParallelSparseTrie;
 
     use super::*;
 

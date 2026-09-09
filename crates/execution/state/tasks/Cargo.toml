@@ -36,13 +36,12 @@ fixed-cache = { workspace = true, features = ["alloc", "stats"] }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-common-types-chain = { workspace = true, features = ["alloy"] }
 base-execution-state-memory = {features = ["std"], workspace = true}
-base-execution-state-trie = {features = ["serde"], workspace = true}
 eyre = { workspace = true, optional = true, features = ["default"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-runtime-tasks = { workspace = true, features = ["rayon"]}
+base-execution-state-trie = { features = ["serde"], workspace = true}
 reth-primitives-traits = {features = ["dashmap", "std"], workspace = true}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
-reth-trie-sparse = { workspace = true, features = ["trie-debug"], optional = true }
 base-execution-state-database = { workspace = true, features = ["default", "mdbx"] }
 base-execution-state-types = {features = ["default", "serde", "std"], workspace = true}
 base-common-observability-metrics = {features = ["common", "metrics"], workspace = true}
@@ -96,13 +95,12 @@ metrics = [
     "base-execution-state-trie/metrics",
 ]
 default = ["metrics"]
-trie-debug = ["dep:rand", "dep:reth-trie-sparse", "reth-trie-sparse?/trie-debug"]
+trie-debug = ["dep:rand", "base-execution-state-trie/trie-debug"]
 test-utils = [
     "reth-primitives-traits/test-utils",
     "base-execution-state-provider/test-utils",
     "base-execution-state-trie/test-utils",
     "base-common-runtime-tasks/test-utils",
-    "reth-trie-sparse?/test-utils",
     "base-execution-state-types/test-utils",
     "base-execution-state-memory/test-utils",
 ]

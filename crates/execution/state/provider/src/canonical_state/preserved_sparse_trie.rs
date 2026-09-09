@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use reth_trie_sparse::SparseStateTrie;
+use base_execution_state_trie::SparseStateTrie;
 use tracing::debug;
 
 /// Type alias for the sparse trie type used in preservation.

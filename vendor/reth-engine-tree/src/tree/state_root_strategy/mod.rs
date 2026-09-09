@@ -79,6 +79,8 @@ pub use base_execution_state_tasks::{
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
 };
 use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
+#[cfg(feature = "trie-debug")]
+use base_execution_state_trie::TrieDebugRecorder;
 use base_execution_state_trie::{
     HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
     updates::TrieUpdates,
@@ -88,12 +90,14 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
-#[cfg(feature = "trie-debug")]
-use reth_trie_sparse::debug_recorder::TrieDebugRecorder;
-use {reth_trie_sparse::ArenaParallelSparseTrie,reth_trie_sparse::RevealableSparseTrie,reth_trie_sparse::SparseStateTrie,base_execution_state_types::TrieNodeEpoch};
 use tracing::{Span, debug, debug_span, instrument, warn};
 use {
     base_execution_state_provider::PreservedSparseTrie, base_execution_state_types::ExecutedBlock,
+};
+use {
+    base_execution_state_trie::ArenaParallelSparseTrie,
+    base_execution_state_trie::RevealableSparseTrie, base_execution_state_trie::SparseStateTrie,
+    base_execution_state_types::TrieNodeEpoch,
 };
 
 use self::sparse_trie::{SparseTrieCacheTask, SparseTrieTaskMetrics};

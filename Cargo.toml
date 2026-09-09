@@ -164,7 +164,6 @@ members = [
   "crates/common/observability/tracing",
   "crates/execution/state/trie",
   "crates/execution/state/types",
-  "vendor/reth-trie-sparse",
   "crates/common/codec/storage",
   "crates/execution/evm/inspectors",
   "crates/execution/evm/crypto",
@@ -461,7 +460,6 @@ reth-rpc-builder = { path = "vendor/reth-rpc-builder", default-features = false 
 reth-downloaders = { path = "vendor/reth-downloaders", default-features = false }
 reth-engine-util = { path = "vendor/reth-engine-util", default-features = false }
 reth-engine-tree = { path = "vendor/reth-engine-tree", default-features = false }
-reth-trie-sparse = { path = "vendor/reth-trie-sparse", default-features = false }
 reth-node-events = { path = "vendor/reth-node-events", default-features = false }
 reth-payload-util = { path = "vendor/reth-payload-util", default-features = false }
 reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }

@@ -86,3 +86,8 @@ pub use database_trie_cursor::{
     DatabaseAccountTrieCursor, DatabaseStorageTrieCursor, DatabaseTrieCursorFactory,
     PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter,
 };
+
+extern crate alloc;
+
+mod sparse;
+pub use sparse::*;

@@ -187,7 +187,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-trie-db](../../vendor/reth-trie-db/Cargo.toml) | Retain shared infrastructure |
 | [reth-trie-parallel](../../vendor/reth-trie-parallel/Cargo.toml) | Retain shared infrastructure |
-| [reth-trie-sparse](../../vendor/reth-trie-sparse/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-trie](../../crates/execution/state/trie/Cargo.toml) | Retain shared infrastructure |
 | [base-common-codec-storage](../../crates/common/codec/storage/Cargo.toml) | Retain shared infrastructure |
 
 ## Validation

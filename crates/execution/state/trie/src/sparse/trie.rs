@@ -108,7 +108,7 @@ impl RevealableSparseTrie {
     /// # Examples
     ///
     /// ```
-    /// use reth_trie_sparse::RevealableSparseTrie;
+    /// use base_execution_state_trie::RevealableSparseTrie;
     ///
     /// let trie = <RevealableSparseTrie>::blind();
     /// assert!(trie.is_blind());

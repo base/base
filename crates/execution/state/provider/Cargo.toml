@@ -40,13 +40,12 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 parking_lot = {workspace = true, features = ["default"]}
 tokio = {workspace = true, features = ["macros", "sync"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
-reth-trie-sparse = { workspace = true, features = ["std"] }
 base-common-types-chain = {workspace = true, features = ["reth"]}
 base-common-client-ethereum = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-runtime-tasks = {workspace = true,  features = ["rayon"]}
-base-execution-state-trie = {workspace = true, features = ["metrics"]}
+base-execution-state-trie = {features = ["metrics"], workspace = true}
 base-execution-state-database = {workspace = true, features = ["mdbx"]}
 alloy-primitives = {workspace = true, features = ["map-foldhash", "std"]}
 base-execution-state-api = {workspace = true, features = ["db-api", "std"]}
@@ -91,7 +90,6 @@ test-utils = [
     "alloy-signer",
     "base-common-client-ethereum",
     "rand",
-    "reth-trie-sparse/test-utils",
 ]
 rayon = []
 serde = [
