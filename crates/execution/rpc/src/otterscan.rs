@@ -11,7 +11,7 @@ use base_common_rpc_types::{
 };
 use base_evm_context::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use reth_rpc_api::OtterscanServer;
+use crate::OtterscanServer;
 use reth_rpc_eth_types::{EthApiError, utils::binary_search};
 use reth_rpc_server_types::result::internal_rpc_err;
 use revm_inspectors::{
@@ -56,7 +56,7 @@ impl OtterscanApi<BaseEthApi> {
 }
 
 #[async_trait]
-impl OtterscanServer<base_common_rpc_types::BaseTransaction, Header> for OtterscanApi<BaseEthApi> {
+impl OtterscanServer for OtterscanApi<BaseEthApi> {
     /// Handler for `ots_getHeaderByNumber` and `erigon_getHeaderByNumber`
     async fn get_header_by_number(
         &self,

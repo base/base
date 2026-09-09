@@ -17,7 +17,7 @@ use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use reth_provider::providers::BlockchainProvider;
-use reth_rpc_api::TraceApiServer;
+use crate::TraceApiServer;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
 };
@@ -570,7 +570,7 @@ fn apply_trace_filter_pagination(
 }
 
 #[async_trait]
-impl TraceApiServer<BaseTransactionRequest> for TraceApi {
+impl TraceApiServer for TraceApi {
     /// Executes the given call and returns a number of possible traces for it.
     ///
     /// Handler for `trace_call`

@@ -21,7 +21,6 @@ alloy-serde = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 base-metrics = { workspace = true }
-reth-rpc-api = { workspace = true }
 alloy-signer = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
@@ -108,7 +107,7 @@ base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["metrics"]
-client = ["jsonrpsee/async-client", "jsonrpsee/client"]
+client = ["reth-chain-state/serde", "jsonrpsee/async-client", "jsonrpsee/client"]
 metrics = [
     "dep:metrics",
     "base-execution-payload-builder/metrics",

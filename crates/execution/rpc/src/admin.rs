@@ -14,7 +14,7 @@ use jsonrpsee::core::RpcResult;
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_peers::{AnyNode, NodeRecord};
 use reth_network_types::PeerKind;
-use reth_rpc_api::AdminApiServer;
+use crate::AdminApiServer;
 use reth_rpc_server_types::ToRpcResult;
 
 /// `admin` API implementation.

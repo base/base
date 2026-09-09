@@ -2547,7 +2547,6 @@ dependencies = [
  "reth-payload-util",
  "reth-primitives-traits",
  "reth-provider",
- "reth-rpc-api",
  "reth-rpc-eth-types",
  "reth-rpc-layer",
  "reth-storage-api",
@@ -3734,7 +3733,6 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-prune-types",
- "reth-rpc-api",
  "reth-rpc-convert",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
@@ -4099,7 +4097,6 @@ dependencies = [
  "reth-provider",
  "reth-prune",
  "reth-prune-types",
- "reth-rpc-api",
  "reth-rpc-builder",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
@@ -14172,7 +14169,6 @@ dependencies = [
  "reth-node-core",
  "reth-primitives-traits",
  "reth-provider",
- "reth-rpc-api",
  "reth-rpc-builder",
  "reth-rpc-server-types",
  "reth-stages-types",
@@ -14573,6 +14569,7 @@ dependencies = [
  "alloy-rpc-types-debug",
  "base-common-consensus",
  "base-execution-evm",
+ "base-execution-rpc",
  "eyre",
  "futures",
  "jsonrpsee",
@@ -14580,7 +14577,6 @@ dependencies = [
  "reth-engine-primitives",
  "reth-primitives-traits",
  "reth-provider",
- "reth-rpc-api",
  "reth-testing-utils",
  "reth-tracing",
  "reth-trie",
@@ -15085,26 +15081,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-rpc-api"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-genesis",
- "alloy-json-rpc",
- "alloy-primitives",
- "alloy-rpc-types-admin",
- "alloy-rpc-types-debug",
- "base-common-rpc-types",
- "jsonrpsee",
- "reth-chain-state",
- "reth-network-peers",
- "reth-trie-common",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "reth-rpc-builder"
 version = "0.0.0"
 dependencies = [
@@ -15136,7 +15112,6 @@ dependencies = [
  "reth-node-core",
  "reth-primitives-traits",
  "reth-provider",
- "reth-rpc-api",
  "reth-rpc-eth-types",
  "reth-rpc-layer",
  "reth-rpc-server-types",

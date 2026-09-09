@@ -1,8 +1,6 @@
 //! Engine API specific actions for testing.
 
 use alloy_primitives::B256;
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
-use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_rpc_types_engine::{ExecutionPayloadV3, PayloadStatusEnum};
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
@@ -67,14 +65,7 @@ impl Action for SendNewPayload {
             const MAX_RETRIES: u32 = 5;
 
             while retries < MAX_RETRIES {
-                match EthApiClient::<
-                    TransactionRequest,
-                    Transaction,
-                    Block,
-                    Receipt,
-                    Header,
-                    EthereumTxEnvelope<TxEip4844>,
-                >::block_by_number(
+                match EthApiClient::block_by_number(
                     source_rpc,
                     alloy_eips::BlockNumberOrTag::Number(self.block_number),
                     true, // include transactions
@@ -114,7 +105,7 @@ impl Action for SendNewPayload {
             // Convert block to ExecutionPayloadV3
             let payload = ExecutionPayloadV3::from_block_unchecked(
                 block.hash(),
-                &block.map_transactions(|tx| tx.inner).into_consensus(),
+                &block.map_transactions(|tx| tx.inner.inner).into_consensus(),
             );
 
             // Send the payload to the target node

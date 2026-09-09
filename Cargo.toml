@@ -330,7 +330,6 @@ reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }
 reth-tracing = { path = "vendor/reth-tracing", default-features = false }
-reth-rpc-api = { path = "vendor/reth-rpc-api", default-features = false }
 reth-network = { path = "vendor/reth-network", default-features = false }
 reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }
 reth-fs-util = { path = "vendor/reth-fs-util", default-features = false }

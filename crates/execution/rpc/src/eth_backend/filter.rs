@@ -295,7 +295,7 @@ impl EthFilter {
 }
 
 #[async_trait]
-impl EthFilterApiServer<base_common_rpc_types::BaseTransaction, Log> for EthFilter {
+impl EthFilterApiServer for EthFilter {
     /// Handler for `eth_newFilter`
     async fn new_filter(&self, filter: Filter) -> RpcResult<FilterId> {
         trace!(target: "rpc::eth", "Serving eth_newFilter");

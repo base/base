@@ -21,7 +21,6 @@ thiserror = { workspace = true }
 dyn-clone = { workspace = true }
 pin-project = { workspace = true }
 reth-network = { workspace = true }
-reth-rpc-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
@@ -53,7 +52,6 @@ reth-network-peers = { workspace = true }
 base-common-rpc-types = {workspace = true}
 base-common-rpc-types-engine = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
-reth-rpc-api = { workspace = true, features = ["client"] }
 reth-tracing = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive"] }

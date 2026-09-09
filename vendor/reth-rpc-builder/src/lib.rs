@@ -40,7 +40,7 @@ use jsonrpsee::{
 };
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_provider::providers::BlockchainProvider;
-use reth_rpc_api::servers::*;
+use base_execution_rpc::{AdminApiServer, DebugApiServer, MevSimApiServer, MinerApiServer, NetApiServer, OtterscanServer, RethApiServer, RpcApiServer, TraceApiServer, TxPoolApiServer, Web3ApiServer};
 use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider};
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 pub use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};

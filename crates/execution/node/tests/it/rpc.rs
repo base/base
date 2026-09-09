@@ -9,7 +9,7 @@ use reth_node_core::{
     args::{NetworkArgs, RpcServerArgs},
     node_config::NodeConfig,
 };
-use reth_rpc_api::servers::AdminApiServer;
+use base_execution_rpc::AdminApiServer;
 use reth_tasks::Runtime;
 
 // <https://github.com/paradigmxyz/reth/issues/19765>

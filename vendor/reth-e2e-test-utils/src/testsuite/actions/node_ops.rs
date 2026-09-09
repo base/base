@@ -2,8 +2,6 @@
 
 use std::time::Duration;
 
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
-use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
@@ -70,27 +68,13 @@ impl Action for CompareNodeChainTips {
             let node_b_client = &env.node_clients[self.node_b];
 
             // Get latest block from each node
-            let block_a = EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                EthereumTxEnvelope<TxEip4844>,
-            >::block_by_number(
+            let block_a = EthApiClient::block_by_number(
                 &node_a_client.rpc, alloy_eips::BlockNumberOrTag::Latest, false
             )
             .await?
             .ok_or_else(|| eyre::eyre!("Failed to get latest block from node {}", self.node_a))?;
 
-            let block_b = EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                EthereumTxEnvelope<TxEip4844>,
-            >::block_by_number(
+            let block_b = EthApiClient::block_by_number(
                 &node_b_client.rpc, alloy_eips::BlockNumberOrTag::Latest, false
             )
             .await?
@@ -274,14 +258,7 @@ impl Action for WaitForSync {
                     let node_b_client = &env.node_clients[self.node_b];
 
                     // Get latest block from each node
-                    let block_a = EthApiClient::<
-                        TransactionRequest,
-                        Transaction,
-                        Block,
-                        Receipt,
-                        Header,
-                        EthereumTxEnvelope<TxEip4844>,
-                    >::block_by_number(
+                    let block_a = EthApiClient::block_by_number(
                         &node_a_client.rpc,
                         alloy_eips::BlockNumberOrTag::Latest,
                         false,
@@ -291,14 +268,7 @@ impl Action for WaitForSync {
                         eyre::eyre!("Failed to get latest block from node {}", self.node_a)
                     })?;
 
-                    let block_b = EthApiClient::<
-                        TransactionRequest,
-                        Transaction,
-                        Block,
-                        Receipt,
-                        Header,
-                        EthereumTxEnvelope<TxEip4844>,
-                    >::block_by_number(
+                    let block_b = EthApiClient::block_by_number(
                         &node_b_client.rpc,
                         alloy_eips::BlockNumberOrTag::Latest,
                         false,

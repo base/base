@@ -8,7 +8,7 @@ use core::ops::{Deref, DerefMut};
 use std::vec::Vec;
 
 use base_evm_context::{
-    AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalEntry,
+    AccountInfoLoad, AccountLoad, JournalCheckpoint,
     JournalLoadError, JournalTr, JournaledAccount, SStoreResult, SelfDestructResult, StateLoad,
     TransferError,
 };

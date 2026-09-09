@@ -9,6 +9,7 @@ use tracing::warn;
 use crate::{RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
 
 /// Resolved settings for the Base RPC server and its handlers.
+#[derive(Debug)]
 pub struct RpcConfig {
     /// Ethereum API limits, caches, and execution settings.
     pub eth: EthConfig,

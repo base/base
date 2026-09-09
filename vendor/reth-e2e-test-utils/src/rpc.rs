@@ -3,7 +3,7 @@ use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{EthereumTxEnvelope, TxEip4844Variant};
 use base_common_network::eip2718::Decodable2718;
 use base_execution_rpc::BaseEthApiError;
-use reth_rpc_api::DebugApiServer;
+use base_execution_rpc::DebugApiServer;
 use reth_rpc_builder::RpcRegistryInner;
 
 #[expect(missing_debug_implementations)]

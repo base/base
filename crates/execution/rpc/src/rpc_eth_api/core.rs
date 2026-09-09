@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2930::AccessListResult};
-use alloy_json_rpc::RpcObject;
 use alloy_primitives::{Address, B64, B256, Bytes, U64, U256};
 use alloy_serde::JsonStorageKey;
 use base_common_consensus::BaseTxEnvelope;
@@ -26,15 +25,7 @@ use crate::BaseEthApi;
 /// Eth rpc interface: <https://ethereum.github.io/execution-apis/api-documentation>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "eth"))]
-pub trait EthApi<
-    TxReq: RpcObject,
-    T: RpcObject,
-    B: RpcObject,
-    R: RpcObject,
-    H: RpcObject,
-    RawTx: RpcObject,
->
-{
+pub trait EthApi {
     /// Returns the protocol version encoded as a string.
     #[method(name = "protocolVersion")]
     async fn protocol_version(&self) -> RpcResult<U64>;
@@ -68,11 +59,15 @@ pub trait EthApi<
 
     /// Returns information about a block by hash.
     #[method(name = "getBlockByHash")]
-    async fn block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<B>>;
+    async fn block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<BaseBlockResponse>>;
 
     /// Returns information about a block by number.
     #[method(name = "getBlockByNumber")]
-    async fn block_by_number(&self, number: BlockNumberOrTag, full: bool) -> RpcResult<Option<B>>;
+    async fn block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        full: bool,
+    ) -> RpcResult<Option<BaseBlockResponse>>;
 
     /// Returns the number of transactions in a block from a block matching the given block hash.
     #[method(name = "getBlockTransactionCountByHash")]
@@ -98,12 +93,18 @@ pub trait EthApi<
 
     /// Returns all transaction receipts for a given block.
     #[method(name = "getBlockReceipts")]
-    async fn block_receipts(&self, block_id: BlockId) -> RpcResult<Option<Vec<R>>>;
+    async fn block_receipts(
+        &self,
+        block_id: BlockId,
+    ) -> RpcResult<Option<Vec<BaseTransactionReceipt>>>;
 
     /// Returns an uncle block of the given block and index.
     #[method(name = "getUncleByBlockHashAndIndex")]
-    async fn uncle_by_block_hash_and_index(&self, hash: B256, index: Index)
-    -> RpcResult<Option<B>>;
+    async fn uncle_by_block_hash_and_index(
+        &self,
+        hash: B256,
+        index: Index,
+    ) -> RpcResult<Option<BaseBlockResponse>>;
 
     /// Returns an uncle block of the given block and index.
     #[method(name = "getUncleByBlockNumberAndIndex")]
@@ -111,7 +112,7 @@ pub trait EthApi<
         &self,
         number: BlockNumberOrTag,
         index: Index,
-    ) -> RpcResult<Option<B>>;
+    ) -> RpcResult<Option<BaseBlockResponse>>;
 
     /// Returns the EIP-2718 encoded transaction if it exists.
     ///
@@ -121,7 +122,10 @@ pub trait EthApi<
 
     /// Returns the information about a transaction requested by transaction hash.
     #[method(name = "getTransactionByHash")]
-    async fn transaction_by_hash(&self, hash: B256) -> RpcResult<Option<T>>;
+    async fn transaction_by_hash(
+        &self,
+        hash: B256,
+    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
 
     /// Returns information about a raw transaction by block hash and transaction index position.
     #[method(name = "getRawTransactionByBlockHashAndIndex")]
@@ -137,7 +141,7 @@ pub trait EthApi<
         &self,
         hash: B256,
         index: Index,
-    ) -> RpcResult<Option<T>>;
+    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
 
     /// Returns information about a raw transaction by block number and transaction index
     /// position.
@@ -154,7 +158,7 @@ pub trait EthApi<
         &self,
         number: BlockNumberOrTag,
         index: Index,
-    ) -> RpcResult<Option<T>>;
+    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
 
     /// Returns information about a transaction by sender and nonce.
     #[method(name = "getTransactionBySenderAndNonce")]
@@ -162,15 +166,15 @@ pub trait EthApi<
         &self,
         address: Address,
         nonce: U64,
-    ) -> RpcResult<Option<T>>;
+    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
 
     /// Returns all transactions in the local pending pool.
     #[method(name = "pendingTransactions")]
-    fn pending_transactions(&self) -> RpcResult<Vec<T>>;
+    fn pending_transactions(&self) -> RpcResult<Vec<base_common_rpc_types::BaseTransaction>>;
 
     /// Returns the receipt of a transaction by transaction hash.
     #[method(name = "getTransactionReceipt")]
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<BaseTransactionReceipt>>;
 
     /// Returns the balance of the account of given address.
     #[method(name = "getBalance")]
@@ -207,26 +211,26 @@ pub trait EthApi<
 
     /// Returns the block's header at given number.
     #[method(name = "getHeaderByNumber")]
-    async fn header_by_number(&self, hash: BlockNumberOrTag) -> RpcResult<Option<H>>;
+    async fn header_by_number(&self, hash: BlockNumberOrTag) -> RpcResult<Option<Header>>;
 
     /// Returns the block's header at given hash.
     #[method(name = "getHeaderByHash")]
-    async fn header_by_hash(&self, hash: B256) -> RpcResult<Option<H>>;
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<Option<Header>>;
 
     /// `eth_simulateV1` executes an arbitrary number of transactions on top of the requested state.
     /// The transactions are packed into individual blocks. Overrides can be provided.
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
-        opts: SimulatePayload<TxReq>,
+        opts: SimulatePayload<BaseTransactionRequest>,
         block_number: Option<BlockId>,
-    ) -> RpcResult<Vec<SimulatedBlock<B>>>;
+    ) -> RpcResult<Vec<SimulatedBlock<BaseBlockResponse>>>;
 
     /// Executes a new message call immediately without creating a transaction on the block chain.
     #[method(name = "call")]
     async fn call(
         &self,
-        request: TxReq,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
@@ -234,14 +238,17 @@ pub trait EthApi<
 
     /// Fills the defaults on a given unsigned transaction.
     #[method(name = "fillTransaction")]
-    async fn fill_transaction(&self, request: TxReq) -> RpcResult<FillTransaction<RawTx>>;
+    async fn fill_transaction(
+        &self,
+        request: BaseTransactionRequest,
+    ) -> RpcResult<FillTransaction<BaseTxEnvelope>>;
 
     /// Simulate arbitrary number of transactions at an arbitrary blockchain index, with the
     /// optionality of state overrides
     #[method(name = "callMany")]
     async fn call_many(
         &self,
-        bundles: Vec<Bundle<TxReq>>,
+        bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         state_override: Option<StateOverride>,
     ) -> RpcResult<Vec<Vec<EthCallResponse>>>;
@@ -263,7 +270,7 @@ pub trait EthApi<
     #[method(name = "createAccessList")]
     async fn create_access_list(
         &self,
-        request: TxReq,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> RpcResult<AccessListResult>;
@@ -273,7 +280,7 @@ pub trait EthApi<
     #[method(name = "estimateGas")]
     async fn estimate_gas(
         &self,
-        request: TxReq,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
@@ -346,7 +353,7 @@ pub trait EthApi<
     /// Sends transaction; will block waiting for signer to return the
     /// transaction hash.
     #[method(name = "sendTransaction")]
-    async fn send_transaction(&self, request: TxReq) -> RpcResult<B256>;
+    async fn send_transaction(&self, request: BaseTransactionRequest) -> RpcResult<B256>;
 
     /// Sends signed transaction, returning its hash.
     #[method(name = "sendRawTransaction")]
@@ -360,7 +367,7 @@ pub trait EthApi<
         &self,
         bytes: Bytes,
         timeout_ms: Option<u64>,
-    ) -> RpcResult<R>;
+    ) -> RpcResult<BaseTransactionReceipt>;
 
     /// Returns an Ethereum specific signature with: sign(keccak256("\x19Ethereum Signed Message:\n"
     /// + len(message) + message))).
@@ -370,7 +377,7 @@ pub trait EthApi<
     /// Signs a transaction that can be submitted to the network at a later time using with
     /// `sendRawTransaction.`
     #[method(name = "signTransaction")]
-    async fn sign_transaction(&self, transaction: TxReq) -> RpcResult<Bytes>;
+    async fn sign_transaction(&self, transaction: BaseTransactionRequest) -> RpcResult<Bytes>;
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[method(name = "signTypedData")]
@@ -425,16 +432,7 @@ pub trait EthApi<
 }
 
 #[async_trait::async_trait]
-impl
-    EthApiServer<
-        BaseTransactionRequest,
-        base_common_rpc_types::BaseTransaction,
-        BaseBlockResponse,
-        BaseTransactionReceipt,
-        Header,
-        BaseTxEnvelope,
-    > for BaseEthApi
-{
+impl EthApiServer for BaseEthApi {
     /// Handler for: `eth_protocolVersion`
     async fn protocol_version(&self) -> RpcResult<U64> {
         trace!(target: "rpc::eth", "Serving eth_protocolVersion");

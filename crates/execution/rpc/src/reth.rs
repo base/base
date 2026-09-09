@@ -13,7 +13,7 @@ use reth_chain_state::{
 };
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_api::{RethApiServer, RethJitAction};
+use crate::{RethApiServer, RethJitAction};
 use reth_rpc_eth_types::{EthApiError, EthResult};
 use reth_storage_api::{
     BlockReader, BlockReaderIdExt, ChangeSetReader, StateProviderFactory, TransactionVariant,

@@ -1,7 +1,5 @@
 //! Invalid block hook helpers for the node builder.
 
-use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
-use base_common_consensus::TxEnvelope;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_rpc::EthApiClient;
 use eyre::OptionExt;
@@ -89,14 +87,7 @@ impl InvalidBlockHookBuilder {
         let client = jsonrpsee::http_client::HttpClientBuilder::default().build(url)?;
 
         // Verify that the healthy node is running the same chain as the current node.
-        let healthy_chain_id = EthApiClient::<
-            TransactionRequest,
-            Transaction,
-            Block,
-            Receipt,
-            Header,
-            TxEnvelope,
-        >::chain_id(&client)
+        let healthy_chain_id = EthApiClient::chain_id(&client)
         .await?
         .ok_or_eyre("healthy node rpc client didn't return a chain id")?;
 

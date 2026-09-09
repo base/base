@@ -8,7 +8,7 @@ use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
-use reth_rpc_api::DebugApiClient;
+use base_execution_rpc::DebugApiClient;
 use reth_tracing::tracing::warn;
 use reth_trie::{HashedStorage, updates::TrieUpdates};
 use revm::{
@@ -235,7 +235,7 @@ where
 
         if let Some(healthy_node_client) = &self.healthy_node_client {
             let healthy_node_witness = futures::executor::block_on(async move {
-                DebugApiClient::<()>::debug_execution_witness(
+                DebugApiClient::debug_execution_witness(
                     healthy_node_client,
                     block_number.into(),
                     None,

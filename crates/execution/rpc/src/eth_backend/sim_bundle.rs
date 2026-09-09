@@ -16,7 +16,7 @@ use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use reth_provider::providers::BlockchainProvider;
-use reth_rpc_api::MevSimApiServer;
+use crate::MevSimApiServer;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;

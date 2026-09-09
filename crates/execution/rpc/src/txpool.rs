@@ -9,7 +9,7 @@ use base_common_rpc_types::{
 };
 use base_execution_txpool::{AllPoolTransactions, TransactionPool};
 use jsonrpsee::core::RpcResult;
-use reth_rpc_api::TxPoolApiServer;
+use crate::TxPoolApiServer;
 use tracing::trace;
 
 /// `txpool` API implementation.
@@ -93,7 +93,7 @@ where
 }
 
 #[async_trait]
-impl<Pool, Eth> TxPoolApiServer<base_common_rpc_types::BaseTransaction> for TxPoolApi<Pool, Eth>
+impl<Pool, Eth> TxPoolApiServer for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
     Eth: reth_storage_api::BlockReader<

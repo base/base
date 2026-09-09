@@ -93,7 +93,6 @@ revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_lim
 
 [dev-dependencies]
 reth-trie = { workspace = true }
-reth-rpc-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-genesis = { workspace = true  }
 alloy-hardforks = { workspace = true }

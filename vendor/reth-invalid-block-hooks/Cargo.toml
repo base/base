@@ -28,9 +28,9 @@ eyre = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-reth-rpc-api = { workspace = true, features = ["client"] }
 reth-tracing = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["serde"]}
+base-execution-rpc = { workspace = true, features = ["client"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]

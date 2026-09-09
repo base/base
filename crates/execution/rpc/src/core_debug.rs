@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
-use reth_rpc_api::DebugApiServer;
+use crate::DebugApiServer;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, StateCacheDb};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
@@ -741,7 +741,7 @@ impl DebugApi {
 }
 
 #[async_trait]
-impl DebugApiServer<BaseTransactionRequest> for DebugApi {
+impl DebugApiServer for DebugApi {
     /// Handler for `debug_getRawHeader`
     async fn raw_header(&self, block_id: BlockId) -> RpcResult<Bytes> {
         let header = match block_id {

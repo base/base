@@ -3,8 +3,6 @@
 use std::{collections::HashSet, time::Duration};
 
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
-use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_rpc_types_engine::{
     ExecutionPayloadEnvelopeV3, ForkchoiceState, PayloadAttributes, PayloadStatusEnum,
 };
@@ -59,14 +57,7 @@ impl Action for AssertMineBlock {
             let engine_client = node_client.engine.clone();
 
             // get the latest block to use as parent
-            let latest_block = EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                EthereumTxEnvelope<TxEip4844>,
-            >::block_by_number(
+            let latest_block = EthApiClient::block_by_number(
                 rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
             )
             .await?;
@@ -315,14 +306,7 @@ impl Action for BroadcastLatestForkchoice {
             } else {
                 // fallback to RPC query
                 let rpc_client = &env.node_clients[0].rpc;
-                let current_head_block = EthApiClient::<
-                    TransactionRequest,
-                    Transaction,
-                    Block,
-                    Receipt,
-                    Header,
-                    EthereumTxEnvelope<TxEip4844>,
-                >::block_by_number(
+                let current_head_block = EthApiClient::block_by_number(
                     rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
                 )
                 .await?
@@ -383,14 +367,7 @@ impl Action for UpdateBlockInfo {
         Box::pin(async move {
             // get the latest block from the first client to update environment state
             let rpc_client = &env.node_clients[0].rpc;
-            let latest_block = EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                EthereumTxEnvelope<TxEip4844>,
-            >::block_by_number(
+            let latest_block = EthApiClient::block_by_number(
                 rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
             )
             .await?
@@ -486,14 +463,7 @@ impl Action for CheckPayloadAccepted {
                 let rpc_client = &client.rpc;
 
                 // get the last header by number using latest_head_number
-                let rpc_latest_header = EthApiClient::<
-                    TransactionRequest,
-                    Transaction,
-                    Block,
-                    Receipt,
-                    Header,
-                    EthereumTxEnvelope<TxEip4844>,
-                >::header_by_number(
+                let rpc_latest_header = EthApiClient::header_by_number(
                     rpc_client, alloy_eips::BlockNumberOrTag::Latest
                 )
                 .await?

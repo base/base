@@ -6,8 +6,6 @@ use std::{
     },
 };
 
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
-use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_execution_rpc::EthApiClient;
 use jsonrpsee::{
     core::middleware::{Batch, Notification},
@@ -87,14 +85,7 @@ async fn test_rpc_middleware() {
         .unwrap();
 
     let client = handle.http_client().unwrap();
-    EthApiClient::<
-        TransactionRequest,
-        Transaction,
-        Block,
-        Receipt,
-        Header,
-        EthereumTxEnvelope<TxEip4844>,
-    >::protocol_version(&client)
+    EthApiClient::protocol_version(&client)
     .await
     .unwrap();
     let count = mylayer.count.load(Ordering::Relaxed);

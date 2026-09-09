@@ -1,7 +1,5 @@
 //! Fork creation actions for the e2e testing framework.
 
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
-use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_rpc_types_engine::ForkchoiceState;
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
@@ -115,14 +113,7 @@ impl Action for SetForkBase {
 
             // get the block at the fork base number to establish the fork point
             let rpc_client = &env.node_clients[0].rpc;
-            let fork_base_block = EthApiClient::<
-                TransactionRequest,
-                Transaction,
-                Block,
-                Receipt,
-                Header,
-                EthereumTxEnvelope<TxEip4844>,
-            >::block_by_number(
+            let fork_base_block = EthApiClient::block_by_number(
                 rpc_client,
                 alloy_eips::BlockNumberOrTag::Number(self.fork_base_block),
                 false,
@@ -228,14 +219,7 @@ impl Action for ValidateFork {
 
             // walk backwards through the chain until we reach the fork base
             while current_number > self.fork_base_number {
-                let block = EthApiClient::<
-                    TransactionRequest,
-                    Transaction,
-                    Block,
-                    Receipt,
-                    Header,
-                    EthereumTxEnvelope<TxEip4844>,
-                >::block_by_hash(rpc_client, current_hash, false)
+                let block = EthApiClient::block_by_hash(rpc_client, current_hash, false)
                 .await?
                 .ok_or_else(|| {
                     eyre::eyre!("Block with hash {} not found during fork validation", current_hash)

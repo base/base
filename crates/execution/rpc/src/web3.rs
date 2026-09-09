@@ -2,7 +2,7 @@ use alloy_primitives::{B256, Bytes, keccak256};
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
 use reth_network_api::NetworkInfo;
-use reth_rpc_api::Web3ApiServer;
+use crate::Web3ApiServer;
 use reth_rpc_server_types::ToRpcResult;
 
 /// `web3` API implementation.

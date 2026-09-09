@@ -149,6 +149,7 @@ impl<Provider> BaseEthConfigHandler<Provider> {
 }
 
 /// Constructs the Base rules advertised for an individual fork.
+#[derive(Debug)]
 pub struct BaseForkConfig;
 
 impl BaseForkConfig {

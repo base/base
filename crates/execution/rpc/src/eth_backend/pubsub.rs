@@ -202,7 +202,7 @@ impl EthPubSub {
 }
 
 #[async_trait::async_trait]
-impl EthPubSubApiServer<base_common_rpc_types::BaseTransaction> for EthPubSub {
+impl EthPubSubApiServer for EthPubSub {
     /// Handler for `eth_subscribe`
     async fn subscribe(
         &self,

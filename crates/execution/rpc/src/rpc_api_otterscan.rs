@@ -1,5 +1,4 @@
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
-use alloy_json_rpc::RpcObject;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use base_common_rpc_types::{
     BlockDetails, ContractCreator, InternalOperation, OtsBlockTransactions, TraceEntry,
@@ -10,7 +9,7 @@ use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 /// Otterscan rpc interface.
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "ots"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "ots"))]
-pub trait Otterscan<T: RpcObject, H: RpcObject> {
+pub trait Otterscan {
     /// Get the block header by block number, required by otterscan.
     /// Otterscan currently requires this endpoint, used as:
     ///
@@ -22,7 +21,7 @@ pub trait Otterscan<T: RpcObject, H: RpcObject> {
     async fn get_header_by_number(
         &self,
         block_number: LenientBlockNumberOrTag,
-    ) -> RpcResult<Option<H>>;
+    ) -> RpcResult<Option<base_common_rpc_types::Header>>;
 
     /// Check if a certain address contains a deployed code.
     #[method(name = "hasCode")]
@@ -53,12 +52,15 @@ pub trait Otterscan<T: RpcObject, H: RpcObject> {
     async fn get_block_details(
         &self,
         block_number: LenientBlockNumberOrTag,
-    ) -> RpcResult<BlockDetails<H>>;
+    ) -> RpcResult<BlockDetails<base_common_rpc_types::Header>>;
 
     /// Tailor-made and expanded version of `eth_getBlockByHash` for block details page in
     /// Otterscan.
     #[method(name = "getBlockDetailsByHash")]
-    async fn get_block_details_by_hash(&self, block_hash: B256) -> RpcResult<BlockDetails<H>>;
+    async fn get_block_details_by_hash(
+        &self,
+        block_hash: B256,
+    ) -> RpcResult<BlockDetails<base_common_rpc_types::Header>>;
 
     /// Get paginated transactions for a certain block. Also remove some verbose fields like logs.
     #[method(name = "getBlockTransactions")]
@@ -67,7 +69,9 @@ pub trait Otterscan<T: RpcObject, H: RpcObject> {
         block_number: LenientBlockNumberOrTag,
         page_number: usize,
         page_size: usize,
-    ) -> RpcResult<OtsBlockTransactions<T, H>>;
+    ) -> RpcResult<
+        OtsBlockTransactions<base_common_rpc_types::BaseTransaction, base_common_rpc_types::Header>,
+    >;
 
     /// Gets paginated inbound/outbound transaction calls for a certain address.
     #[method(name = "searchTransactionsBefore")]

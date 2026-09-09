@@ -23,7 +23,6 @@ reth-tasks = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
 base-bundles = { workspace = true }
-reth-rpc-api = { workspace = true }
 alloy-signer = { workspace = true }
 reth-provider = { workspace = true }
 reth-cli-util = { workspace = true }
