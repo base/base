@@ -740,7 +740,7 @@ mod tests {
     /// Returns a default all-zero L2 block and its canonical hash.
     ///
     /// Use the returned hash as `genesis.l2.hash` in the test rollup config so that
-    /// [`L2BlockInfo::from_block_and_genesis`] accepts the block via the genesis path.
+    /// [`base_protocol::L2BlockInfoDecoder::from_block_and_genesis`] accepts the block via the genesis path.
     fn make_genesis_block() -> (RpcBlock<BaseTransaction>, B256) {
         let block = RpcBlock::<BaseTransaction>::default();
         let hash = block.clone().into_consensus().hash_slow();
@@ -1694,7 +1694,7 @@ mod tests {
         let (genesis_block, genesis_hash) = make_genesis_block();
 
         // Build a RollupConfig whose genesis.l2.hash matches the computed hash so that
-        // L2BlockInfo::from_block_and_genesis accepts the block via the genesis fast path.
+        // base_protocol::L2BlockInfoDecoder::from_block_and_genesis accepts the block via the genesis fast path.
         let cfg = Arc::new(RollupConfig {
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 0, hash: genesis_hash },

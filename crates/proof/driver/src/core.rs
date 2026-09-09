@@ -166,7 +166,7 @@ where
 
             // Get the pipeline origin and update the tip cursor.
             let origin = self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let l2_info = L2BlockInfo::from_block_and_genesis(
+            let l2_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
                 &block,
                 &self.pipeline.rollup_config().genesis,
             )?;

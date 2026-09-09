@@ -107,8 +107,11 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
         let block = self.block_by_number(number).await?;
 
         // Construct the system config from the payload.
-        L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-            .map_err(OracleProviderError::BlockInfo)
+        base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &self.rollup_config.genesis,
+        )
+        .map_err(OracleProviderError::BlockInfo)
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {

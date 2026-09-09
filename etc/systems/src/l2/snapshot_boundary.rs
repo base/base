@@ -62,8 +62,11 @@ impl SnapshotBoundary {
             );
         }
 
-        let l2_block_info = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
-            .wrap_err("failed to derive L2 block info from snapshot head")?;
+        let l2_block_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &rollup_config.genesis,
+        )
+        .wrap_err("failed to derive L2 block info from snapshot head")?;
         let first_transaction = block
             .body
             .transactions

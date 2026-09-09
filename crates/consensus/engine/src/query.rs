@@ -86,9 +86,11 @@ impl EngineQueries {
                 let output_block = output_block.ok_or(EngineQueriesError::NoL2BlockFound(block))?;
                 let block_hash = output_block.hash();
                 let output_block = output_block.into_block();
-                let output_block_info =
-                    L2BlockInfo::from_block_and_genesis(&output_block, &rollup_config.genesis)
-                        .map_err(|_| EngineQueriesError::NoL2BlockFound(block))?;
+                let output_block_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                    &output_block,
+                    &rollup_config.genesis,
+                )
+                .map_err(|_| EngineQueriesError::NoL2BlockFound(block))?;
 
                 let state_root = output_block.header.state_root;
 

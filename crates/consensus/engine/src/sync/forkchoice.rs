@@ -124,7 +124,10 @@ impl L2ForkchoiceState {
                 .get_l2_block(BlockNumberOrTag::Latest.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-            L2BlockInfo::from_block_and_genesis(&rpc_block.into_block(), &cfg.genesis)?
+            base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                &rpc_block.into_block(),
+                &cfg.genesis,
+            )?
         };
 
         Ok(Self { un_safe, safe, finalized })
@@ -154,7 +157,7 @@ async fn block_info_from_reth_or_checkpoint<
     checkpoint_reader: &CheckpointReader,
 ) -> Result<L2BlockInfo, SyncStartError> {
     let block = rpc_block.into_block();
-    match L2BlockInfo::from_block_and_genesis(&block, &cfg.genesis) {
+    match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(&block, &cfg.genesis) {
         Ok(block_info) => Ok(block_info),
         Err(err @ FromBlockError::MissingL1InfoDeposit(_)) => {
             let header = BlockInfo::from(&block);
@@ -227,23 +230,25 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     let latest_number = latest.header().number;
     let latest_consensus = latest.into_block();
 
-    let mut last_known_unpruned =
-        match L2BlockInfo::from_block_and_genesis(&latest_consensus, &cfg.genesis) {
-            Ok(info) => info,
-            Err(FromBlockError::MissingL1InfoDeposit(hash)) => {
-                error!(
-                    target: "sync_start",
-                    latest_block_number = latest_number,
-                    latest_block_hash = %hash,
-                    "Latest L2 block body is pruned; cannot recover an unpruned upper bound"
-                );
-                return Err(SyncStartError::NoUnprunedBlockAvailable {
-                    pruned_block_number,
-                    latest_block_number: latest_number,
-                });
-            }
-            Err(err) => return Err(err.into()),
-        };
+    let mut last_known_unpruned = match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        &latest_consensus,
+        &cfg.genesis,
+    ) {
+        Ok(info) => info,
+        Err(FromBlockError::MissingL1InfoDeposit(hash)) => {
+            error!(
+                target: "sync_start",
+                latest_block_number = latest_number,
+                latest_block_hash = %hash,
+                "Latest L2 block body is pruned; cannot recover an unpruned upper bound"
+            );
+            return Err(SyncStartError::NoUnprunedBlockAvailable {
+                pruned_block_number,
+                latest_block_number: latest_number,
+            });
+        }
+        Err(err) => return Err(err.into()),
+    };
 
     if pruned_block_number >= latest_number {
         // Nothing to search above the pruned block. `latest` is by definition unpruned (just
@@ -277,7 +282,10 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
             .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
         let consensus_block = block.into_block();
 
-        match L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis) {
+        match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &consensus_block,
+            &cfg.genesis,
+        ) {
             Ok(info) => {
                 // Cache the last successfully hydrated block at the upper bound so the
                 // post-loop return can avoid an extra round-trip — the value at `lo` after

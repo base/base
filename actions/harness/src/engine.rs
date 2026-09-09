@@ -502,12 +502,15 @@ impl ActionEngineClient {
 
         registry.insert(block_number, block_hash, Some(state_root));
 
-        let l2_info =
-            L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis).map_err(|e| {
-                TransportError::from(TransportErrorKind::custom_str(&format!(
-                    "failed to derive L2 block info: {e}"
-                )))
-            })?;
+        let l2_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &rollup_config.genesis,
+        )
+        .map_err(|e| {
+            TransportError::from(TransportErrorKind::custom_str(&format!(
+                "failed to derive L2 block info: {e}"
+            )))
+        })?;
         inner.executed_headers.insert(block_number, hdr);
         inner.executed_infos.insert(block_number, l2_info);
         Ok((block_hash, l2_info))

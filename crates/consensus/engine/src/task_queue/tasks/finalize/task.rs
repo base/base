@@ -4,7 +4,6 @@ use std::{sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_protocol::L2BlockInfo;
 use derive_more::Constructor;
 
 use crate::{
@@ -58,8 +57,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             .map_err(FinalizeTaskError::Local)?
             .ok_or(FinalizeTaskError::BlockNotFound(self.block_number))?
             .into_block();
-        let block_info = L2BlockInfo::from_block_and_genesis(&block, &self.client.cfg().genesis)
-            .map_err(FinalizeTaskError::FromBlock)?;
+        let block_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &self.client.cfg().genesis,
+        )
+        .map_err(FinalizeTaskError::FromBlock)?;
         let block_fetch_duration = block_fetch_start.elapsed();
 
         // Dispatch a forkchoice update.

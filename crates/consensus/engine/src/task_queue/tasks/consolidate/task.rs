@@ -220,7 +220,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             return Ok(false);
         }
 
-        let block_info = match L2BlockInfo::from_block_and_genesis(
+        let block_info = match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
             &block.into_block(),
             &self.cfg.genesis,
         ) {
@@ -272,7 +272,10 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 block_hash = %block_hash,
                 "Consolidating engine state",
             );
-            match L2BlockInfo::from_block_and_genesis(&block.into_block(), &self.cfg.genesis) {
+            match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                &block.into_block(),
+                &self.cfg.genesis,
+            ) {
                 Ok(block_info) => {
                     let fcu_start = Instant::now();
 

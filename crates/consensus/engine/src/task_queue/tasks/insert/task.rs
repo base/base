@@ -244,9 +244,11 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                 .map_err(InsertTaskError::FromBlockError)?,
         };
 
-        let new_block_ref =
-            L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-                .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+        let new_block_ref = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &self.rollup_config.genesis,
+        )
+        .map_err(InsertTaskError::L2BlockInfoConstruction)?;
 
         if !self.is_unsafe_payload_applicable(state, &new_block_ref) {
             return Ok(state.sync_state.unsafe_head());

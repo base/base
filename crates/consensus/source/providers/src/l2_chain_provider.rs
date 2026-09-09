@@ -146,7 +146,7 @@ impl AlloyL2ChainProvider {
                     let consensus_block =
                         block.into_consensus().map_transactions(|t| t.inner.inner);
 
-                    let l2_block = L2BlockInfo::from_block_and_genesis(
+                    let l2_block = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
                         &consensus_block,
                         &self.rollup_config.genesis,
                     )
@@ -232,8 +232,11 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
 
     async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo, Self::Error> {
         let block = self.block_by_number(number).await?;
-        L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-            .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
+        base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &self.rollup_config.genesis,
+        )
+        .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {

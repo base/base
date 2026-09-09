@@ -90,7 +90,7 @@ fn matching_rpc_block(
 }
 
 fn block_info_from_rpc_block(block: RpcBlock<BaseTransaction>, cfg: &RollupConfig) -> L2BlockInfo {
-    L2BlockInfo::from_block_and_genesis(
+    base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
         &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
         &cfg.genesis,
     )

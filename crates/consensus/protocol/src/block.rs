@@ -178,12 +178,18 @@ impl L2BlockInfo {
     pub const fn new(block_info: BlockInfo, l1_origin: BlockNumHash, seq_num: u64) -> Self {
         Self { block_info, l1_origin, seq_num }
     }
+}
 
+/// Decodes the L1 origin and sequence number from a Base block's deposit transaction.
+#[derive(Debug)]
+pub struct L2BlockInfoDecoder;
+
+impl L2BlockInfoDecoder {
     /// Constructs an [`L2BlockInfo`] from a given Base [`Block`] and [`ChainGenesis`].
     pub fn from_block_and_genesis<T: AsRef<BaseTxEnvelope>>(
         block: &Block<T>,
         genesis: &ChainGenesis,
-    ) -> Result<Self, FromBlockError> {
+    ) -> Result<L2BlockInfo, FromBlockError> {
         let block_info = BlockInfo::from(block);
 
         let (l1_origin, sequence_number) = if block_info.number == genesis.l2.number {
@@ -206,7 +212,7 @@ impl L2BlockInfo {
             (l1_info.id(), l1_info.sequence_number())
         };
 
-        Ok(Self { block_info, l1_origin, seq_num: sequence_number })
+        Ok(L2BlockInfo { block_info, l1_origin, seq_num: sequence_number })
     }
 
     /// Constructs an [`L2BlockInfo`] From a given [`BaseExecutionPayload`] and [`ChainGenesis`].
@@ -214,7 +220,7 @@ impl L2BlockInfo {
         payload: BaseExecutionPayload,
         parent_beacon_block_root: Option<B256>,
         genesis: &ChainGenesis,
-    ) -> Result<Self, FromBlockError> {
+    ) -> Result<L2BlockInfo, FromBlockError> {
         let block: BaseBlock = match payload {
             BaseExecutionPayload::V4(_) => {
                 let sidecar = BaseExecutionPayloadSidecar::v4(
@@ -339,7 +345,7 @@ mod tests {
             seq_num: 4,
         };
         let block = block.into_consensus();
-        let derived = L2BlockInfo::from_block_and_genesis(&block, &genesis).unwrap();
+        let derived = crate::L2BlockInfoDecoder::from_block_and_genesis(&block, &genesis).unwrap();
         assert_eq!(derived, expected);
     }
 
@@ -382,7 +388,8 @@ mod tests {
             },
             body: Default::default(),
         };
-        let err = L2BlockInfo::from_block_and_genesis(&base_block, &genesis).unwrap_err();
+        let err =
+            crate::L2BlockInfoDecoder::from_block_and_genesis(&base_block, &genesis).unwrap_err();
         assert_eq!(err, FromBlockError::InvalidGenesisHash);
     }
 

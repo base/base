@@ -236,8 +236,11 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         // state root against the builder-produced one.
         self.block_registry.insert(block.header.number, new_hash, Some(block.header.state_root));
 
-        let info = L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-            .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
+        let info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            &block,
+            &self.rollup_config.genesis,
+        )
+        .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
         *self.head.lock().expect("head lock") = info;
         Ok(info)
     }

@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_chain_config::RollupConfig;
-use base_protocol::L2BlockInfo;
 
 mod forkchoice;
 pub use forkchoice::L2ForkchoiceState;
@@ -151,8 +150,10 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
 
-            current_fc.un_safe =
-                L2BlockInfo::from_block_and_genesis(&l2_parent.into_block(), &cfg.genesis)?;
+            current_fc.un_safe = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                &l2_parent.into_block(),
+                &cfg.genesis,
+            )?;
             unsafe_walked_blocks = unsafe_walked_blocks.saturating_add(1);
         }
     }
@@ -209,7 +210,10 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 .get_l2_block(safe_cursor.block_info.parent_hash.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
-            safe_cursor = L2BlockInfo::from_block_and_genesis(&block.into_block(), &cfg.genesis)?;
+            safe_cursor = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                &block.into_block(),
+                &cfg.genesis,
+            )?;
             safe_walked_blocks = safe_walked_blocks.saturating_add(1);
         }
     }
@@ -247,7 +251,7 @@ mod tests {
     /// Sanity regression test - `alloy_rpc_types`' `Block::into_consensus` failed to saturate the
     /// header of the `base_common_types_chain::Header` type on an old version. This test covers the
     /// conversion to ensure a Base Sepolia genesis block's conversion to the consensus type works for
-    /// the sake of `L2BlockInfo::from_block_and_genesis`.
+    /// the sake of `base_protocol::L2BlockInfoDecoder::from_block_and_genesis`.
     #[tokio::test]
     async fn test_genesis_block_hash() {
         let genesis = ChainGenesis {
@@ -265,7 +269,8 @@ mod tests {
 
         // Convert to `L2BlockInfo` and check the same.
         let l2_block_info =
-            L2BlockInfo::from_block_and_genesis(&consensus_block, &genesis).unwrap();
+            base_protocol::L2BlockInfoDecoder::from_block_and_genesis(&consensus_block, &genesis)
+                .unwrap();
         assert_eq!(rpc_reported_hash, l2_block_info.block_info.hash);
     }
 

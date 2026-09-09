@@ -69,8 +69,11 @@ impl LocalL2Provider {
         self.block(id)
             .await?
             .map(|block| {
-                L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-                    .map_err(LocalL2Error::BlockInfo)
+                base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                    &block,
+                    &self.rollup_config.genesis,
+                )
+                .map_err(LocalL2Error::BlockInfo)
             })
             .transpose()
     }

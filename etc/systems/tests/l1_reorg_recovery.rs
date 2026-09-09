@@ -249,7 +249,7 @@ async fn l2_block_info(
         .ok_or_eyre("L2 block is missing at the requested height")?
         .into_consensus()
         .map_transactions(|transaction| transaction.inner.inner);
-    L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
+    base_protocol::L2BlockInfoDecoder::from_block_and_genesis(&block, &rollup_config.genesis)
         .wrap_err("Failed to decode L1 origin from L2 block")
 }
 
