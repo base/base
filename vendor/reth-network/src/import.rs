@@ -8,7 +8,7 @@ use std::{
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
 use reth_eth_wire::NewBlock;
 use reth_eth_wire_types::broadcast::NewBlockHashes;
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 
 use crate::message::NewBlockMessage;
 

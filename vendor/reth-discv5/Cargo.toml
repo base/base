@@ -28,9 +28,9 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 discv5-reth = { workspace = true, features = ["libp2p"] }
 tracing = { workspace = true, features = ["attributes"] }
-reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
+base-execution-network-types = { workspace = true, features = ["secp256k1"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [dev-dependencies]

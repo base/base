@@ -11,7 +11,7 @@ use reth_eth_wire::{
     Capabilities, DisconnectReason, EthVersion, UnifiedStatus, errors::EthStreamError,
 };
 use reth_network_api::{PeerRequest, PeerRequestSender};
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use tracing::trace;
 
 use crate::{

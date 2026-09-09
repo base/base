@@ -61,7 +61,7 @@ use reth_network_p2p::{
     error::{RequestError, RequestResult},
     sync::SyncStateProvider,
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_network_types::ReputationChangeKind;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};

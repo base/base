@@ -25,7 +25,7 @@ use alloy_eip2124::{EnrForkIdEntry, ForkId};
 pub use config::DnsDiscoveryConfig;
 use enr::Enr;
 pub use error::ParseDnsEntryError;
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use schnellru::{ByLength, LruMap};
 use secp256k1::SecretKey;
 use sync::SyncTree;

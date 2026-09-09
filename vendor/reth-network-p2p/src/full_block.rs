@@ -15,7 +15,7 @@ use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
-use reth_network_peers::{PeerId, WithPeerId};
+use base_execution_network_types::{PeerId, WithPeerId};
 use reth_primitives_traits::{SealedBlock, SealedBlockWith, SealedHeader};
 use tracing::{debug, trace};
 

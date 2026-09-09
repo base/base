@@ -49,7 +49,7 @@
 //! use reth_network::{
 //!     config::rng_secret_key, NetworkConfig, NetworkManager,
 //! };
-//! use reth_network_peers::mainnet_nodes;
+//! use base_execution_network_types::mainnet_nodes;
 //! use base_execution_state_api::{NoopProvider};
 //! use base_common_runtime_tasks::Runtime;
 //!
@@ -79,7 +79,7 @@
 //! use reth_network::{
 //!     config::rng_secret_key, NetworkConfig, NetworkManager,
 //! };
-//! use reth_network_peers::mainnet_nodes;
+//! use base_execution_network_types::mainnet_nodes;
 //! use base_execution_state_api::{NoopProvider};
 //! use base_common_runtime_tasks::Runtime;
 //! use base_execution_txpool::TransactionPool;

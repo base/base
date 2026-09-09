@@ -46,9 +46,9 @@ base-common-client-ethereum = {workspace = true, features = ["debug-api", "reqwe
 
 [dev-dependencies]
 alloy-eips = { workspace = true }
-reth-network-peers = { workspace = true }
 base-common-types-rpc = {workspace = true}
 base-common-types-payload = { workspace = true }
+base-execution-network-types = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 clap = { workspace = true, features = ["default", "derive"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }

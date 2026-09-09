@@ -9,7 +9,7 @@ use alloy_rpc_types_admin::EthProtocolInfo;
 use enr::{Enr, secp256k1::SecretKey};
 use reth_eth_wire_types::{DisconnectReason, ProtocolVersion};
 use reth_network_p2p::{NoopFullBlockClient, sync::NetworkSyncUpdater};
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use reth_network_types::{PeerKind, Reputation, ReputationChangeKind};
 use base_common_runtime_tasks::{EventSender, EventStream};
 use tokio::sync::{mpsc, oneshot};

@@ -25,7 +25,7 @@ use reth_eth_wire::{
 };
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use reth_network_p2p::receipts::client::ReceiptsResponse;
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_network_types::{PeerAddr, PeerKind};
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
@@ -322,7 +322,7 @@ impl NetworkState {
     }
 
     /// Adds a trusted peer that may use a hostname, with periodic DNS re-resolution.
-    pub(crate) fn add_trusted_peer_node(&mut self, trusted: reth_network_peers::TrustedPeer) {
+    pub(crate) fn add_trusted_peer_node(&mut self, trusted: base_execution_network_types::TrustedPeer) {
         self.peers_manager.add_trusted_peer_node(trusted)
     }
 
@@ -694,7 +694,7 @@ mod tests {
     use reth_eth_wire::{BlockBodies, Capabilities, Capability, EthVersion};
     use reth_network_api::PeerRequestSender;
     use reth_network_p2p::{bodies::client::BodiesClient, error::RequestError};
-    use reth_network_peers::PeerId;
+    use base_execution_network_types::PeerId;
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 

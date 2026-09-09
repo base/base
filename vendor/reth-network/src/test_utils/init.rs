@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use enr::{Enr, EnrPublicKey, k256::ecdsa::SigningKey};
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 
 /// Obtains a `PeerId` from an ENR. In this case, the `PeerId` represents the public key contained
 /// in the ENR.

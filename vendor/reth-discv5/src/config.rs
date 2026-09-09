@@ -13,7 +13,7 @@ use discv5_reth::{
     ListenConfig,
     multiaddr::{Multiaddr, Protocol},
 };
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use tracing::debug;
 
 use crate::{NetworkStackId, enr::discv4_id_to_multiaddr_id, filter::MustNotIncludeKeys};

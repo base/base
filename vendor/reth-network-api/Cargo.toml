@@ -19,11 +19,11 @@ workspace = true
 auto_impl = { workspace = true }
 thiserror = { workspace = true }
 alloy-eip2124 = { workspace = true }
-reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+base-execution-network-types = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 enr = { workspace = true, features = ["rust-secp256k1"] }

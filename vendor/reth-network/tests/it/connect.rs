@@ -22,7 +22,7 @@ use reth_network_p2p::{
     headers::client::{HeadersClient, HeadersRequest},
     sync::{NetworkSyncUpdater, SyncState},
 };
-use reth_network_peers::{NodeRecord, TrustedPeer, mainnet_nodes};
+use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use reth_provider::test_utils::MockEthProvider;
 use secp256k1::SecretKey;
 use tokio::task;

@@ -29,7 +29,7 @@ use reth_eth_wire_types::{
 };
 use reth_network_api::{PeerRequest, RequestMessage};
 use reth_network_p2p::{error::RequestError, snap::client::SnapResponse};
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_network_types::session::config::INITIAL_REQUEST_TIMEOUT;
 use reth_primitives_traits::Block;
 use rustc_hash::FxHashMap;
@@ -1323,7 +1323,7 @@ mod tests {
         },
     };
     use reth_network_p2p::error::RequestResult;
-    use reth_network_peers::pk2id;
+    use base_execution_network_types::pk2id;
     use reth_network_types::session::config::PROTOCOL_BREACH_REQUEST_TIMEOUT;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::{

@@ -18,12 +18,12 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 base-execution-state-types = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+base-execution-network-types = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -57,7 +57,7 @@ std = [
     "alloy-primitives/std",
     "reth-primitives-traits/std",
     "derive_more/std",
-    "reth-network-peers/std",
+    "base-execution-network-types/std",
     "base-execution-state-types/std",
     "tracing/std",
 ]

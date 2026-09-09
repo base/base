@@ -14,7 +14,7 @@ use reth_discv5::{
     discv5::{self, Event, ListenConfig},
 };
 use reth_net_nat::NatResolver;
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};
 use tokio_stream::StreamExt;

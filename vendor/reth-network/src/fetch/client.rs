@@ -28,7 +28,7 @@ use reth_network_p2p::{
     receipts::client::{ReceiptsClient, ReceiptsFut},
     snap::client::{SnapClient, SnapResponse},
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_network_types::ReputationChangeKind;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 

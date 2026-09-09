@@ -3,7 +3,7 @@ use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerRequest, PeersInfo, events::PeerEvent,
     test_utils::PeersHandleProvider,
 };
-use reth_network_peers::{NodeRecord, PeerId};
+use base_execution_network_types::{NodeRecord, PeerId};
 use base_common_runtime_tasks::EventStream;
 use base_common_observability_tracing::tracing::info;
 

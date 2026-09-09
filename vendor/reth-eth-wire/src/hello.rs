@@ -1,6 +1,6 @@
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_types_chain::add_arbitrary_tests;
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_primitives_traits::constants::RETH_CLIENT_VERSION;
 
 use crate::{Capability, EthVersion, ProtocolVersion};
@@ -47,7 +47,7 @@ impl HelloMessageWithProtocols {
     ///
     /// ```
     /// use reth_eth_wire::HelloMessageWithProtocols;
-    /// use reth_network_peers::pk2id;
+    /// use base_execution_network_types::pk2id;
     /// use secp256k1::{SecretKey, SECP256K1};
     /// let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     /// let id = pk2id(&secret_key.public_key(SECP256K1));
@@ -143,7 +143,7 @@ impl HelloMessage {
     ///
     /// ```
     /// use reth_eth_wire::HelloMessage;
-    /// use reth_network_peers::pk2id;
+    /// use base_execution_network_types::pk2id;
     /// use secp256k1::{SecretKey, SECP256K1};
     /// let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     /// let id = pk2id(&secret_key.public_key(SECP256K1));
@@ -231,7 +231,7 @@ impl HelloMessageBuilder {
 #[cfg(test)]
 mod tests {
     use alloy_rlp::{Decodable, EMPTY_STRING_CODE, Encodable};
-    use reth_network_peers::pk2id;
+    use base_execution_network_types::pk2id;
     use secp256k1::{SECP256K1, SecretKey};
 
     use crate::{

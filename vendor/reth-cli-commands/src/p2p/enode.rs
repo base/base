@@ -7,7 +7,7 @@ use std::{
 
 use clap::Parser;
 use reth_cli_util::get_secret_key;
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 
 /// Print the enode identifier for a given secret key.
 #[derive(Parser, Debug)]

@@ -7,7 +7,7 @@ use reth_eth_wire::{
     Capabilities, DisconnectReason, EthVersion, UnifiedStatus, errors::EthStreamError,
 };
 use reth_network_api::PeerInfo;
-use reth_network_peers::{NodeRecord, PeerId};
+use base_execution_network_types::{NodeRecord, PeerId};
 use reth_network_types::PeerKind;
 use tokio::sync::{
     mpsc::{self, error::SendError},

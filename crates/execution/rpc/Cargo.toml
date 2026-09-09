@@ -65,7 +65,6 @@ jsonrpsee = { workspace = true, features = ["macros", "server"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
-reth-network-peers = { workspace = true, features = ["secp256k1"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
@@ -76,6 +75,7 @@ base-execution-payload-types = { workspace = true, features = ["default"]}
 base-common-client-ethereum = { workspace = true, features = ["mnemonic"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
+base-execution-network-types = { workspace = true, features = ["secp256k1"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"]}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }

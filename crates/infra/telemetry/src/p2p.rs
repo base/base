@@ -16,7 +16,7 @@ use axum::{
 };
 use discv5::enr::{CombinedPublicKey, Enr, EnrPublicKey};
 use libp2p::{Multiaddr, PeerId, multiaddr::Protocol};
-use reth_network_peers::{NodeRecord, id2pk};
+use base_execution_network_types::{NodeRecord, id2pk};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, info};

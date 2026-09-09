@@ -6,7 +6,7 @@ use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_types::{DatabaseError, ProviderError};
 use derive_more::{Display, Error};
-use reth_network_peers::WithPeerId;
+use base_execution_network_types::WithPeerId;
 use reth_network_types::ReputationChangeKind;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 use tokio::sync::{mpsc, oneshot};
@@ -16,7 +16,7 @@ use super::headers::client::HeadersRequest;
 /// Result alias for result of a request.
 pub type RequestResult<T> = Result<T, RequestError>;
 
-/// Result with [`PeerId`][reth_network_peers::PeerId]
+/// Result with [`PeerId`][base_execution_network_types::PeerId]
 pub type PeerRequestResult<T> = RequestResult<WithPeerId<T>>;
 
 /// Helper trait used to validate responses.

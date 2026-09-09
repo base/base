@@ -17,7 +17,7 @@ use rand::Rng;
 use reth_eth_wire::{DisconnectReason, errors::EthStreamError};
 use reth_net_banlist::BanList;
 use reth_network_api::test_utils::{PeerCommand, PeersHandle};
-use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};
+use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
 use reth_network_types::{
     ConnectionsConfig, Peer, PeerAddr, PeerConnectionState, PeerKind, PeersConfig,
     PersistedPeerInfo, ReputationChangeKind, ReputationChangeOutcome, ReputationChangeWeights,
@@ -1519,7 +1519,7 @@ mod tests {
     };
     use reth_net_banlist::BanList;
     use reth_network_api::Direction;
-    use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};
+    use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
     use reth_network_types::{
         BackoffKind, Peer, ReputationChangeKind, peers::reputation::DEFAULT_REPUTATION,
     };

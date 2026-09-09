@@ -11,7 +11,7 @@ use reth_discv5::{
     discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
 };
 use reth_net_nat::{NatResolver, external_addr_with};
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use secp256k1::SecretKey;
 use tokio::select;
 use tokio_stream::StreamExt;

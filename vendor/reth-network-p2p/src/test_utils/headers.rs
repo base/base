@@ -13,7 +13,7 @@ use std::{
 use base_common_types_chain::Header;
 use futures::{Future, FutureExt, Stream, StreamExt};
 use reth_eth_wire_types::HeadersDirection;
-use reth_network_peers::{PeerId, WithPeerId};
+use base_execution_network_types::{PeerId, WithPeerId};
 use reth_primitives_traits::SealedHeader;
 use tokio::sync::Mutex;
 

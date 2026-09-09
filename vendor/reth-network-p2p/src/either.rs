@@ -18,7 +18,7 @@ where
     A: DownloadClient,
     B: DownloadClient,
 {
-    fn report_bad_message(&self, peer_id: reth_network_peers::PeerId) {
+    fn report_bad_message(&self, peer_id: base_execution_network_types::PeerId) {
         match self {
             Self::Left(a) => a.report_bad_message(peer_id),
             Self::Right(b) => b.report_bad_message(peer_id),

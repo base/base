@@ -14,7 +14,7 @@ use reth_network_p2p::{
     error::{DownloadError, DownloadResult},
     priority::Priority,
 };
-use reth_network_peers::{PeerId, WithPeerId};
+use base_execution_network_types::{PeerId, WithPeerId};
 use reth_primitives_traits::{GotExpected, InMemorySize, SealedBlock, SealedHeader};
 
 use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};

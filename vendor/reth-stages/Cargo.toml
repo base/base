@@ -56,10 +56,10 @@ alloy-genesis = { workspace = true }
 assert_matches = { workspace = true }
 reth-db-common = { workspace = true }
 reth-static-file = { workspace = true }
-reth-network-peers = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
+base-execution-network-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }

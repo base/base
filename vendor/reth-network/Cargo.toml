@@ -52,7 +52,6 @@ tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-network-peers = { workspace = true, features = ["net"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-network-types = { workspace = true, features = ["serde"] }
 enr = { workspace = true, features = ["serde", "rust-secp256k1"] }
@@ -60,6 +59,7 @@ reth-eth-wire-types = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-network-types = { workspace = true, features = ["net"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }

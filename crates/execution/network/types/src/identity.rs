@@ -1,61 +1,3 @@
-//! Network Types and Utilities.
-//!
-//! This crate manages and converts Ethereum network entities such as node records, peer IDs, and
-//! Ethereum Node Records (ENRs)
-//!
-//! ## An overview of Node Record types
-//!
-//! Ethereum uses different types of "node records" to represent peers on the network.
-//!
-//! The simplest way to identify a peer is by public key. This is the [`PeerId`] type, which usually
-//! represents a peer's secp256k1 public key.
-//!
-//! A more complete representation of a peer is the [`NodeRecord`] type, which includes the peer's
-//! IP address, the ports where it is reachable (TCP and UDP), and the peer's public key. This is
-//! what is returned from discovery v4 queries.
-//!
-//! The most comprehensive node record type is the Ethereum Node Record ([`Enr`]), which is a
-//! signed, versioned record that includes the information from a [`NodeRecord`] along with
-//! additional metadata. This is the data structure returned from discovery v5 queries.
-//!
-//! When we need to deserialize an identifier that could be a [`PeerId`], [`NodeRecord`], [`Enr`],
-//! or [`TrustedPeer`], we use the [`AnyNode`] type. [`AnyNode`] is used in reth's
-//! `admin_addTrustedPeer` RPC method.
-//!
-//! The __final__ type is the [`TrustedPeer`] type, which is similar to a [`NodeRecord`] but may
-//! include a domain name instead of a direct IP address. It includes a `resolve` method, which can
-//! be used to resolve the domain name, producing a [`NodeRecord`]. This is useful for adding
-//! trusted peers at startup, whose IP address may not be static each time the node starts. This is
-//! common in orchestrated environments like Kubernetes, where there is reliable service discovery,
-//! but services do not necessarily have static IPs.
-//!
-//! In short, the types are as follows:
-//! - [`PeerId`]: A simple public key identifier.
-//! - [`NodeRecord`]: A more complete representation of a peer, including IP address and ports.
-//! - [`Enr`]: An Ethereum Node Record, which is a signed, versioned record that includes additional
-//!   metadata. Useful when interacting with discovery v5, or when custom metadata is required.
-//! - [`AnyNode`]: An enum over [`PeerId`], [`NodeRecord`], [`Enr`], and [`TrustedPeer`], useful in
-//!   deserialization when the type of the node record is not known.
-//! - [`TrustedPeer`]: A [`NodeRecord`] with an optional domain name, which can be resolved to a
-//!   [`NodeRecord`]. Useful for adding trusted peers at startup, whose IP address may not be
-//!   static.
-//!
-//!
-//! ## Feature Flags
-//!
-//! - `net`: Support for address lookups.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
 use alloc::{
     format,
     string::{String, ToString},
@@ -63,21 +5,13 @@ use alloc::{
 use core::str::FromStr;
 
 use alloy_primitives::B512;
-// Re-export PeerId for ease of use.
 #[cfg(feature = "secp256k1")]
-pub use enr::Enr;
+use enr::Enr;
+
+use crate::{NodeRecord, TrustedPeer};
 
 /// Alias for a peer identifier
 pub type PeerId = B512;
-
-pub mod node_record;
-pub use node_record::{NodeRecord, NodeRecordParseError};
-
-pub mod trusted_peer;
-pub use trusted_peer::TrustedPeer;
-
-mod bootnodes;
-pub use bootnodes::*;
 
 /// This tag should be set to indicate to libsecp256k1 that the following bytes denote an
 /// uncompressed pubkey.

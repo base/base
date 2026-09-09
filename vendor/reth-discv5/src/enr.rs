@@ -3,7 +3,7 @@
 
 use discv5_reth::enr::{CombinedPublicKey, EnrPublicKey, NodeId};
 use enr::Enr;
-use reth_network_peers::{PeerId, id2pk, pk2id};
+use base_execution_network_types::{PeerId, id2pk, pk2id};
 use secp256k1::{PublicKey, SecretKey};
 
 /// Extracts a [`CombinedPublicKey::Secp256k1`] from a [`discv5_reth::Enr`] and converts it to a
@@ -58,7 +58,7 @@ mod tests {
     use alloy_hardforks::EthereumHardfork;
     use alloy_rlp::Encodable;
     use discv5_reth::enr::{CombinedKey, EnrKey};
-    use reth_network_peers::NodeRecord;
+    use base_execution_network_types::NodeRecord;
 
     use super::*;
 

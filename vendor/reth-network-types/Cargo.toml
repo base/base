@@ -18,11 +18,12 @@ workspace = true
 [dependencies]
 alloy-eip2124 = { workspace = true }
 reth-net-banlist = { workspace = true }
-reth-network-peers = { workspace = true }
 serde = { workspace = true, optional = true }
+base-execution-network-types = { workspace = true }
 humantime-serde = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 serde_json = { workspace = true, features = ["alloc", "std"], optional = true }
+
 [features]
 serde = [
     "dep:serde",

@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{FutureExt, StreamExt, future::BoxFuture, ready, stream::FuturesUnordered};
-use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};
+use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
 use tokio::time::Interval;
 use tracing::warn;
 

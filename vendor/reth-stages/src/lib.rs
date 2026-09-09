@@ -19,7 +19,7 @@
 //! # use alloy_primitives::B256;
 //! #
 //! # use base_execution_state_types::PruneModes;
-//! # use reth_network_peers::PeerId;
+//! # use base_execution_network_types::PeerId;
 //! # use reth_stages::Pipeline;
 //! # use reth_stages::sets::DefaultStages;
 //! # use tokio::sync::watch;

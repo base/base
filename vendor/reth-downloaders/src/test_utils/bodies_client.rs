@@ -15,7 +15,7 @@ use reth_network_p2p::{
     download::DownloadClient,
     priority::Priority,
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use tokio::sync::Mutex;
 
 /// A [`BodiesClient`] for testing.

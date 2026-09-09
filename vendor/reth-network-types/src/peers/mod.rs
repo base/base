@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use alloy_eip2124::ForkId;
 pub use config::{ConnectionsConfig, PeersConfig};
 pub use reputation::{Reputation, ReputationChange, ReputationChangeKind, ReputationChangeWeights};
-use reth_network_peers::{NodeRecord, PeerId};
+use base_execution_network_types::{NodeRecord, PeerId};
 use tracing::trace;
 
 use crate::{

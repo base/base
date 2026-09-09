@@ -27,7 +27,7 @@ use reth_network_p2p::{
     },
     priority::Priority,
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_primitives_traits::{GotExpected, SealedHeader};
 use thiserror::Error;
 use tracing::{debug, error, trace};
@@ -1288,7 +1288,7 @@ mod tests {
     use reth_network_p2p::{
         download::DownloadClient, error::PeerRequestResult, test_utils::TestHeadersClient,
     };
-    use reth_network_peers::WithPeerId;
+    use base_execution_network_types::WithPeerId;
 
     use super::*;
     use crate::headers::test_utils::child_header;

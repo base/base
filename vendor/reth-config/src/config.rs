@@ -7,7 +7,7 @@ use std::{
 use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes};
 use base_execution_state_types::{StaticFileMap, StaticFileSegment};
-use reth_network_peers::TrustedPeer;
+use base_execution_network_types::TrustedPeer;
 use reth_network_types::{PeersConfig, SessionsConfig};
 
 #[cfg(feature = "serde")]
@@ -629,7 +629,7 @@ pub mod tests {
     use base_execution_state_types::{
         MINIMUM_UNWIND_SAFE_DISTANCE, PruneMode, PruneModes, ReceiptsLogPruneConfig,
     };
-    use reth_network_peers::TrustedPeer;
+    use base_execution_network_types::TrustedPeer;
 
     use super::{Config, EXTENSION};
     use crate::PruneConfig;

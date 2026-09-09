@@ -30,7 +30,6 @@ alloy-hardforks = { workspace = true }
 reth-network-api = { workspace = true }
 reth-rpc-builder = { workspace = true }
 base-node-context = { workspace = true }
-reth-network-peers = { workspace = true }
 base-common-types-rpc = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
@@ -39,6 +38,7 @@ base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-types = { workspace = true }
+base-execution-network-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 serde_json = { workspace = true, features = ["alloc"] }

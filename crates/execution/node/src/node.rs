@@ -25,7 +25,7 @@ use base_execution_txpool::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
@@ -497,7 +497,7 @@ impl BaseNode {
                         .network
                         .resolved_bootnodes()
                         .or_else(|| {
-                            reth_network_peers::NodeRecord::parse_bootnodes(
+                            base_execution_network_types::NodeRecord::parse_bootnodes(
                                 ctx.chain_spec().config.bootnodes.execution,
                             )
                         })

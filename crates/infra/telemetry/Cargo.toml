@@ -18,21 +18,22 @@ reth-eth-wire = { workspace = true }
 alloy-primitives = { workspace = true }
 base-trusted-proxy = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 governor = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 anyhow = { workspace = true, features = ["default", "std"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
-secp256k1 = { workspace = true, features = ["default", "rand"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
+secp256k1 = { workspace = true, features = ["default", "rand"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 clap = { workspace = true, features = ["default", "derive", "env", "std"] }
-reth-network-peers = { workspace = true, features = ["default", "secp256k1"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
+base-execution-network-types = { workspace = true, features = ["default", "secp256k1"] }
 libp2p = { workspace = true, features = ["tokio", "tcp", "noise", "yamux", "identify"] }
 tokio = { workspace = true, features = ["default", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
 [dev-dependencies]
 mockall = { workspace = true }
 reqwest = { workspace = true, features = ["default", "json"] }

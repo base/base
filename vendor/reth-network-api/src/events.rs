@@ -20,7 +20,7 @@ use reth_network_p2p::{
     error::{RequestError, RequestResult},
     snap::client::SnapResponse,
 };
-use reth_network_peers::{NodeRecord, PeerId};
+use base_execution_network_types::{NodeRecord, PeerId};
 use reth_network_types::{PeerAddr, PeerKind};
 use base_common_runtime_tasks::EventStream;
 use tokio::sync::{mpsc, oneshot};

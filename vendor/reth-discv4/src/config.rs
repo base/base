@@ -12,7 +12,7 @@ use alloy_primitives::bytes::Bytes;
 use alloy_rlp::Encodable;
 use reth_net_banlist::BanList;
 use reth_net_nat::{NatResolver, ResolveNatInterval};
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone, Debug)]

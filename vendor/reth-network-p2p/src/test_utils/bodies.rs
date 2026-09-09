@@ -6,7 +6,7 @@ use std::{
 use alloy_primitives::B256;
 use base_common_types_chain::BaseBlockBody as BlockBody;
 use futures::FutureExt;
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use tokio::sync::oneshot;
 
 use crate::{

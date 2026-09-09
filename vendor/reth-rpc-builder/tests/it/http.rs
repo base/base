@@ -22,7 +22,7 @@ use jsonrpsee::{
     rpc_params,
     types::error::ErrorCode,
 };
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 

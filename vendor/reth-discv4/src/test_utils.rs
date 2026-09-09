@@ -14,7 +14,7 @@ use std::{
 use alloy_eip2124::{ForkHash, ForkId};
 use alloy_primitives::{B256, B512, hex};
 use rand_08::{Rng, RngCore, thread_rng};
-use reth_network_peers::{NodeRecord, pk2id};
+use base_execution_network_types::{NodeRecord, pk2id};
 use secp256k1::{SECP256K1, SecretKey};
 use tokio::{
     net::UdpSocket,

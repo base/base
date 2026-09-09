@@ -15,7 +15,7 @@ use reth_network_p2p::{
     headers::client::{HeadersClient, HeadersDirection, HeadersFut, HeadersRequest},
     priority::Priority,
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use thiserror::Error;
 use tokio::{

@@ -77,7 +77,6 @@ base-node-core = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
-reth-network-peers = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
@@ -95,6 +94,7 @@ base-execution-payload-types = {features = ["default"], workspace = true}
 base-execution-state-types = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
+base-execution-network-types = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-common-observability-tracing = { workspace = true, features = ["otlp"] }

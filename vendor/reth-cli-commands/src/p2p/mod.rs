@@ -193,7 +193,7 @@ impl<C: ChainSpecParser> DownloadArgs<C> {
         let p2p_secret_key = self.network.secret_key(default_secret_key_path)?;
         let rlpx_socket = (self.network.addr, self.network.port).into();
         let boot_nodes = self.network.resolved_bootnodes().unwrap_or_else(|| {
-            reth_network_peers::NodeRecord::parse_bootnodes(self.chain.config.bootnodes.execution)
+            base_execution_network_types::NodeRecord::parse_bootnodes(self.chain.config.bootnodes.execution)
                 .unwrap_or_default()
         });
 

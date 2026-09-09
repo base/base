@@ -15,10 +15,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-ctr = { workspace = true }
 aes = { workspace = true }
-sha2 = { workspace = true }
+ctr = { workspace = true }
 hmac = { workspace = true }
+sha2 = { workspace = true }
 cipher = { workspace = true }
 thiserror = { workspace = true }
 concat-kdf = { workspace = true }
@@ -31,9 +31,10 @@ byteorder = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
-reth-network-peers = { workspace = true, features = ["secp256k1"] }
+base-execution-network-types = { workspace = true, features = ["secp256k1"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive", "arrayvec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand", "rlp"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "rand"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["net", "rt", "macros"] }

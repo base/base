@@ -4,7 +4,7 @@
 use std::net::SocketAddr;
 
 use derive_more::Constructor;
-use reth_network_peers::{NodeRecord, PeerId};
+use base_execution_network_types::{NodeRecord, PeerId};
 use reth_network_types::{Peer, ReputationChangeKind};
 use tokio::sync::{mpsc, oneshot};
 

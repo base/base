@@ -49,7 +49,7 @@ use reth_eth_wire::{
 };
 use reth_network_api::PeerRequest;
 use reth_network_p2p::error::{RequestError, RequestResult};
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_primitives_traits::SignedTransaction;
 use schnellru::ByLength;
 use tokio::sync::{mpsc::error::TrySendError, oneshot, oneshot::error::RecvError};

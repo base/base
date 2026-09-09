@@ -10,7 +10,7 @@ use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use ctr::Ctr64BE;
 use digest::crypto_common::KeyIvInit;
 use rand_08::{Rng, thread_rng as rng};
-use reth_network_peers::{id2pk, pk2id};
+use base_execution_network_types::{id2pk, pk2id};
 use secp256k1::{
     PublicKey, SECP256K1, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},

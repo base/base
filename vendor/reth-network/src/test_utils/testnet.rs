@@ -29,7 +29,7 @@ use reth_network_api::{
     events::{PeerEvent, SessionInfo},
     test_utils::{PeersHandle, PeersHandleProvider},
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},

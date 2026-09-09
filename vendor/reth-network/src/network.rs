@@ -26,7 +26,7 @@ use reth_network_api::{
     test_utils::{PeersHandle, PeersHandleProvider},
 };
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState, SyncStateProvider};
-use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};
+use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
 use reth_network_types::{PeerAddr, PeerKind, Reputation, ReputationChangeKind};
 use base_common_runtime_tasks::{EventSender, EventStream};
 use secp256k1::SecretKey;
@@ -100,7 +100,7 @@ impl NetworkHandle {
             Arc::new(Mutex::new(([127, 0, 0, 1], 0).into())),
             mpsc::unbounded_channel().0,
             secret_key,
-            reth_network_peers::pk2id(&secret_key.public_key(secp256k1::SECP256K1)),
+            base_execution_network_types::pk2id(&secret_key.public_key(secp256k1::SECP256K1)),
             PeersHandle::new(mpsc::unbounded_channel().0),
             NetworkMode::Stake,
             Arc::new(AtomicU64::new(chain_id)),

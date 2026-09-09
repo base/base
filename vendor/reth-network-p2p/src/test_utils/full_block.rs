@@ -5,7 +5,7 @@ use alloy_primitives::{B256, Bytes, map::B256Map};
 use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
 use parking_lot::Mutex;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
-use reth_network_peers::{PeerId, WithPeerId};
+use base_execution_network_types::{PeerId, WithPeerId};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
 use crate::{

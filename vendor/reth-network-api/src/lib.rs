@@ -37,7 +37,7 @@ use reth_eth_wire_types::{
     Capability, DisconnectReason, EthVersion, UnifiedStatus, capability::Capabilities,
 };
 pub use reth_network_p2p::{BlockClient, HeadersClient};
-use reth_network_peers::NodeRecord;
+use base_execution_network_types::NodeRecord;
 pub use reth_network_types::{PeerKind, Reputation, ReputationChangeKind};
 
 /// The `PeerId` type.
@@ -122,7 +122,7 @@ pub trait Peers: PeersInfo {
     /// Resolution is performed asynchronously by the periodic DNS resolver; the peer is
     /// added to the peer set on first successful resolution and re-resolved periodically
     /// so address changes are picked up automatically.
-    fn add_trusted_peer_node(&self, _peer: reth_network_peers::TrustedPeer) {}
+    fn add_trusted_peer_node(&self, _peer: base_execution_network_types::TrustedPeer) {}
 
     /// Adds a peer to the known peer set, with the given kind.
     ///

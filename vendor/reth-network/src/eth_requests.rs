@@ -34,7 +34,7 @@ use reth_network_p2p::{
     error::{RequestError, RequestResult},
     snap::client::SnapResponse,
 };
-use reth_network_peers::PeerId;
+use base_execution_network_types::PeerId;
 use reth_primitives_traits::Block;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;

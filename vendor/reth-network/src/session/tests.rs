@@ -5,7 +5,7 @@ use reth_eth_wire::{
     Capability, StatusBuilder, UnauthedEthStream, handshake::EthHandshake, protocol::Protocol,
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
-use reth_network_peers::pk2id;
+use base_execution_network_types::pk2id;
 use secp256k1::SECP256K1;
 use tokio::net::TcpListener;
 

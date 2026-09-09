@@ -69,7 +69,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 
 - **Execution and consensus:** `reth-consensus-common` supplies validation routines used directly by Base consensus; generic EVM/execution/revm code remains essential.
 - **ExEx:** `base-execution-exex` uses `reth-exex` for proof history, and `base-shadow-indexer` also consumes ExEx. The manager, notifications, WAL, and pruning coordination are not unused plugin machinery.
-- **Networking:** discovery v4/v5, DNS discovery, peer handling, ETH wire protocol, ECIES, downloads, NAT, and ban lists support Base's execution network. Remove unrelated bootnode presets inside `reth-network-peers`, not the whole crate.
+- **Networking:** discovery v4/v5, DNS discovery, peer handling, ETH wire protocol, ECIES, downloads, NAT, and ban lists support Base's execution network. Remove unrelated bootnode presets inside `base-execution-network-types`, not the whole crate.
 - **Storage:** provider, DB APIs/backends, codecs, ETL, pruning, stage processing, trie implementations, static files, and compression remain active. A single supported network does not remove the need for sync, recovery, persisted formats, or historical reads.
 - **RPC and payload services:** Base reuses the shared engines, servers, caches, transaction pool, payload scheduling, and RPC implementation pieces.
 - **Observability and runtime:** tracing/OTLP, metrics, events, tasks, and Tokio helpers implement active Base behavior.
@@ -138,7 +138,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-network](../../vendor/reth-network/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-api](../../vendor/reth-network-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-p2p](../../vendor/reth-network-p2p/Cargo.toml) | Retain shared infrastructure |
-| [reth-network-peers](../../vendor/reth-network-peers/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-types](../../vendor/reth-network-types/Cargo.toml) | Retain shared infrastructure |
 | [reth-nippy-jar](../../vendor/reth-nippy-jar/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-api](../../vendor/reth-node-api/Cargo.toml) | Consolidate; retain required code |

@@ -47,7 +47,7 @@ use reth_network::{
         },
     },
 };
-use reth_network_peers::{TrustedPeer, mainnet_nodes};
+use base_execution_network_types::{TrustedPeer, mainnet_nodes};
 use secp256k1::SecretKey;
 use tracing::error;
 
@@ -1175,7 +1175,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use clap::Parser;
     use reth_config::Config;
-    use reth_network_peers::NodeRecord;
+    use base_execution_network_types::NodeRecord;
     use secp256k1::SecretKey;
 
     use super::*;

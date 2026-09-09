@@ -26,12 +26,12 @@ schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 data-encoding = { workspace = true, features = ["default"] }
-reth-network-peers = { workspace = true, features = ["secp256k1"] }
 tokio = { workspace = true, features = ["io-util", "net", "time"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-runtime-tasks = { workspace = true, features = ["time"] }
 hickory-resolver = { workspace = true, features = ["default", "tokio"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
+base-execution-network-types = { workspace = true, features = ["secp256k1"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "serde"] }
 
 [dev-dependencies]

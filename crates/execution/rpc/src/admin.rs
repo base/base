@@ -13,7 +13,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::core::RpcResult;
 use reth_network_api::{NetworkInfo, Peers};
-use reth_network_peers::{AnyNode, NodeRecord};
+use base_execution_network_types::{AnyNode, NodeRecord};
 use reth_network_types::PeerKind;
 use reth_rpc_server_types::ToRpcResult;
 

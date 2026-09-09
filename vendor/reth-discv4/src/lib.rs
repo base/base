@@ -49,7 +49,7 @@ use enr::Enr;
 use itertools::Itertools;
 use parking_lot::Mutex;
 use proto::{EnrRequest, EnrResponse};
-use reth_network_peers::{PeerId, pk2id};
+use base_execution_network_types::{PeerId, pk2id};
 use secp256k1::SecretKey;
 use tokio::{
     net::UdpSocket,
@@ -77,7 +77,7 @@ use node::{NodeKey, kad_key};
 mod table;
 
 // reexport NodeRecord primitive
-pub use reth_network_peers::NodeRecord;
+pub use base_execution_network_types::NodeRecord;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -214,7 +214,7 @@ impl Discv4 {
     ///
     /// ```
     /// use reth_discv4::{Discv4, Discv4Config};
-    /// use reth_network_peers::{pk2id, NodeRecord, PeerId};
+    /// use base_execution_network_types::{pk2id, NodeRecord, PeerId};
     /// use secp256k1::SECP256K1;
     /// use std::{net::SocketAddr, str::FromStr};
     /// # async fn t() -> std:: io::Result<()> {
@@ -2572,7 +2572,7 @@ mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable};
     use rand_08::Rng;
-    use reth_network_peers::mainnet_nodes;
+    use base_execution_network_types::mainnet_nodes;
 
     use super::*;
     use crate::test_utils::{create_discv4, create_discv4_with_config, rng_endpoint, rng_record};

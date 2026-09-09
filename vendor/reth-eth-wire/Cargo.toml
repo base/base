@@ -23,10 +23,10 @@ reth-ecies = { workspace = true }
 pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
-reth-network-peers = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
+base-execution-network-types = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }

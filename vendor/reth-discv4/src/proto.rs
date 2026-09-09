@@ -13,7 +13,7 @@ use alloy_rlp::{
     RlpEncodableWrapper,
 };
 use enr::Enr;
-use reth_network_peers::{NodeRecord, PeerId, pk2id};
+use base_execution_network_types::{NodeRecord, PeerId, pk2id};
 use secp256k1::{
     SECP256K1, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
