@@ -52,7 +52,6 @@ alloy-serde = { workspace = true, optional = true }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["default"] }
-alloy-rpc-types = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["alloc"] }
 lru_0_18_2 = { workspace = true, features = ["default"] }
 alloy-transport-ws = { workspace = true, optional = true }
@@ -122,7 +121,7 @@ reqwest = ["dep:reqwest", "dep:url", "dep:alloy-transport-http", "alloy-rpc-clie
 reqwest-default-tls = ["alloy-transport-http?/reqwest-default-tls"]
 reqwest-native-tls = ["alloy-transport-http?/reqwest-native-tls"]
 reqwest-rustls-tls = ["alloy-transport-http?/reqwest-rustls-tls"]
-rpc-api = ["dep:alloy-rpc-types"]
+rpc-api = []
 tenderly-admin-api = []
 throttle = ["alloy-transport/throttle"]
 trace-api = []

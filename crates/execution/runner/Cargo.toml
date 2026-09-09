@@ -36,11 +36,11 @@ alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, optional = true, features = ["default"] }
-alloy-rpc-types = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
 base-common-rpc-types-engine = {workspace = true, optional = true, features = ["std"]}
 base-execution-chainspec = { workspace = true, features = ["default"], optional = true }
+base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -72,7 +72,7 @@ test-utils = [
     "dep:alloy-primitives",
     "dep:alloy-provider",
     "dep:alloy-rpc-client",
-    "dep:alloy-rpc-types",
+    "dep:base-common-rpc-types",
     "dep:base-common-rpc-types-engine",
     "dep:base-common-rpc-types-engine",
     "dep:base-test-utils",

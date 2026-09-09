@@ -75,5 +75,5 @@ pub use service_metrics::PayloadBuilderServiceMetrics;
 mod job_metrics;
 pub use job_metrics::PayloadBuilderMetrics;
 mod basic;
-pub use alloy_rpc_types::engine::PayloadId;
+pub use base_common_rpc_types_engine::PayloadId;
 pub use basic::*;

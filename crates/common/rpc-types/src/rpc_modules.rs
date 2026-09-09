@@ -1,12 +1,15 @@
 //! Types for the `rpc` API.
 
+use alloc::string::String;
+
 use alloy_primitives::map::HashMap;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Represents the `rpc_modules` response, which returns the
 /// list of all available modules on that transport and their version
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(transparent))]
 pub struct RpcModules {
     module_map: HashMap<String, String>,
 }
@@ -23,9 +26,9 @@ impl RpcModules {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "serde"))]
 mod tests {
-    use similar_asserts::assert_eq;
+    use alloc::borrow::ToOwned;
 
     use super::*;
     #[test]

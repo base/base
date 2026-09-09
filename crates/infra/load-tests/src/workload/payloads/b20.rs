@@ -3,7 +3,7 @@
 use std::sync::{Arc, OnceLock};
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
-use alloy_rpc_types::TransactionRequest;
+use base_common_rpc_types::TransactionRequest;
 use alloy_sol_types::SolCall;
 use async_trait::async_trait;
 use base_common_network::TransactionBuilder;

@@ -25,7 +25,7 @@ use std::{
 };
 
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockNumberOrTag;
+use base_common_rpc_types::BlockNumberOrTag;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, PreparedBlock, TestHarness};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tokio::runtime::Runtime;

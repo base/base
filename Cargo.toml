@@ -311,7 +311,6 @@ alloy-rpc-types-admin = { version = "=2.4.1", default-features = false }
 alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
 alloy-provider = { path = "vendor/alloy-provider", default-features = false }
 alloy-contract = { path = "vendor/alloy-contract", default-features = false }
-alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
 alloy-node-bindings = { path = "vendor/alloy-node-bindings", default-features = false }
 alloy-network-primitives = { path = "vendor/alloy-network-primitives", default-features = false }
 alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }

@@ -1,4 +1,4 @@
-use alloy_rpc_types::RpcModules;
+use base_common_rpc_types::RpcModules;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 /// RPC namespace, used to find the versions of all rpc modules

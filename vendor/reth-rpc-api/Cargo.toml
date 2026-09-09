@@ -26,7 +26,6 @@ alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["alloc"] }
-alloy-rpc-types = { workspace = true, features = ["eth"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

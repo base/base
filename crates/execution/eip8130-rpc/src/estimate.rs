@@ -2,7 +2,7 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::U256;
-use alloy_rpc_types::state::EvmOverrides;
+use base_common_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};

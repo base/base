@@ -118,3 +118,6 @@ mod bundle_sim;
 pub use bundle_sim::*;
 
 mod u256_numeric_string;
+
+mod rpc_modules;
+pub use rpc_modules::RpcModules;

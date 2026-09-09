@@ -370,7 +370,7 @@ impl BaseEthApiInner {
 mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Signature, U64};
-    use alloy_rpc_types::FeeHistory;
+    use base_common_rpc_types::FeeHistory;
     use base_common_consensus::{BaseTxEnvelope as TransactionSigned, Block, BlockBody, Header};
     use base_common_rpc_types::{Bundle, StateContext, TransactionRequest};
     use base_execution_chainspec::ChainSpecProvider;

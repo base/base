@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::{Address, Bytes, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
+use base_common_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
 use base_common_network::{Ethereum, EthereumWallet, PrivateKeySigner, TransactionBuilder};
 use base_tx_manager::NonceManager;

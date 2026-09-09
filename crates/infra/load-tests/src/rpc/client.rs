@@ -67,7 +67,7 @@ pub trait BaseFeeExt {
 impl BaseFeeExt for QueryProvider {
     async fn get_base_fee(&self) -> Result<u128> {
         let block = self
-            .get_block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest)
+            .get_block_by_number(base_common_rpc_types::BlockNumberOrTag::Latest)
             .hashes()
             .await
             .rpc("get latest block for base fee")?

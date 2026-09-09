@@ -79,7 +79,6 @@ base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
-alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, optional = false, features = ["alloc"]}
 base-execution-rpc = { workspace = true, features = ["default", "client"] }

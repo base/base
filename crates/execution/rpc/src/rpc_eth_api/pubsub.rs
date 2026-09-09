@@ -11,7 +11,7 @@ pub trait EthPubSubApi<T: RpcObject> {
     #[subscription(
         name = "subscribe" => "subscription",
         unsubscribe = "unsubscribe",
-        item = alloy_rpc_types::pubsub::SubscriptionResult
+        item = base_common_rpc_types::pubsub::SubscriptionResult
     )]
     async fn subscribe(
         &self,

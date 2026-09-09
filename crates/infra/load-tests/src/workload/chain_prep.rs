@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use base_common_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
 use base_common_network::TransactionBuilder;
 use indicatif::{ProgressBar, ProgressStyle};

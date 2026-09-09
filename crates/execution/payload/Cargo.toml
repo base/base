@@ -54,7 +54,6 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-common-rpc-types-engine = {workspace = true, features = ["serde", "std"]}

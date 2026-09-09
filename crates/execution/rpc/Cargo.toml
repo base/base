@@ -59,7 +59,6 @@ serde_json = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true, features = ["attributes"]}
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-alloy-rpc-types = { workspace = true, features = ["eth"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
