@@ -1,9 +1,11 @@
 //! Geth ERC-7562 tracer types.
 
+use alloc::{string::String, vec::Vec};
+
 use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
 use serde::{Deserialize, Serialize};
 
-use crate::geth::CallLogFrame;
+use crate::trace_geth::CallLogFrame;
 
 /// The response object for `debug_traceTransaction` with `"tracer": "erc7562Tracer"`.
 ///
@@ -134,7 +136,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::geth::*;
+    use crate::trace_geth::*;
 
     #[test]
     fn test_serialize_erc7562_trace() {

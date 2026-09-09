@@ -1,12 +1,11 @@
 #[cfg(feature = "js-tracer")]
 use alloc::boxed::Box;
 
-use alloy_rpc_types_trace::geth::{
-    CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-    GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace, NoopFrame, PreStateConfig,
-    erc7562::Erc7562Config, mux::MuxConfig,
+use base_common_rpc_types::{
+    CallConfig, Erc7562Config, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+    GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace, MuxConfig, NoopFrame,
+    PreStateConfig, TransactionInfo,
 };
-use base_common_rpc_types::TransactionInfo;
 use base_evm_context::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
 use base_evm_handler::{FrameResult, JournalExt};
 use revm::{

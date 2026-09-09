@@ -1,18 +1,13 @@
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
-use alloy_rpc_types_trace::{
-    otterscan::{
-        BlockDetails, ContractCreator, InternalOperation, OperationType, OtsBlockTransactions,
-        OtsReceipt, OtsTransactionReceipt, TraceEntry, TransactionsWithReceipts,
-    },
-    parity::{Action, CreateAction, CreateOutput, TraceOutput},
-};
 use async_trait::async_trait;
 use base_common_consensus::{BlockHeader, Typed2718};
 use base_common_network::{ReceiptResponse, TransactionResponse};
 use base_common_rpc_types::{
-    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BlockTransactions,
-    TransactionReceipt,
+    Action, BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BlockDetails,
+    BlockTransactions, ContractCreator, CreateAction, CreateOutput, InternalOperation,
+    OperationType, OtsBlockTransactions, OtsReceipt, OtsTransactionReceipt, TraceEntry,
+    TraceOutput, TransactionReceipt, TransactionsWithReceipts,
 };
 use base_evm_context::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};

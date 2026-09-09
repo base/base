@@ -17,7 +17,7 @@ pub use alloy_rpc_types_debug as debug;
 #[cfg(feature = "mev")]
 pub use alloy_rpc_types_mev as mev;
 #[cfg(feature = "trace")]
-pub use alloy_rpc_types_trace as trace;
+pub use base_common_rpc_types as trace;
 #[cfg(feature = "txpool")]
 pub use base_common_rpc_types as txpool;
 #[cfg(feature = "eth")]

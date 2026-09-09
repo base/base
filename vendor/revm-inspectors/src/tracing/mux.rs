@@ -1,12 +1,10 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Log, U256, map::HashMap};
-use alloy_rpc_types_trace::geth::{
+use base_common_rpc_types::{
     CallConfig, FlatCallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-    NoopFrame, PreStateConfig,
-    mux::{MuxConfig, MuxFrame},
+    MuxConfig, MuxFrame, NoopFrame, PreStateConfig, TransactionInfo,
 };
-use base_common_rpc_types::TransactionInfo;
 use base_evm_context::{ContextTr, HaltReasonTr, ResultAndState};
 use base_evm_handler::{FrameResult, JournalExt};
 use revm::{

@@ -36,8 +36,7 @@ colorchoice = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
-alloy-rpc-types-trace = { workspace = true }
-base-common-rpc-types = { workspace = true }
+base-common-rpc-types = {workspace = true}
 boa_gc = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-primitives = { workspace = true, features = ["map"] }

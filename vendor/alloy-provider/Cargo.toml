@@ -61,7 +61,6 @@ alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
-alloy-rpc-types-trace = { workspace = true, optional = true }
 futures-utils-wasm = { workspace = true, features = ["default"] }
 url = { workspace = true, optional = true, features = ["default"] }
 http = { workspace = true, optional = true, features = ["default"] }
@@ -113,7 +112,7 @@ workspace = true
 admin-api = ["dep:alloy-rpc-types-admin"]
 anvil-api = ["dep:alloy-serde"]
 anvil-node = ["anvil-api", "reqwest", "dep:alloy-node-bindings"]
-debug-api = ["dep:alloy-rpc-types-trace", "dep:alloy-rpc-types-debug"]
+debug-api = ["dep:alloy-rpc-types-debug"]
 default = ["reqwest", "reqwest-default-tls"]
 erc4337-api = []
 hyper = ["dep:alloy-transport-http", "dep:url", "alloy-rpc-client/hyper"]
@@ -129,7 +128,7 @@ reqwest-rustls-tls = ["alloy-transport-http?/reqwest-rustls-tls"]
 rpc-api = ["dep:alloy-rpc-types"]
 tenderly-admin-api = []
 throttle = ["alloy-transport/throttle"]
-trace-api = ["dep:alloy-rpc-types-trace"]
+trace-api = []
 txpool-api = []
 ws = ["ws-base", "alloy-rpc-client/ws", "alloy-transport-ws/aws-lc-rs"]
 ws-base = ["pubsub", "dep:alloy-transport-ws", "alloy-rpc-client/ws-base"]

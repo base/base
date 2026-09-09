@@ -3,17 +3,22 @@
 //! <https://www.quicknode.com/docs/ethereum/ots_getBlockTransactions>
 //! <https://github.com/otterscan/otterscan/blob/v2.6.1/docs/custom-jsonrpc.md>
 
-use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, U256};
-use base_common_rpc_types::{
-    Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt, Withdrawals,
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
 };
+
+use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, U256};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Unexpected},
     ser::SerializeSeq,
 };
 
-use crate::parity::TransactionTrace;
+use crate::{
+    Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt, Withdrawals,
+    trace_parity::TransactionTrace,
+};
 
 /// Operation type enum for `InternalOperation` struct
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

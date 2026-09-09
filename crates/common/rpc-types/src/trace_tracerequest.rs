@@ -1,12 +1,14 @@
 //! Builder style functions for `trace_call`
 
+use alloc::boxed::Box;
+
 use alloy_primitives::map::HashSet;
-use base_common_rpc_types::{
-    BlockId, BlockOverrides, request::TransactionRequest, state::StateOverride,
-};
 use serde::{Deserialize, Serialize};
 
-use crate::parity::TraceType;
+use crate::{
+    BlockId, BlockOverrides, request::TransactionRequest, state::StateOverride,
+    trace_parity::TraceType,
+};
 
 /// Container type for `trace_call` arguments
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -2,13 +2,13 @@
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{B256, Bytes, TxHash, hex};
 use alloy_rpc_types_debug::ExecutionWitness;
-use alloy_rpc_types_trace::geth::{
-    BlockTraceResult, CallFrame, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
-    PreStateFrame, TraceResult,
-};
 use alloy_transport::TransportResult;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{BadBlock, BlockId, BlockNumberOrTag, Bundle, StateContext};
+use base_common_rpc_types::{
+    BadBlock, BlockId, BlockNumberOrTag, BlockTraceResult, Bundle, CallFrame,
+    GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+    GethTraceResult as TraceResult, PreStateFrame, StateContext,
+};
 
 use crate::Provider;
 
@@ -48,7 +48,7 @@ pub trait DebugApi<N: Network = Ethereum>: Send + Sync {
         trace_options: Option<GethDebugTracingOptions>,
     ) -> crate::GetSubscription<
         (&'static str, BlockNumberOrTag, BlockNumberOrTag, Option<GethDebugTracingOptions>),
-        alloy_rpc_types_trace::geth::ChainBlockTraceResult,
+        base_common_rpc_types::ChainBlockTraceResult,
     >;
 
     /// The debug_traceBlock method will return a full stack trace of all invoked opcodes of all
@@ -421,7 +421,7 @@ where
         trace_options: Option<GethDebugTracingOptions>,
     ) -> crate::GetSubscription<
         (&'static str, BlockNumberOrTag, BlockNumberOrTag, Option<GethDebugTracingOptions>),
-        alloy_rpc_types_trace::geth::ChainBlockTraceResult,
+        base_common_rpc_types::ChainBlockTraceResult,
     > {
         let mut call = self.client().request(
             "debug_subscribe",

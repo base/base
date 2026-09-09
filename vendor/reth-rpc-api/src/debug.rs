@@ -3,10 +3,10 @@ use alloy_genesis::ChainConfig;
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::{Address, B256, Bytes, U64};
 use alloy_rpc_types_debug::ExecutionWitness;
-use alloy_rpc_types_trace::geth::{
-    BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult,
+use base_common_rpc_types::{
+    Account, AccountInfo, BlockTraceResult, Bundle, GethDebugTracingCallOptions,
+    GethDebugTracingOptions, GethTrace, GethTraceResult as TraceResult, Index, StateContext,
 };
-use base_common_rpc_types::{Account, AccountInfo, Bundle, Index, StateContext};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_trie_common::{ExecutionWitnessMode, HashedPostState, updates::TrieUpdates};
 

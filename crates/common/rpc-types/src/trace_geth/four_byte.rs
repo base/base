@@ -1,6 +1,6 @@
 //! Geth 4byte tracer types.
 
-use std::collections::BTreeMap;
+use alloc::{collections::BTreeMap, string::String};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::geth::*;
+    use crate::trace_geth::*;
 
     const DEFAULT: &str = r#"{
         "0x27dc297e-128": 1,

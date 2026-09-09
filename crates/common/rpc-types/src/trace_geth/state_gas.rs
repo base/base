@@ -26,7 +26,7 @@ pub struct StateGasTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geth::{GethDebugTracingOptions, GethTrace, StructLog};
+    use crate::trace_geth::{GethDebugTracingOptions, GethTrace, StructLog};
 
     #[test]
     fn test_state_gas_trace_serde() {

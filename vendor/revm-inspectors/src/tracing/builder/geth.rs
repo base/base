@@ -10,10 +10,10 @@ use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{Entry, HashMap},
 };
-use alloy_rpc_types_trace::geth::{
-    AccountChangeKind, AccountState, CallConfig, CallFrame, DefaultFrame, DiffMode,
-    GethDefaultTracingOptions, PreStateConfig, PreStateFrame, PreStateMode, StructLog,
-    erc7562::{AccessedSlots, CallFrameType, ContractSize, Erc7562Config, Erc7562Frame},
+use base_common_rpc_types::{
+    AccessedSlots, AccountChangeKind, AccountState, CallConfig, CallFrame, CallFrameType,
+    ContractSize, DefaultFrame, DiffMode, Erc7562Config, Erc7562Frame, GethDefaultTracingOptions,
+    PreStateConfig, PreStateFrame, PreStateMode, StructLog,
 };
 use base_evm_context::{HaltReasonTr, ResultAndState};
 use revm::{

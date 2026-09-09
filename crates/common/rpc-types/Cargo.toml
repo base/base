@@ -14,9 +14,9 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+thiserror = {workspace = true}
 alloy-serde = {workspace = true}
 itertools = { workspace = true }
-thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-eips = {workspace = true, features = ["serde"]}
 serde_json = {workspace = true, features = ["alloc"]}

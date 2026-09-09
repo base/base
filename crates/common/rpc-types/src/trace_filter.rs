@@ -1,9 +1,11 @@
 //! `trace_filter` types and support.
 
+use alloc::vec::Vec;
+
 use alloy_primitives::{Address, map::AddressHashSet};
 use serde::{Deserialize, Serialize};
 
-use crate::parity::{
+use crate::trace_parity::{
     Action, CallAction, CreateAction, CreateOutput, RewardAction, SelfdestructAction, TraceOutput,
     TransactionTrace,
 };
@@ -399,7 +401,7 @@ mod tests {
         let trace = TransactionTrace {
             action: Action::Reward(RewardAction {
                 author: addr0,
-                reward_type: crate::parity::RewardType::Block,
+                reward_type: crate::trace_parity::RewardType::Block,
                 value: U256::from(0),
             }),
             ..Default::default()

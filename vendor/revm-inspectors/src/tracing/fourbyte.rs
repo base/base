@@ -23,7 +23,7 @@
 use alloc::format;
 
 use alloy_primitives::{Selector, hex, map::HashMap};
-use alloy_rpc_types_trace::geth::FourByteFrame;
+use base_common_rpc_types::FourByteFrame;
 use base_evm_context::{ContextTr, LocalContextTr};
 use revm::{
     Inspector,

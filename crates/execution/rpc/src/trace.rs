@@ -5,16 +5,12 @@ use alloy_primitives::{
     Address, B256, BlockHash, Bytes,
     map::{HashMap, HashSet},
 };
-use alloy_rpc_types_trace::{
-    filter::TraceFilter,
-    opcode::{BlockOpcodeGas, TransactionOpcodeGas},
-    parity::*,
-    tracerequest::TraceCallRequest,
-};
 use async_trait::async_trait;
 use base_common_consensus::BlockHeader as _;
 use base_common_rpc_types::{
-    BaseTransactionRequest, BlockOverrides, Index,
+    BaseTransactionRequest, BlockOpcodeGas, BlockOverrides, Index, LocalizedTransactionTrace,
+    TraceCallRequest, TraceFilter, TraceResults, TraceResultsWithTransactionHash, TraceType,
+    TransactionOpcodeGas,
     state::{EvmOverrides, StateOverride},
 };
 use base_execution_txpool::PoolPooledTx;

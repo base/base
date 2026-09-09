@@ -92,3 +92,24 @@ mod txpool;
 pub use txpool::{
     TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
+
+mod trace_common;
+pub use trace_common::*;
+
+mod trace_filter;
+pub use trace_filter::*;
+
+mod trace_geth;
+pub use trace_geth::*;
+
+mod trace_opcode;
+pub use trace_opcode::*;
+
+mod trace_otterscan;
+pub use trace_otterscan::*;
+
+mod trace_parity;
+pub use trace_parity::*;
+
+mod trace_tracerequest;
+pub use trace_tracerequest::*;

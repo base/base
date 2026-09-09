@@ -1,6 +1,6 @@
 //! Pre-state Geth tracer types.
 
-use std::collections::{BTreeMap, btree_map};
+use alloc::collections::{BTreeMap, btree_map};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use serde::{Deserialize, Serialize};
@@ -279,7 +279,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::geth::*;
+    use crate::trace_geth::*;
 
     // See <https://github.com/ethereum/go-ethereum/tree/master/eth/tracers/internal/tracetest/testdata>
     const DEFAULT: &str = include_str!("../../test_data/pre_state_tracer/default.json");

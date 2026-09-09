@@ -2,14 +2,13 @@
 //!
 //! See <https://openethereum.github.io/JSONRPC-trace-module>
 
-use std::{
-    collections::BTreeMap,
-    ops::{Deref, DerefMut},
-};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use core::ops::{Deref, DerefMut};
 
 use alloy_primitives::{Address, B256, BlockHash, Bytes, TxHash, U64, U256};
-use base_common_rpc_types::BlockNumHash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
+
+use crate::BlockNumHash;
 
 /// Different Trace diagnostic targets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -624,7 +623,7 @@ impl LocalizedTransactionTrace {
     /// Sets the gas used of this trace.
     ///
     /// This is intended to manually set the root trace's gas used to the actual gas used by the
-    /// transaction, e.g. for geth's [`FlatCallFrame`](crate::geth::call::FlatCallFrame)
+    /// transaction, e.g. for geth's [`FlatCallFrame`](crate::trace_geth::call::FlatCallFrame)
     pub const fn set_gas_used(&mut self, gas_used: u64) {
         if let Some(res) = self.trace.result.as_mut() {
             res.set_gas_used(gas_used);
@@ -760,7 +759,7 @@ pub struct StorageDelta {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     use serde_json::{Value, json};
     use similar_asserts::assert_eq;

@@ -10,12 +10,10 @@ use alloc::{
 
 pub use alloy_primitives::Log;
 use alloy_primitives::{Address, Bytes, FixedBytes, LogData, U256};
-use alloy_rpc_types_trace::{
-    geth::{CallFrame, CallLogFrame, GethDefaultTracingOptions, StructLog},
-    parity::{
-        Action, ActionType, CallAction, CallOutput, CallType, CreateAction, CreateOutput,
-        CreationMethod, SelfdestructAction, TraceOutput, TransactionTrace,
-    },
+use base_common_rpc_types::{
+    Action, ActionType, CallAction, CallFrame, CallLogFrame, CallOutput, CallType, CreateAction,
+    CreateOutput, CreationMethod, GethDefaultTracingOptions, SelfdestructAction, StructLog,
+    TraceOutput, TransactionTrace,
 };
 use revm::{
     bytecode::{opcode, opcode::OpCode},

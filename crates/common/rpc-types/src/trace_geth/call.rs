@@ -1,9 +1,11 @@
 //! Geth call tracer types.
 
+use alloc::{string::String, vec::Vec};
+
 use alloy_primitives::{Address, B256, Bytes, Selector, U256};
 use serde::{Deserialize, Serialize};
 
-use crate::parity::{ActionType, CallType, CreationMethod, LocalizedTransactionTrace};
+use crate::trace_parity::{ActionType, CallType, CreationMethod, LocalizedTransactionTrace};
 
 /// The response object for `debug_traceTransaction` with `"tracer": "callTracer"`.
 ///
@@ -72,7 +74,7 @@ impl CallFrame {
     ///
     /// Iterate over all frames:
     /// ```
-    /// # use alloy_rpc_types_trace::geth::CallFrame;
+    /// # use crate::CallFrame;
     /// # let frame = CallFrame::default();
     /// for call in frame.iter() {
     ///     println!("{} -> {:?}", call.from, call.to);
@@ -81,7 +83,7 @@ impl CallFrame {
     ///
     /// Skip child calls selectively:
     /// ```
-    /// # use alloy_rpc_types_trace::geth::CallFrame;
+    /// # use crate::CallFrame;
     /// # let frame = CallFrame::default();
     /// let mut iter = frame.iter();
     /// while let Some(call) = iter.next() {
@@ -402,7 +404,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::geth::*;
+    use crate::trace_geth::*;
 
     // See <https://github.com/ethereum/go-ethereum/tree/master/eth/tracers/internal/tracetest/testdata>
     const DEFAULT: &str = include_str!("../../test_data/call_tracer/default.json");

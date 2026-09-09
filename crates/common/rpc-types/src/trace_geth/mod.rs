@@ -1,35 +1,27 @@
 //! Geth tracing types.
 
-use std::{borrow::Cow, collections::BTreeMap, time::Duration};
+use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
+use core::time::Duration;
 
 use alloy_primitives::{B256, Bytes, U256};
-use base_common_rpc_types::{BlockOverrides, state::StateOverride};
 use serde::{Deserialize, Serialize, Serializer, de::DeserializeOwned, ser::SerializeMap};
 
-// re-exports
-pub use self::{
-    call::{CallConfig, CallFrame, CallKind, CallLogFrame, FlatCallConfig},
-    four_byte::FourByteFrame,
-    noop::NoopFrame,
-    pre_state::{
-        AccountChangeKind, AccountState, DiffMode, DiffStateKind, PreStateConfig, PreStateFrame,
-        PreStateMode,
-    },
-    state_gas::StateGasTrace,
-};
-use crate::geth::{
-    call::FlatCallFrame,
-    erc7562::{Erc7562Config, Erc7562Frame},
-    mux::{MuxConfig, MuxFrame},
-};
+use crate::{BlockOverrides, state::StateOverride};
 
-pub mod call;
-pub mod erc7562;
-pub mod four_byte;
-pub mod mux;
-pub mod noop;
-pub mod pre_state;
-pub mod state_gas;
+mod call;
+pub use call::*;
+mod erc7562;
+pub use erc7562::*;
+mod four_byte;
+pub use four_byte::*;
+mod mux;
+pub use mux::*;
+mod noop;
+pub use noop::*;
+mod pre_state;
+pub use pre_state::*;
+mod state_gas;
+pub use state_gas::*;
 
 /// Error when the inner tracer from [GethTrace] is mismatching to the target tracer.
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +29,7 @@ pub mod state_gas;
 pub struct UnexpectedTracerError(pub GethTrace);
 
 /// Result type for geth style transaction trace
-pub type TraceResult = crate::common::TraceResult<GethTrace, String>;
+pub type GethTraceResult = crate::trace_common::TraceResult<GethTrace, String>;
 
 /// blockTraceResult represents the results of tracing a single block when an entire chain is being
 /// traced.
@@ -50,7 +42,7 @@ pub struct BlockTraceResult {
     /// Block hash corresponding to the trace task
     pub hash: B256,
     /// Trace results produced by the trace task
-    pub traces: Vec<TraceResult>,
+    pub traces: Vec<GethTraceResult>,
 }
 
 /// Result for one block emitted by a `debug_traceChain` subscription.
@@ -65,7 +57,7 @@ pub struct ChainBlockTraceResult {
     /// Trace results produced by the trace task.
     ///
     /// Geth leaves entries after the first transaction-level tracing failure as `null`.
-    pub traces: Vec<Option<TraceResult>>,
+    pub traces: Vec<Option<GethTraceResult>>,
 }
 
 /// Geth Default struct log trace frame
@@ -935,7 +927,7 @@ mod tests {
             block: U256::from(2),
             hash: block_hash,
             traces: vec![
-                Some(TraceResult::Error {
+                Some(GethTraceResult::Error {
                     error: "trace failed".to_string(),
                     tx_hash: Some(tx_hash),
                 }),
@@ -1043,7 +1035,7 @@ mod tests {
             },
             "txHash": "0x7cc741c553d4098f319c894d9db208999ca49ee1b5c53f6a9992e687cbffb69e"
         }"#;
-        let result: TraceResult = serde_json::from_str(s).unwrap();
+        let result: GethTraceResult = serde_json::from_str(s).unwrap();
         let hash = result.tx_hash().unwrap();
         assert_eq!(
             hash,

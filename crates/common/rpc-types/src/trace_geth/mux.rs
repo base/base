@@ -3,7 +3,7 @@
 use alloy_primitives::map::HashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::geth::{GethDebugTracerConfig, GethDebugTracerType, GethTrace};
+use crate::trace_geth::{GethDebugTracerConfig, GethDebugTracerType, GethTrace};
 
 /// A `muxTracer` config that contains the configuration for running multiple tracers in one go.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::geth::*;
+    use crate::trace_geth::*;
 
     const FOUR_BYTE_FRAME: &str = r#"{
         "0x27dc297e-128": 1,

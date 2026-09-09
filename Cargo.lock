@@ -409,7 +409,6 @@ dependencies = [
  "alloy-rpc-types-admin",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
- "alloy-rpc-types-trace",
  "alloy-serde",
  "alloy-signer",
  "alloy-sol-types",
@@ -525,7 +524,6 @@ dependencies = [
  "alloy-rpc-types-admin",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
- "alloy-rpc-types-trace",
  "alloy-serde",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
@@ -573,19 +571,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "similar-asserts",
-]
-
-[[package]]
-name = "alloy-rpc-types-trace"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-serde",
- "base-common-rpc-types",
- "serde",
- "serde_json",
- "similar-asserts",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -3738,7 +3723,6 @@ dependencies = [
  "alloy-rpc-types-admin",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
- "alloy-rpc-types-trace",
  "alloy-serde",
  "alloy-signer",
  "alloy-transport",
@@ -15151,7 +15135,6 @@ dependencies = [
  "alloy-rpc-types-admin",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
- "alloy-rpc-types-trace",
  "base-common-rpc-types",
  "jsonrpsee",
  "reth-chain-state",
@@ -15169,7 +15152,6 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types-trace",
  "base-common-consensus",
  "base-common-network",
  "base-common-rpc-types",
@@ -15772,7 +15754,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
- "alloy-rpc-types-trace",
  "alloy-sol-types",
  "anstyle",
  "base-common-rpc-types",

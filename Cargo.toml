@@ -314,7 +314,6 @@ alloy-contract = { path = "vendor/alloy-contract", default-features = false }
 alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
 alloy-node-bindings = { path = "vendor/alloy-node-bindings", default-features = false }
 alloy-rpc-types-mev = { path = "vendor/alloy-rpc-types-mev", default-features = false }
-alloy-rpc-types-trace = { path = "vendor/alloy-rpc-types-trace", default-features = false }
 alloy-network-primitives = { path = "vendor/alloy-network-primitives", default-features = false }
 alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }
 

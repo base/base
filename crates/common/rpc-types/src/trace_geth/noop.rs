@@ -1,6 +1,6 @@
 //! Noop tracer response.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::geth::*;
+    use crate::trace_geth::*;
 
     const DEFAULT: &str = r"{}";
 

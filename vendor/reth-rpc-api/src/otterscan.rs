@@ -1,7 +1,7 @@
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
-use alloy_rpc_types_trace::otterscan::{
+use base_common_rpc_types::{
     BlockDetails, ContractCreator, InternalOperation, OtsBlockTransactions, TraceEntry,
     TransactionsWithReceipts,
 };

@@ -1,5 +1,7 @@
 //! Types for opcode tracing.
 
+use alloc::{string::String, vec::Vec};
+
 use alloy_primitives::{BlockHash, TxHash};
 use serde::{Deserialize, Serialize};
 

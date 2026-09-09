@@ -37,7 +37,6 @@ alloy-primitives = { workspace = true, features = ["map"] }
 alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
-alloy-rpc-types-trace = { workspace = true, optional = true }
 serde = { workspace = true, features = [
     "derive",
     "alloc",
@@ -77,5 +76,5 @@ mev = ["dep:alloy-rpc-types-mev"]
 ssz = [
     "base-common-rpc-types-engine?/ssz",
 ]
-trace = ["dep:alloy-rpc-types-trace"]
+trace = ["dep:base-common-rpc-types"]
 txpool = ["dep:base-common-rpc-types"]

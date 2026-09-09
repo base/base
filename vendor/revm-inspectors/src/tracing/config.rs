@@ -1,10 +1,6 @@
 use alloy_primitives::{U256, map::HashSet};
-use alloy_rpc_types_trace::{
-    geth::{
-        CallConfig, FlatCallConfig, GethDefaultTracingOptions, PreStateConfig,
-        erc7562::Erc7562Config,
-    },
-    parity::TraceType,
+use base_common_rpc_types::{
+    CallConfig, Erc7562Config, FlatCallConfig, GethDefaultTracingOptions, PreStateConfig, TraceType,
 };
 use revm::bytecode::opcode::OpCode;
 
@@ -151,7 +147,7 @@ impl TracingInspectorConfig {
     /// This config does _not_ record opcode level traces and is suited for `debug_traceTransaction`
     ///
     /// This will configure the default output of geth's default
-    /// [StructLogTracer](alloy_rpc_types_trace::geth::DefaultFrame).
+    /// [StructLogTracer](base_common_rpc_types::DefaultFrame).
     pub const fn default_geth() -> Self {
         Self {
             record_steps: true,
@@ -184,7 +180,7 @@ impl TracingInspectorConfig {
     /// Returns a config for geth style traces based on the given [GethDefaultTracingOptions].
     ///
     /// This will configure the output of geth's default
-    /// [StructLogTracer](alloy_rpc_types_trace::geth::DefaultFrame) according to the given config.
+    /// [StructLogTracer](base_common_rpc_types::DefaultFrame) according to the given config.
     #[inline]
     pub fn from_geth_config(config: &GethDefaultTracingOptions) -> Self {
         Self {
@@ -200,7 +196,7 @@ impl TracingInspectorConfig {
         }
     }
 
-    /// Returns a config for geth's [CallTracer](alloy_rpc_types_trace::geth::CallFrame).
+    /// Returns a config for geth's [CallTracer](base_common_rpc_types::CallFrame).
     ///
     /// This returns [Self::none] and enables [TracingInspectorConfig::record_logs] if configured in
     /// the given [CallConfig]
@@ -212,7 +208,7 @@ impl TracingInspectorConfig {
     }
 
     /// Returns a config for geth's
-    /// [Erc7562Frame](alloy_rpc_types_trace::geth::erc7562::Erc7562Frame).
+    /// [Erc7562Frame](base_common_rpc_types::Erc7562Frame).
     #[inline]
     pub fn from_geth_erc7562_config(config: &Erc7562Config) -> Self {
         Self::none()
@@ -228,7 +224,7 @@ impl TracingInspectorConfig {
     }
 
     /// Returns a config for geth's
-    /// [FlatCallTracer](alloy_rpc_types_trace::geth::call::FlatCallFrame).
+    /// [FlatCallTracer](base_common_rpc_types::FlatCallFrame).
     ///
     /// This returns [Self::default_parity] and sets
     /// [TracingInspectorConfig::exclude_precompile_calls] if configured in the given
@@ -240,7 +236,7 @@ impl TracingInspectorConfig {
             .set_exclude_precompile_calls(!config.include_precompiles.unwrap_or_default())
     }
 
-    /// Returns a config for geth's [PrestateTracer](alloy_rpc_types_trace::geth::PreStateFrame).
+    /// Returns a config for geth's [PrestateTracer](base_common_rpc_types::PreStateFrame).
     ///
     /// Note: This currently returns [Self::none] because the prestate tracer result currently
     /// relies on the execution result entirely, see
