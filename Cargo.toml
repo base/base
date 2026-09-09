@@ -107,7 +107,6 @@ members = [
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/registrar",
   "crates/proof/worker",
-  "crates/utilities/balance-monitor",
   "crates/utilities/cli",
   "crates/common/observability/health",
   "crates/common/observability/metrics",
@@ -414,7 +413,6 @@ base-common-l1-transactions = { path = "crates/common/l1/transactions", default-
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc", default-features = false }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
 base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
-base-balance-monitor = { path = "crates/utilities/balance-monitor", default-features = false }
 
 # revm
 base-execution-evm-machine = { path = "crates/execution/evm/machine", default-features = false }

@@ -19,10 +19,9 @@ alloy-signer = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-primitives = { workspace = true }
-base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-common-l1-transactions = { workspace = true }
+base-common-l1-transactions = {workspace = true}
 hex = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-verifier = { workspace = true }

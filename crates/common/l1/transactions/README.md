@@ -175,3 +175,5 @@ let prepared = manager.craft_tx(&candidate, None).await?;
 ## License
 
 [MIT License](https://github.com/base/base/blob/main/LICENSE)
+
+`BalanceMonitorLayer` publishes periodic account balances for transaction-producing services.

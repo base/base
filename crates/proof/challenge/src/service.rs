@@ -7,8 +7,8 @@ use std::sync::{
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
+use base_common_l1_transactions::BalanceMonitorLayer;
 use base_common_l1_transactions::{BaseTxMetrics, SimpleTxManager};
 use base_common_observability_health::HealthServer;
 use base_common_runtime_tasks::TokioRuntime;

@@ -49,3 +49,6 @@ pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
 pub mod test_utils;
 #[cfg(test)]
 pub use test_utils::StubReceipt;
+
+mod balance_monitor;
+pub use balance_monitor::BalanceMonitorLayer;

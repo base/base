@@ -2276,19 +2276,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-balance-monitor"
-version = "0.0.0"
-dependencies = [
- "alloy-node-bindings",
- "alloy-primitives",
- "alloy-provider",
- "base-common-network",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
@@ -2338,7 +2325,6 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "backon",
- "base-balance-monitor",
  "base-batcher-encoding-channel",
  "base-common-l1-transactions",
  "base-common-network",
@@ -2497,7 +2483,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-trie",
  "async-trait",
- "base-balance-monitor",
  "base-challenger",
  "base-cli-utils",
  "base-common-l1-transactions",
@@ -2684,6 +2669,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -4573,7 +4559,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
- "base-balance-monitor",
  "base-cli-utils",
  "base-common-l1-transactions",
  "base-common-observability-health",
@@ -4644,7 +4629,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "async-trait",
- "base-balance-monitor",
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-l1-transactions",

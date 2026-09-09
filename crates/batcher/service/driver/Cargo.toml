@@ -15,7 +15,6 @@ workspace = true
 async-trait = {workspace = true}
 auto_impl = { workspace = true }
 base-common-network = {workspace = true}
-base-balance-monitor = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-l1-transactions = {workspace = true}
 tracing = {workspace = true, features = ["std"]}

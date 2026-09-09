@@ -23,14 +23,13 @@ base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
-base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-primitives = { workspace = true }
 base-proof-submission = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-common-l1-transactions = {workspace = true}
 base-prover-service-client = { workspace = true }
-base-common-l1-transactions = { workspace = true }
 serde_json = { workspace = true, optional = true }
 url = { workspace = true, features = ["default"] }
 async-trait = { workspace = true, optional = true }
