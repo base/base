@@ -660,7 +660,7 @@ where
         error: BasePrecompileError,
     ) -> PrecompileResult {
         self.record_base_error(&error);
-        let result = error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        let result = ctx.error_result(error);
         self.record_result(&result);
         result
     }

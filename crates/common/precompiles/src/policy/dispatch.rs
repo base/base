@@ -563,6 +563,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn malformed_known_selector_returns_selector_only_at_cobalt() {
+        let mut storage = HashMapStorageProvider::new_with_storage_features(
+            1,
+            base_precompile_storage::StorageFeatures::Cobalt,
+        );
+        let selector = IPolicyRegistry::policyExistsCall::SELECTOR;
+
+        let out = run_at(&mut storage, &selector, BaseUpgrade::Cobalt);
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(selector));
+    }
+
     fn create_allowlist_policy(storage: &mut HashMapStorageProvider) -> u64 {
         storage.set_caller(ADMIN);
         let calldata = IPolicyRegistry::createPolicyCall {
