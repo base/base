@@ -1,18 +1,18 @@
 use std::marker::PhantomData;
 
 use alloy_primitives::{B256, U256};
+use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
 use reth_db::{
     Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbDupCursorRO},
     table::{DupSort, Table},
     transaction::DbTx,
 };
-use reth_primitives_traits::Account;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
-use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
 
 use crate::{
     BaseProofsStorageResult,

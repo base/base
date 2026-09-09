@@ -29,6 +29,7 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["serde", "reth-codec"] }
 base-execution-state-types = {features = ["reth-codec", "serde"], workspace = true}
+base-execution-state-memory = {workspace = true, features = ["reth-codec", "serde"]}
 
 [dev-dependencies]
 test-fuzz = { workspace = true }
@@ -46,6 +47,7 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
     "base-execution-state-types/test-utils",
+    "base-execution-state-memory/test-utils",
 ]
 arbitrary = [
     "base-execution-state-types/arbitrary",
@@ -54,4 +56,5 @@ arbitrary = [
     "reth-primitives-traits/arbitrary",
     "alloy-primitives/arbitrary",
     "base-common-types-chain/arbitrary",
+    "base-execution-state-memory/arbitrary",
 ]

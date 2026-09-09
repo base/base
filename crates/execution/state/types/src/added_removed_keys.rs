@@ -91,7 +91,7 @@ impl MultiAddedRemovedKeys {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use reth_primitives_traits::Account;
+    use base_execution_state_memory::StoredAccount as Account;
 
     use super::*;
     use crate::HashedStorage;

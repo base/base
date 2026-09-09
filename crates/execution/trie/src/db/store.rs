@@ -2,6 +2,11 @@ use std::{collections::BTreeMap, ops::RangeBounds, path::Path, time::Duration};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_types::{
+    BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
+    updates::{StorageTrieUpdates, TrieUpdates},
+};
 #[cfg(feature = "metrics")]
 use eyre::WrapErr;
 #[cfg(feature = "metrics")]
@@ -13,12 +18,7 @@ use reth_db::{
     table::{DupSort, Table},
     transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::Account;
 use reth_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
-use base_execution_state_types::{
-    BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
-    updates::{StorageTrieUpdates, TrieUpdates},
-};
 #[cfg(feature = "metrics")]
 use tracing::error;
 

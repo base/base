@@ -30,7 +30,6 @@ alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-base-execution-state-memory = {workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-types-rpc = { workspace = true, optional = true }
@@ -93,13 +92,12 @@ arbitrary = [
     "alloy-trie/arbitrary",
     "base-common-types-rpc?/arbitrary",
     "dashmap?/arbitrary",
-    "base-execution-state-memory/arbitrary",
 ]
 dashmap = ["dep:dashmap"]
 default = ["std", "quanta"]
 quanta = ["std", "dep:quanta"]
 rayon = ["dep:rayon"]
-reth-codec = ["base-common-types-chain/reth", "base-execution-state-memory/reth-codec"]
+reth-codec = ["base-common-types-chain/reth"]
 rpc-compat = ["base-common-types-rpc"]
 secp256k1 = ["base-common-types-chain/secp256k1"]
 serde = [
@@ -114,7 +112,6 @@ serde = [
     "rand_08/serde",
     "base-common-types-rpc?/serde",
     "dashmap?/serde",
-    "base-execution-state-memory/serde",
 ]
 std = [
     "base-common-types-chain/std",
@@ -130,6 +127,5 @@ std = [
     "alloy-trie/std",
     "serde_json/std",
     "base-common-types-rpc?/std",
-    "base-execution-state-memory/std",
 ]
-test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-execution-state-memory/test-utils"]
+test-utils = ["arbitrary", "base-common-types-chain/test-utils"]

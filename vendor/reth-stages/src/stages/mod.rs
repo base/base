@@ -52,6 +52,7 @@ mod tests {
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_api::StorageSettingsCache;
+    use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_db::mdbx::{RW, cursor::Cursor};
@@ -64,7 +65,7 @@ mod tests {
         transaction::{DbTx, DbTxMut},
     };
     use reth_exex::ExExManagerHandle;
-    use reth_primitives_traits::{Account, Bytecode, SealedBlock, SignerRecoverable};
+    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{
         AccountExtReader, BlockBodyIndicesProvider, BlockWriter, DatabaseProviderFactory,
         ProviderFactory, ProviderResult, PruneCheckpointWriter, ReceiptProvider,

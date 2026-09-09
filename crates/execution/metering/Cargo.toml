@@ -18,6 +18,7 @@ reth-provider = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
+base-execution-state-memory = {workspace = true}
 serde = { workspace = true, features = ["std"] }
 base-execution-evm-machine = { workspace = true }
 tracing = { workspace = true, features = ["std"] }

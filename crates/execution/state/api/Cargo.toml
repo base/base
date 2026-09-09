@@ -23,7 +23,7 @@ base-common-chain-config = { workspace = true }
 base-common-types-chain = { workspace = true  }
 base-execution-state-types = {workspace = true}
 base-common-types-payload = { workspace = true }
-base-execution-state-memory = { workspace = true }
+base-execution-state-memory = {workspace = true}
 reth-db-api = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }

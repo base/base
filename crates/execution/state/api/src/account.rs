@@ -6,9 +6,9 @@ use core::ops::{RangeBounds, RangeInclusive};
 
 use alloy_primitives::{Address, BlockNumber};
 use auto_impl::auto_impl;
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::AccountBeforeTx;
 use base_execution_state_types::ProviderResult;
-use reth_primitives_traits::Account;
 
 /// Account reader
 #[auto_impl(&, Arc, Box)]

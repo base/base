@@ -68,6 +68,7 @@ toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
 base-common-types-chain = {features = ["arbitrary", "serde"], workspace = true}
 reth-primitives-traits = {features = ["arbitrary", "reth-codec", "serde", "test-utils"], workspace = true}
 alloy-primitives = {features = ["arbitrary", "getrandom", "map-foldhash", "rand", "serde"], workspace = true}
+base-execution-state-memory = {workspace = true, features = ["arbitrary", "reth-codec", "serde", "test-utils"]}
 
 [features]
 default = ["std"]
@@ -113,6 +114,7 @@ reth-codec = [
     "dep:arrayvec",
     "dep:modular-bitfield",
     "reth-primitives-traits/reth-codec",
+    "base-execution-state-memory/reth-codec",
 ]
 serde-bincode-compat = [
     "serde",
@@ -130,6 +132,7 @@ test-utils = [
     "base-common-types-chain/test-utils",
     "std",
     "dep:arbitrary",
+    "base-execution-state-memory/test-utils",
 ]
 arbitrary = [
     "std",

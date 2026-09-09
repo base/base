@@ -28,9 +28,9 @@ alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-memory = {workspace = true}
 moka = { workspace = true, features = ["sync"] }
 base-execution-evm-machine = { workspace = true }
-base-execution-state-memory = { workspace = true }
 derive_more = { workspace = true, features = ["full"]}
 base-common-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["attributes"]}
@@ -73,4 +73,5 @@ test-utils = [
     "tokio/rt",
     "reth-execution-cache/test-utils",
     "base-execution-trie/test-utils",
+    "base-execution-state-memory/test-utils",
 ]

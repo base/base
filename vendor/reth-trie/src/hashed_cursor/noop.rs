@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use alloy_primitives::{B256, U256};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::DatabaseError;
-use reth_primitives_traits::Account;
 
 use super::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
 

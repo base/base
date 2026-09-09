@@ -28,6 +28,7 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-memory = {workspace = true, features = ["std"]}
 base-execution-state-api = { workspace = true, features = ["db-api"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
@@ -54,6 +55,7 @@ codspeed-criterion-compat = { workspace = true, features = ["default"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
 base-execution-state-types = {features = ["arbitrary", "test-utils"], workspace = true}
+base-execution-state-memory = {workspace = true, features = ["arbitrary", "test-utils"]}
 
 [[bench]]
 name = "proof_v2"
@@ -73,6 +75,7 @@ serde = [
     "base-execution-evm-runtime/serde",
     "similar-asserts/serde",
     "base-execution-state-api/serde",
+    "base-execution-state-memory/serde",
 ]
 test-utils = [
     "triehash",
@@ -83,5 +86,6 @@ test-utils = [
     "reth-db/test-utils",
     "reth-db-api/test-utils",
     "reth-provider/test-utils",
+    "base-execution-state-memory/test-utils",
 ]
 serde-bincode-compat = ["base-common-types-chain/serde-bincode-compat", "base-execution-state-types/serde-bincode-compat"]

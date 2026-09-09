@@ -984,9 +984,9 @@ mod tests {
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
         StateProofProvider, StateRootProvider, StorageRootProvider,
     };
+    use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
     use base_execution_state_types::ProviderResult;
     use rand::Rng;
-    use reth_primitives_traits::{Account, Bytecode};
     use reth_trie::{
         AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets,
         StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,

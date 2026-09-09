@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
-use reth_db::table::{DupSort, Table};
-use reth_primitives_traits::Account;
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
+use reth_db::table::{DupSort, Table};
 
 use crate::db::{
     AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey, MaybeDeleted,

@@ -102,7 +102,7 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     /// use alloy_primitives::U256;
     /// use reth_db::test_utils::create_test_rw_db;
     /// use reth_db_api::database::Database;
-    /// use reth_primitives_traits::Account;
+    /// use base_execution_state_memory::StoredAccount;
     /// use crate::{updates::TrieUpdates, HashedPostState, StateRoot};
     /// use reth_trie::{DatabaseStateRoot, PackedKeyAdapter};
     ///
@@ -357,6 +357,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::StorageSettingsCache;
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StateRootError;
     use base_execution_state_types::StorageEntry;
     use reth_db_api::{
@@ -364,7 +365,6 @@ mod tests {
         tables,
         transaction::DbTxMut,
     };
-    use reth_primitives_traits::Account;
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
 
     use super::*;

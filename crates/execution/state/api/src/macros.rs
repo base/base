@@ -31,7 +31,7 @@ macro_rules! delegate_provider_impls {
         $crate::delegate_impls_to_as_ref!(
             for $target =>
             AccountReader $(where [$($generics)*])? {
-                fn basic_account(&self, address: &alloy_primitives::Address) -> base_execution_state_api::ProviderResult<Option<reth_primitives_traits::Account>>;
+                fn basic_account(&self, address: &alloy_primitives::Address) -> base_execution_state_api::ProviderResult<Option<base_execution_state_memory::StoredAccount>>;
             }
             BlockHashReader $(where [$($generics)*])? {
                 fn block_hash(&self, number: u64) -> base_execution_state_api::ProviderResult<Option<alloy_primitives::B256>>;
@@ -41,7 +41,7 @@ macro_rules! delegate_provider_impls {
                 fn storage(&self, account: alloy_primitives::Address, storage_key: alloy_primitives::StorageKey) -> base_execution_state_api::ProviderResult<Option<alloy_primitives::StorageValue>>;
             }
             BytecodeReader $(where [$($generics)*])? {
-                fn bytecode_by_hash(&self, code_hash: &alloy_primitives::B256) -> base_execution_state_api::ProviderResult<Option<reth_primitives_traits::Bytecode>>;
+                fn bytecode_by_hash(&self, code_hash: &alloy_primitives::B256) -> base_execution_state_api::ProviderResult<Option<base_execution_state_memory::StoredBytecode>>;
             }
             StateRootProvider $(where [$($generics)*])? {
                 fn state_root(&self, state: reth_trie::HashedPostState) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
@@ -128,9 +128,9 @@ macro_rules! impl_read_only_database {
 mod tests {
     use alloy_primitives::{Address, B256, U256};
     use base_execution_state_memory::Database;
+    use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
     use base_execution_state_types::{ProviderError, ProviderResult};
     use mockall::predicate::eq;
-    use reth_primitives_traits::{Account, Bytecode};
 
     use crate::{AccountReader, BlockHashReader, BytecodeReader, StateReadProvider};
 

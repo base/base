@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{B256, map::B256Map};
-use either::Either;
 use base_execution_state_types::{
     DecodedMultiProof, MultiProof, Nibbles, ProofTrieNodeV2, SparseStateTrieResult,
     SparseTrieErrorKind,
     updates::{StorageTrieUpdates, TrieUpdates},
 };
+use either::Either;
 #[cfg(feature = "std")]
 use tracing::debug;
 use tracing::instrument;
@@ -260,8 +260,11 @@ where
         &mut self,
         multiproof: base_execution_state_types::DecodedMultiProofV2,
     ) -> SparseStateTrieResult<()> {
-        let base_execution_state_types::DecodedMultiProofV2 { account_proofs, mut storage_proofs, .. } =
-            multiproof;
+        let base_execution_state_types::DecodedMultiProofV2 {
+            account_proofs,
+            mut storage_proofs,
+            ..
+        } = multiproof;
 
         // Collect `(trie, proof_nodes)` pairs for both the account trie and every storage trie
         // touched by this multiproof.
@@ -597,15 +600,15 @@ mod tests {
         map::{HashMap, HashSet},
     };
     use arbitrary::Arbitrary;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
-    use reth_primitives_traits::Account;
-    use reth_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{
         BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode,
         SparseStateTrieErrorKind, SparseTrieErrorKind, StorageMultiProof, TrieAccount, TrieMask,
         TrieNodeV2,
         proof::{ProofNodes, ProofRetainer},
     };
+    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use reth_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
 
     use super::*;
     use crate::{ArenaParallelSparseTrie, LeafLookup, LeafUpdate};

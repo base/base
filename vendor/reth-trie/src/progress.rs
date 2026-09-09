@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::MerkleCheckpoint;
-use reth_primitives_traits::Account;
 
 use crate::{
     hash_builder::HashBuilder,

@@ -30,8 +30,8 @@ base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-memory = {workspace = true}
 base-common-l1-transactions = { workspace = true }
-base-execution-state-memory = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }

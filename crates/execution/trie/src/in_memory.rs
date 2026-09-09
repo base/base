@@ -4,15 +4,15 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
+use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_types::{
+    BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
+};
 use parking_lot::RwLock;
 use reth_db::DatabaseError;
-use reth_primitives_traits::Account;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
-};
-use base_execution_state_types::{
-    BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
 
 use crate::{
@@ -986,7 +986,7 @@ impl BaseProofsInitialStateStore for InMemoryProofsStorage {
 mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::U256;
-    use reth_primitives_traits::Account;
+    use base_execution_state_memory::StoredAccount as Account;
 
     use super::*;
     use crate::BaseProofsStorageError;

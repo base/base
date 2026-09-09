@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256, keccak256};
 use base_execution_evm_runtime::database::BundleAccount;
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::DatabaseError;
 use base_execution_state_types::HashedPostState;
-use reth_primitives_traits::Account;
 
 /// Implementation of hashed state cursor traits for the post state.
 mod post_state;

@@ -7,9 +7,10 @@ use std::{
 
 use alloy_primitives::{B256, map::B256Map};
 use alloy_rlp::Encodable;
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{DatabaseError, StateProofError};
 use crossbeam_channel::Receiver as CrossbeamReceiver;
-use reth_primitives_traits::{Account, dashmap::DashMap};
+use reth_primitives_traits::dashmap::DashMap;
 use reth_trie::{
     ProofTrieNodeV2,
     hashed_cursor::HashedStorageCursor,

@@ -21,6 +21,7 @@ alloy-genesis = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 base-execution-state-types = {workspace = true, features = ["arbitrary"]}
+base-execution-state-memory = {workspace = true, features = ["arbitrary"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "arbitrary"] }

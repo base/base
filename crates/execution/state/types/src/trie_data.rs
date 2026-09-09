@@ -276,7 +276,7 @@ mod tests {
     };
 
     use alloy_primitives::{B256, U256, map::B256Map};
-    use reth_primitives_traits::Account;
+    use base_execution_state_memory::StoredAccount as Account;
 
     use super::*;
     use crate::HashedStorage;

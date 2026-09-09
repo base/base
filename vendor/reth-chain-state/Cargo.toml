@@ -24,6 +24,7 @@ reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
+base-execution-state-memory = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
 alloy-signer = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
@@ -46,6 +47,7 @@ reth-testing-utils = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+base-execution-state-memory = {workspace = true, features = ["test-utils"]}
 
 [features]
 serde = [
@@ -60,6 +62,7 @@ serde = [
     "reth-trie/serde",
     "base-execution-evm-runtime/serde",
     "base-execution-state-api/serde",
+    "base-execution-state-memory/serde",
 ]
 test-utils = [
     "dep:alloy-hardforks",
@@ -71,4 +74,5 @@ test-utils = [
     "reth-trie/test-utils",
     "reth-trie-sparse/test-utils",
     "dep:base-common-chain-config",
+    "base-execution-state-memory/test-utils",
 ]

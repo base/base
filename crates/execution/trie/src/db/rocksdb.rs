@@ -12,6 +12,10 @@ use std::{
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_types::{
+    BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles, updates::TrieUpdates,
+};
 #[cfg(feature = "metrics")]
 use metrics::Label;
 use parking_lot::{Mutex, RwLock};
@@ -19,13 +23,9 @@ use reth_db::{
     DatabaseError,
     table::{Compress, Decompress, DupSort, Encode, Table},
 };
-use reth_primitives_traits::Account;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
-};
-use base_execution_state_types::{
-    BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles, updates::TrieUpdates,
 };
 use rocksdb::{
     BlockBasedIndexType, BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
@@ -3559,7 +3559,8 @@ mod tests {
             let parent = block(block_number.saturating_sub(1), parent_hash);
 
             let mut trie_updates = TrieUpdates::default();
-            let mut storage_updates = base_execution_state_types::updates::StorageTrieUpdates::default();
+            let mut storage_updates =
+                base_execution_state_types::updates::StorageTrieUpdates::default();
             storage_updates.storage_nodes.insert(*path, branch.clone());
             trie_updates.storage_tries.insert(address, storage_updates);
 

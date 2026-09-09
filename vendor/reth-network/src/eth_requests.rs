@@ -843,9 +843,9 @@ mod tests {
     use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
     use base_common_types_chain::constants::EMPTY_ROOT_HASH;
     use base_execution_state_api::NoopProvider;
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
-    use reth_primitives_traits::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use test_case::test_case;
     use tokio::sync::mpsc;

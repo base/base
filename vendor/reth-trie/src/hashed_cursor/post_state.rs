@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::DatabaseError;
 use base_execution_state_types::HashedPostStateSorted;
-use reth_primitives_traits::Account;
 
 use super::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
 use crate::forward_cursor::ForwardInMemoryCursor;

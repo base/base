@@ -12,8 +12,9 @@ use base_execution_evm_blocks::{
     BaseEvmConfig, BasicBlockExecutor, Executor, test_utils::StateProviderTest,
 };
 use base_execution_evm_runtime::BaseTime;
+use base_execution_state_memory::StoredAccount as Account;
 use base_protocol::BaseTimeUpdateTx;
-use reth_primitives_traits::{Account, RecoveredBlock};
+use reth_primitives_traits::RecoveredBlock;
 
 const BASE_TIME_READER: Address = address!("0x1000000000000000000000000000000000000000");
 const USER: Address = address!("0x1000000000000000000000000000000000000001");

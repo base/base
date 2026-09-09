@@ -23,6 +23,7 @@ use base_execution_state_api::{
     StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
     WriteStateInput,
 };
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
@@ -49,8 +50,7 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_primitives_traits::{
-    Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
-    SealedHeader,
+    Block as _, BlockBody as _, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
 use reth_storage_overlay::OverlayManager;
 use reth_trie::{

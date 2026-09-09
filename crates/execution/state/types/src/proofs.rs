@@ -13,9 +13,9 @@ use alloy_trie::{
     proof::{DecodedProofNodes, ProofNodes, ProofVerificationError, verify_proof},
 };
 use base_common_types_chain::constants::KECCAK_EMPTY;
+use base_execution_state_memory::StoredAccount as Account;
 use derive_more::{Deref, DerefMut, IntoIterator};
 use itertools::Itertools;
-use reth_primitives_traits::Account;
 
 use crate::{BranchNodeMasks, BranchNodeMasksMap, Nibbles, ProofTrieNodeV2, TrieAccount};
 

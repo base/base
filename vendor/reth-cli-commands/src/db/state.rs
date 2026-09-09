@@ -211,7 +211,7 @@ impl Command {
         &self,
         address: Address,
         block: Option<BlockNumber>,
-        account: Option<reth_primitives_traits::Account>,
+        account: Option<base_execution_state_memory::StoredAccount>,
         storage: &[(alloy_primitives::B256, U256)],
     ) {
         match self.format {

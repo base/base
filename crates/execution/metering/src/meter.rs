@@ -26,8 +26,9 @@ use base_execution_evm_runtime::{
 use base_execution_payload_types::{
     BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult,
 };
+use base_execution_state_memory::StoredAccount as Account;
 use eyre::{Result as EyreResult, eyre};
-use reth_primitives_traits::{Account, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 
 use crate::{inspector::MeteringInspector, transaction::validate_tx};
 

@@ -27,8 +27,9 @@ use base_execution_state_api::{
     AccountInfoReader, BlockReaderIdExt, BytecodeReader, ProviderError, StateProviderBox,
     StateProviderFactory,
 };
+use base_execution_state_memory::StoredAccount as Account;
 use reth_primitives_traits::{
-    Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
+    GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;

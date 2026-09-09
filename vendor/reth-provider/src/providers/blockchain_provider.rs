@@ -17,6 +17,7 @@ use base_execution_state_api::{
     StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
     TryIntoHistoricalStateProvider,
 };
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
@@ -28,7 +29,7 @@ use reth_chain_state::{
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
-use reth_primitives_traits::{Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
+use reth_primitives_traits::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 use reth_storage_overlay::{
     AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
 };
@@ -1017,6 +1018,7 @@ mod tests {
         StateWriteConfig, StateWriter, StorageRootProvider, TransactionVariant,
         TransactionsProvider,
     };
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{
         BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
@@ -1029,9 +1031,7 @@ mod tests {
         test_utils::TestBlockBuilder,
     };
     use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
-    use reth_primitives_traits::{
-        Account, Block as _, RecoveredBlock, SealedBlock, SignerRecoverable,
-    };
+    use reth_primitives_traits::{Block as _, RecoveredBlock, SealedBlock, SignerRecoverable};
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };

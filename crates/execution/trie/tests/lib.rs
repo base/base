@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorageError, BaseProofsStorageResult, BaseProofsStore,
     BlockStateDiff, InMemoryProofsStorage,
     api::{InitialStateAnchor, WriteCounts},
     db::{MdbxProofsStorage, RocksdbProofsStorage},
 };
-use reth_primitives_traits::Account;
 use reth_trie::{
     BranchNodeCompact, HashedPostState, HashedPostStateSorted, HashedStorage, Nibbles, TrieMask,
     hashed_cursor::HashedCursor,

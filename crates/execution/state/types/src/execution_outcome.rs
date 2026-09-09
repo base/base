@@ -11,7 +11,7 @@ use base_common_types_chain::{BaseReceipt, TxReceipt};
 use base_execution_state_memory::AccountInfo;
 use base_execution_state_memory::BundleAccount;
 use base_execution_state_memory::BundleState;
-use reth_primitives_traits::{Account, Bytecode};
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 
 use crate::{BlockExecutionOutput, BlockExecutionResult};
 

@@ -702,6 +702,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_types_chain::Header;
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
     use reth_db_api::{
@@ -710,7 +711,6 @@ mod tests {
         table::{Encode, Table},
     };
     use reth_libmdbx::Error;
-    use reth_primitives_traits::Account;
     use tempfile::TempDir;
 
     use super::*;

@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 use alloy_primitives::{B256, U256, map::B256Map};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::DatabaseError;
 use base_execution_state_types::HashedPostState;
 use parking_lot::{Mutex, MutexGuard};
-use reth_primitives_traits::Account;
 use tracing::instrument;
 
 use super::{HashedCursor, HashedCursorFactory, HashedStorageCursor};

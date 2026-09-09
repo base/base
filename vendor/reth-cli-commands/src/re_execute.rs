@@ -16,10 +16,11 @@ use base_common_types_chain::{BlockHeader, TxReceipt};
 use base_execution_evm_blocks::Executor;
 use base_execution_evm_runtime::database::{AccountInfoRevert, BundleState, RevertToSlot};
 use base_execution_state_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
+use base_execution_state_memory::StoredAccount as Account;
 use clap::Parser;
 use eyre::WrapErr;
 use reth_cli_util::cancellation::CancellationToken;
-use reth_primitives_traits::{Account, GotExpected, format_gas_throughput};
+use reth_primitives_traits::{GotExpected, format_gas_throughput};
 use reth_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderROFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,

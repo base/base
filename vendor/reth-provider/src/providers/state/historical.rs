@@ -6,6 +6,7 @@ use base_execution_state_api::{
     BlockNumReader, BytecodeReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StateProofProvider, StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
 };
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ProviderResult;
 use reth_db_api::{
     BlockNumberList,
@@ -14,7 +15,6 @@ use reth_db_api::{
     tables,
     transaction::DbTx,
 };
-use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
@@ -880,6 +880,7 @@ mod tests {
         PruneCheckpointReader, StageCheckpointReader, StateReadProvider, StorageChangeSetReader,
         StorageSettingsCache,
     };
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::StorageEntry;
     use reth_db_api::{
@@ -888,7 +889,6 @@ mod tests {
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::Account;
     use reth_storage_overlay::OverlayManager;
 
     use super::needs_prev_shard_check;

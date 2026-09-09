@@ -1,6 +1,6 @@
 use crate::ValueWithSubKey;
 use alloy_primitives::Address;
-use reth_primitives_traits::Account;
+use base_execution_state_memory::StoredAccount as Account;
 
 /// Account as it is saved in the database.
 ///

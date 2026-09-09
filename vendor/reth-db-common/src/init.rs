@@ -7,6 +7,7 @@ use alloy_primitives::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::StateRootError;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
@@ -20,7 +21,7 @@ use reth_db_api::{
     transaction::DbTxMut,
 };
 use reth_etl::Collector;
-use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader};
+use reth_primitives_traits::{GotExpected, SealedHeader};
 use reth_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,

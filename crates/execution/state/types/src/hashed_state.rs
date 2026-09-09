@@ -6,12 +6,12 @@ use alloy_primitives::{
     map::{B256Map, HashMap, HashSet, hash_map},
 };
 use base_execution_state_memory::BundleAccount;
+use base_execution_state_memory::StoredAccount as Account;
 use itertools::Itertools;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{FromParallelIterator, IntoParallelIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
 pub use rayon::*;
-use reth_primitives_traits::Account;
 
 use crate::{
     MultiProofTargets, Nibbles,
@@ -2323,7 +2323,7 @@ pub mod serde_bincode_compat {
     #[cfg(test)]
     mod tests {
         use alloy_primitives::{B256, U256};
-        use reth_primitives_traits::Account;
+        use base_execution_state_memory::StoredAccount as Account;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 

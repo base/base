@@ -32,6 +32,7 @@ base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
+base-execution-state-memory = {workspace = true}
 base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
@@ -57,6 +58,7 @@ tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
+base-execution-state-memory = {workspace = true, features = ["test-utils"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
 base-execution-state-types = { workspace = true, features = ["serde-bincode-compat"] }
 
@@ -74,4 +76,5 @@ serde = [
     "base-execution-state-types/serde",
     "reth-config/serde",
     "reth-chain-state/serde",
+    "base-execution-state-memory/serde",
 ]

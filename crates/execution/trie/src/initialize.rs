@@ -5,6 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, time::Instant};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
     BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
@@ -16,7 +17,6 @@ use reth_db::{
     tables,
     transaction::DbTx,
 };
-use reth_primitives_traits::Account;
 use reth_trie::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
 use tracing::{debug, info};
 
@@ -546,6 +546,7 @@ mod tests {
                 use std::sync::Arc;
 
                 use alloy_primitives::{Address, U256, keccak256};
+                use base_execution_state_memory::StoredAccount as Account;
                 use reth_db::{
                     Database,
                     cursor::DbCursorRW,
@@ -553,7 +554,6 @@ mod tests {
                     test_utils::create_test_rw_db,
                     transaction::DbTxMut,
                 };
-                use reth_primitives_traits::Account;
                 use reth_trie::{
                     BranchNodeCompact, PackedStorageTrieEntry, PackedStoredNibbles,
                     PackedStoredNibblesSubKey, StoredNibbles, StoredNibblesSubKey, TrieMask,

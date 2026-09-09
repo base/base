@@ -13,9 +13,9 @@ mod tests {
 
     use crate::ChangesetOffsetReader;
     use alloy_primitives::{Address, U256};
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
     use reth_db::{models::AccountBeforeTx, test_utils::create_test_static_files_dir};
-    use reth_primitives_traits::Account;
 
     use crate::providers::{
         StaticFileProvider,

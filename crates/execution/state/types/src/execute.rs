@@ -3,7 +3,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_memory::BundleAccount;
 use base_execution_state_memory::BundleState;
-use reth_primitives_traits::{Account, Bytecode};
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 
 /// [`BlockExecutionResult`] combined with state.
 #[derive(

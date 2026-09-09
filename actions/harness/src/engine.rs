@@ -344,7 +344,7 @@ impl ActionEngineClient {
         provider
             .account_code(&address)
             .expect("failed to read account code")
-            .is_some_and(|c: reth_primitives_traits::Bytecode| !c.is_empty())
+            .is_some_and(|c: base_execution_state_memory::StoredBytecode| !c.is_empty())
     }
 
     /// Build a block from the given `BasePayloadAttributes`, returning the `BaseBuiltPayload`.

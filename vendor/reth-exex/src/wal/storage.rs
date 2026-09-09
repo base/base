@@ -174,12 +174,12 @@ mod tests {
         map::{HashMap, HashSet},
     };
     use base_common_types_chain::BlockHeader;
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, LazyTrieData, Nibbles,
         updates::{StorageTrieUpdates, TrieUpdates},
     };
     use reth_exex_types::ExExNotification;
-    use reth_primitives_traits::Account;
     use reth_provider::Chain;
     use reth_testing_utils::generators::{self};
 

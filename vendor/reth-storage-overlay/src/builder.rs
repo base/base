@@ -602,11 +602,11 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
+    use base_execution_state_memory::StoredAccount as Account;
     #[cfg(feature = "partial-persistence")]
     #[cfg(feature = "partial-persistence")]
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
-    use reth_primitives_traits::Account;
     #[cfg(feature = "partial-persistence")]
     use reth_provider::{
         BlockWriter, ProviderFactory,

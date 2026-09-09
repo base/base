@@ -37,6 +37,7 @@ base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
+base-execution-state-memory = {workspace = true}
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 base-execution-network-discv5 = { workspace = true }
@@ -108,6 +109,7 @@ serde = [
     "base-execution-state-types/serde",
     "reth-trie/serde",
     "alloy-eip7928/serde",
+    "base-execution-state-memory/serde",
 ]
 test-utils = [
     "base-execution-txpool/test-utils",
@@ -121,4 +123,5 @@ test-utils = [
     "base-common-runtime-tasks/test-utils",
     "base-execution-state-types/test-utils",
     "reth-trie/test-utils",
+    "base-execution-state-memory/test-utils",
 ]

@@ -9,7 +9,7 @@ mod tests {
     use alloy_primitives::{B256, Bytes, U256, keccak256};
     use alloy_trie::EMPTY_ROOT_HASH;
     use base_common_types_chain::constants::KECCAK_EMPTY;
-    use reth_primitives_traits::Account;
+    use base_execution_state_memory::StoredAccount as Account;
 
     use super::*;
     use crate::root::storage_root_unhashed;

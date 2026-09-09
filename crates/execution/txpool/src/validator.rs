@@ -1449,7 +1449,7 @@ where
     fn validate_eip8130_create_freshness(
         state: &dyn StateProvider,
         sender: Address,
-        account: &reth_primitives_traits::Account,
+        account: &base_execution_state_memory::StoredAccount,
     ) -> Result<(), InvalidPoolTransactionError> {
         if account.nonce != 0 {
             return Err(Self::eip8130_error("create sender nonce is non-zero"));

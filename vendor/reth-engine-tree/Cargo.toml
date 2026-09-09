@@ -27,9 +27,9 @@ reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-execution-cache = { workspace = true }
 base-execution-state-api = { workspace = true }
+base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
-base-execution-state-memory = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
@@ -106,6 +106,7 @@ test-utils = [
     "base-execution-trie/test-utils",
     "base-common-runtime-tasks/test-utils",
     "reth-execution-cache/test-utils",
+    "base-execution-state-memory/test-utils",
 ]
 trie-debug = [
     "reth-trie-sparse/trie-debug",

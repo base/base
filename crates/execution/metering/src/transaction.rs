@@ -2,8 +2,8 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
 use base_common_types_chain::{Transaction, transaction::Recovered};
 use base_execution_evm_runtime::{BaseSpecId, L1BlockInfo};
+use base_execution_state_memory::StoredAccount as Account;
 use derive_more::Display;
-use reth_primitives_traits::Account;
 
 /// Errors that can occur when validating a transaction.
 #[derive(Debug, PartialEq, Eq, Display)]

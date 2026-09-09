@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, StorageKey, StorageValue, U256};
 use base_execution_state_memory::CachedReads;
-use reth_primitives_traits::{Account, Bytecode};
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 
 /// A deep, immutable txpool-prewarm cache snapshot for one parent state.
 ///

@@ -1373,6 +1373,7 @@ mod tests {
     use base_execution_evm_runtime::BaseTime;
     use base_execution_evm_runtime::{database::State, state::EvmState};
     use base_execution_payload_types::{MeterBundleResponse, OpcodeGas, TransactionResult};
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
     use base_execution_trie::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
@@ -1380,7 +1381,7 @@ mod tests {
     };
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
+    use reth_primitives_traits::{SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::NoopProvider;
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};

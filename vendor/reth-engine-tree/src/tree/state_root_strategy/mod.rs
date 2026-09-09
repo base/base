@@ -1304,11 +1304,11 @@ mod tests {
     use base_execution_evm_runtime::state::{
         AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, TransactionId,
     };
+    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_common::init::init_genesis;
-    use reth_primitives_traits::Account;
     use reth_provider::{
         HashingWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,

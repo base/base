@@ -21,6 +21,7 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{B256Map, B256Set},
 };
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
 };
@@ -28,7 +29,6 @@ use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
     provider::BaseProofsStateProviderRef,
 };
-use reth_primitives_traits::Account;
 use reth_provider::{
     AccountReader, NoopProvider, StateProofProvider, StateReadProvider, StateRootProvider,
     StorageRootProvider,

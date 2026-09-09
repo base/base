@@ -31,6 +31,7 @@ reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
@@ -104,6 +105,7 @@ serde = [
     "reth-chain-state/serde",
     "base-execution-state-api/serde",
     "base-execution-evm-runtime/serde",
+    "base-execution-state-memory/serde",
 ]
 test-utils = [
     "rand",
@@ -115,6 +117,7 @@ test-utils = [
     "alloy-primitives/rand",
     "base-execution-evm-blocks/test-utils",
     "base-common-runtime-tasks/test-utils",
+    "base-execution-state-memory/test-utils",
 ]
 arbitrary = [
     "proptest",
@@ -128,4 +131,5 @@ arbitrary = [
     "reth-primitives-traits/arbitrary",
     "smallvec/arbitrary",
     "base-execution-evm-runtime/arbitrary",
+    "base-execution-state-memory/arbitrary",
 ]

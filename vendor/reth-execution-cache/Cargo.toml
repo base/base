@@ -22,12 +22,12 @@ reth-provider = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
-base-execution-state-memory = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 fixed-cache = { workspace = true, features = ["alloc", "stats"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-memory = {features = ["std"], workspace = true}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 
 [dev-dependencies]
@@ -36,4 +36,9 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 
 [features]
-test-utils = ["reth-primitives-traits/test-utils", "reth-provider/test-utils", "reth-trie/test-utils"]
+test-utils = [
+    "reth-primitives-traits/test-utils",
+    "reth-provider/test-utils",
+    "reth-trie/test-utils",
+    "base-execution-state-memory/test-utils",
+]

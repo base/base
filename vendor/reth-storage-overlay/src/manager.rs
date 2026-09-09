@@ -662,8 +662,8 @@ mod tests {
     };
 
     use alloy_primitives::U256;
+    use base_execution_state_memory::StoredAccount as Account;
     use reth_chain_state::{ExecutedBlock, SparseTrie, test_utils::TestBlockBuilder};
-    use reth_primitives_traits::Account;
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
 
     use super::*;

@@ -12,6 +12,7 @@ use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_execution_evm_blocks::ExecutionWitnessRecord;
 use base_execution_evm_runtime::{Database, database::State};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
@@ -19,7 +20,6 @@ use base_execution_trie::{
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
-use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, NoopProvider, StateReadProvider};
 use tempfile::TempDir;
 

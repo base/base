@@ -20,6 +20,7 @@ use std::fmt;
 
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_types_chain::{EthereumReceipt as Receipt, Header};
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::StageCheckpoint;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
@@ -28,7 +29,6 @@ use base_execution_state_types::{
 };
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
-use reth_primitives_traits::{Account, Bytecode};
 use serde::{Deserialize, Serialize};
 
 use crate::{

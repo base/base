@@ -21,6 +21,7 @@ alloy-hardforks = { workspace = true }
 reth-primitives-traits = {workspace = true}
 rayon = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
+base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 reth-trie = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true }
@@ -85,6 +86,7 @@ std = [
     "base-execution-state-api/std",
     "thiserror/std",
     "tracing/std",
+    "base-execution-state-memory/std",
 ]
 portable = ["base-execution-evm-runtime/portable"]
 test-utils = [
@@ -93,6 +95,7 @@ test-utils = [
     "base-execution-state-types/test-utils",
     "reth-trie?/test-utils",
     "std",
+    "base-execution-state-memory/test-utils",
 ]
 witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
 serde = [
@@ -102,6 +105,7 @@ serde = [
     "reth-trie?/serde",
     "reth-primitives-traits/serde",
     "base-execution-state-api/serde",
+    "base-execution-state-memory/serde",
 ]
 gmp = ["base-execution-evm-runtime/gmp"]
 optional-balance-check = ["base-execution-evm-runtime/optional_balance_check"]

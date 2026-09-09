@@ -50,6 +50,7 @@ tempfile = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["reth-codec"] }
 base-execution-state-types = {workspace = true, features = ["reth-codec"]}
+base-execution-state-memory = {workspace = true, features = ["reth-codec"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [features]
@@ -73,6 +74,7 @@ test-utils = [
     "reth-nippy-jar/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-state-types/test-utils",
+    "base-execution-state-memory/test-utils",
 ]
 arbitrary = [
     "reth-db-api/arbitrary",
@@ -80,5 +82,6 @@ arbitrary = [
     "base-common-types-chain/arbitrary",
     "reth-primitives-traits/arbitrary",
     "base-execution-state-types/arbitrary",
+    "base-execution-state-memory/arbitrary",
 ]
 disable-lock = []

@@ -26,6 +26,7 @@ reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
+base-execution-state-memory = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true, features = ["attributes"] }

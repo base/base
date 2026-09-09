@@ -26,6 +26,7 @@ use base_execution_state_api::{
     HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
     StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
@@ -39,8 +40,7 @@ use reth_db_api::{
     models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
 };
 use reth_primitives_traits::{
-    Account, Block, BlockBody, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
-    SignerRecoverable,
+    Block, BlockBody, GotExpected, RecoveredBlock, SealedHeader, SignerRecoverable,
 };
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,

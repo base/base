@@ -43,6 +43,7 @@ reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-memory = {workspace = true}
 tokio = { workspace = true, features = ["net"] }
 arbitrary = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
@@ -103,4 +104,5 @@ arbitrary = [
     "base-common-types-chain/arbitrary",
     "base-execution-state-types/arbitrary",
     "reth-primitives-traits/arbitrary",
+    "base-execution-state-memory/arbitrary",
 ]

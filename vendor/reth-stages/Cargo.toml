@@ -34,6 +34,7 @@ base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-memory = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
@@ -89,4 +90,5 @@ test-utils = [
     "reth-trie/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
+    "base-execution-state-memory/test-utils",
 ]

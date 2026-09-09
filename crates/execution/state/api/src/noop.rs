@@ -14,6 +14,7 @@ use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
+use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ExecutionOutcome;
 #[cfg(feature = "db-api")]
 use base_execution_state_types::PruneModes;
@@ -27,7 +28,7 @@ use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 #[cfg(feature = "db-api")]
 use reth_db_api::mock::TxMock;
-use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 
 use crate::{
     AccountReader, BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,

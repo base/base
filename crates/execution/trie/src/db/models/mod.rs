@@ -16,6 +16,8 @@ mod kv;
 use std::fmt;
 
 use alloy_primitives::B256;
+use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_types::{BranchNodeCompact, StoredNibbles};
 pub use change_set::*;
 pub use kv::*;
 use reth_db::{
@@ -23,8 +25,6 @@ use reth_db::{
     table::{DupSort, TableInfo},
     tables,
 };
-use reth_primitives_traits::Account;
-use base_execution_state_types::{BranchNodeCompact, StoredNibbles};
 
 tables! {
     /// Stores historical branch nodes for the account state trie.
