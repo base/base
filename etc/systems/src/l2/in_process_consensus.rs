@@ -24,7 +24,7 @@ use base_consensus_node::{
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
-use base_upgrade_signal::{
+use base_common_chain_activation::{
     UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
     UpgradeSignalRuntimeApplier,
 };

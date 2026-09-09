@@ -1,4 +1,4 @@
-# `base-upgrade-signal`
+# `base-common-chain-activation`
 
 Shared utilities for reading network upgrade activation signals from L1.
 

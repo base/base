@@ -2203,6 +2203,7 @@ dependencies = [
  "base-builder-cli",
  "base-builder-core",
  "base-cli-utils",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-consensus-cli",
  "base-consensus-engine",
@@ -2210,7 +2211,6 @@ dependencies = [
  "base-execution-cli",
  "base-execution-evm-blocks",
  "base-node-core",
- "base-upgrade-signal",
  "clap",
  "eyre",
  "figment",
@@ -2637,6 +2637,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-chain-activation"
+version = "0.0.0"
+dependencies = [
+ "alloy-json-rpc",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-sol-types",
+ "alloy-transport",
+ "backon",
+ "base-common-chain-config",
+ "base-common-observability-metrics",
+ "base-common-runtime-tasks",
+ "base-common-types-rpc",
+ "clap",
+ "eyre",
+ "futures",
+ "httpmock",
+ "metrics",
+ "reqwest",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tower",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-common-chain-config"
 version = "0.0.0"
 dependencies = [
@@ -2919,6 +2950,7 @@ dependencies = [
  "alloy-signer",
  "backon",
  "base-cli-utils",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-network",
  "base-common-runtime-tasks",
@@ -2932,7 +2964,6 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-protocol",
- "base-upgrade-signal",
  "clap",
  "dirs",
  "discv5",
@@ -3094,6 +3125,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "backon",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-network",
  "base-common-observability-health",
@@ -3113,7 +3145,6 @@ dependencies = [
  "base-execution-trie",
  "base-node-runner",
  "base-protocol",
- "base-upgrade-signal",
  "bytes",
  "derive_more",
  "discv5",
@@ -3222,13 +3253,13 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "backon",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-types-payload",
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-safedb",
  "base-protocol",
- "base-upgrade-signal",
  "getrandom 0.4.3",
  "ipnet",
  "jsonrpsee",
@@ -3290,6 +3321,7 @@ dependencies = [
  "axum",
  "backon",
  "base-cli-utils",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-observability-events",
  "base-common-runtime-tasks",
@@ -3304,7 +3336,6 @@ dependencies = [
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
- "base-upgrade-signal",
  "clap",
  "eyre",
  "futures",
@@ -4019,6 +4050,7 @@ dependencies = [
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-network",
  "base-common-observability-tracing",
@@ -4044,7 +4076,6 @@ dependencies = [
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
- "base-upgrade-signal",
  "clap",
  "criterion",
  "eyre",
@@ -4949,6 +4980,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-network",
  "base-common-runtime-tasks",
@@ -4981,7 +5013,6 @@ dependencies = [
  "base-tx-forwarding",
  "base-tx-manager",
  "base-txpool-rpc",
- "base-upgrade-signal",
  "chrono",
  "clap",
  "eyre",
@@ -5208,37 +5239,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-upgrade-signal"
-version = "0.0.0"
-dependencies = [
- "alloy-json-rpc",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-sol-types",
- "alloy-transport",
- "backon",
- "base-common-chain-config",
- "base-common-observability-metrics",
- "base-common-runtime-tasks",
- "base-common-types-rpc",
- "clap",
- "eyre",
- "futures",
- "httpmock",
- "metrics",
- "reqwest",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tower",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
@@ -5342,6 +5342,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "axum",
+ "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-network",
  "base-common-types-chain",
@@ -5357,7 +5358,6 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "base-tx-manager",
- "base-upgrade-signal",
  "chrono",
  "clap",
  "crossterm",

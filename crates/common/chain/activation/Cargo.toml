@@ -1,5 +1,5 @@
 [package]
-name = "base-upgrade-signal"
+name = "base-common-chain-activation"
 description = "L1 upgrade signal reader utilities"
 version.workspace = true
 edition.workspace = true

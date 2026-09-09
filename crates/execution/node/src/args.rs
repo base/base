@@ -10,7 +10,7 @@ use std::{
 use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
 use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
-use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
+use base_common_chain_activation::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
 /// Default proofs history window: 1 month of blocks at 2s block time.

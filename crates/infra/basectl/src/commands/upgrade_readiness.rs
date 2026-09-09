@@ -6,7 +6,7 @@
 //! a fleet-wide rollout before the upgrade is scheduled on L1.
 
 use anyhow::Result;
-use base_upgrade_signal::UpgradeReadiness;
+use base_common_chain_activation::UpgradeReadiness;
 use clap::Args;
 use url::Url;
 

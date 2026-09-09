@@ -24,7 +24,7 @@ use base_tx_forwarding::{
 };
 use base_txpool_rpc::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_txpool_tracing::TxpoolConfig;
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_common_chain_activation::UpgradeSignalStartupMode;
 use tracing::warn;
 use url::Url;
 
@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn test_execution_upgrade_signal_reads_require_l1_rpc() {
         let error = StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
-            upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
+            upgrade_signal: base_common_chain_activation::UpgradeSignalArgs {
                 contract_address: Some(address!("0000000000000000000000000000000000000001")),
                 ..Default::default()
             },

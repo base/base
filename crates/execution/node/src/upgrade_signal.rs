@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eip2124::{EnrForkIdEntry, ForkFilter, ForkId, Head};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
-use base_upgrade_signal::{
+use base_common_chain_activation::{
     PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
     UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
@@ -488,7 +488,7 @@ mod tests {
     use alloy_primitives::Address;
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
-    use base_upgrade_signal::UpgradeSignalDefaults;
+    use base_common_chain_activation::UpgradeSignalDefaults;
 
     use super::*;
 
@@ -504,7 +504,7 @@ mod tests {
     ) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
             1,
-            vec![base_upgrade_signal::UpgradeSignal {
+            vec![base_common_chain_activation::UpgradeSignal {
                 upgrade_id,
                 activation_timestamp,
                 protocol_version: UpgradeSignalDefaults::node_protocol_version(),
@@ -517,7 +517,7 @@ mod tests {
             1,
             signals
                 .iter()
-                .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                .map(|(upgrade_id, activation_timestamp)| base_common_chain_activation::UpgradeSignal {
                     upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: Default::default(),

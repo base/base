@@ -5,7 +5,7 @@ pragma solidity ^0.8.24;
 /// system tests.
 ///
 /// Implements the read interface consumed by node upgrade-signal readers
-/// (`IProtocolVersions` in `base-upgrade-signal`): `getSchedule()` returns activation
+/// (`IProtocolVersions` in `base-common-chain-activation`): `getSchedule()` returns activation
 /// timestamps ordered by ascending upgrade registration id (`0` = not scheduled), and
 /// `minimumProtocolVersion()` returns the packed-semver minimum client version.
 contract MockProtocolVersions {

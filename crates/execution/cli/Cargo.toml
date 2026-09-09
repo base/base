@@ -56,7 +56,7 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
-base-upgrade-signal = { workspace = true, features = ["default", "metrics"] }
+base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
 tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
 
 [dev-dependencies]

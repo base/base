@@ -8,7 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use base_consensus_gossip::Metrics;
-use base_upgrade_signal::{
+use base_common_chain_activation::{
     AlloyUpgradeSignalReader, PackedProtocolVersion, UpgradeReadiness, UpgradeSignalConfig,
     UpgradeSignalDefaults, UpgradeSignalError, UpgradeSignalMetricLayer, UpgradeSignalSchedule,
 };
@@ -275,7 +275,7 @@ impl BaseApiServer for BaseRpc {
 mod tests {
     use core::time::Duration;
 
-    use base_upgrade_signal::UpgradeSignalDefaults;
+    use base_common_chain_activation::UpgradeSignalDefaults;
 
     use super::BaseRpc;
 

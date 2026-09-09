@@ -9,7 +9,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
-use base_upgrade_signal::{
+use base_common_chain_activation::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
     UpgradeSignalRuntimeApplier, UpgradeSignalSchedule, UpgradeSignalStartupMode,
 };
@@ -696,7 +696,7 @@ mod tests {
             1,
             signals
                 .iter()
-                .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                .map(|(upgrade_id, activation_timestamp)| base_common_chain_activation::UpgradeSignal {
                     upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: U256::from(7),

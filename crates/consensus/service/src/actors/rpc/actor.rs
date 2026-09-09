@@ -12,7 +12,7 @@ use base_consensus_rpc::{
 };
 use base_consensus_safedb::SafeDBReader;
 use base_common_observability_health::EthHealthCheckLayer;
-use base_upgrade_signal::UpgradeSignalRefresher;
+use base_common_chain_activation::UpgradeSignalRefresher;
 use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{

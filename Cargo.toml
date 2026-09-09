@@ -122,7 +122,7 @@ members = [
   "crates/testing/support",
   "crates/utilities/trusted-proxy",
   "crates/utilities/tx-manager",
-  "crates/utilities/upgrade-signal",
+  "crates/common/chain/activation",
   "etc/systems",
   "etc/tools/witness-diff",
   "vendor/alloy-contract",
@@ -429,7 +429,7 @@ base-testing-support = { path = "crates/testing/support", default-features = fal
 base-tx-manager = { path = "crates/utilities/tx-manager", default-features = false }
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc", default-features = false }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
-base-upgrade-signal = { path = "crates/utilities/upgrade-signal", default-features = false }
+base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
 base-balance-monitor = { path = "crates/utilities/balance-monitor", default-features = false }
 
 # revm

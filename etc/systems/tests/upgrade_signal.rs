@@ -8,7 +8,7 @@
 use base_common_chain_config::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
 use base_consensus_rpc::RollupNodeApiClient;
 use base_system_tests::{SystemTestStack, SystemTestStackBuilder, UpgradeSignalStackOptions};
-use base_upgrade_signal::UpgradeSignalMode;
+use base_common_chain_activation::UpgradeSignalMode;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 

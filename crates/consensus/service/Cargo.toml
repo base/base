@@ -58,7 +58,7 @@ derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
-base-upgrade-signal = { workspace = true, features = ["default"] }
+base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["default"]}
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
@@ -100,7 +100,7 @@ metrics = [
     "base-consensus-providers/metrics",
     "base-consensus-rpc/metrics",
     "base-common-observability-metrics/metrics",
-    "base-upgrade-signal/metrics",
+    "base-common-chain-activation/metrics",
     "dep:metrics",
     "libp2p/metrics",
     "tower-http/metrics",

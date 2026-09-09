@@ -14,7 +14,7 @@ use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_core::BaseNode;
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_common_chain_activation::UpgradeSignalStartupMode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
 

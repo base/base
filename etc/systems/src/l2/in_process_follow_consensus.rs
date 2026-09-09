@@ -12,7 +12,7 @@ use base_common_chain_config::RollupConfig;
 use base_consensus_node::{FollowNode, FollowNodeConfig, RemoteL2Client};
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
-use base_upgrade_signal::{
+use base_common_chain_activation::{
     UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
     UpgradeSignalPollOutcome, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
 };

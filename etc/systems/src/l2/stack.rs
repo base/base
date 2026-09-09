@@ -20,7 +20,7 @@ use base_common_types_rpc::BaseTransactionRequest;
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_tx_forwarding::TxForwardingConfig;
-use base_upgrade_signal::UpgradeSignalConfig;
+use base_common_chain_activation::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 use url::Url;

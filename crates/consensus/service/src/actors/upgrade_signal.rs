@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use base_upgrade_signal::{
+use base_common_chain_activation::{
     AlloyUpgradeSignalReader, PackedProtocolVersion, UpgradeSignalConfig, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
     UpgradeSignalRefresher,

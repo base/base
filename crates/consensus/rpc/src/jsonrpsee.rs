@@ -9,7 +9,7 @@ use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::SyncStatus;
-use base_upgrade_signal::{UpgradeReadiness, UpgradeSignalApplySummary};
+use base_common_chain_activation::{UpgradeReadiness, UpgradeSignalApplySummary};
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
@@ -394,7 +394,7 @@ mod tests {
     use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
     use base_consensus_safedb::SafeHeadResponse;
     use base_protocol::SyncStatus;
-    use base_upgrade_signal::UpgradeSignalApplySummary;
+    use base_common_chain_activation::UpgradeSignalApplySummary;
     use ipnet::IpNet;
     use jsonrpsee::{
         PendingSubscriptionSink,

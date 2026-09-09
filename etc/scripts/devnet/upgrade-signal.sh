@@ -71,7 +71,7 @@ load_upgrade_ids() {
 
   local upgrade_ids_csv
   upgrade_ids_csv="$(
-    cd "$REPO_ROOT" && cargo run --quiet -p base-upgrade-signal --bin contract_upgrade_ids
+    cd "$REPO_ROOT" && cargo run --quiet -p base-common-chain-activation --bin contract_upgrade_ids
   )"
 
   IFS=, read -r -a UPGRADE_IDS <<<"$upgrade_ids_csv"

@@ -11,7 +11,7 @@ use base_common_network::Base;
 use base_common_types_rpc::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use base_consensus_rpc::{BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
-use base_upgrade_signal::UpgradeReadiness;
+use base_common_chain_activation::UpgradeReadiness;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;

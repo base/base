@@ -27,7 +27,7 @@ tokio = { workspace = true, features = ["default", "time"] }
 alloy-eips = { workspace = true, features = ["serde", "std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
-base-upgrade-signal = { workspace = true, features = ["default"] }
+base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
@@ -48,6 +48,6 @@ client = [
 metrics = [
 	"base-consensus-engine/metrics",
 	"base-consensus-gossip/metrics",
-	"base-upgrade-signal/metrics",
+	"base-common-chain-activation/metrics",
 	"libp2p/metrics",
 ]

@@ -278,7 +278,7 @@ deploy_contracts() {
 
 load_fork_names() {
   local names
-  names=$(cd "$REPO_ROOT" && cargo run --quiet -p base-upgrade-signal --bin contract_upgrade_ids)
+  names=$(cd "$REPO_ROOT" && cargo run --quiet -p base-common-chain-activation --bin contract_upgrade_ids)
   IFS=, read -r -a FORK_NAMES <<<"$names"
 }
 

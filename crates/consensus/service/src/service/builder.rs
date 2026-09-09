@@ -8,7 +8,7 @@ use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_chain_config::RollupConfig;
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
-use base_upgrade_signal::UpgradeSignalConfig;
+use base_common_chain_activation::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{

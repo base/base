@@ -39,7 +39,7 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 base-common-types-rpc = {workspace = true, features = ["std"]}
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-base-upgrade-signal = { workspace = true, features = ["default"] }
+base-common-chain-activation = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-execution-evm-runtime = { workspace = true, features = ["std"] }
