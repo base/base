@@ -204,15 +204,14 @@ impl ExecutionNodeRuntimeConfig {
     }
 
     /// Converts the runtime config into a reth node builder.
-    pub fn into_node_builder<Rpc>(mut self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder>
-    where
-        Rpc: RpcModuleValidator,
-    {
+    pub fn into_node_builder(mut self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder> {
         if let Some(http_api) = &self.node_config.rpc.http_api {
-            Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre::eyre!("{e}"))?;
+            LenientRpcModuleValidator::validate_selection(http_api, "http.api")
+                .map_err(|e| eyre::eyre!("{e}"))?;
         }
         if let Some(ws_api) = &self.node_config.rpc.ws_api {
-            Rpc::validate_selection(ws_api, "ws.api").map_err(|e| eyre::eyre!("{e}"))?;
+            LenientRpcModuleValidator::validate_selection(ws_api, "ws.api")
+                .map_err(|e| eyre::eyre!("{e}"))?;
         }
 
         info!(
@@ -240,7 +239,7 @@ impl ExecutionNodeRuntimeConfig {
 
     /// Converts the runtime config into a reth node builder with the default RPC validator.
     pub fn into_default_node_builder(self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder> {
-        self.into_node_builder::<LenientRpcModuleValidator>(ctx)
+        self.into_node_builder(ctx)
     }
 }
 
@@ -274,13 +273,10 @@ impl ExecutionNodeLaunchConfig {
     }
 
     /// Launches the execution node and returns its handle.
-    pub async fn launch<Rpc>(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode>
-    where
-        Rpc: RpcModuleValidator,
-    {
+    pub async fn launch(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode> {
         let (execution, standard) = self.into_runtime_config();
         let upgrade_signal_startup = execution.upgrade_signal_startup;
-        let builder = execution.into_node_builder::<Rpc>(ctx)?;
+        let builder = execution.into_node_builder(ctx)?;
         crate::StandardBaseRethNode::launch_with_upgrade_signal_startup(
             builder,
             standard,
@@ -291,12 +287,9 @@ impl ExecutionNodeLaunchConfig {
 
     /// Launches the execution node with the default RPC module validator.
     pub async fn launch_default(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode> {
-        self.launch::<LenientRpcModuleValidator>(ctx).await
+        self.launch(ctx).await
     }
 }
-
-#[cfg(test)]
-pub use tests::execution_args_reject_era_import;
 
 #[cfg(test)]
 mod tests {
@@ -311,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    pub fn execution_args_reject_era_import() {
+    fn execution_args_reject_era_import() {
         for arg in ["--era.enable", "--era.path=/tmp/era", "--era.url=https://example.com"] {
             let error = CommandParser::<ExecutionNodeConfigArgs>::try_parse_from(["base", arg])
                 .expect_err("ERA import is no longer supported");

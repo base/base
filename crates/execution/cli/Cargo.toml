@@ -45,21 +45,18 @@ futures = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 reth-net-nat = { workspace = true, features = ["default"] }
-reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["default"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-txpool-tracing = { workspace = true, features = ["default"] }
 base-shadow-indexer = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
-base-execution-consensus = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
 base-upgrade-signal = { workspace = true, features = ["default", "metrics"] }
@@ -77,11 +74,12 @@ tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] 
 base-execution-chainspec = { workspace = true, features = ["default", "std"] }
 
 [features]
+otlp = ["reth-node-core/otlp"]
+otlp-logs = ["reth-node-core/otlp-logs"]
+tracy = ["reth-node-core/tracy"]
 default = []
 
 # Opentelemetry feature to activate tracing and logs export
-otlp = [ "reth-node-core/otlp", "reth-tracing/otlp" ]
-otlp-logs = [ "reth-node-core/otlp-logs", "reth-tracing/otlp-logs" ]
 
 asm-keccak = [ "base-node-core/asm-keccak", "reth-node-core/asm-keccak" ]
 
@@ -95,7 +93,6 @@ jemalloc = [ "reth-node-core/jemalloc", "reth-node-metrics/jemalloc" ]
 jemalloc-prof = [ "jemalloc", "reth-node-metrics/jemalloc-prof" ]
 jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
-tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
 dev = [
 	"base-common-consensus/arbitrary",
