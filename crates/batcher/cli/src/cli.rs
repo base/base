@@ -9,7 +9,7 @@ use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::RuntimeManager;
-use base_runtime::TokioRuntime;
+use base_common_runtime_tasks::TokioRuntime;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
 use tracing::info;

@@ -16,7 +16,7 @@ use base_proof_contracts::{
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
-use base_runtime::TokioRuntime;
+use base_common_runtime_tasks::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;

@@ -55,7 +55,7 @@ use base_common_network::{
     TransactionBuilder, TransactionBuilderError,
 };
 use base_common_types_rpc::{TransactionReceipt, TransactionRequest};
-use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
+use base_common_runtime_tasks::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -251,7 +251,7 @@ where
     /// Creates a new [`SimpleTxManager`] with an injected runtime.
     ///
     /// This mirrors [`Self::new`] but lets deterministic tests control
-    /// timers and spawned tasks through `base-runtime`.
+    /// timers and spawned tasks through `base-common-runtime-tasks`.
     pub async fn new_with_runtime(
         runtime: R,
         provider: P,
@@ -1838,7 +1838,7 @@ mod tests {
     use alloy_transport::mock::Asserter;
     use base_common_types_chain::TxEip1559;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
-    use base_runtime::{
+    use base_common_runtime_tasks::{
         Clock,
         deterministic::{Config, Runner},
     };

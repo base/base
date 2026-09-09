@@ -1,5 +1,5 @@
 [package]
-name = "base-runtime"
+name = "base-common-runtime-tasks"
 description = "Async runtime abstraction for deterministic batcher and pipeline testing"
 version.workspace = true
 edition.workspace = true

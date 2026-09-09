@@ -7,7 +7,7 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
-use base_runtime::{Spawner, TokioRuntime};
+use base_common_runtime_tasks::{Spawner, TokioRuntime};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tracing::{debug, warn};
 
@@ -55,7 +55,7 @@ where
     /// Creates a new `TxQueue` backed by an explicit task spawner.
     ///
     /// Production callers normally use [`TxQueue::new`]. Tests can pass
-    /// `base_runtime::deterministic::Context` to make background completion
+    /// `base_common_runtime_tasks::deterministic::Context` to make background completion
     /// task ordering reproducible.
     pub fn with_runtime(tx_mgr: Arc<M>, max_pending: Option<NonZeroUsize>, runtime: R) -> Self {
         let permits = max_pending.map(|n| n.get()).unwrap_or(Semaphore::MAX_PERMITS);
@@ -163,7 +163,7 @@ mod tests {
     };
 
     use alloy_primitives::Address;
-    use base_runtime::{
+    use base_common_runtime_tasks::{
         Clock,
         deterministic::{Config, Runner},
     };

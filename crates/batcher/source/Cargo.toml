@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-base-runtime = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
@@ -26,4 +26,4 @@ mockall = { workspace = true }
 base-common-types-chain = { workspace = true }
 tokio = { workspace = true, features = ["default", "rt"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-runtime = { workspace = true, features = ["test-utils"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }

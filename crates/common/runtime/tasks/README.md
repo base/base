@@ -1,6 +1,6 @@
-# base-runtime
+# base-common-runtime-tasks
 
-base-runtime provides an async runtime abstraction for deterministic testing of base
+base-common-runtime-tasks provides an async runtime abstraction for deterministic testing of base
 components such as the batch submission pipeline and the hybrid block source. The crate
 defines three composable traits — `Clock`, `Spawner`, and `Cancellation` — and a blanket
 `Runtime` supertrait that combines all three. Components accept a single `R: Runtime`
@@ -12,7 +12,7 @@ project's [commonware-runtime](https://crates.io/crates/commonware-runtime) crat
 uses a `Runner`/`Context` abstraction to decouple application logic from the underlying
 executor. Commonware ships two implementations — a production tokio-backed runtime and a
 deterministic simulator — allowing the same application code to be driven with full
-control over scheduling and time. base-runtime follows the same pattern but is scoped
+control over scheduling and time. base-common-runtime-tasks follows the same pattern but is scoped
 to the capabilities the base batch driver and derivation pipeline actually require:
 virtual time, task spawning, and structured cancellation.
 
@@ -49,7 +49,7 @@ Components in this workspace that accept `R: Runtime`:
 Create a fresh runtime with its own cancellation scope:
 
 ```rust
-use base_runtime::TokioRuntime;
+use base_common_runtime_tasks::TokioRuntime;
 
 let rt = TokioRuntime::new();
 // Pass rt into BatchDriver::new(...) or PollingBlockSource::new(...)
@@ -59,7 +59,7 @@ When migrating code that already holds a `CancellationToken`, wrap it instead of
 creating a second cancellation scope:
 
 ```rust
-use base_runtime::TokioRuntime;
+use base_common_runtime_tasks::TokioRuntime;
 use tokio_util::sync::CancellationToken;
 
 let token = CancellationToken::new();
@@ -71,7 +71,7 @@ To shut down a sub-component independently without affecting its parent, use a c
 runtime whose cancellation propagates from parent to child but not in reverse:
 
 ```rust
-use base_runtime::{TokioRuntime, Cancellation};
+use base_common_runtime_tasks::{TokioRuntime, Cancellation};
 
 let parent = TokioRuntime::new();
 let child = parent.child(); // cancelled when parent is cancelled
@@ -85,7 +85,7 @@ runtime rather than calling `tokio::time::sleep` directly. This ensures the same
 path is exercised under the deterministic executor in tests:
 
 ```rust,ignore
-use base_runtime::{Runtime, Clock};
+use base_common_runtime_tasks::{Runtime, Clock};
 use std::time::Duration;
 
 async fn drain_with_timeout<R: Runtime>(runtime: R, timeout: Duration) {
@@ -99,8 +99,8 @@ async fn drain_with_timeout<R: Runtime>(runtime: R, timeout: Duration) {
 ### Deterministic tests
 
 ```rust,ignore
-use base_runtime::deterministic::{Config, Runner};
-use base_runtime::{Clock, Spawner};
+use base_common_runtime_tasks::deterministic::{Config, Runner};
+use base_common_runtime_tasks::{Clock, Spawner};
 use std::time::Duration;
 
 #[test]

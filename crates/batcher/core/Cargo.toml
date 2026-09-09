@@ -22,7 +22,7 @@ async-trait = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["std"] }
-base-runtime = { workspace = true, features = ["tokio"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "sync", "macros", "rt"] }
@@ -32,7 +32,7 @@ base-common-types-rpc = { workspace = true, features = ["std"], optional = true 
 [dev-dependencies]
 async-trait = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-base-runtime = { workspace = true, features = ["test-utils"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
@@ -60,7 +60,7 @@ required-features = ["test-utils"]
 metrics = [ "base-batcher-encoder/metrics", "base-tx-manager/metrics" ]
 test-utils = [
     "base-protocol/test-utils",
-    "base-runtime/test-utils",
+    "base-common-runtime-tasks/test-utils",
     "dep:base-common-types-rpc",
     "dep:async-trait",
 ]

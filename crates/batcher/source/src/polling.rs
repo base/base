@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
-use base_runtime::Clock;
+use base_common_runtime_tasks::Clock;
 
 use crate::{L2BlockEvent, SourceError, UnsafeBlockSource};
 
@@ -106,7 +106,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_runtime::{Config, Runner};
+    use base_common_runtime_tasks::{Config, Runner};
     use mockall::{Sequence, predicate::eq};
 
     use super::*;

@@ -119,7 +119,7 @@ members = [
   "crates/utilities/optimism-rpc",
   "crates/utilities/reth-cli",
   "crates/utilities/retry",
-  "crates/utilities/runtime",
+  "crates/common/runtime/tasks",
   "crates/testing/support",
   "crates/utilities/trusted-proxy",
   "crates/utilities/tx-manager",
@@ -429,7 +429,7 @@ base-retry = { path = "crates/utilities/retry", default-features = false }
 base-health = { path = "crates/utilities/health", default-features = false }
 base-cli-utils = { path = "crates/utilities/cli", default-features = false }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
-base-runtime = { path = "crates/utilities/runtime", default-features = false }
+base-common-runtime-tasks = { path = "crates/common/runtime/tasks", default-features = false }
 base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
 base-testing-support = { path = "crates/testing/support", default-features = false }
 base-tx-manager = { path = "crates/utilities/tx-manager", default-features = false }

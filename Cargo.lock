@@ -2243,6 +2243,7 @@ dependencies = [
  "base-builder-core",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -2258,7 +2259,6 @@ dependencies = [
  "base-execution-state-memory",
  "base-execution-txpool",
  "base-protocol",
- "base-runtime",
  "base-testing-support",
  "base-tx-manager",
  "eyre",
@@ -2312,8 +2312,8 @@ dependencies = [
  "base-batcher-service",
  "base-cli-utils",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-protocol",
- "base-runtime",
  "base-tx-manager",
  "clap",
  "eyre",
@@ -2333,10 +2333,10 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-protocol",
- "base-runtime",
  "base-tx-manager",
  "derive_more",
  "futures",
@@ -2382,13 +2382,13 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-consensus-rpc",
  "base-metrics",
  "base-protocol",
  "base-retry",
- "base-runtime",
  "base-tx-manager",
  "derive_more",
  "eyre",
@@ -2408,9 +2408,9 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-protocol",
- "base-runtime",
  "derive_more",
  "futures",
  "mockall",
@@ -2568,6 +2568,7 @@ dependencies = [
  "base-challenger",
  "base-cli-utils",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-health",
@@ -2579,7 +2580,6 @@ dependencies = [
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
- "base-runtime",
  "base-tx-manager",
  "clap",
  "eyre",
@@ -2692,6 +2692,18 @@ dependencies = [
  "tracing",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "base-common-runtime-tasks"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "rand 0.9.5",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
 ]
 
 [[package]]
@@ -4741,18 +4753,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-runtime"
-version = "0.0.0"
-dependencies = [
- "futures",
- "rand 0.9.5",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tokio-util",
-]
-
-[[package]]
 name = "base-shadow-indexer"
 version = "0.0.0"
 dependencies = [
@@ -4919,6 +4919,7 @@ dependencies = [
  "base-builder-core",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -4942,7 +4943,6 @@ dependencies = [
  "base-prover-service",
  "base-prover-service-db",
  "base-prover-service-protocol",
- "base-runtime",
  "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-testing-support",
@@ -5102,10 +5102,10 @@ dependencies = [
  "async-trait",
  "backon",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-metrics",
- "base-runtime",
  "clap",
  "futures",
  "humantime",

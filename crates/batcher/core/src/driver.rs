@@ -10,7 +10,7 @@ use base_batcher_source::{
 };
 use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
-use base_runtime::Runtime;
+use base_common_runtime_tasks::Runtime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -634,7 +634,7 @@ mod tests {
     use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_common_types_rpc::TransactionReceipt;
     use base_protocol::{BlockInfo, Frame};
-    use base_runtime::{
+    use base_common_runtime_tasks::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
@@ -780,7 +780,7 @@ mod tests {
         }
     }
 
-    fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
+    fn driver_for_next_event<R: base_common_runtime_tasks::Runtime, TM: TxManager>(
         runtime: R,
         source_events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>,
         l1_events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>,

@@ -30,7 +30,7 @@ backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
-base-runtime = { workspace = true, features = ["tokio"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
@@ -42,7 +42,7 @@ alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
 
 [dev-dependencies]
 httpmock = { workspace = true, features = ["default"] }
-base-runtime = { workspace = true, features = ["test-utils"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 
 [features]

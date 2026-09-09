@@ -3,7 +3,7 @@
 use std::{marker::PhantomData, time::Duration};
 
 use async_trait::async_trait;
-use base_runtime::Clock;
+use base_common_runtime_tasks::Clock;
 use futures::{StreamExt, stream::BoxStream};
 
 use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, SourceError};
@@ -119,7 +119,7 @@ where
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use base_runtime::{Config, Runner};
+    use base_common_runtime_tasks::{Config, Runner};
     use futures::{StreamExt, stream::BoxStream};
 
     use super::*;

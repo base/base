@@ -16,7 +16,7 @@ use base_batcher_core::{
 };
 use base_batcher_source::{ChannelL1HeadSource, L1HeadEvent};
 use base_protocol::BlockInfo;
-use base_runtime::{
+use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };

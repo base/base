@@ -9,7 +9,7 @@ use base_proof_contracts::{
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
 };
 use base_proof_rpc::L2Provider;
-use base_runtime::Clock;
+use base_common_runtime_tasks::Clock;
 use base_tx_manager::TxManager;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};

@@ -38,7 +38,7 @@ async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["default"] }
 alloy-trie = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
-base-runtime = { workspace = true, features = ["tokio"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, optional = false}
 alloy-provider = { workspace = true, features = ["default"] }
@@ -59,6 +59,6 @@ test-utils = [
     "base-common-types-rpc",
     "async-trait",
     "base-protocol/test-utils",
-    "base-runtime/test-utils",
+    "base-common-runtime-tasks/test-utils",
     "serde_json",
 ]

@@ -20,7 +20,7 @@ use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
-use base_runtime::TokioRuntime;
+use base_common_runtime_tasks::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     StreamExt,

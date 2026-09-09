@@ -23,7 +23,7 @@ tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-base-runtime = { workspace = true, features = ["tokio"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-provider = { workspace = true, features = ["default"] }
@@ -40,7 +40,7 @@ alloy-json-rpc = { workspace = true }
 alloy-node-bindings = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
-base-runtime = { workspace = true, features = ["test-utils"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 tokio = { workspace = true, features = ["default", "macros", "net", "rt", "rt-multi-thread"] }
 
