@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::{Compact, add_arbitrary_tests, impl_compression_for_compact};
-use reth_prune_types::PruneSegment;
+use base_execution_state_types::PruneSegment;
 use base_execution_state_types::{StoredNibbles, StoredNibblesSubKey, *};
 use serde::{Deserialize, Serialize};
 
@@ -21,13 +21,13 @@ pub mod storage_sharded_key;
 
 pub use accounts::*;
 pub use bal::*;
-pub use blocks::*;
-pub use integer_list::IntegerList;
-pub use metadata::*;
 pub use base_execution_state_types::{
     AccountBeforeTx, ClientVersion, StaticFileBlockWithdrawals, StorageBeforeTx,
     StoredBlockBodyIndices, StoredBlockWithdrawals,
 };
+pub use blocks::*;
+pub use integer_list::IntegerList;
+pub use metadata::*;
 pub use sharded_key::ShardedKey;
 
 /// Macro that implements [`Encode`] and [`Decode`] for uint types.
@@ -261,8 +261,8 @@ mod tests {
     #[test]
     fn test_ensure_backwards_compatibility() {
         use base_common_types_chain::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
+        use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
         use reth_primitives_traits::Account;
-        use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
         use reth_stages_types::{
             AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint,
             ExecutionCheckpoint, HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint,

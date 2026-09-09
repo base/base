@@ -6,6 +6,8 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
+use base_common_runtime_tasks::{EventSender, EventStream};
+use base_execution_state_types::PruneModes;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use reth_primitives_traits::FastInstant as Instant;
@@ -13,11 +15,9 @@ use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileWriter,
 };
-use reth_prune_types::PruneModes;
 use reth_stages_types::StageId;
 use reth_static_file_types::{HighestStaticFiles, StaticFileTargets};
 use reth_storage_errors::provider::ProviderResult;
-use base_common_runtime_tasks::{EventSender, EventStream};
 use tracing::{debug, trace};
 
 use crate::{StaticFileProducerEvent, segments, segments::Segment};
@@ -230,10 +230,10 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
+    use base_execution_state_types::PruneModes;
     use reth_provider::{
         ProviderError, ProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
     };
-    use reth_prune_types::PruneModes;
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_static_file_types::{HighestStaticFiles, StaticFileSegment};
     use reth_testing_utils::generators::{self, BlockRangeParams};

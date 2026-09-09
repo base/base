@@ -4,7 +4,7 @@ use base_common_observability_metrics::{
     Metrics,
     metrics::{Gauge, Histogram},
 };
-use reth_prune_types::PruneSegment;
+use base_execution_state_types::PruneSegment;
 
 #[derive(Metrics)]
 #[metrics(scope = "pruner")]

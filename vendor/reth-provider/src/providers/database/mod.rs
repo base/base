@@ -17,12 +17,14 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
+use base_execution_state_types::{
+    MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment,
+};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use reth_db::{init_db, mdbx::DatabaseArguments};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment};
 use reth_stages_types::{PipelineTarget, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
@@ -1011,13 +1013,13 @@ mod tests {
     use alloy_primitives::{B256, TxNumber};
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_execution_state_types::{PruneMode, PruneModes};
     use reth_db::{
         mdbx::DatabaseArguments,
         test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},
     };
     use reth_db_api::{tables, transaction::DbTxMut};
     use reth_primitives_traits::SignerRecoverable;
-    use reth_prune_types::{PruneMode, PruneModes};
     use reth_storage_errors::provider::ProviderError;
     use reth_testing_utils::generators::{self, BlockParams, random_header};
 

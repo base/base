@@ -1,8 +1,8 @@
+use base_execution_state_types::{PruneMode, PrunePurpose, PruneSegment, SegmentOutput};
 use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
     BlockReader, DBProvider, StaticFileProviderFactory, StorageSettingsCache, TransactionsProvider,
 };
-use reth_prune_types::{PruneMode, PrunePurpose, PruneSegment, SegmentOutput};
 use reth_static_file_types::StaticFileSegment;
 use tracing::{debug, instrument};
 

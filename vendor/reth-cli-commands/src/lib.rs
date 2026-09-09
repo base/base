@@ -40,3 +40,6 @@ pub mod test_vectors;
 
 #[cfg(test)]
 pub mod test_utils;
+
+mod snapshots;
+pub use snapshots::{DEFAULT_DOWNLOAD_URL, Snapshots};

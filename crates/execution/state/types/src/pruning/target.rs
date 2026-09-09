@@ -82,7 +82,7 @@ pub struct PruneModes {
     /// Receipts pruning configuration by retaining only those receipts that contain logs emitted
     /// by the specified addresses, discarding others. This setting is overridden by `receipts`.
     ///
-    /// The [`BlockNumber`](`crate::BlockNumber`) represents the starting block from which point
+    /// The [`BlockNumber`](`alloy_primitives::BlockNumber`) represents the starting block from which point
     /// onwards the receipts are preserved.
     #[cfg_attr(
         any(test, feature = "serde"),

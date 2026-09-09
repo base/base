@@ -1,9 +1,9 @@
 use alloy_primitives::BlockNumber;
-use reth_provider::{BlockReader, PruneCheckpointReader, StaticFileProviderFactory};
-use reth_prune_types::{
+use base_execution_state_types::{
     PruneInterruptReason, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
     SegmentOutputCheckpoint,
 };
+use reth_provider::{BlockReader, PruneCheckpointReader, StaticFileProviderFactory};
 use reth_static_file_types::StaticFileSegment;
 use tracing::{debug, instrument};
 
@@ -131,12 +131,12 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::BlockNumber;
+    use base_execution_state_types::{PruneMode, PruneProgress, PruneSegment};
     use reth_exex_types::FinishedExExHeight;
     use reth_provider::{
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
         StaticFileWriter, test_utils::create_test_provider_factory,
     };
-    use reth_prune_types::{PruneMode, PruneProgress, PruneSegment};
     use reth_static_file_types::{
         DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
     };
@@ -242,7 +242,7 @@ mod tests {
             provider
                 .save_prune_checkpoint(
                     PruneSegment::TransactionLookup,
-                    reth_prune_types::PruneCheckpoint {
+                    base_execution_state_types::PruneCheckpoint {
                         block_number: Some(checkpoint_block),
                         tx_number: None,
                         prune_mode: test_case.tx_lookup_mode.unwrap(),

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use base_execution_state_types::PruneModes;
 use reth_config::PruneConfig;
 use reth_db_api::transaction::DbTxMut;
 use reth_exex_types::FinishedExExHeight;
@@ -8,7 +9,6 @@ use reth_provider::{
     PruneCheckpointWriter, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileProvider,
 };
-use reth_prune_types::PruneModes;
 use reth_storage_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 use tokio::sync::watch;
 
@@ -39,7 +39,7 @@ impl PrunerBuilder {
             .block_interval(pruner_config.block_interval)
             .delete_limit(pruner_config.delete_limit.unwrap_or(usize::MAX))
             .segments(pruner_config.segments);
-        if min_distance != reth_prune_types::MINIMUM_UNWIND_SAFE_DISTANCE {
+        if min_distance != base_execution_state_types::MINIMUM_UNWIND_SAFE_DISTANCE {
             builder.minimum_pruning_distance = Some(min_distance);
         }
         builder

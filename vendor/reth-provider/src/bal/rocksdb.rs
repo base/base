@@ -6,6 +6,8 @@ use std::{
 use alloy_eip7928::BAL_RETENTION_PERIOD_SLOTS;
 use alloy_eips::NumHash;
 use alloy_primitives::{BlockHash, BlockNumber, Bytes};
+use base_common_runtime_tasks::EventSender;
+use base_execution_state_types::PruneMode;
 use parking_lot::RwLock;
 use reth_db_api::{
     DatabaseError,
@@ -13,12 +15,10 @@ use reth_db_api::{
     table::{Decode, Decompress},
     tables,
 };
-use reth_prune_types::PruneMode;
 use reth_storage_api::{
     BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, RawBal,
 };
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use base_common_runtime_tasks::EventSender;
 
 use crate::providers::RocksDBProvider;
 

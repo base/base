@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use reth_prune_types::{PruneInterruptReason, PruneProgress};
+use base_execution_state_types::{PruneInterruptReason, PruneProgress};
 
 /// Limits a pruner run by either the number of entries (rows in the database) that can be deleted
 /// or the time it can run.

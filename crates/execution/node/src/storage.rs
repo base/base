@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use base_common_types_chain::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
-    use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
+    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
 
     #[test]
     fn test_ensure_backwards_compatibility() {

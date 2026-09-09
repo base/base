@@ -16,6 +16,10 @@ use base_common_types_chain::{
         withdrawal::Withdrawal,
     },
 };
+use base_execution_state_types::{PruneCheckpoint, PruneMode};
+use base_execution_state_types::{
+    StoredNibbles, StoredNibblesSubKey, hash_builder::HashBuilderState,
+};
 use eyre::{Context, Result};
 use proptest::{
     prelude::{ProptestConfig, RngCore},
@@ -30,14 +34,12 @@ use reth_db::{
 };
 use reth_fs_util as fs;
 use reth_primitives_traits::{Account, Log, LogData, StorageEntry};
-use reth_prune_types::{PruneCheckpoint, PruneMode};
 use reth_stages_types::{
     AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint, ExecutionCheckpoint,
     HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint, StageUnitCheckpoint,
     StorageHashingCheckpoint,
 };
 use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
-use base_execution_state_types::{StoredNibbles, StoredNibblesSubKey, hash_builder::HashBuilderState};
 
 pub const VECTORS_FOLDER: &str = "testdata/micro/compact";
 pub const VECTOR_SIZE: usize = 100;
@@ -97,7 +99,7 @@ compact_types!(
         Log,
         // BranchNodeCompact, // todo requires arbitrary
         TrieMask,
-        // reth_prune_types
+        // base_execution_state_types
         PruneCheckpoint,
         PruneMode,
         // reth_stages_types

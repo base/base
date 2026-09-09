@@ -6,10 +6,10 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
+use base_execution_state_types::PruneSegment;
 use metrics::{Counter, Histogram};
 use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_prune_types::PruneSegment;
 use reth_stages_types::StageId;
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,

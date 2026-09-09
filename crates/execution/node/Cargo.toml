@@ -71,11 +71,11 @@ reth-network-peers = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
-base-common-chain-activation = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
+base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
@@ -92,7 +92,6 @@ reth-trie = { workspace = true }
 alloy-genesis = { workspace = true  }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-prune-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-stages-types = { workspace = true }
 base-execution-rpc = { workspace = true }
@@ -101,6 +100,7 @@ base-common-network = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
+base-execution-state-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }

@@ -3,9 +3,9 @@
 use alloy_primitives::{U64, U256};
 use base_common_types_chain::ChainInfo;
 use base_common_types_rpc::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus};
+use base_execution_state_types::{PruneMode, PruneSegment};
 use futures::Future;
 use reth_network_api::NetworkInfo;
-use reth_prune_types::{PruneMode, PruneSegment};
 use reth_rpc_eth_types::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
 use reth_storage_api::{
     BlockNumReader, PruneCheckpointReader, StageCheckpointReader, TransactionsProvider,
@@ -181,7 +181,7 @@ pub type SignersForRpc<Provider> = parking_lot::RwLock<
 mod tests {
     use std::collections::HashMap;
 
-    use reth_prune_types::PruneCheckpoint;
+    use base_execution_state_types::PruneCheckpoint;
     use reth_storage_api::errors::provider::ProviderResult;
 
     use super::*;

@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, path::Path};
 
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
+use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use reth_config::config::{BlocksPerFileConfig, Config, PruneConfig, StaticFilesConfig};
 use reth_db::tables;
 use reth_db_api::transaction::{DbTx, DbTxMut};
 use reth_node_core::args::DefaultPruningValues;
-use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use reth_stages_types::StageCheckpoint;
 use tracing::info;
 

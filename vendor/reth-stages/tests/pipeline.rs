@@ -12,6 +12,7 @@ use base_common_types_chain::{
 };
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
+use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
 use reth_db_common::init::init_genesis;
 use reth_downloaders::{
@@ -32,7 +33,6 @@ use reth_provider::{
     StageCheckpointReader, StateWriter, StaticFileProviderFactory,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_prune_types::PruneModes;
 use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;

@@ -119,3 +119,11 @@ pub use storage_changes::StorageBeforeTx;
 
 mod client_version;
 pub use client_version::ClientVersion;
+
+mod pruning;
+pub use pruning::{
+    HistoryType, MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint,
+    PruneInterruptReason, PruneMode, PruneModes, PruneProgress, PrunePurpose, PruneSegment,
+    PruneSegmentError, PrunedSegmentInfo, PrunerEvent, PrunerOutput, ReceiptsLogPruneConfig,
+    SegmentOutput, SegmentOutputCheckpoint, UnwindTargetPrunedError,
+};

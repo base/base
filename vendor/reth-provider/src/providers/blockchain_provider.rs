@@ -12,6 +12,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_types_payload::ForkchoiceState;
+use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
@@ -21,7 +22,6 @@ use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
-use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{

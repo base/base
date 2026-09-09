@@ -51,6 +51,7 @@ mod tests {
     use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, SignableTransaction, TxLegacy};
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_db::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
         AccountsHistory,
@@ -68,7 +69,6 @@ mod tests {
         StaticFileProviderFactory, StorageReader,
         providers::{StaticFileProvider, StaticFileWriter},
     };
-    use reth_prune_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_stages_api::{
         ExecInput, ExecutionStageThresholds, PipelineTarget, Stage, StageCheckpoint, StageId,
     };
@@ -461,7 +461,7 @@ mod tests {
         let mut db_full = seed_data(90, true).unwrap();
         db_full.factory = db_full.factory.with_prune_modes(PruneModes {
             receipts: Some(PruneMode::Before(1)),
-            receipts_log_filter: reth_prune_types::ReceiptsLogPruneConfig(
+            receipts_log_filter: base_execution_state_types::ReceiptsLogPruneConfig(
                 std::collections::BTreeMap::from([(
                     alloy_primitives::Address::ZERO,
                     PruneMode::Before(1),

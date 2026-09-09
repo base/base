@@ -13,7 +13,7 @@
 //! # use reth_stages::Pipeline;
 //! # use reth_stages::sets::{OfflineStages};
 //! #
-//! # use reth_prune_types::PruneModes;
+//! # use base_execution_state_types::PruneModes;
 //! # use base_execution_evm_blocks::BaseEvmConfig;
 //! # use reth_provider::StaticFileProviderFactory;
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
@@ -39,10 +39,10 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_types::{PruneMode, PruneModes};
 use reth_config::config::StageConfig;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
 use reth_provider::HeaderSyncGapProvider;
-use reth_prune_types::{PruneMode, PruneModes};
 use reth_stages_api::Stage;
 use tokio::sync::watch;
 

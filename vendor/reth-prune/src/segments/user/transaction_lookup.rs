@@ -1,12 +1,12 @@
 use alloy_primitives::TxNumber;
+use base_execution_state_types::{
+    PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
+};
 use reth_db_api::{tables, transaction::DbTxMut};
 use reth_primitives_traits::SignedTransaction;
 use reth_provider::{
     BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
     StaticFileProviderFactory, TransactionsProviderExt,
-};
-use reth_prune_types::{
-    PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
 };
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::StorageSettingsCache;
@@ -205,9 +205,9 @@ mod tests {
 
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
+    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
     use reth_db_api::tables;
     use reth_provider::{DBProvider, DatabaseProviderFactory};
-    use reth_prune_types::{PruneCheckpoint, PruneMode, PruneProgress};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams};
 

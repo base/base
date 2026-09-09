@@ -27,7 +27,6 @@ alloy-eip2124 = { workspace = true }
 reth-cli-util = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-net-banlist = { workspace = true }
-reth-prune-types = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
@@ -38,6 +37,7 @@ reth-engine-primitives = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
+base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["mdbx"] }
 strum = { workspace = true, features = ["derive"] }

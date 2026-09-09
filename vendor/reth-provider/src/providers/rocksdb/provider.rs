@@ -9,6 +9,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, TxNumber,
     map::{AddressMap, HashMap},
 };
+use base_execution_state_types::PruneMode;
 use metrics::Label;
 use parking_lot::Mutex;
 use reth_chain_state::ExecutedBlock;
@@ -20,7 +21,6 @@ use reth_db_api::{
     tables,
 };
 use reth_primitives_traits::{BlockBody as _, FastInstant as Instant};
-use reth_prune_types::PruneMode;
 use reth_storage_errors::{
     db::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation, LogLevel},
     provider::{ProviderError, ProviderResult},

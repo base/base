@@ -1,9 +1,9 @@
+use base_execution_state_types::PruneModes;
 use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, providers::StaticFileProvider,
 };
-use reth_prune_types::PruneModes;
 use reth_storage_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 
 use crate::segments::{

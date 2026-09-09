@@ -1,5 +1,5 @@
+use base_execution_state_types::PruneSegmentError;
 use reth_provider::ProviderError;
-use reth_prune_types::PruneSegmentError;
 use reth_storage_errors::db::DatabaseError;
 use thiserror::Error;
 

@@ -741,6 +741,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_runtime::database::{AccountStatus, BundleAccount};
+    use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
     use reth_db_api::{
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
@@ -752,7 +753,6 @@ mod tests {
         test_utils::{create_test_provider_factory, create_test_provider_factory_with_chain_spec},
     };
     use reth_prune::PruneModes;
-    use reth_prune_types::{PruneMode, ReceiptsLogPruneConfig};
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators;
 

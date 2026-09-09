@@ -18,6 +18,9 @@ use base_common_types_chain::{
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
+use base_execution_state_types::{
+    MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
+};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
@@ -37,9 +40,6 @@ use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, Ex
 use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
     SealedHeader, StorageEntry,
-};
-use reth_prune_types::{
-    MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
 };
 use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;

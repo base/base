@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use core::ops::{Bound, RangeBounds};
 
+use base_execution_state_types::PruneModes;
 use reth_db_api::{
     DatabaseError,
     common::KeyValue,
@@ -8,7 +9,6 @@ use reth_db_api::{
     table::{Table, TableImporter},
     transaction::{DbTx, DbTxMut},
 };
-use reth_prune_types::PruneModes;
 use reth_storage_errors::provider::ProviderResult;
 
 /// Provides shared access to a database transaction.

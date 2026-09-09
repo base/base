@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-prune-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-common-types-chain = { workspace = true }
@@ -36,9 +35,8 @@ std = [
     "derive_more/std",
     "reth-primitives-traits/std",
     "thiserror/std",
-    "reth-prune-types/std",
+    "base-execution-state-types/std",
     "reth-static-file-types/std",
     "base-execution-state-memory/std",
     "base-common-types-chain/std",
-    "base-execution-state-types/std",
 ]

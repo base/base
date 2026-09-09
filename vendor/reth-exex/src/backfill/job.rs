@@ -5,18 +5,18 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
+use base_common_observability_tracing::tracing::{debug, trace};
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor,
 };
+use base_execution_state_types::PruneModes;
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
 };
-use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
-use base_common_observability_tracing::tracing::{debug, trace};
 
 use crate::StreamBackfillJob;
 

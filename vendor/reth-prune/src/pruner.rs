@@ -3,15 +3,15 @@
 use std::time::Duration;
 
 use alloy_primitives::BlockNumber;
+use base_common_runtime_tasks::{EventSender, EventStream};
+use base_execution_state_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
 use reth_exex_types::FinishedExExHeight;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     DBProvider, DatabaseProviderFactory, PruneCheckpointReader, PruneCheckpointWriter,
     StageCheckpointReader,
 };
-use reth_prune_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
 use reth_stages_types::StageId;
-use base_common_runtime_tasks::{EventSender, EventStream};
 use tokio::sync::watch;
 use tracing::{debug, instrument};
 

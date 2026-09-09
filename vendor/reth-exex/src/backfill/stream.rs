@@ -5,17 +5,17 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
+use base_common_observability_tracing::tracing::debug;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
+use base_execution_state_types::PruneModes;
 use futures::{
     StreamExt,
     stream::{FuturesOrdered, Stream},
 };
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReader, Chain, StateProviderFactory};
-use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
-use base_common_observability_tracing::tracing::debug;
 use tokio::task::JoinHandle;
 
 use super::job::BackfillJobResult;

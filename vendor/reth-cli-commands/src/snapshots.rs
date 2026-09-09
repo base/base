@@ -2,11 +2,11 @@
 
 use std::borrow::Cow;
 
-use reth_cli_commands::download::DownloadDefaults;
+use crate::download::DownloadDefaults;
+use base_execution_state_types::PruneMode;
 use reth_node_core::args::DefaultPruningValues;
-use reth_prune_types::PruneMode;
 
-pub(crate) const DEFAULT_DOWNLOAD_URL: &str = "https://chain.base.org/8453";
+pub const DEFAULT_DOWNLOAD_URL: &str = "https://chain.base.org/8453";
 const SNAPSHOT_API_URL: &str = "https://chain.base.org/api/snapshots";
 const FULL_HISTORY_DISTANCE: u64 = 1_339_200;
 
@@ -50,19 +50,6 @@ impl Snapshots {
         pruning_defaults.full_bodies_history_use_pre_merge = false;
         pruning_defaults.try_init().expect("failed to initialize pruning defaults");
     }
-}
-
-/// Initializes Reth's global snapshot download URLs and pruning defaults.
-///
-/// Use this in the unified `base` binary that need
-/// Reth's global download URLs initialized for snapshot downloads
-///
-/// This macro must be called from the binary crate to capture the correct URLs.
-#[macro_export]
-macro_rules! init_snapshots {
-    () => {
-        $crate::Snapshots::init_snapshots()
-    };
 }
 
 #[cfg(test)]

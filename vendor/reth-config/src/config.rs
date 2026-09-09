@@ -4,9 +4,9 @@ use std::{
     time::Duration,
 };
 
+use base_execution_state_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes};
 use reth_network_peers::TrustedPeer;
 use reth_network_types::{PeersConfig, SessionsConfig};
-use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes};
 use reth_stages_types::ExecutionStageThresholds;
 use reth_static_file_types::{StaticFileMap, StaticFileSegment};
 
@@ -626,10 +626,10 @@ pub mod tests {
     use std::{collections::BTreeMap, path::Path, str::FromStr, time::Duration};
 
     use alloy_primitives::Address;
-    use reth_network_peers::TrustedPeer;
-    use reth_prune_types::{
+    use base_execution_state_types::{
         MINIMUM_UNWIND_SAFE_DISTANCE, PruneMode, PruneModes, ReceiptsLogPruneConfig,
     };
+    use reth_network_peers::TrustedPeer;
 
     use super::{Config, EXTENSION};
     use crate::PruneConfig;

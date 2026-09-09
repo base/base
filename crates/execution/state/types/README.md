@@ -1,7 +1,7 @@
 # `base-execution-state-types`
 
 Shared execution-state and trie data: hashed accounts and storage, trie updates, proof targets,
-intermediate hash-builder state, persisted account and storage changes, block indices, and serialization helpers.
+intermediate hash-builder state, persisted account and storage changes, block indices, pruning policies and checkpoints, and serialization helpers.
 
 These types are used by persistent providers, trie computation, synchronization, and execution
 consumers. Memory state is provided by `base-execution-state-memory`; provider and database

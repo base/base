@@ -27,7 +27,6 @@ alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
@@ -35,6 +34,7 @@ reth-storage-overlay = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
+base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["mdbx"] }
 serde_json = { workspace = true, features = ["std"] }
@@ -82,7 +82,7 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
     "reth-db-api/test-utils",
-    "reth-prune-types/test-utils",
+    "base-execution-state-types/test-utils",
     "reth-stages-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "dep:tokio",

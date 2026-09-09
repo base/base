@@ -28,11 +28,11 @@ reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-prune-types = { workspace = true }
 base-node-context = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
+base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
@@ -72,7 +72,6 @@ serde = [
     "secp256k1/serde",
     "reth-primitives-traits/serde",
     "base-execution-state-types/serde",
-    "reth-prune-types/serde",
     "reth-config/serde",
     "reth-chain-state/serde",
 ]

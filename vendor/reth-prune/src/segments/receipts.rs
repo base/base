@@ -4,12 +4,14 @@
 //!   user-configured settings (for example, on a full node or with a custom prune config)
 
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_types::{
+    PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
+};
 use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointWriter, StaticFileProviderFactory,
     StorageSettingsCache, TransactionsProvider, errors::provider::ProviderResult,
 };
-use reth_prune_types::{PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint};
 use reth_static_file_types::StaticFileSegment;
 use tracing::{debug, trace};
 

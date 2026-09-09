@@ -23,6 +23,6 @@ pub use limiter::PruneLimiter;
 pub use pruner::{Pruner, PrunerResult, PrunerWithFactory, PrunerWithResult};
 // Re-export prune types
 #[doc(inline)]
-pub use reth_prune_types::*;
+pub use base_execution_state_types::*;
 
 use crate::metrics::Metrics;

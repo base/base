@@ -1,9 +1,11 @@
+use base_execution_state_types::{
+    PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
+};
 use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
     BlockReader, DBProvider, PruneCheckpointWriter, StaticFileProviderFactory,
     StorageSettingsCache, TransactionsProvider, errors::provider::ProviderResult,
 };
-use reth_prune_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment, SegmentOutput};
 use tracing::instrument;
 
 use crate::{

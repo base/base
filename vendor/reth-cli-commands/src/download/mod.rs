@@ -102,6 +102,7 @@ use std::{
 use crate::ChainSpecParser;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use archive::run_modular_downloads;
+use base_execution_state_types::PruneMode;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
 use extract::stream_and_extract;
@@ -115,7 +116,6 @@ use reth_db::{Database, init_db};
 use reth_db_api::transaction::DbTx;
 use reth_fs_util as fs;
 use reth_node_core::args::DefaultPruningValues;
-use reth_prune_types::PruneMode;
 use source::{
     discover_manifest_url, fetch_manifest_from_source, fetch_snapshot_api_entries,
     print_snapshot_listing, resolve_manifest_base_url,

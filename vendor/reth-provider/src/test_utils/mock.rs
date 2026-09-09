@@ -21,6 +21,7 @@ use base_common_types_chain::{
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
 use reth_db::transaction::{DbTx, DbTxMut};
@@ -33,7 +34,6 @@ use reth_primitives_traits::{
     Account, Block, BlockBody, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
     SignerRecoverable, StorageEntry,
 };
-use reth_prune_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_storage_api::{
     BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,

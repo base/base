@@ -15,19 +15,19 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
 #[cfg(feature = "db-api")]
-use reth_db_api::mock::TxMock;
+use base_execution_state_types::PruneModes;
 use base_execution_state_types::{AccountBeforeTx, StoredBlockBodyIndices};
-use reth_execution_types::ExecutionOutcome;
-use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
-#[cfg(feature = "db-api")]
-use reth_prune_types::PruneModes;
-use reth_prune_types::{PruneCheckpoint, PruneSegment};
-use reth_stages_types::{StageCheckpoint, StageId};
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
+use base_execution_state_types::{PruneCheckpoint, PruneSegment};
+#[cfg(feature = "db-api")]
+use reth_db_api::mock::TxMock;
+use reth_execution_types::ExecutionOutcome;
+use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
+use reth_stages_types::{StageCheckpoint, StageId};
+use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 pub use crate::bal::NoopBalStore;
 use crate::{

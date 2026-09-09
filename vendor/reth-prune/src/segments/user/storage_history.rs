@@ -1,9 +1,9 @@
 use alloy_primitives::BlockNumber;
-use reth_db_api::transaction::DbTxMut;
-use reth_provider::{DBProvider, RocksDBProviderFactory, StaticFileProviderFactory};
-use reth_prune_types::{
+use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
 };
+use reth_db_api::transaction::DbTxMut;
+use reth_provider::{DBProvider, RocksDBProviderFactory, StaticFileProviderFactory};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{StorageChangeSetReader, StorageSettingsCache};
 use rustc_hash::FxHashMap;
@@ -180,9 +180,9 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
+    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
     use reth_db_api::{BlockNumberList, tables};
     use reth_provider::{DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
-    use reth_prune_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_storage_api::StorageSettingsCache;
     use reth_testing_utils::generators::{

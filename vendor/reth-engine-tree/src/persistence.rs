@@ -402,6 +402,7 @@ impl Drop for ServiceGuard {
 mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
+    use base_execution_state_types::PruneMode;
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
     use reth_db_api::Database;
     use reth_db_common::init::init_genesis;
@@ -414,7 +415,6 @@ mod tests {
         test_utils::create_test_provider_factory,
     };
     use reth_prune::Pruner;
-    use reth_prune_types::PruneMode;
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;

@@ -18,7 +18,7 @@
 //! # use reth_network_p2p::test_utils::{TestBodiesClient, TestHeadersClient};
 //! # use alloy_primitives::B256;
 //! #
-//! # use reth_prune_types::PruneModes;
+//! # use base_execution_state_types::PruneModes;
 //! # use reth_network_peers::PeerId;
 //! # use reth_stages::Pipeline;
 //! # use reth_stages::sets::DefaultStages;

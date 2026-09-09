@@ -14,6 +14,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, Header,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_execution_state_types::PruneSegment;
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
 use reth_db::{
@@ -34,7 +35,6 @@ use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
     AlloyBlockHeader as _, RecoveredBlock, SealedHeader, StorageEntry, dashmap::DashMap,
 };
-use reth_prune_types::PruneSegment;
 use reth_stages_types::PipelineTarget;
 use reth_static_file_types::{
     DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles, SegmentHeader, SegmentRangeInclusive,
@@ -101,7 +101,7 @@ pub struct StaticFileWriteCtx {
     /// The current chain tip block number (for pruning).
     pub tip: BlockNumber,
     /// The prune mode for receipts, if any.
-    pub receipts_prune_mode: Option<reth_prune_types::PruneMode>,
+    pub receipts_prune_mode: Option<base_execution_state_types::PruneMode>,
     /// Whether receipts are prunable (based on storage settings and prune distance).
     pub receipts_prunable: bool,
 }
@@ -1449,7 +1449,7 @@ impl StaticFileProvider {
     }
 
     /// Returns `true` if the given prune segment has a checkpoint with
-    /// [`reth_prune_types::PruneMode::Full`], indicating all data for this segment has been
+    /// [`base_execution_state_types::PruneMode::Full`], indicating all data for this segment has been
     /// intentionally deleted.
     fn is_segment_fully_pruned<Provider>(provider: &Provider, segment: PruneSegment) -> bool
     where
