@@ -860,7 +860,7 @@ mod tests {
     fn test_memory_access() {
         let code = r#"{
             depths: [],
-            step: function(log) { this.depths.push(log.memory.slice_range(-1,-2)); },
+            step: function(log) { this.depths.push(log.memory.slice(-1,-2)); },
             fault: function() {},
             result: function() { return this.depths; }
         }"#;
@@ -872,7 +872,7 @@ mod tests {
     fn test_memory_slice_rejects_non_finite_indexes() {
         let code = r#"{
             depths: [],
-            step: function(log) { this.depths.push(log.memory.slice_range(Infinity, NaN)); },
+            step: function(log) { this.depths.push(log.memory.slice(Infinity, NaN)); },
             fault: function() {},
             result: function() { return this.depths; }
         }"#;
@@ -884,7 +884,7 @@ mod tests {
     fn test_memory_slice_rejects_non_finite_end() {
         let code = r#"{
             depths: [],
-            step: function(log) { this.depths.push(log.memory.slice_range(0, Infinity)); },
+            step: function(log) { this.depths.push(log.memory.slice(0, Infinity)); },
             fault: function() {},
             result: function() { return this.depths; }
         }"#;
@@ -896,7 +896,7 @@ mod tests {
     fn test_memory_slice_accepts_bigint_index() {
         let code = r#"{
             res: [],
-            step: function(log) { this.res.push(log.memory.slice_range(0, 0n)); },
+            step: function(log) { this.res.push(log.memory.slice(0, 0n)); },
             fault: function() {},
             result: function() { return this.res; }
         }"#;
@@ -908,7 +908,7 @@ mod tests {
     fn test_memory_slice_rejects_bigint_index_overflow() {
         let code = r#"{
             depths: [],
-            step: function(log) { this.depths.push(log.memory.slice_range(0, 340282366920938463463374607431768211455n)); },
+            step: function(log) { this.depths.push(log.memory.slice(0, 340282366920938463463374607431768211455n)); },
             fault: function() {},
             result: function() { return this.depths; }
         }"#;
@@ -1087,7 +1087,7 @@ mod tests {
             step: function(log) {
                 var op = log.op.toString();
                 if (op === 'MSTORE8' || op === 'STOP') {
-                    this.res.push(log.memory.slice_range(0, 2))
+                    this.res.push(log.memory.slice(0, 2))
                 }
             },
             fault: function() {},
@@ -1106,7 +1106,7 @@ mod tests {
         // already completed. The transaction succeeds but the trace result is empty.
         let code = r#"{
             res: [],
-            step: function(log) { if (log.op.toString() === 'STOP') { this.res.push(log.memory.slice_range(5, 1025 * 1024)) } },
+            step: function(log) { if (log.op.toString() === 'STOP') { this.res.push(log.memory.slice(5, 1025 * 1024)) } },
             fault: function() {},
             result: function() { return this.res }
         }"#;
@@ -1242,7 +1242,7 @@ mod tests {
             res: [],
             step: function(log) {
                 if ((log.stack.length() > 0) && log.memory.length() >= log.stack.peek(0)) {
-                    this.res.push(log.memory.slice_range(0, log.stack.peek(0)));
+                    this.res.push(log.memory.slice(0, log.stack.peek(0)));
                 }
             },
             fault: function() {},
