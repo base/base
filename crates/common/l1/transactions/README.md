@@ -144,7 +144,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{bytes, Address, U256};
 use base_common_client_ethereum::RootProvider;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_l1_transactions::{
     BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManagerConfig,
 };

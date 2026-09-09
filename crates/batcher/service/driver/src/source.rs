@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use crate::{PollingSource, SourceError};
-use base_common_client_ethereum::Provider;
 use async_trait::async_trait;
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::Provider;
 use base_common_types_chain::BaseBlock;
 
 /// Fetches full L2 blocks from an RPC provider.

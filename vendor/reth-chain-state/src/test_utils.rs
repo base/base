@@ -8,7 +8,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, BlockNumber, U256, map::B256HashMap};
 use alloy_signer::SignerSync;
 use base_common_chain_config::BaseChainSpec;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{
     BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559,

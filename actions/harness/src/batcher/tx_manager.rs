@@ -6,11 +6,11 @@ use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
 use base_batcher_service_driver::L1HeadEvent;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_l1_transactions::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
 };
-use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{
     SignableTransaction, TxEip1559, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
 };
@@ -456,8 +456,8 @@ impl TxManager for L1MinerTxManager {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
+    use base_common_client_ethereum::PrivateKeySigner;
     use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
-    use base_common_network::PrivateKeySigner;
 
     use super::L1MinerTxManager;
     use crate::L1Miner;

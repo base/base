@@ -12,8 +12,6 @@ use std::{
 
 use alloy_hardforks_legacy::EthereumHardfork;
 use alloy_primitives::{Address, ChainId, hex};
-use alloy_signer::Signer;
-use base_common_network::{EthereumWallet, PrivateKeySigner};
 use k256::{SecretKey as K256SecretKey, ecdsa::SigningKey};
 use url::Url;
 
@@ -31,7 +29,6 @@ pub struct AnvilInstance {
     child: Child,
     private_keys: Vec<K256SecretKey>,
     addresses: Vec<Address>,
-    wallet: Option<EthereumWallet>,
     ipc_path: Option<String>,
     host: String,
     port: u16,
@@ -115,11 +112,6 @@ impl AnvilInstance {
     /// Returns the Websocket endpoint url of this instance
     pub fn ws_endpoint_url(&self) -> Url {
         Url::parse(&self.ws_endpoint()).unwrap()
-    }
-
-    /// Returns the [`EthereumWallet`] of this instance generated from anvil dev accounts.
-    pub fn wallet(&self) -> Option<EthereumWallet> {
-        self.wallet.clone()
     }
 }
 
@@ -467,7 +459,6 @@ impl Anvil {
         let mut addresses = Vec::new();
         let mut is_private_key = false;
         let mut chain_id = None;
-        let mut wallet = None;
         loop {
             if start + timeout <= Instant::now() {
                 let _ = child.kill();
@@ -506,19 +497,6 @@ impl Anvil {
                     chain_id = Some(chain);
                 };
             }
-
-            if !private_keys.is_empty() {
-                let mut private_keys = private_keys.iter().map(|key| {
-                    let mut signer = PrivateKeySigner::from(key.clone());
-                    signer.set_chain_id(chain_id);
-                    signer
-                });
-                let mut w = EthereumWallet::new(private_keys.next().unwrap());
-                for pk in private_keys {
-                    w.register_signer(pk);
-                }
-                wallet = Some(w);
-            }
         }
 
         if self.keep_stdout {
@@ -530,7 +508,6 @@ impl Anvil {
             child,
             private_keys,
             addresses,
-            wallet,
             ipc_path: self.ipc_path,
             host: self.host.unwrap_or_else(|| "localhost".to_string()),
             port,

@@ -68,14 +68,12 @@ base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-shadow-indexer = { workspace = true, features = ["default"] }
-base-common-network = { workspace = true, features = ["mnemonic"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 prometheus-scraper = { version = "0.2.0", default-features = false }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
-base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
@@ -86,6 +84,7 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
 base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 tokio = { workspace = true, features = ["default", "full", "rt-multi-thread", "macros"] }
+base-common-client-ethereum = {workspace = true, features = ["default", "mnemonic", "reqwest"]}
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 
 [dev-dependencies]

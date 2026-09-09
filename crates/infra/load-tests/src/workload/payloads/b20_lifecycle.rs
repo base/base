@@ -3,11 +3,13 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_sol_types::{SolCall, SolValue};
+use base_common_client_ethereum::{Ethereum, EthereumWallet, TransactionBuilder};
 use base_common_client_ethereum::{PendingTransactionBuilder, Provider};
 use base_common_types_rpc::TransactionRequest;
-use alloy_sol_types::{SolCall, SolValue};
-use base_common_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use base_execution_evm_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
+use base_execution_evm_precompiles::{
+    B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory,
+};
 use futures::{StreamExt, stream};
 use tracing::{info, trace, warn};
 

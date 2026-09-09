@@ -5,8 +5,8 @@ use std::{
     time::Duration,
 };
 
+use crate::BlockResponse as _;
 use alloy_eips::BlockNumberOrTag;
-use base_common_types_rpc::HeaderResponse;
 use alloy_primitives::{B256, U64};
 use alloy_rpc_client::RpcClient;
 use alloy_transport::{
@@ -14,7 +14,7 @@ use alloy_transport::{
     layers::{RetryBackoffLayer, RetryPolicy},
 };
 use base_common_types_chain::BlockHeader;
-use base_common_network::BlockResponse as _;
+use base_common_types_rpc::HeaderResponse;
 use base_common_types_rpc::{Block, Filter, Log};
 
 use crate::{BlockLogs, Provider, ProviderBuilder};
@@ -262,7 +262,7 @@ pub(crate) fn log(number: u64, hash_last_byte: u8, index: u64) -> Log {
 }
 
 pub(crate) fn assert_batch(
-    block_logs: &BlockLogs<base_common_network::Ethereum>,
+    block_logs: &BlockLogs<crate::Ethereum>,
     number: u64,
     hash_last_byte: u8,
     removed: bool,

@@ -1,8 +1,8 @@
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B256, Signature, U256};
 use alloy_signer::SignerSync;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::BaseBlock;
-use base_common_network::PrivateKeySigner;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     CancunPayloadFields, NetworkPayloadEnvelope, PayloadHash, PraguePayloadFields,

@@ -34,11 +34,10 @@ path = "src/lib.rs"
 [dependencies]
 thiserror = { workspace = true }
 alloy-json-abi = { workspace = true }
-base-common-client-ethereum = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
-base-common-network = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-common-client-ethereum = {workspace = true}
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["default"] }
@@ -53,10 +52,9 @@ serde_json = { workspace = true, features = [
 
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
-base-common-network = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
-base-common-client-ethereum = { workspace = true, features = ["anvil-node"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
+base-common-client-ethereum = {workspace = true, features = ["anvil-node"]}
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]

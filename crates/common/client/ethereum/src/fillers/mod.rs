@@ -16,7 +16,7 @@
 //! To layer fillers, a utility filler is provided called [`JoinFill`], which is a composition of
 //! two fillers, left and right. The left filler is called before the right filler.
 //!
-//! [`Provider`]: crate::Provider
+//! [`Provider`]: base_common_client_ethereum::Provider
 
 mod chain_id;
 use std::borrow::Cow;
@@ -46,11 +46,11 @@ pub use gas::{
 mod join_fill;
 use std::marker::PhantomData;
 
+use crate::{Ethereum, Network};
 use alloy_json_rpc::RpcError;
 use alloy_primitives::{Bytes, U64};
 use alloy_transport::{TransportError, TransportResult};
 use async_trait::async_trait;
-use base_common_network::{Ethereum, Network};
 use base_common_types_rpc::{
     AccessListResult, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Filter,
     FilterChanges, Log, StorageValuesRequest, StorageValuesResponse,
@@ -294,7 +294,7 @@ pub trait TxFiller<N: Network = Ethereum>: Clone + Send + Sync + std::fmt::Debug
 /// Users should NOT use this struct directly. Instead, use
 /// [`ProviderBuilder::filler`] to construct and apply it to a stack.
 ///
-/// [`ProviderBuilder::filler`]: crate::ProviderBuilder::filler
+/// [`ProviderBuilder::filler`]: base_common_client_ethereum::ProviderBuilder::filler
 #[derive(Clone, Debug)]
 pub struct FillProvider<F, P, N = Ethereum>
 where
@@ -375,7 +375,7 @@ where
     /// # use alloy_primitives::{Address, U256};
     /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use base_common_types_rpc::TransactionRequest;
-    /// # use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
+    /// # use base_common_client_ethereum::{NetworkTransactionBuilder, TransactionBuilder};
     ///
     /// # #[cfg(feature = "anvil-node")]
     /// async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -857,7 +857,7 @@ impl RecommendedFillers for Ethereum {
     }
 }
 
-impl RecommendedFillers for base_common_network::Base {
+impl RecommendedFillers for crate::Base {
     type RecommendedFillers = JoinFill<GasFiller, JoinFill<NonceFiller, ChainIdFiller>>;
 
     fn recommended_fillers() -> Self::RecommendedFillers {

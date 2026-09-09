@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use crate::Network;
 use alloy_chains::NamedChain;
-use base_common_network::Network;
 
 use crate::{Provider, ProviderLayer};
 

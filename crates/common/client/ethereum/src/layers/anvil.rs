@@ -3,8 +3,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use crate::{Ethereum, EthereumWallet, Network, PrivateKeySigner};
 use alloy_node_bindings::{Anvil, AnvilInstance};
-use base_common_network::{Ethereum, Network};
+use alloy_signer::Signer;
 use reqwest::Url;
 
 use crate::{Provider, ProviderLayer, RootProvider};
@@ -21,6 +22,21 @@ pub struct AnvilLayer {
 }
 
 impl AnvilLayer {
+    /// Builds a wallet from the node's dev accounts with its configured chain ID.
+    pub fn wallet(&self) -> Option<EthereumWallet> {
+        let instance = self.instance();
+        let mut signers = instance.keys().iter().map(|key| {
+            let mut signer = PrivateKeySigner::from(key.clone());
+            signer.set_chain_id(Some(instance.chain_id()));
+            signer
+        });
+        let mut wallet = EthereumWallet::new(signers.next()?);
+        for signer in signers {
+            wallet.register_signer(signer);
+        }
+        Some(wallet)
+    }
+
     /// Starts the anvil instance, or gets a reference to the existing instance.
     pub fn instance(&self) -> &Arc<AnvilInstance> {
         self.instance.get_or_init(|| Arc::new(self.anvil.clone().spawn()))

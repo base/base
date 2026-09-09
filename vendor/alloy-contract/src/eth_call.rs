@@ -4,7 +4,7 @@ use alloy_dyn_abi::{DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_common_network::Network;
+use base_common_client_ethereum::Network;
 use base_common_types_rpc::{
     BlockId, BlockOverrides,
     state::{AccountOverride, StateOverride},
@@ -46,7 +46,10 @@ where
     D: CallDecoder,
 {
     /// Create a new [`EthCall`].
-    pub const fn new(inner: base_common_client_ethereum::EthCall<N, Bytes>, decoder: &'coder D) -> Self {
+    pub const fn new(
+        inner: base_common_client_ethereum::EthCall<N, Bytes>,
+        decoder: &'coder D,
+    ) -> Self {
         Self { inner, decoder }
     }
 }

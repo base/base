@@ -15,9 +15,9 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
+use base_common_client_ethereum::{Base, ReceiptResponse};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_rpc::{BlockId, BlockNumberOrTag};
-use base_common_network::{Base, ReceiptResponse};
 use futures::{StreamExt, stream};
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -487,7 +487,7 @@ impl BlockWatcher {
 
     /// Returns the full RPC millisecond timestamp, or derives it from legacy seconds.
     pub fn block_timestamp_ms(
-        block: &<Base as base_common_network::Network>::BlockResponse,
+        block: &<Base as base_common_client_ethereum::Network>::BlockResponse,
     ) -> u64 {
         block.header.timestamp_ms.unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000))
     }
@@ -826,8 +826,8 @@ mod tests {
     fn rpc_block(
         timestamp: u64,
         timestamp_ms: Option<u64>,
-    ) -> <Base as base_common_network::Network>::BlockResponse {
-        let block = <Base as base_common_network::Network>::BlockResponse::default();
+    ) -> <Base as base_common_client_ethereum::Network>::BlockResponse {
+        let block = <Base as base_common_client_ethereum::Network>::BlockResponse::default();
         let mut json = serde_json::to_value(block).unwrap();
         json["timestamp"] = serde_json::json!(format!("0x{timestamp:x}"));
         if let Some(timestamp_ms) = timestamp_ms {

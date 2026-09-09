@@ -10,10 +10,11 @@ use std::{
 };
 
 use alloy_primitives::{B256, b256};
-use base_common_client_ethereum::Provider;
 use backon::Retryable;
 use base_common_chain_config::RollupConfig;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
+use base_common_client_ethereum::Provider;
+use base_common_runtime_tasks::RetryConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
@@ -23,7 +24,6 @@ use base_consensus_gossip::{
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
-use base_common_runtime_tasks::RetryConfig;
 use clap::Parser;
 use discv5::enr::k256;
 use eyre::{Result, WrapErr};

@@ -3,11 +3,11 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::{B256, Bytes, Sealable};
-use base_common_client_ethereum::{Provider, RootProvider, network::primitives::BlockTransactions};
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};
 use base_common_chain_config::RollupConfig;
+use base_common_client_ethereum::{Provider, RootProvider, primitives::BlockTransactions};
 use base_common_types_chain::Header;
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_execution_evm_runtime::BaseEvmFactory;

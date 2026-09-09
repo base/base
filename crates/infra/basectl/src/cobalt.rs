@@ -7,15 +7,14 @@ use std::{
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_common_client_ethereum::{
-    Network, Provider, ProviderBuilder,
-    network::{ReceiptResponse, TransactionResponse},
-};
 use alloy_rpc_client::RpcClient;
 use alloy_sol_types::SolCall;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{
+    Network, Provider, ProviderBuilder, ReceiptResponse, TransactionResponse,
+};
 use base_common_types_chain::Predeploys;
 use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use base_consensus_rpc::RollupNodeApiClient;

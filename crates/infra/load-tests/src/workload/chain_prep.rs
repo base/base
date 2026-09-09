@@ -3,10 +3,10 @@
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_common_client_ethereum::Provider;
-use base_common_types_rpc::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
-use base_common_network::TransactionBuilder;
+use base_common_client_ethereum::Provider;
+use base_common_client_ethereum::TransactionBuilder;
+use base_common_types_rpc::TransactionRequest;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{trace, warn};
 use url::Url;

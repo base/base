@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use crate::{Network, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_transport::TransportResult;
 use async_trait::async_trait;
-use base_common_network::{Network, TransactionBuilder};
 use dashmap::DashMap;
 use futures::lock::Mutex;
 
@@ -107,10 +107,10 @@ impl NonceManager for CachedNonceManager {
 /// # Example
 ///
 /// ```
-/// # use base_common_network::{Ethereum};
+/// # use base_common_client_ethereum::{Ethereum};
 /// # use base_common_types_rpc::TransactionRequest;
 /// # use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
-/// # use base_common_network::PrivateKeySigner;
+/// # use base_common_client_ethereum::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
 /// let provider = ProviderBuilder::<_, _, Ethereum>::default()
@@ -150,7 +150,7 @@ impl<M: NonceManager> NonceFiller<M> {
     /// [`CachedNonceManager`] will fetch the transaction count for any new account it sees,
     /// store it locally, and increment the locally stored nonce as transactions are filled,
     /// reducing the number of RPC calls. Reservation happens before broadcast and also applies to
-    /// direct [`FillProvider::fill`](crate::fillers::FillProvider::fill) calls.
+    /// direct [`FillProvider::fill`](base_common_client_ethereum::fillers::FillProvider::fill) calls.
     pub fn cached() -> NonceFiller<CachedNonceManager> {
         NonceFiller { nonce_manager: CachedNonceManager::default() }
     }

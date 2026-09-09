@@ -1,12 +1,12 @@
 use std::{borrow::Cow, sync::Arc};
 
+use crate::{Ethereum, Network};
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, U64, U128, U256,
 };
 use alloy_rpc_client::{ClientRef, NoParams, WeakClient};
 use alloy_transport::TransportResult;
-use base_common_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
 use base_common_types_rpc::pubsub::{Params, SubscriptionKind};
 use base_common_types_rpc::{

@@ -114,7 +114,7 @@ impl<W: Wordlist> MnemonicBuilder<W> {
     /// # Examples
     ///
     /// ```
-    /// use base_common_network::{MnemonicBuilder, coins_bip39::English};
+    /// use base_common_client_ethereum::{MnemonicBuilder, coins_bip39::English};
     ///
     /// let signer = MnemonicBuilder::<English>::default()
     ///     .phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
@@ -135,7 +135,7 @@ impl<W: Wordlist> MnemonicBuilder<W> {
     /// # Examples
     ///
     /// ```
-    /// use base_common_network::{coins_bip39::English, MnemonicBuilder};
+    /// use base_common_client_ethereum::{coins_bip39::English, MnemonicBuilder};
     ///
     /// let signer = MnemonicBuilder::<English>::default().word_count(24).build_random()?;
     /// # Ok::<_, Box<dyn std::error::Error>>(())

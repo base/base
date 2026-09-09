@@ -12,10 +12,10 @@ use std::{
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Bytes, TxHash, U256};
-use base_common_client_ethereum::RootProvider;
 use alloy_signer::SignerSync;
+use base_common_client_ethereum::RootProvider;
+use base_common_client_ethereum::{Ethereum, PrivateKeySigner, TransactionBuilder};
 use base_common_l1_transactions::NonceManager;
-use base_common_network::{Ethereum, PrivateKeySigner, TransactionBuilder};
 use base_common_types_chain::transaction::SignableTransaction;
 use base_common_types_rpc::TransactionRequest;
 use base_execution_txpool::ValidityPredicate;
@@ -1314,7 +1314,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 

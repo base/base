@@ -9,13 +9,13 @@ use std::{
 use std::{num::NonZeroU64, path::PathBuf};
 
 use alloy_primitives::B256;
-use base_common_client_ethereum::RootProvider;
 use alloy_rpc_client::RpcClient;
 #[cfg(feature = "upgrade-signal")]
 use base_common_chain_config::{
     BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation,
 };
-use base_common_network::{Base, Ethereum, PrivateKeySigner};
+use base_common_client_ethereum::RootProvider;
+use base_common_client_ethereum::{Base, Ethereum, PrivateKeySigner};
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;

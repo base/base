@@ -4,10 +4,10 @@ use std::{
     sync::Arc,
 };
 
+use crate::{Network, TransactionBuilder, TransactionBuilder4844};
 use alloy_eips::eip4844::BLOB_TX_MIN_BLOB_GASPRICE;
 use alloy_json_rpc::RpcError;
 use alloy_transport::TransportResult;
-use base_common_network::{Network, TransactionBuilder, TransactionBuilder4844};
 use base_common_types_rpc::BlockNumberOrTag;
 use futures::FutureExt;
 
@@ -56,10 +56,10 @@ pub enum GasFillable {
 /// # Example
 ///
 /// ```
-/// # use base_common_network::{Ethereum};
+/// # use base_common_client_ethereum::{Ethereum};
 /// # use base_common_types_rpc::TransactionRequest;
 /// # use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
-/// # use base_common_network::PrivateKeySigner;
+/// # use base_common_client_ethereum::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
 /// let provider = ProviderBuilder::<_, _, Ethereum>::default()
@@ -343,10 +343,10 @@ where
 #[cfg(feature = "reqwest")]
 #[cfg(test)]
 mod tests {
+    use crate::Ethereum;
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
     use alloy_primitives::{U256, address};
     use base_common_types_chain::{SidecarBuilder, SimpleCoder, Transaction};
-    use base_common_network::Ethereum;
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;

@@ -4,9 +4,9 @@
 //!
 //! This module is not public API.
 use alloy_primitives::{Address, Bytes, U256};
-use base_common_client_ethereum::{MulticallItem, Provider};
 use alloy_sol_types::SolCall;
-use base_common_network::{Network, TransactionBuilder};
+use base_common_client_ethereum::{MulticallItem, Provider};
+use base_common_client_ethereum::{Network, TransactionBuilder};
 
 use super::SolCallBuilder;
 
@@ -30,8 +30,10 @@ impl<P: Provider<N>, C: SolCall, N: Network> MulticallItem for SolCallBuilder<P,
 mod tests {
     use DummyThatFails::DummyThatFailsInstance;
     use alloy_primitives::{U256, address, b256};
-    use base_common_client_ethereum::{CallItem, Failure, MulticallBuilder, Provider, ProviderBuilder};
     use alloy_sol_types::sol;
+    use base_common_client_ethereum::{
+        CallItem, Failure, MulticallBuilder, Provider, ProviderBuilder,
+    };
 
     use super::*;
 

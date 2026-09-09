@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use crate::{BlockResponse, Network};
 use alloy_json_rpc::RpcError;
 use alloy_primitives::{
     B256, TxHash,
@@ -15,7 +16,6 @@ use alloy_primitives::{
 };
 use alloy_transport::{TransportError, utils::Spawnable};
 use base_common_types_chain::BlockHeader;
-use base_common_network::{BlockResponse, Network};
 use futures::{FutureExt, Stream, future::pending, stream::StreamExt};
 use tokio::{
     select,
@@ -61,7 +61,7 @@ pub enum PendingTransactionError {
 /// Send and wait for a transaction to be confirmed 2 times, with a timeout of 60 seconds:
 ///
 /// ```no_run
-/// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider, tx: base_common_types_rpc::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn example<N: base_common_client_ethereum::Network>(provider: impl base_common_client_ethereum::Provider, tx: base_common_types_rpc::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
 /// // Send a transaction, and configure the pending transaction.
 /// let builder = provider.send_transaction(tx)
 ///     .await?
@@ -77,7 +77,7 @@ pub enum PendingTransactionError {
 ///
 /// This can also be more concisely written using `watch`:
 /// ```no_run
-/// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider, tx: base_common_types_rpc::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn example<N: base_common_client_ethereum::Network>(provider: impl base_common_client_ethereum::Provider, tx: base_common_types_rpc::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
 /// let tx_hash = provider.send_transaction(tx)
 ///     .await?
 ///     .with_required_confirmations(2)

@@ -31,8 +31,8 @@ base-execution-state-api = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
-base-common-network = { workspace = true }
 base-testing-support = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }

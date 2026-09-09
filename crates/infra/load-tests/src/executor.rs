@@ -8,9 +8,9 @@ use std::{
 };
 
 use alloy_primitives::{U256, utils::format_ether};
-use base_common_client_ethereum::Provider;
 use base_cli_utils::RuntimeManager;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
+use base_common_client_ethereum::Provider;
 use indicatif::MultiProgress;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;

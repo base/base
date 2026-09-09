@@ -6,10 +6,10 @@ use std::{
 };
 
 use alloy_primitives::{Address, Bytes, Signed, U160, U256, Uint, utils::format_ether};
-use base_common_client_ethereum::Provider;
-use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
-use base_common_network::{EthereumWallet, TransactionBuilder};
+use base_common_client_ethereum::Provider;
+use base_common_client_ethereum::{EthereumWallet, TransactionBuilder};
+use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, instrument, trace};

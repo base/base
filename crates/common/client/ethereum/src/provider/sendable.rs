@@ -1,4 +1,4 @@
-use base_common_network::Network;
+use crate::Network;
 
 /// A transaction that can be sent. This is either a builder or an envelope.
 ///
@@ -6,7 +6,7 @@ use base_common_network::Network;
 /// without changing the user-facing API.
 ///
 /// Users should NOT use this type directly. It should only be used as an
-/// implementation detail of [`Provider::send_transaction_internal`](crate::Provider).
+/// implementation detail of [`Provider::send_transaction_internal`](base_common_client_ethereum::Provider).
 #[doc(alias = "SendableTransaction")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendableTx<N: Network> {

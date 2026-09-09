@@ -1,7 +1,7 @@
-pub use base_common_types_rpc::{TransactionBuilder4844, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_sol_types::SolCall;
 use base_common_types_rpc::{AccessList, TransactionInputKind, TransactionRequest};
+pub use base_common_types_rpc::{TransactionBuilder4844, TransactionBuilder7702};
 use futures_utils_wasm::impl_future;
 
 use super::signer::NetworkWallet;

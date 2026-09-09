@@ -16,6 +16,5 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-network = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
+base-common-client-ethereum = {workspace = true, features = ["default"]}

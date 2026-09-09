@@ -1,6 +1,8 @@
 //! Lazy key stream for deterministic `secp256k1` signer derivation.
 
-use base_common_network::{MnemonicBuilder, MnemonicKey, PrivateKeySigner, coins_bip39::English};
+use base_common_client_ethereum::{
+    MnemonicBuilder, MnemonicKey, PrivateKeySigner, coins_bip39::English,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::utils::{BaselineError, Result};

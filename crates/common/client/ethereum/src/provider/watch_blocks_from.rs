@@ -7,13 +7,13 @@ use std::{
     time::Duration,
 };
 
+use crate::{BlockResponse, Network};
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::{RpcError, RpcRecv};
-use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::U64;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
-use base_common_network::{BlockResponse, Network};
+use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use futures::{Stream, ready};
 use pin_project::pin_project;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
@@ -326,7 +326,7 @@ impl<N: Network> WatchBlocksFrom<N> {
     }
 
     /// Converts this builder into a canonical-stream builder that emits
-    /// [`crate::CanonicalEvent`] deltas on reorgs.
+    /// [`base_common_client_ethereum::CanonicalEvent`] deltas on reorgs.
     pub const fn canonical(self) -> WatchCanonicalBlocksFrom<N> {
         WatchCanonicalBlocksFrom::new(self)
     }

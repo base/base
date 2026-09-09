@@ -17,7 +17,7 @@ use crate::{EthSignerApiClient, RemoteSignerError, TransactionBuilder, TxSigner}
 /// via the `eth_signTransaction` JSON-RPC method.
 ///
 /// Implements alloy's [`TxSigner<Signature>`] trait, allowing it to be used with
-/// [`crate::EthereumWallet`] for seamless integration with the standard
+/// [`base_common_client_ethereum::EthereumWallet`] for seamless integration with the standard
 /// signing pipeline:
 ///
 /// ```rust,ignore

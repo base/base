@@ -1,17 +1,17 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use base_common_client_ethereum::{Provider, ProviderBuilder};
 use alloy_rpc_client::RpcClient;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
+use base_common_chain_activation::UpgradeReadiness;
 use base_common_chain_config::UpgradeConfig;
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use base_common_types_rpc::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use base_consensus_rpc::{BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
-use base_common_chain_activation::UpgradeReadiness;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;

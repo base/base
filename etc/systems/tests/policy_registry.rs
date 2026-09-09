@@ -8,9 +8,9 @@ mod common;
 
 use alloy_primitives::{Address, LogData};
 use alloy_sol_types::{SolCall, SolEvent};
-use base_common_network::PrivateKeySigner;
-use base_execution_evm_precompiles::{ActivationFeature, IPolicyRegistry, PolicyRegistryStorage};
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_rpc::BaseTransactionReceipt;
+use base_execution_evm_precompiles::{ActivationFeature, IPolicyRegistry, PolicyRegistryStorage};
 use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
 use eyre::{Result, WrapErr};
 

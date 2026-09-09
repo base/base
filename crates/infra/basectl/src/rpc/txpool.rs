@@ -3,14 +3,14 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use alloy_primitives::{Address, TxHash};
-use base_common_client_ethereum::{
-    Network, Provider, ProviderBuilder, ext::TxPoolApi, network::TransactionResponse,
-};
 use alloy_rpc_client::RpcClient;
 use alloy_transport::TransportError;
 use alloy_transport_http::Http;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{
+    Network, Provider, ProviderBuilder, TransactionResponse, ext::TxPoolApi,
+};
 use base_common_types_chain::Transaction as ConsensusTransaction;
-use base_common_network::Base;
 use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
@@ -484,8 +484,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_primitives::{Address, B256, address};
+    use base_common_client_ethereum::Base;
     use base_common_client_ethereum::Network;
-    use base_common_network::Base;
     use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom};
     use serde_json::json;
 

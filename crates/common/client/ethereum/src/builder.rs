@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
+use crate::{Ethereum, IntoWallet, Network};
 use alloy_chains::NamedChain;
 use alloy_primitives::ChainId;
 use alloy_rpc_client::{ClientBuilder, ConnectionConfig, RpcClient};
 use alloy_transport::{TransportConnect, TransportError, TransportResult};
-use base_common_network::{Ethereum, IntoWallet, Network};
 
 use crate::{
     Provider, RootProvider,
@@ -163,8 +163,8 @@ impl
     /// For Ethereum, the recommended set handles gas and blob-gas estimation, cached nonce
     /// management, and chain-ID fetching.
     ///
-    /// Building a provider with this setting enabled will return a [`crate::fillers::FillProvider`]
-    /// with [`crate::utils::JoinedRecommendedFillers`].
+    /// Building a provider with this setting enabled will return a [`base_common_client_ethereum::fillers::FillProvider`]
+    /// with [`base_common_client_ethereum::utils::JoinedRecommendedFillers`].
     ///
     /// You can opt-out of using these fillers by using the `.disable_recommended_fillers()` method.
     pub fn new() -> Self {
@@ -399,7 +399,7 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
 
     /// Add response caching to the stack being built with the specified maximum cache size.
     ///
-    /// See [`CacheLayer`](crate::layers::CacheLayer) for more information.
+    /// See [`CacheLayer`](base_common_client_ethereum::layers::CacheLayer) for more information.
     #[cfg(not(target_family = "wasm"))]
     pub fn with_caching(
         self,
@@ -410,7 +410,7 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
 
     /// Add response caching to the stack being built with a default cache size of 100 items.
     ///
-    /// See [`CacheLayer`](crate::layers::CacheLayer) for more information.
+    /// See [`CacheLayer`](base_common_client_ethereum::layers::CacheLayer) for more information.
     #[cfg(not(target_family = "wasm"))]
     pub fn with_default_caching(
         self,
@@ -621,7 +621,7 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
 }
 
 #[cfg(any(test, feature = "anvil-node"))]
-type JoinedEthereumWalletFiller<F> = JoinFill<F, WalletFiller<base_common_network::EthereumWallet>>;
+type JoinedEthereumWalletFiller<F> = JoinFill<F, WalletFiller<crate::EthereumWallet>>;
 
 #[cfg(any(test, feature = "anvil-node"))]
 type AnvilProviderResult<T> = Result<T, alloy_node_bindings::NodeError>;
@@ -662,7 +662,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
                 crate::layers::AnvilProvider<crate::provider::RootProvider<N>, N>,
                 N,
             >,
-        base_common_network::EthereumWallet: base_common_network::NetworkWallet<N>,
+        crate::EthereumWallet: crate::NetworkWallet<N>,
     {
         self.connect_anvil_with_wallet_and_config(std::convert::identity)
             .expect("failed to build provider")
@@ -737,15 +737,12 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
                 crate::layers::AnvilProvider<crate::provider::RootProvider<N>, N>,
                 N,
             >,
-        base_common_network::EthereumWallet: base_common_network::NetworkWallet<N>,
+        crate::EthereumWallet: crate::NetworkWallet<N>,
     {
         let anvil_layer = crate::layers::AnvilLayer::from(f(Default::default()));
         let url = anvil_layer.endpoint_url();
 
-        let wallet = anvil_layer
-            .instance()
-            .wallet()
-            .ok_or(alloy_node_bindings::NodeError::NoKeysAvailable)?;
+        let wallet = anvil_layer.wallet().ok_or(alloy_node_bindings::NodeError::NoKeysAvailable)?;
 
         let rpc_client = ClientBuilder::default().http(url);
 
@@ -772,15 +769,12 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
                 crate::layers::AnvilProvider<crate::provider::RootProvider<N>, N>,
                 N,
             >,
-        base_common_network::EthereumWallet: base_common_network::NetworkWallet<N>,
+        crate::EthereumWallet: crate::NetworkWallet<N>,
     {
         let anvil_layer = crate::layers::AnvilLayer::from(f(Default::default()));
         let url = anvil_layer.endpoint_url();
 
-        let wallet = anvil_layer
-            .instance()
-            .wallet()
-            .ok_or(alloy_node_bindings::NodeError::NoKeysAvailable)?;
+        let wallet = anvil_layer.wallet().ok_or(alloy_node_bindings::NodeError::NoKeysAvailable)?;
 
         let rpc_client = ClientBuilder::default().http(url);
 
@@ -790,7 +784,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
 
 #[cfg(test)]
 mod tests {
-    use base_common_network::Ethereum;
+    use crate::Ethereum;
 
     use super::*;
     use crate::Provider;

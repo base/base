@@ -5,12 +5,12 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};
 use alloy_trie::{Nibbles, TrieAccount};
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_proof_mpt::TrieNode;
 use eyre::Result;
 use serde::{Deserialize, Deserializer};

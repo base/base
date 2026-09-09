@@ -37,7 +37,7 @@ The `ProviderBuilder` struct can quickly create a stacked provider, similar to
 
 ```rust,no_run
 use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
-use base_common_network::Ethereum;
+use base_common_client_ethereum::Ethereum;
 use alloy_primitives::address;
 use std::str::FromStr;
 
@@ -61,3 +61,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+Base and Ethereum network contracts, transaction builders, local and remote signers, and mnemonic wallets are owned by this crate alongside the RPC client.

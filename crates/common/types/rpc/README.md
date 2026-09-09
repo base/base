@@ -9,7 +9,7 @@ simulation schemas. `BaseTransaction`, `BaseTransactionRequest`, and `BaseTransa
 retain Base deposit and EIP-8130 behavior; the generic Ethereum types remain available for L1
 providers. Shared `Header` and `Log` responses carry optional millisecond timestamps.
 
-The Base network marker and transaction builders live in `base-common-network`. RPC-to-EVM
+The Base network marker and transaction builders live in `base-common-client-ethereum`. RPC-to-EVM
 conversion lives in `base-execution-evm-runtime`, keeping these schemas independent of providers and execution.
 Engine payload and fork-choice types live in `base-common-types-payload`.
 

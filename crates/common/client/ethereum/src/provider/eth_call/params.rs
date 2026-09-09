@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
+use crate::Network;
 use alloy_eips::BlockId;
-use base_common_network::Network;
 use base_common_types_rpc::{
     BlockOverrides, Bundle, StateContext, TransactionIndex, state::StateOverride,
 };

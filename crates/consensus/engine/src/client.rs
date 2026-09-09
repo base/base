@@ -2,11 +2,11 @@
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256};
-use base_common_client_ethereum::EthGetBlock;
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_common_network::{Ethereum, Network};
+use base_common_client_ethereum::EthGetBlock;
+use base_common_client_ethereum::{Ethereum, Network};
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,

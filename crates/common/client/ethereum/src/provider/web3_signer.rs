@@ -1,6 +1,6 @@
+use crate::{Ethereum, Network, TransactionBuilder};
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, Bytes};
-use base_common_network::{Ethereum, Network, TransactionBuilder};
 
 use super::Provider;
 
@@ -13,7 +13,7 @@ use super::Provider;
 ///
 /// `"eth_signTransaction"` is not supported by regular nodes.
 ///
-/// [`ProviderBuilder`]: crate::ProviderBuilder
+/// [`ProviderBuilder`]: base_common_client_ethereum::ProviderBuilder
 #[derive(Debug, Clone)]
 pub struct Web3Signer<P: Provider<N> + Clone, N: Network = Ethereum> {
     /// The provider used to make `"eth_signTransaction"` requests.

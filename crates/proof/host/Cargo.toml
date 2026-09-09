@@ -25,7 +25,6 @@ base-proof-mpt = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
-base-common-network = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -35,9 +34,9 @@ futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
 base-common-types-rpc = { workspace = true, features = []}
 base-proof-client = { workspace = true, features = ["std"] }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
+base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }

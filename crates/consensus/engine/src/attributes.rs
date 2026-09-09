@@ -356,7 +356,7 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_chain_config::{ChainConfig, rollup_config};
-    use base_common_network::TransactionResponse;
+    use base_common_client_ethereum::TransactionResponse;
     use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_types_payload::BasePayloadAttributes;
     use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactions};

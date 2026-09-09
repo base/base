@@ -9,11 +9,11 @@ use alloy_eips::{
     BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
 };
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
-use base_common_client_ethereum::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types_debug::ExecutionWitness;
 use ark_ff::{BigInteger, PrimeField};
-use base_common_network::{Base, Network};
+use base_common_client_ethereum::Provider;
+use base_common_client_ethereum::{Base, Network};
 use base_common_types_chain::{Header, HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_types_payload::BasePayloadAttributes;
 use base_common_types_rpc::Block;
@@ -1312,10 +1312,10 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_genesis::ChainConfig;
-    use base_common_client_ethereum::{RootProvider, builder as provider_builder, mock::Asserter};
     use alloy_rlp::Encodable;
     use base_common_chain_config::RollupConfig;
-    use base_common_network::Base;
+    use base_common_client_ethereum::Base;
+    use base_common_client_ethereum::{RootProvider, builder as provider_builder, mock::Asserter};
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;

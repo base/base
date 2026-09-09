@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use alloy_eips::eip1898::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
+use base_common_client_ethereum::Ethereum;
 use base_common_client_ethereum::{Provider, RootProvider};
-use base_common_network::Ethereum;
 use base_common_types_payload::{
     ExecutionPayloadEnvelopeV5, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadAttributes,
     PayloadStatus, PayloadStatusEnum,

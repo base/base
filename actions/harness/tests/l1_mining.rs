@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, L1TxBuilder};
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{Transaction, transaction::SignerRecoverable};
-use base_common_network::PrivateKeySigner;
 
 fn test_signer() -> PrivateKeySigner {
     PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")

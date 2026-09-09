@@ -5,8 +5,8 @@ use alloy_eips::{
     eip2718::{Eip2718Envelope, Eip2718Error},
 };
 use alloy_json_rpc::RpcObject;
-use base_common_types_rpc::HeaderResponse;
 use base_common_types_chain::{BlockHeader, Transaction, TxReceipt};
+use base_common_types_rpc::HeaderResponse;
 
 use crate::{BlockResponse, NetworkTransactionBuilder, ReceiptResponse, TransactionResponse};
 

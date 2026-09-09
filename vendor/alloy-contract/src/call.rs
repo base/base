@@ -8,17 +8,17 @@ use std::{
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use base_common_types_rpc::ReceiptResponse;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
-use base_common_client_ethereum::{PendingTransactionBuilder, Provider};
 use alloy_sol_types::SolCall;
 use alloy_transport::{BoxFuture, TransportResult};
-use base_common_types_chain::SignableTransaction;
-use base_common_network::{
+use base_common_client_ethereum::{
     Ethereum, IntoWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
     TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
     eip2718::Encodable2718,
 };
+use base_common_client_ethereum::{PendingTransactionBuilder, Provider};
+use base_common_types_chain::SignableTransaction;
+use base_common_types_rpc::ReceiptResponse;
 use base_common_types_rpc::{
     AccessList, BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlockId,
     SignedAuthorization, state::StateOverride,
@@ -287,7 +287,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     /// ```no_run
     /// # use alloy_primitives::Address;
     /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
-    /// # use base_common_network::PrivateKeySigner;
+    /// # use base_common_client_ethereum::PrivateKeySigner;
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -780,10 +780,10 @@ impl<P, D: CallDecoder, N: Network> std::fmt::Debug for CallBuilder<P, D, N> {
 mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
-    use base_common_client_ethereum::{Provider, ProviderBuilder, WalletProvider};
     use alloy_sol_types::sol;
+    use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner};
+    use base_common_client_ethereum::{Provider, ProviderBuilder, WalletProvider};
     use base_common_types_chain::Transaction;
-    use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_common_types_rpc::{AccessListItem, Authorization};
     use futures::Future;
 

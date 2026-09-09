@@ -37,7 +37,6 @@ reth-network-api = { workspace = true }
 reth-node-events = { workspace = true }
 reth-rpc-builder = { workspace = true }
 reth-static-file = { workspace = true }
-base-common-network = {workspace = true}
 base-node-context = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
@@ -52,6 +51,7 @@ reth-rpc-server-types = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
+base-common-client-ethereum = {workspace = true}
 base-execution-eip8130-rpc = { workspace = true }
 base-execution-payload-types = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
@@ -95,11 +95,11 @@ alloy-hardforks = { workspace = true }
 reth-payload-util = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-common-network = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }

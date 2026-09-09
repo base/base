@@ -1,7 +1,7 @@
 //! Built-in consensus debugging and local mining services.
 use std::sync::Arc;
 
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
 use base_execution_payload_types::BaseBuiltPayload;
 use reth_consensus_debug_client::{DebugConsensusClient, EtherscanBlockProvider, RpcBlockProvider};
 use reth_engine_local::LocalMiner;

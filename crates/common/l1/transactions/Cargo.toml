@@ -15,7 +15,6 @@ workspace = true
 thiserror = { workspace = true }
 alloy-primitives = {workspace = true}
 alloy-transport = { workspace = true }
-base-common-network = {workspace = true}
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = {features = ["std"], workspace = true}
@@ -25,11 +24,11 @@ futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
-base-common-client-ethereum = {features = ["default"], workspace = true}
 alloy-eips = { workspace = true, features = ["std", "kzg"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
 tokio = {features = ["default", "sync", "time"], workspace = true}
 base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
+base-common-client-ethereum = {workspace = true, features = ["default"]}
 
 [dev-dependencies]
 rayon = { workspace = true }

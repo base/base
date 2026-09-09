@@ -227,9 +227,9 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
 mod tests {
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, Sealed, b256};
-    use base_common_client_ethereum::Network;
     use base_common_chain_config::ChainGenesis;
-    use base_common_network::Base;
+    use base_common_client_ethereum::Base;
+    use base_common_client_ethereum::Network;
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_types_rpc::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,

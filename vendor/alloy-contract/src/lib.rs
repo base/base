@@ -39,5 +39,5 @@ mod multicall;
 #[doc(hidden)]
 pub mod private {
     pub use base_common_client_ethereum::Provider;
-    pub use base_common_network::{Ethereum, Network};
+    pub use base_common_client_ethereum::{Ethereum, Network};
 }

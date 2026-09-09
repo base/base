@@ -2,7 +2,7 @@ use alloy_primitives::hex;
 use k256::ecdsa;
 use thiserror::Error;
 
-/// Error thrown by [`PrivateKeySigner`](crate::PrivateKeySigner).
+/// Error thrown by [`PrivateKeySigner`](base_common_client_ethereum::PrivateKeySigner).
 #[derive(Debug, Error)]
 pub enum LocalSignerError {
     /// [`ecdsa`] error.

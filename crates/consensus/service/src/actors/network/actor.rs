@@ -233,10 +233,8 @@ mod tests {
     use alloy_primitives::B256;
     use alloy_signer::SignerSync;
     use arbitrary::Arbitrary;
-    use base_common_network::PrivateKeySigner;
-    use base_common_types_payload::{
-        BaseExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV3,
-    };
+    use base_common_client_ethereum::PrivateKeySigner;
+    use base_common_types_payload::{BaseExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV3};
     use rand::Rng;
 
     use super::*;
@@ -268,8 +266,7 @@ mod tests {
         let encoded_payload = payload.encode_v1().unwrap();
 
         let decoded_payload =
-            base_common_types_payload::NetworkPayloadEnvelope::decode_v1(&encoded_payload)
-                .unwrap();
+            base_common_types_payload::NetworkPayloadEnvelope::decode_v1(&encoded_payload).unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);
         let msg_signer = decoded_payload.signature.recover_address_from_prehash(&msg).unwrap();
@@ -304,8 +301,7 @@ mod tests {
         let encoded_payload = payload.encode_v3().unwrap();
 
         let decoded_payload =
-            base_common_types_payload::NetworkPayloadEnvelope::decode_v3(&encoded_payload)
-                .unwrap();
+            base_common_types_payload::NetworkPayloadEnvelope::decode_v3(&encoded_payload).unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);
         let msg_signer = decoded_payload.signature.recover_address_from_prehash(&msg).unwrap();

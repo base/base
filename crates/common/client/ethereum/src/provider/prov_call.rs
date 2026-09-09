@@ -28,7 +28,7 @@ pub type BoxedFut<Output> = Pin<Box<dyn Future<Output = TransportResult<Output>>
 /// - proudce data via an arbitrary boxed future
 /// - produce data in any synchronous way
 ///
-/// [`Provider`]: crate::Provider
+/// [`Provider`]: base_common_client_ethereum::Provider
 #[pin_project(project = ProviderCallProj)]
 pub enum ProviderCall<Params, Resp, Output = Resp, Map = fn(Resp) -> Output>
 where

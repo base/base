@@ -14,8 +14,12 @@ use std::{
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use base_builder_core::test_utils::get_available_port;
+use base_common_chain_activation::{
+    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
+    UpgradeSignalRuntimeApplier,
+};
 use base_common_chain_config::RollupConfig;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
@@ -24,10 +28,6 @@ use base_consensus_node::{
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
-use base_common_chain_activation::{
-    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
-    UpgradeSignalRuntimeApplier,
-};
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tempfile::TempDir;

@@ -38,13 +38,12 @@ alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-network = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-evm-precompiles = { workspace = true }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
+base-common-client-ethereum = {workspace = true, features = ["default"]}
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

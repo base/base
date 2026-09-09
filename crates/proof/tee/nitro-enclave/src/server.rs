@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
 use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_execution_evm_runtime::BaseEvmFactory;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;

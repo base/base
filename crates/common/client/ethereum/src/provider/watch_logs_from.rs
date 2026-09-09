@@ -7,14 +7,14 @@ use std::{
     time::Duration,
 };
 
+use crate::{BlockResponse as _, Network};
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::RpcError;
-use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::B256;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
-use base_common_network::{BlockResponse as _, Network};
+use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use base_common_types_rpc::{Filter, Log};
 use futures::{Stream, ready};
 use pin_project::pin_project;
@@ -136,7 +136,7 @@ impl<N: Network> WatchLogsFrom<N> {
     }
 
     /// Converts this builder into a canonical-stream builder that emits
-    /// [`CanonicalEvent`](crate::CanonicalEvent) deltas on reorgs.
+    /// [`CanonicalEvent`](base_common_client_ethereum::CanonicalEvent) deltas on reorgs.
     pub const fn canonical(self) -> WatchCanonicalLogsFrom<N> {
         WatchCanonicalLogsFrom::new(self)
     }
@@ -538,7 +538,7 @@ fn normalize_range_logs_if_matches(
 
 #[cfg(test)]
 mod tests {
-    use base_common_network::Ethereum;
+    use crate::Ethereum;
     use base_common_types_rpc::Block;
     use futures::{Stream, StreamExt};
     use tokio::time::timeout;

@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, U256};
-use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_signer::SignerSync;
+use base_common_client_ethereum::{Base, PrivateKeySigner, TransactionBuilder};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::SignableTransaction;
-use base_common_network::{Base, PrivateKeySigner, TransactionBuilder};
 use base_common_types_rpc::{BaseTransactionRequest, BlockNumberOrTag};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,

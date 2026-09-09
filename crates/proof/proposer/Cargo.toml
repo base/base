@@ -22,7 +22,6 @@ base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
-base-common-network = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -36,10 +35,10 @@ futures = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 base-common-observability-health = { workspace = true, features = ["axum-server"] }
 

@@ -40,5 +40,5 @@ pub use alloy_rpc_client::WsConnect;
 pub use alloy_transport as transport;
 #[doc(no_inline)]
 pub use alloy_transport::mock;
-#[doc(no_inline)]
-pub use base_common_network::{self as network, Network};
+mod networks;
+pub use networks::*;

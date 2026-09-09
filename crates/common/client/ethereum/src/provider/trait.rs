@@ -4,6 +4,7 @@
 
 use std::borrow::Cow;
 
+use crate::{Ethereum, Network};
 use alloy_eips::{eip2718::Encodable2718, eip7928::BlockAccessList};
 use alloy_json_rpc::{RpcError, RpcRecv, RpcSend};
 use alloy_primitives::{
@@ -12,7 +13,6 @@ use alloy_primitives::{
 };
 use alloy_rpc_client::{ClientRef, NoParams, PollerBuilder, WeakClient};
 use alloy_transport::TransportResult;
-use base_common_network::{Ethereum, Network};
 use base_common_types_chain::BlockHeader;
 #[cfg(feature = "pubsub")]
 use base_common_types_rpc::pubsub::{Params, SubscriptionKind};
@@ -71,7 +71,7 @@ pub type FilterPollerBuilder<R> = PollerBuilder<(U256,), Vec<R>>;
 /// types. Networks that DO NOT support [EIP-1559] should create their own
 /// [`TransactionBuilder`] and Fillers to change this behavior.
 ///
-/// [`TransactionBuilder`]: base_common_network::TransactionBuilder
+/// [`TransactionBuilder`]: base_common_client_ethereum::TransactionBuilder
 /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
@@ -829,12 +829,12 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Stream canonical block events from a historical block.
     ///
     /// This wraps [`watch_blocks_from`](Self::watch_blocks_from) and performs canonical chain
-    /// reconciliation, yielding [`CanonicalEvent`](crate::provider::CanonicalEvent) values.
+    /// reconciliation, yielding [`CanonicalEvent`](base_common_client_ethereum::provider::CanonicalEvent) values.
     ///
     /// On a reorg the stream emits
-    /// [`CanonicalEvent::Removed`](crate::provider::CanonicalEvent::Removed)
+    /// [`CanonicalEvent::Removed`](base_common_client_ethereum::provider::CanonicalEvent::Removed)
     /// for each rolled-back block (newest first), then
-    /// [`CanonicalEvent::Added`](crate::provider::CanonicalEvent::Added) for the new chain segment.
+    /// [`CanonicalEvent::Added`](base_common_client_ethereum::provider::CanonicalEvent::Added) for the new chain segment.
     ///
     /// # Examples
     ///
@@ -894,7 +894,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// events when already-emitted blocks are rolled back by a later reorg.
     ///
     /// The filter's block option is replaced internally for each exact block; use `start_block` and
-    /// [`block_tag`](crate::provider::WatchLogsFrom::block_tag) to configure range progress.
+    /// [`block_tag`](base_common_client_ethereum::provider::WatchLogsFrom::block_tag) to configure range progress.
     ///
     /// # Examples
     ///
@@ -933,7 +933,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// This follows canonical blocks from `start_block` and emits block-scoped log batches.
     /// Removed events use retained logs when a block is rolled back by a reorg. The filter's block
     /// option is replaced internally for each exact block; use `start_block` and
-    /// [`block_tag`](crate::provider::WatchCanonicalLogsFrom::block_tag) to configure range
+    /// [`block_tag`](base_common_client_ethereum::provider::WatchCanonicalLogsFrom::block_tag) to configure range
     /// progress.
     ///
     /// # Examples
@@ -1298,7 +1298,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # use alloy_json_rpc::RpcError;
     /// # use base_common_types_rpc::ReceiptResponse;
-    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, encoded_tx: &[u8]) {
+    /// # async fn example<N: base_common_client_ethereum::Network>(provider: impl base_common_client_ethereum::Provider<N>, encoded_tx: &[u8]) {
     /// match provider.send_raw_transaction_sync(encoded_tx).await {
     ///     Ok(receipt) => {
     ///         println!("Transaction successful: {}", receipt.transaction_hash());
@@ -1349,7 +1349,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     ///
     /// The resulting [`SendableTx`] determines submission. An envelope is submitted with
     /// `eth_sendRawTransaction`; a request builder uses `eth_sendTransaction`, so the node must be
-    /// able to sign for its `from` account. A [`WalletFiller`](crate::fillers::WalletFiller)
+    /// able to sign for its `from` account. A [`WalletFiller`](base_common_client_ethereum::fillers::WalletFiller)
     /// normally transforms a builder into a locally signed envelope, and custom fillers may do the
     /// same.
     ///
@@ -1363,7 +1363,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// See [`PendingTransactionBuilder`] for more examples.
     ///
     /// ```no_run
-    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example<N: base_common_client_ethereum::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
     /// let receipt = provider.send_transaction(tx)
     ///     .await?
     ///     .with_required_confirmations(2)
@@ -1394,8 +1394,8 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// transaction and send it to the network without changing user-facing
     /// APIs. Generally implementers should NOT override this method.
     ///
-    /// [`ProviderLayer`]: crate::ProviderLayer
-    /// [`TxFiller`]: crate::fillers::TxFiller
+    /// [`ProviderLayer`]: base_common_client_ethereum::ProviderLayer
+    /// [`TxFiller`]: base_common_client_ethereum::fillers::TxFiller
     #[doc(hidden)]
     async fn send_transaction_internal(
         &self,
@@ -1407,7 +1407,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
 
         match tx {
             SendableTx::Builder(mut tx) => {
-                base_common_network::NetworkTransactionBuilder::prep_for_submission(&mut tx);
+                crate::NetworkTransactionBuilder::prep_for_submission(&mut tx);
                 let tx_hash = self.client().request("eth_sendTransaction", (tx,)).await?;
                 Ok(PendingTransactionBuilder::new(self.root().clone(), tx_hash))
             }
@@ -1429,7 +1429,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Example
     /// ```no_run
     /// # use base_common_types_rpc::ReceiptResponse;
-    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example<N: base_common_client_ethereum::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
     /// let receipt = provider.send_transaction_sync(tx).await?;
     /// println!("Transaction hash: {}", receipt.transaction_hash());
     /// # Ok(())
@@ -1444,7 +1444,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # use alloy_json_rpc::RpcError;
     /// # use base_common_types_rpc::ReceiptResponse;
-    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) {
+    /// # async fn example<N: base_common_client_ethereum::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) {
     /// match provider.send_transaction_sync(tx).await {
     ///     Ok(receipt) => {
     ///         println!("Transaction successful: {}", receipt.transaction_hash());
@@ -1471,8 +1471,8 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// If the input is a [`SendableTx::Builder`] then this utilizes `eth_sendTransactionSync` by
     /// default.
     ///
-    /// [`ProviderLayer`]: crate::ProviderLayer
-    /// [`TxFiller`]: crate::fillers::TxFiller
+    /// [`ProviderLayer`]: base_common_client_ethereum::ProviderLayer
+    /// [`TxFiller`]: base_common_client_ethereum::fillers::TxFiller
     #[doc(hidden)]
     async fn send_transaction_sync_internal(
         &self,
@@ -1484,7 +1484,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
 
         match tx {
             SendableTx::Builder(mut tx) => {
-                base_common_network::NetworkTransactionBuilder::prep_for_submission(&mut tx);
+                crate::NetworkTransactionBuilder::prep_for_submission(&mut tx);
                 let receipt = self.client().request("eth_sendTransactionSync", (tx,)).await?;
                 Ok(receipt)
             }
@@ -1828,7 +1828,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
         self.client().request(method, params).await
     }
 
-    /// Creates a new [`TransactionRequest`](base_common_network::Network).
+    /// Creates a new [`TransactionRequest`](base_common_client_ethereum::Network).
     #[inline]
     fn transaction_request(&self) -> N::TransactionRequest {
         Default::default()
@@ -1899,7 +1899,7 @@ mod tests {
     #[cfg(feature = "hyper")]
     use base_common_types_payload::{Claims, JwtSecret};
     // For layer transport tests
-    use base_common_network::{
+    use crate::{
         Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };
     use base_common_types_chain::transaction::SignerRecoverable;
@@ -2671,8 +2671,8 @@ mod tests {
     ))]
     #[ignore = "ignore until <https://github.com/paradigmxyz/reth/pull/14727> is in"]
     async fn call_mainnet() {
+        use crate::TransactionBuilder;
         use alloy_sol_types::SolValue;
-        use base_common_network::TransactionBuilder;
 
         let url = "https://docs-demo.quiknode.pro/";
         let provider = ProviderBuilder::new().connect_http(url.parse().unwrap());
@@ -2899,8 +2899,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_sync() {
+        use crate::TransactionBuilder;
         use alloy_primitives::{U256, address};
-        use base_common_network::TransactionBuilder;
 
         let anvil = Anvil::new().spawn();
         let provider = ProviderBuilder::new().connect_http(anvil.endpoint_url());
@@ -2922,8 +2922,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_sync_with_fillers() {
+        use crate::TransactionBuilder;
         use alloy_primitives::{U256, address};
-        use base_common_network::TransactionBuilder;
 
         let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 
@@ -2949,8 +2949,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fill_transaction() {
+        use crate::TransactionBuilder;
         use alloy_primitives::{U256, address};
-        use base_common_network::TransactionBuilder;
 
         let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 

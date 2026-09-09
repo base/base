@@ -1,12 +1,12 @@
 use alloy_eips::{eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
 use alloy_signer::SignerSync;
-use base_common_types_chain::{
-    EnvKzgSettings, EthereumTxEnvelope, SidecarBuilder, SimpleCoder, TxEip4844Variant, TxEnvelope,
-};
-use base_common_network::{
+use base_common_client_ethereum::{
     Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder4844,
     eip2718::Encodable2718,
+};
+use base_common_types_chain::{
+    EnvKzgSettings, EthereumTxEnvelope, SidecarBuilder, SimpleCoder, TxEip4844Variant, TxEnvelope,
 };
 use base_common_types_rpc::{Authorization, TransactionInput, TransactionRequest};
 use eyre::Ok;

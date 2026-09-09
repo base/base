@@ -44,8 +44,8 @@ sha2 = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-common-network = { workspace = true }
 base-common-types-rpc = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 alloy-primitives = {features = ["serde"], workspace = true}
 k256 = { workspace = true, features = ["default", "ecdsa"] }

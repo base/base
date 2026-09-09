@@ -8,8 +8,8 @@ use base_batcher_service_driver::{
 };
 use base_batcher_service_driver::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_chain_config::RollupConfig;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_l1_transactions::TxManager;
-use base_common_network::PrivateKeySigner;
 use base_common_runtime_tasks::TokioRuntime;
 use base_common_types_chain::BaseBlock;
 use tokio_util::sync::CancellationToken;

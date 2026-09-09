@@ -17,7 +17,6 @@ discv5 = { workspace = true }
 libp2p = { workspace = true }
 http-body = { workspace = true }
 async-trait = { workspace = true }
-base-common-observability-health = { workspace = true }
 alloy-signer = { workspace = true }
 async-stream = { workspace = true }
 ethereum_ssz = { workspace = true }
@@ -26,7 +25,6 @@ base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-network = { workspace = true }
 base-consensus-disc = { workspace = true }
 base-execution-trie = { workspace = true }
 base-consensus-peers = { workspace = true }
@@ -49,6 +47,7 @@ backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
+base-common-observability-health = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
@@ -58,20 +57,20 @@ derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
-base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["default"]}
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
+base-common-chain-activation = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 base-common-types-payload = {workspace = true, features = ["std", "jwt", "serde"]}
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "time"] }
-base-common-client-ethereum = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
+base-common-client-ethereum = {workspace = true, features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"]}
 
 [dev-dependencies]
 mockall = { workspace = true }
 arbitrary = { workspace = true }
-base-common-network = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }

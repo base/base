@@ -1,7 +1,7 @@
 use std::{fmt, path::Path, time::Duration};
 
 use alloy_primitives::{Address, U256};
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
 use url::Url;
 

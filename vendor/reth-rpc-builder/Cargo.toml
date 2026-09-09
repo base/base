@@ -27,7 +27,6 @@ reth-rpc-layer = { workspace = true }
 base-node-context = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-common-network = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -42,8 +41,8 @@ tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
-base-common-client-ethereum = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
+base-common-client-ethereum = {workspace = true, features = ["debug-api", "reqwest", "ws"]}
 
 [dev-dependencies]
 alloy-eips = { workspace = true }

@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes};
-use base_common_types_rpc::TransactionRequest;
 use async_trait::async_trait;
-use base_common_network::TransactionBuilder;
+use base_common_client_ethereum::TransactionBuilder;
+use base_common_types_rpc::TransactionRequest;
 
 use super::Payload;
 use crate::{config::OsakaTarget, workload::SeededRng};

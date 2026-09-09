@@ -10,9 +10,9 @@ use std::{
 };
 
 use alloy_primitives::{Address, TxHash, U256};
+use base_common_client_ethereum::{Base, Ethereum, PrivateKeySigner};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_l1_transactions::NonceManager;
-use base_common_network::{Base, Ethereum, PrivateKeySigner};
 use base_common_types_rpc::BlockNumberOrTag;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{

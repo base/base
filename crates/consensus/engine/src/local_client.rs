@@ -2,10 +2,10 @@ use std::time::Instant;
 
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256};
-use base_common_client_ethereum::{EthGetBlock, Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_common_network::{Ethereum, Network};
+use base_common_client_ethereum::{EthGetBlock, Provider, RootProvider};
+use base_common_client_ethereum::{Ethereum, Network};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     BasePayloadAttributes, CancunPayloadFields, ExecutionData, ForkchoiceState, ForkchoiceUpdated,

@@ -1,6 +1,6 @@
+use crate::Network;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, U256};
 use alloy_transport::TransportResult;
-use base_common_network::Network;
 
 use crate::Provider;
 
@@ -148,9 +148,9 @@ where
 mod test {
     use std::env;
 
+    use crate::TransactionBuilder;
     use alloy_primitives::{Address, U256, address, bytes};
     use alloy_sol_types::{SolCall, sol};
-    use base_common_network::TransactionBuilder;
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;

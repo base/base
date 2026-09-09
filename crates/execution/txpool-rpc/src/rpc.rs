@@ -300,7 +300,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
     use base_common_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,

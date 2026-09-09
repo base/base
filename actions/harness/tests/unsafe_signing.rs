@@ -2,7 +2,7 @@
 
 use alloy_primitives::{B256, Signature, U256};
 use base_action_harness::{ActionTestHarness, SharedL1Chain, TestGossipTransport};
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_payload::{BaseExecutionPayload, NetworkPayloadEnvelope, PayloadHash};
 use base_consensus_node::GossipTransport as _;
 

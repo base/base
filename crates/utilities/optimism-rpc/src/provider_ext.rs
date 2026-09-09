@@ -4,9 +4,9 @@ use std::future::Future;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U64};
-use base_common_client_ethereum::Provider;
 use alloy_transport::TransportResult;
-use base_common_network::Network;
+use base_common_client_ethereum::Network;
+use base_common_client_ethereum::Provider;
 use serde_json::Value;
 
 use crate::{OutputAtBlock, SyncStatus};

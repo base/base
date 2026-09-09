@@ -55,7 +55,7 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, bytes};
-    use base_common_network::TxSignerSync;
+    use base_common_client_ethereum::TxSignerSync;
     use base_common_types_chain::{
         BaseTxEnvelope, SignableTransaction, Transaction, TxEip1559, transaction::SignerRecoverable,
     };

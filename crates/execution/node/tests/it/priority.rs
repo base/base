@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, TxKind};
 use base_common_chain_config::BaseChainSpecBuilder;
-use base_common_network::TxSignerSync;
+use base_common_client_ethereum::TxSignerSync;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_node_core::NodeConfig;

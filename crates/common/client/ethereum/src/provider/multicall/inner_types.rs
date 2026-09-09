@@ -142,7 +142,7 @@ where
     /// Converts a [`MulticallItem`] into a [`CallItem`]
     ///
     /// By default, it doesn't allow for failure when used in
-    /// [`aggregate3`][crate::MulticallBuilder::aggregate3].
+    /// [`aggregate3`][base_common_client_ethereum::MulticallBuilder::aggregate3].
     /// Call [`allow_failure`][CallItem::allow_failure] on the result to specify the failure
     /// behavior, or use [`into_call`][MulticallItem::into_call] instead.
     fn from(value: T) -> Self {

@@ -36,7 +36,6 @@ base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-common-network = { workspace = true }
 reth-execution-cache = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
@@ -74,7 +73,6 @@ tokio-util = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 clap_builder = { workspace = true, features = ["default"] }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
@@ -89,6 +87,7 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
+base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
@@ -124,9 +123,9 @@ hyper-util = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-execution-state-types = { workspace = true, features = ["default"] }
-base-common-client-ethereum = { workspace = true, features = ["default", "txpool-api"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "txpool-api"] }
 
 [features]
 default = ["jemalloc", "metrics"]

@@ -40,7 +40,6 @@ members = [
   "crates/execution/evm/runtime",
   "crates/execution/evm/machine",
   "crates/execution/evm/fees",
-  "crates/common/network",
   "crates/common/observability/events",
   "crates/execution/evm/macros",
   "crates/execution/evm/precompiles",
@@ -317,7 +316,6 @@ incremental = false
 [workspace.dependencies]
 # Base Primitives
 base-execution-evm-runtime = { path = "crates/execution/evm/runtime", default-features = false }
-base-common-network = { path = "crates/common/network", default-features = false }
 base-common-chain-config = { path = "crates/common/chain/config", default-features = false }
 base-execution-evm-fees = { path = "crates/execution/evm/fees", default-features = false }
 base-common-types-rpc = { path = "crates/common/types/rpc", default-features = false }

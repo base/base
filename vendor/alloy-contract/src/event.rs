@@ -1,10 +1,10 @@
 use std::{fmt, marker::PhantomData};
 
 use alloy_primitives::{Address, B256, LogData};
-use base_common_client_ethereum::{FilterPollerBuilder, Network, Provider};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
-use base_common_network::Ethereum;
+use base_common_client_ethereum::Ethereum;
+use base_common_client_ethereum::{FilterPollerBuilder, Network, Provider};
 use base_common_types_rpc::{
     BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray,
 };
@@ -499,7 +499,7 @@ pub(crate) mod subscription {
 mod tests {
     use alloy_primitives::U256;
     use alloy_sol_types::sol;
-    use base_common_network::{EthereumWallet, PrivateKeySigner};
+    use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner};
 
     use super::*;
 

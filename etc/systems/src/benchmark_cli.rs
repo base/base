@@ -13,8 +13,8 @@ use std::{
     time::Duration,
 };
 
+use base_common_client_ethereum::{Base, PrivateKeySigner};
 use base_common_client_ethereum::{Provider, RootProvider};
-use base_common_network::{Base, PrivateKeySigner};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_load_tests::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,

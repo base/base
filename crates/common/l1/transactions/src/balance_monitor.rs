@@ -18,8 +18,8 @@ use std::{
 };
 
 use alloy_primitives::{Address, U256};
+use base_common_client_ethereum::Network;
 use base_common_client_ethereum::{Provider, ProviderLayer};
-use base_common_network::Network;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};

@@ -10,10 +10,10 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use base_common_client_ethereum::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{Identity, ProviderBuilder, RootProvider};
 use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use base_execution_txpool::{BasePooledTransaction, TransactionPool};
 use base_node_core::{BaseNode, NodeConfig, RollupArgs};

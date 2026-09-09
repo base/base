@@ -43,7 +43,7 @@ impl TryFrom<Bundle> for ParsedBundle {
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::U256;
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
 
     use super::*;
     use crate::test_utils::create_transaction;

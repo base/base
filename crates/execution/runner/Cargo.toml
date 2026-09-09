@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 reth-provider = { workspace = true }
-base-common-network = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
@@ -33,8 +32,8 @@ base-execution-payload-types = { workspace = true, optional = true}
 tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
+base-common-client-ethereum = {workspace = true,  features = ["default"]}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
-base-common-client-ethereum = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {optional = true, features = ["std"], workspace = true}
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
@@ -68,7 +67,6 @@ test-utils = [
     "dep:alloy-eips",
     "dep:alloy-genesis",
     "dep:alloy-primitives",
-    "dep:base-common-client-ethereum",
     "dep:alloy-rpc-client",
     "dep:base-common-types-rpc",
     "dep:base-common-types-payload",

@@ -3,9 +3,9 @@ use std::marker::PhantomData;
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector};
-use base_common_client_ethereum::Provider;
 use alloy_sol_types::SolEvent;
-use base_common_network::{Ethereum, Network};
+use base_common_client_ethereum::Provider;
+use base_common_client_ethereum::{Ethereum, Network};
 use base_common_types_rpc::Filter;
 
 use crate::{CallBuilder, Event, Interface, Result};
@@ -123,7 +123,7 @@ impl<P, N> std::fmt::Debug for ContractInstance<P, N> {
 mod tests {
     use alloy_primitives::{U256, hex};
     use base_common_client_ethereum::ProviderBuilder;
-    use base_common_network::TransactionBuilder;
+    use base_common_client_ethereum::TransactionBuilder;
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;

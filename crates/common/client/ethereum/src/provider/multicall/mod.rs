@@ -1,8 +1,8 @@
 //! A Multicall Builder
 
+use crate::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, address};
 use alloy_sol_types::SolCall;
-use base_common_network::{Network, TransactionBuilder};
 use base_common_types_rpc::{BlockId, TransactionInputKind, state::StateOverride};
 use bindings::IMulticall3::{
     Call, Call3, Call3Value, blockAndAggregateCall, blockAndAggregateReturn,
@@ -39,7 +39,7 @@ pub const ARB_SYS_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// A Multicall3 builder
 ///
 /// This builder implements a simple API interface to build and execute multicalls using the
-/// [`IMultiCall3`](crate::bindings::IMulticall3) contract which is available on 270+
+/// [`IMultiCall3`](base_common_client_ethereum::bindings::IMulticall3) contract which is available on 270+
 /// chains.
 ///
 /// # Examples
@@ -96,7 +96,7 @@ pub struct MulticallBuilder<T: CallTuple, P: Provider<N>, N: Network> {
     block: Option<BlockId>,
     /// The [`StateOverride`] for the call
     state_override: Option<StateOverride>,
-    /// This is the address of the [`IMulticall3`](crate::bindings::IMulticall3)
+    /// This is the address of the [`IMulticall3`](base_common_client_ethereum::bindings::IMulticall3)
     /// contract.
     ///
     /// By default it is set to [`MULTICALL3_ADDRESS`].

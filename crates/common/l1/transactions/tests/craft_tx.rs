@@ -7,12 +7,12 @@ use std::sync::Arc;
 use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_ethereum::RootProvider;
 use base_common_l1_transactions::{
     FeeCalculator, FeeOverride, NoopTxMetrics, PreparedTx, SignerConfig, SimpleTxManager,
     TxCandidate, TxManager, TxManagerConfig, TxManagerError,
 };
-use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{TxEip1559, TxEip4844Variant, TxEnvelope};
 use common::{
     TEST_RECIPIENT, setup_anvil, setup_with_config, setup_with_failing_signer, value_transfer,

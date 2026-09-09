@@ -1,7 +1,7 @@
+use crate::Network;
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_rpc_client::WeakClient;
 use alloy_transport::{TransportErrorKind, TransportResult};
-use base_common_network::Network;
 
 use super::{EthCallManyParams, EthCallParams};
 use crate::ProviderCall;

@@ -7,7 +7,7 @@ use alloy_eips::eip2930::AccessListResult;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes, U256};
 use base_common_chain_config::ChainSpecProvider;
-use base_common_network::TransactionBuilder;
+use base_common_client_ethereum::TransactionBuilder;
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, Bundle, EthCallResponse, StateContext,

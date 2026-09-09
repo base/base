@@ -1,14 +1,14 @@
 use std::{fmt::Debug, marker::PhantomData, time::Duration};
 
+use crate::BlockResponse;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_json_rpc::RpcRecv;
-use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::{Address, B64, B256, BlockHash};
 use alloy_rpc_client::{ClientRef, RpcCall};
 use alloy_transport::{TransportError, TransportResult};
-use base_common_network::BlockResponse;
 #[cfg(feature = "pubsub")]
 use base_common_types_rpc::pubsub::SubscriptionKind;
+use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use either::Either;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -56,12 +56,12 @@ impl EthGetBlockParams {
 /// A builder for an `"eth_getBlockByHash"` request. This type is returned by the
 /// [`Provider::call`] method.
 ///
-/// [`Provider::call`]: crate::Provider::call
+/// [`Provider::call`]: base_common_client_ethereum::Provider::call
 #[must_use = "EthGetBlockBy must be awaited to execute the request"]
 //#[derive(Clone, Debug)]
 pub struct EthGetBlock<BlockResp>
 where
-    BlockResp: base_common_network::BlockResponse + RpcRecv,
+    BlockResp: crate::BlockResponse + RpcRecv,
 {
     inner: GetBlockInner<BlockResp>,
     block: BlockId,
@@ -71,7 +71,7 @@ where
 
 impl<BlockResp> EthGetBlock<BlockResp>
 where
-    BlockResp: base_common_network::BlockResponse + RpcRecv,
+    BlockResp: crate::BlockResponse + RpcRecv,
 {
     /// Create a new [`EthGetBlock`] request to get the block by hash i.e call
     /// `"eth_getBlockByHash"`.
@@ -96,7 +96,7 @@ where
 
 impl<BlockResp> EthGetBlock<BlockResp>
 where
-    BlockResp: base_common_network::BlockResponse + RpcRecv,
+    BlockResp: crate::BlockResponse + RpcRecv,
 {
     /// Create a new [`EthGetBlock`] request with the given [`RpcCall`].
     pub fn new_rpc(block: BlockId, inner: RpcCall<EthGetBlockParams, Option<BlockResp>>) -> Self {
@@ -149,7 +149,7 @@ where
 
 impl<BlockResp> std::future::IntoFuture for EthGetBlock<BlockResp>
 where
-    BlockResp: base_common_network::BlockResponse + RpcRecv,
+    BlockResp: crate::BlockResponse + RpcRecv,
 {
     type Output = TransportResult<Option<BlockResp>>;
 
@@ -410,14 +410,14 @@ where
 #[derive(Debug)]
 #[must_use = "this does nothing unless you call `.into_stream`"]
 #[cfg(feature = "pubsub")]
-pub struct SubFullBlocks<N: base_common_network::Network> {
+pub struct SubFullBlocks<N: crate::Network> {
     sub: super::GetSubscription<(SubscriptionKind,), N::HeaderResponse>,
     client: alloy_rpc_client::WeakClient,
     kind: BlockTransactionsKind,
 }
 
 #[cfg(feature = "pubsub")]
-impl<N: base_common_network::Network> SubFullBlocks<N> {
+impl<N: crate::Network> SubFullBlocks<N> {
     /// Create a new [`SubFullBlocks`] subscription with the given [`super::GetSubscription`].
     ///
     /// By default, this subscribes to block with tx hashes only. Use [`SubFullBlocks::full`] to

@@ -1,7 +1,7 @@
 //! Estimate gas needed implementation
 
 use alloy_primitives::{TxKind, U256};
-use base_common_network::TransactionBuilder;
+use base_common_client_ethereum::TransactionBuilder;
 use base_common_types_rpc::{BaseTransactionRequest, BlockId, state::EvmOverrides};
 use base_execution_evm_blocks::{
     BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,

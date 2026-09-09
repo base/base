@@ -4,11 +4,11 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use crate::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
 use alloy_pubsub::{PubSubFrontend, Subscription};
 use alloy_rpc_client::{BuiltInConnectionString, ClientBuilder, ClientRef, RpcClient, WeakClient};
 use alloy_transport::{TransportConnect, TransportError};
-use base_common_network::{Ethereum, Network};
 
 use crate::{
     Identity, ProviderBuilder,
@@ -23,7 +23,7 @@ use crate::{
 /// including default call builders, filter pollers, block or log watch builders, and subscription
 /// request builders, keep only a weak client handle. Keep at least one provider clone alive until
 /// those builders are awaited or their streams are consumed, or they may report that the backend
-/// was dropped or end early. A [`PendingTransactionBuilder`](crate::PendingTransactionBuilder)
+/// was dropped or end early. A [`PendingTransactionBuilder`](base_common_client_ethereum::PendingTransactionBuilder)
 /// instead owns a root-provider clone. Layers can also retain additional state; for example,
 /// batched calls keep their batching backend alive.
 pub struct RootProvider<N: Network = Ethereum> {

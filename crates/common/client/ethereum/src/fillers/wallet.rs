@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
+use crate::{Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder};
 use alloy_json_rpc::RpcError;
 use alloy_transport::TransportResult;
-use base_common_network::{Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder};
 
 use super::{FillerControlFlow, TxFiller};
 use crate::{Provider, provider::SendableTx};
@@ -16,9 +16,9 @@ use crate::{Provider, provider::SendableTx};
 /// # Example
 ///
 /// ```
-/// # use base_common_network::{IntoWallet, EthereumWallet, Ethereum};
+/// # use base_common_client_ethereum::{IntoWallet, EthereumWallet, Ethereum};
 /// # use base_common_types_rpc::TransactionRequest;
-/// # use base_common_network::PrivateKeySigner;
+/// # use base_common_client_ethereum::PrivateKeySigner;
 /// # use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
@@ -123,9 +123,9 @@ where
 #[cfg(feature = "reqwest")]
 #[cfg(test)]
 mod tests {
+    use crate::PrivateKeySigner;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{U256, address, b256};
-    use base_common_network::PrivateKeySigner;
     use base_common_types_rpc::TransactionRequest;
 
     use crate::{Provider, ProviderBuilder, WalletProvider};

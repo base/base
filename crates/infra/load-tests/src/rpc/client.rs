@@ -1,11 +1,11 @@
 use std::{fmt::Display, time::Duration};
 
 use alloy_primitives::{Address, Bytes, TxHash};
+use base_common_client_ethereum::{Base, Ethereum, EthereumWallet};
 use base_common_client_ethereum::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
-use base_common_network::{Base, Ethereum, EthereumWallet};
 use base_execution_txpool::ValidityPredicate;
 use futures::future::join_all;
 use tokio::sync::Semaphore;

@@ -2,13 +2,13 @@ use core::time::Duration;
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
+use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
-use base_common_network::Base;
-use base_common_types_rpc::{BaseTransaction as Transaction, Block};
 use base_common_types_payload::{
     BasePayloadAttributes, ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum,
 };
+use base_common_types_rpc::{BaseTransaction as Transaction, Block};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use chrono::Utc;
 

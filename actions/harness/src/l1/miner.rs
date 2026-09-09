@@ -2,7 +2,7 @@ use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
 use alloy_signer::SignerSync;
 use base_common_chain_config::SystemConfigUpdate;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{
     Header, Receipt, ReceiptEnvelope, SignableTransaction, Transaction, TxEip1559, TxEnvelope,
     transaction::{SignerRecoverable, TransactionMeta},
@@ -820,7 +820,7 @@ impl Action for L1Miner {
 mod tests {
     use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData};
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
     use base_common_types_chain::{Transaction, transaction::SignerRecoverable};
 
     use super::{L1Miner, L1TxBuilder, ReorgError};

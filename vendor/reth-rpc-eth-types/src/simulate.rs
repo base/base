@@ -2,7 +2,7 @@
 
 use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
-use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
+use base_common_client_ethereum::{NetworkTransactionBuilder, TransactionBuilder};
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, Transaction as _};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, BlockOverrides, BlockTransactionsKind,

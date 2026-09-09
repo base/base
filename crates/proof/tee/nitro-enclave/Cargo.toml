@@ -19,8 +19,8 @@ async-trait = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-network = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 base-proof = { workspace = true, features = ["std"] }
 rand_08 = { workspace = true, features = ["default"] }

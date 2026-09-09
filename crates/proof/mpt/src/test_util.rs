@@ -3,10 +3,10 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 
 use alloy_primitives::{B256, Bytes, Log, keccak256};
-use base_common_client_ethereum::{Provider, ProviderBuilder, network::eip2718::Encodable2718};
 use alloy_rlp::Decodable;
-use base_common_types_rpc::{BlockId, BlockNumberOrTag, BlockTransactions};
+use base_common_client_ethereum::{Provider, ProviderBuilder, eip2718::Encodable2718};
 use base_common_types_chain::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, TxType};
+use base_common_types_rpc::{BlockId, BlockNumberOrTag, BlockTransactions};
 use reqwest::Url;
 
 use crate::{TrieNode, TrieProvider, ordered_trie_with_encoder};

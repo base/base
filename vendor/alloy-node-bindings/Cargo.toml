@@ -33,7 +33,6 @@ path = "src/lib.rs"
 
 [dependencies]
 thiserror = { workspace = true }
-alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks-legacy = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
@@ -50,10 +49,11 @@ alloy-primitives = { workspace = true, features = [
     "k256",
     "serde",
 ] }
-base-common-network = { workspace = true }
+
 [dev-dependencies]
 ci_info = { workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+
 [target."cfg(unix)".dependencies]
 libc = { workspace = true, features = ["default"] }
 [lints]

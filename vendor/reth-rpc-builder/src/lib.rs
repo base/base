@@ -15,9 +15,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_common_client_ethereum::{Provider, ProviderBuilder, fillers::RecommendedFillers};
 use base_common_chain_config::ChainSpecProvider;
-use base_common_network::IntoWallet;
+use base_common_client_ethereum::IntoWallet;
+use base_common_client_ethereum::{Provider, ProviderBuilder, fillers::RecommendedFillers};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc::{
@@ -1267,21 +1267,25 @@ impl RpcServerHandle {
         Some(client)
     }
 
-    /// Returns a new [`base_common_network::Ethereum`] http provider with its recommended fillers.
+    /// Returns a new [`base_common_client_ethereum::Ethereum`] http provider with its recommended fillers.
     pub fn eth_http_provider(
         &self,
-    ) -> Option<impl Provider<base_common_network::Ethereum> + Clone + Unpin + 'static> {
+    ) -> Option<impl Provider<base_common_client_ethereum::Ethereum> + Clone + Unpin + 'static>
+    {
         self.new_http_provider_for()
     }
 
-    /// Returns a new [`base_common_network::Ethereum`] http provider with its recommended fillers and
+    /// Returns a new [`base_common_client_ethereum::Ethereum`] http provider with its recommended fillers and
     /// installed wallet.
     pub fn eth_http_provider_with_wallet<W>(
         &self,
         wallet: W,
-    ) -> Option<impl Provider<base_common_network::Ethereum> + Clone + Unpin + 'static>
+    ) -> Option<impl Provider<base_common_client_ethereum::Ethereum> + Clone + Unpin + 'static>
     where
-        W: IntoWallet<base_common_network::Ethereum, NetworkWallet: Clone + Unpin + 'static>,
+        W: IntoWallet<
+                base_common_client_ethereum::Ethereum,
+                NetworkWallet: Clone + Unpin + 'static,
+            >,
     {
         let rpc_url = self.http_url()?;
         let provider =
@@ -1290,7 +1294,7 @@ impl RpcServerHandle {
     }
 
     /// Returns an http provider from the rpc server handle for the
-    /// specified [`base_common_network::Network`].
+    /// specified [`base_common_client_ethereum::Network`].
     ///
     /// This installs the recommended fillers: [`RecommendedFillers`]
     pub fn new_http_provider_for<N>(&self) -> Option<impl Provider<N> + Clone + Unpin + 'static>
@@ -1304,21 +1308,25 @@ impl RpcServerHandle {
         Some(provider)
     }
 
-    /// Returns a new [`base_common_network::Ethereum`] websocket provider with its recommended fillers.
+    /// Returns a new [`base_common_client_ethereum::Ethereum`] websocket provider with its recommended fillers.
     pub async fn eth_ws_provider(
         &self,
-    ) -> Option<impl Provider<base_common_network::Ethereum> + Clone + Unpin + 'static> {
+    ) -> Option<impl Provider<base_common_client_ethereum::Ethereum> + Clone + Unpin + 'static>
+    {
         self.new_ws_provider_for().await
     }
 
-    /// Returns a new [`base_common_network::Ethereum`] ws provider with its recommended fillers and
+    /// Returns a new [`base_common_client_ethereum::Ethereum`] ws provider with its recommended fillers and
     /// installed wallet.
     pub async fn eth_ws_provider_with_wallet<W>(
         &self,
         wallet: W,
-    ) -> Option<impl Provider<base_common_network::Ethereum> + Clone + Unpin + 'static>
+    ) -> Option<impl Provider<base_common_client_ethereum::Ethereum> + Clone + Unpin + 'static>
     where
-        W: IntoWallet<base_common_network::Ethereum, NetworkWallet: Clone + Unpin + 'static>,
+        W: IntoWallet<
+                base_common_client_ethereum::Ethereum,
+                NetworkWallet: Clone + Unpin + 'static,
+            >,
     {
         let rpc_url = self.ws_url()?;
         let provider = ProviderBuilder::new()
@@ -1330,7 +1338,7 @@ impl RpcServerHandle {
     }
 
     /// Returns an ws provider from the rpc server handle for the
-    /// specified [`base_common_network::Network`].
+    /// specified [`base_common_client_ethereum::Network`].
     ///
     /// This installs the recommended fillers: [`RecommendedFillers`]
     pub async fn new_ws_provider_for<N>(&self) -> Option<impl Provider<N> + Clone + Unpin + 'static>

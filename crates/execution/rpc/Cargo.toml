@@ -64,7 +64,6 @@ reth-rpc-convert = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
-base-common-network = { workspace = true, features = ["mnemonic"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -74,6 +73,7 @@ base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
+base-common-client-ethereum = { workspace = true, features = ["mnemonic"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }

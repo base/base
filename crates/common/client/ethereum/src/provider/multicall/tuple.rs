@@ -39,7 +39,7 @@ pub trait CallTuple: Sealed {
     /// use alloy_sol_types::sol;
     /// use alloy_primitives::Address;
     /// use base_common_client_ethereum::{CallItem, Provider, ProviderBuilder, Result, Failure};
-    /// use crate::SomeContract::failureCall;
+    /// use base_common_client_ethereum::SomeContract::failureCall;
     /// sol! {
     ///     #[derive(Debug)]
     ///     #[sol(rpc)]
@@ -87,7 +87,7 @@ pub trait CallTuple: Sealed {
     fn try_into_success(results: Self::Returns) -> Result<Self::SuccessReturns>;
 }
 
-/// Type indicating that the [`MulticallBuilder`](crate::MulticallBuilder) is empty.
+/// Type indicating that the [`MulticallBuilder`](base_common_client_ethereum::MulticallBuilder) is empty.
 #[derive(Debug, Clone)]
 pub struct Empty;
 

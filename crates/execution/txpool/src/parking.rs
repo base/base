@@ -339,7 +339,7 @@ mod tests {
     use alloy_primitives::Bytes;
     use alloy_signer::SignerSync;
     use base_common_chain_config::ChainConfig;
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
         TxEip8130,

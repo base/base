@@ -6,12 +6,12 @@ use std::{
     time::Duration,
 };
 
+use crate::Network;
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use alloy_transport::TransportResult;
-use base_common_network::Network;
 use base_common_types_rpc::{
     BlockOverrides,
     state::{AccountOverride, StateOverride},
@@ -158,7 +158,7 @@ where
 /// backend-gone transport error. Provider layers may supply a custom caller that retains additional
 /// state, as the batching layer does.
 ///
-/// [`Provider::call`]: crate::Provider::call
+/// [`Provider::call`]: base_common_client_ethereum::Provider::call
 #[must_use = "EthCall must be awaited to execute the call"]
 #[derive(Clone)]
 pub struct EthCall<N, Resp, Output = Resp, Map = fn(Resp) -> Output>
@@ -426,9 +426,9 @@ where
 
 #[cfg(test)]
 mod test {
+    use crate::{Ethereum, TransactionBuilder};
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{U256, address};
-    use base_common_network::{Ethereum, TransactionBuilder};
     use base_common_types_rpc::{TransactionRequest, state::StateOverride};
 
     use super::*;

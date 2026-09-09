@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, U256};
-use base_common_network::{EthereumWallet, PrivateKeySigner};
+use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::{utils::Result, workload::KeyStream};

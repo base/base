@@ -30,10 +30,10 @@ alloy-hardforks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
-base-common-network = { workspace = true, optional = true }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros"] }
 base-common-chain-config = { workspace = true, optional = true}
+base-common-client-ethereum = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
@@ -43,7 +43,7 @@ base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 [dev-dependencies]
 alloy-signer = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-common-network = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 
@@ -65,7 +65,7 @@ test-utils = [
     "dep:alloy-hardforks",
     "alloy-primitives/getrandom",
     "alloy-signer",
-    "base-common-network",
+    "base-common-client-ethereum",
     "rand",
     "reth-primitives-traits/test-utils",
     "reth-trie/test-utils",

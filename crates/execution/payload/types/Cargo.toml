@@ -27,8 +27,8 @@ tokio = { workspace = true, features = ["sync"] }
 pin-project = { workspace = true, optional = true}
 serde = {features = ["derive", "std"], workspace = true}
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-common-network = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["default", "v4", "serde"] }
+base-common-client-ethereum = { workspace = true, optional = true }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 tracing = { workspace = true, features = ["attributes"], optional = true}
 alloy-primitives = {features = ["map-foldhash", "serde"], workspace = true}
@@ -38,8 +38,8 @@ base-common-types-rpc = { workspace = true, features = ["default", "std"], optio
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-base-common-network = { workspace = true }
 base-common-chain-config = {workspace = true}
+base-common-client-ethereum = { workspace = true }
 serde_json = {features = ["alloc", "std"], workspace = true}
 base-common-types-rpc = { workspace = true, features = ["default", "std"] }
 
@@ -62,4 +62,4 @@ std = [
     "dep:tracing",
     "dep:tokio-stream",
 ]
-test-utils = ["dep:base-common-network", "dep:base-common-types-rpc"]
+test-utils = ["dep:base-common-client-ethereum", "dep:base-common-types-rpc"]

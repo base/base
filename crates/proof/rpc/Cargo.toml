@@ -22,16 +22,15 @@ async-trait = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
-base-common-network = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "future"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-types-rpc = {workspace = true, features = ["default"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["serde"] }
+base-common-client-ethereum = {workspace = true, features = ["default"]}
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "test-util"] }

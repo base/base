@@ -17,7 +17,7 @@ that returns a `CallBuilder` for that function. See its documentation for more d
 use alloy_contract::SolCallBuilder;
 use alloy_primitives::{Address, U256};
 use base_common_client_ethereum::ProviderBuilder;
-use base_common_network::PrivateKeySigner;
+use base_common_client_ethereum::PrivateKeySigner;
 use alloy_sol_types::sol;
 
 sol! {

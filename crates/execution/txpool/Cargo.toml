@@ -63,10 +63,10 @@ paste = { workspace = true }
 alloy-signer = { workspace = true }
 assert_matches = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-common-network = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }

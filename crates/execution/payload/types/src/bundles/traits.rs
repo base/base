@@ -2,8 +2,8 @@
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, TxHash, keccak256};
-use base_execution_evm_fees::tx_estimated_size_fjord_bytes;
 use base_common_types_chain::{BaseTxEnvelope, Transaction, transaction::Recovered};
+use base_execution_evm_fees::tx_estimated_size_fjord_bytes;
 
 use crate::{AcceptedBundle, ParsedBundle};
 
@@ -70,7 +70,7 @@ impl BundleTxs for AcceptedBundle {
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Keccak256, U256};
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
 
     use super::*;
     use crate::{

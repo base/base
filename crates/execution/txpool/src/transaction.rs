@@ -117,9 +117,9 @@ impl BasePooledTransaction {
     /// `max(minTransactionSize, intercept + fastlzCoef*fastlzSize) / 1e6`
     /// Uses cached EIP-2718 encoded bytes to avoid recomputing the encoding for each estimation.
     pub fn estimated_compressed_size(&self) -> u64 {
-        *self
-            .estimated_tx_compressed_size
-            .get_or_init(|| base_execution_evm_fees::tx_estimated_size_fjord_bytes(self.encoded_2718()))
+        *self.estimated_tx_compressed_size.get_or_init(|| {
+            base_execution_evm_fees::tx_estimated_size_fjord_bytes(self.encoded_2718())
+        })
     }
 
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
@@ -472,7 +472,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, EthereumTxEnvelope, SignableTransaction, TxDeposit,

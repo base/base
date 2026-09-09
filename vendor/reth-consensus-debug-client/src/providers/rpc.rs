@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockId;
-use base_common_client_ethereum::{
-    ConnectionConfig, Provider, ProviderBuilder, WebSocketConfig,
-    network::{BlockResponse, Network, primitives::HeaderResponse},
-};
 use alloy_transport::TransportResult;
+use base_common_client_ethereum::{
+    BlockResponse, ConnectionConfig, Network, Provider, ProviderBuilder, WebSocketConfig,
+    primitives::HeaderResponse,
+};
+use base_common_observability_tracing::tracing::{debug, warn};
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::PayloadExtras;
 use base_execution_payload_types::ExecutionPayload;
 use futures::{Stream, StreamExt};
-use base_common_observability_tracing::tracing::{debug, warn};
 use tokio::sync::mpsc::Sender;
 
 use crate::PayloadProvider;

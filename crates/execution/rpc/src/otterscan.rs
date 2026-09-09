@@ -2,7 +2,7 @@ use crate::OtterscanServer;
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use async_trait::async_trait;
-use base_common_network::{ReceiptResponse, TransactionResponse};
+use base_common_client_ethereum::{ReceiptResponse, TransactionResponse};
 use base_common_types_chain::{BlockHeader, Typed2718};
 use base_common_types_rpc::{
     Action, BaseBlockResponse, BaseTransactionReceipt, BlockDetails, BlockTransactions,
@@ -10,14 +10,14 @@ use base_common_types_rpc::{
     OtsBlockTransactions, OtsReceipt, OtsTransactionReceipt, TraceEntry, TraceOutput,
     TransactionReceipt, TransactionsWithReceipts,
 };
-use base_execution_evm_machine::ExecutionResult;
-use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use reth_rpc_eth_types::{EthApiError, utils::binary_search};
-use reth_rpc_server_types::result::internal_rpc_err;
 use base_execution_evm_inspectors::{
     tracing::{TracingInspectorConfig, types::CallTraceNode},
     transfer::{TransferInspector, TransferKind},
 };
+use base_execution_evm_machine::ExecutionResult;
+use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
+use reth_rpc_eth_types::{EthApiError, utils::binary_search};
+use reth_rpc_server_types::result::internal_rpc_err;
 
 use crate::{BaseEthApi, EthApiServer};
 

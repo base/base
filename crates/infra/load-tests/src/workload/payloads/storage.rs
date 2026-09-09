@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, Bytes, U256};
-use base_common_types_rpc::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
-use base_common_network::TransactionBuilder;
+use base_common_client_ethereum::TransactionBuilder;
+use base_common_types_rpc::TransactionRequest;
 
 use super::Payload;
 use crate::workload::SeededRng;

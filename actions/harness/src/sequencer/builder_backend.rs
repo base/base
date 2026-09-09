@@ -19,7 +19,6 @@ use std::{
 };
 
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
-use base_common_client_ethereum::{Identity, ProviderBuilder};
 use async_trait::async_trait;
 use base_builder_core::{
     BuilderConfig,
@@ -29,7 +28,8 @@ use base_builder_core::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::RollupConfig;
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{Identity, ProviderBuilder};
 use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_node::{

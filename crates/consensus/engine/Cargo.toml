@@ -18,7 +18,6 @@ alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-network-api = { workspace = true }
-base-common-network = { workspace = true }
 base-execution-trie = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -37,8 +36,8 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
-base-common-client-ethereum = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
+base-common-client-ethereum = {workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"]}
 
 [dev-dependencies]
 arbitrary = { workspace = true }

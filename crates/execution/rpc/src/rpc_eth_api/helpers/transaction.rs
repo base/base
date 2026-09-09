@@ -6,7 +6,7 @@ use std::sync::Arc;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
-use base_common_network::{TransactionBuilder, TransactionBuilder4844};
+use base_common_client_ethereum::{TransactionBuilder, TransactionBuilder4844};
 use base_common_types_chain::{
     BaseTxEnvelope, BlockHeader, Transaction,
     transaction::{SignerRecoverable, TransactionMeta},

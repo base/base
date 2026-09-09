@@ -13,9 +13,9 @@ mod beryl;
 mod common;
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_sol_types::SolCall;
-use base_common_network::{Base, PrivateKeySigner};
+use base_common_client_ethereum::{Base, PrivateKeySigner};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_execution_evm_precompiles::{
     ActivationFeature, B20PolicyType, B20Variant, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };

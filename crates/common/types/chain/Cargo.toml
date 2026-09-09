@@ -64,9 +64,9 @@ derive_more = { workspace = true, features = [
 test-fuzz = { workspace = true }
 alloy-signer = { workspace = true }
 assert_matches_1_5 = { workspace = true }
-base-common-network = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 proptest-arbitrary-interop = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }

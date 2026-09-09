@@ -1,8 +1,8 @@
 use std::sync::{Arc, OnceLock};
 
+use crate::{Network, TransactionBuilder};
 use alloy_primitives::ChainId;
 use alloy_transport::TransportResult;
-use base_common_network::{Network, TransactionBuilder};
 
 use crate::{
     fillers::{FillerControlFlow, TxFiller},
@@ -22,10 +22,10 @@ use crate::{
 /// # Example
 ///
 /// ```
-/// # use base_common_network::{Ethereum};
+/// # use base_common_client_ethereum::{Ethereum};
 /// # use base_common_types_rpc::TransactionRequest;
 /// # use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
-/// # use base_common_network::PrivateKeySigner;
+/// # use base_common_client_ethereum::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
 /// let provider =

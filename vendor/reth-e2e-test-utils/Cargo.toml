@@ -48,12 +48,11 @@ reth-db = { workspace = true, features = ["test-utils"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
-base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
-base-common-client-ethereum = { workspace = true, features = ["reqwest", "debug-api"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth", "kzg", "serde"] }
+base-common-client-ethereum = {workspace = true, features = ["debug-api", "mnemonic", "reqwest"]}

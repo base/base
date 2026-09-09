@@ -4,11 +4,11 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
-use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
-use base_common_network::Base;
+use base_common_client_ethereum::Base;
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Predeploys;
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_common_types_rpc::BlockNumberOrTag;

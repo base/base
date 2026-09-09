@@ -74,7 +74,7 @@ impl MainContext for Context<TxEnv, CfgEnv, EmptyDB, ()> {
 #[cfg(test)]
 mod test {
     use alloy_signer::{Either, SignerSync};
-    use base_common_network::PrivateKeySigner;
+    use base_common_client_ethereum::PrivateKeySigner;
     use base_execution_evm_machine::{Authorization, Context, TxEnv};
     use base_execution_evm_primitives::{
         Bytecode,
