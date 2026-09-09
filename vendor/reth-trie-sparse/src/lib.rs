@@ -15,8 +15,9 @@ mod trie;
 #[cfg(feature = "std")]
 pub use trie::*;
 
-mod types;
-pub use types::*;
+pub use base_execution_state_types::{
+    LeafLookup, LeafLookupError, LeafUpdate, SparseTrieUpdates, TrieNodeEpoch,
+};
 
 #[cfg(feature = "std")]
 mod arena;

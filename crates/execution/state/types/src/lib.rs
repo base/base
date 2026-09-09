@@ -171,3 +171,8 @@ pub use execution_stats::ExecutionTimingStats;
 
 mod canonical_notification;
 pub use canonical_notification::CanonStateNotification;
+
+mod sparse_updates;
+pub use sparse_updates::{
+    LeafLookup, LeafLookupError, LeafUpdate, SparseTrieUpdates, TrieNodeEpoch,
+};

@@ -24,9 +24,7 @@ use alloy_rlp::{Decodable, encode_fixed_size};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_execution_state_trie::test_utils::TrieTestHarness;
 use base_execution_state_types::{Nibbles, ProofV2Target, TrieNodeV2};
-use reth_trie_sparse::{
-    ArenaParallelSparseTrie, LeafLookup, LeafLookupError, LeafUpdate, TrieNodeEpoch,
-};
+use {reth_trie_sparse::ArenaParallelSparseTrie,base_execution_state_types::LeafLookup,base_execution_state_types::LeafLookupError,base_execution_state_types::LeafUpdate,base_execution_state_types::TrieNodeEpoch};
 
 mod find_leaf;
 mod get_leaf_value;

@@ -90,9 +90,7 @@ use reth_primitives_traits::{
 };
 #[cfg(feature = "trie-debug")]
 use reth_trie_sparse::debug_recorder::TrieDebugRecorder;
-use reth_trie_sparse::{
-    ArenaParallelSparseTrie, RevealableSparseTrie, SparseStateTrie, TrieNodeEpoch,
-};
+use {reth_trie_sparse::ArenaParallelSparseTrie,reth_trie_sparse::RevealableSparseTrie,reth_trie_sparse::SparseStateTrie,base_execution_state_types::TrieNodeEpoch};
 use tracing::{Span, debug, debug_span, instrument, warn};
 use {
     base_execution_state_provider::PreservedSparseTrie, base_execution_state_types::ExecutedBlock,

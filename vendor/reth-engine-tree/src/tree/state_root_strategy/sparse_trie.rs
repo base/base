@@ -23,10 +23,7 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use reth_primitives_traits::FastInstant as Instant;
-use reth_trie_sparse::{
-    DeferredDrops, LeafUpdate, RevealableSparseTrie, SparseStateTrie, TrieNodeEpoch,
-    errors::SparseStateTrieErrorKind, errors::SparseTrieErrorKind, errors::SparseTrieResult,
-};
+use {reth_trie_sparse::DeferredDrops,base_execution_state_types::LeafUpdate,reth_trie_sparse::RevealableSparseTrie,reth_trie_sparse::SparseStateTrie,base_execution_state_types::TrieNodeEpoch,reth_trie_sparse::errors::SparseStateTrieErrorKind,reth_trie_sparse::errors::SparseTrieErrorKind,reth_trie_sparse::errors::SparseTrieResult};
 use tracing::{debug, debug_span, error, instrument, trace_span};
 
 use super::{StateRootComputeOutcome, StateRootMessage, evm_state_to_hashed_post_state};

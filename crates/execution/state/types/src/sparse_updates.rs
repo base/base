@@ -1,12 +1,12 @@
 //! Sparse trie updates, epochs, and leaf lookup results.
 
+use crate::Nibbles;
 use alloc::vec::Vec;
 use alloy_primitives::{
     B256,
     map::{HashMap, HashSet},
 };
 use alloy_trie::BranchNodeCompact;
-use base_execution_state_types::Nibbles;
 
 /// Modification epoch assigned to cached sparse trie nodes.
 ///
@@ -113,4 +113,27 @@ pub enum LeafLookup {
     Exists,
     /// Leaf does not exist (exclusion proof found).
     NonExistent,
+}
+
+impl SparseTrieUpdates {
+    /// Create new wiped sparse trie updates.
+    pub fn wiped() -> Self {
+        Self { wiped: true, ..Default::default() }
+    }
+
+    /// Clears the updates, but keeps the backing data structures allocated.
+    ///
+    /// Sets `wiped` to `false`.
+    pub fn clear(&mut self) {
+        self.updated_nodes.clear();
+        self.removed_nodes.clear();
+        self.wiped = false;
+    }
+
+    /// Extends the updates with another set of updates.
+    pub fn extend(&mut self, other: Self) {
+        self.updated_nodes.extend(other.updated_nodes);
+        self.removed_nodes.extend(other.removed_nodes);
+        self.wiped |= other.wiped;
+    }
 }
