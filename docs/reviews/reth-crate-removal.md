@@ -111,7 +111,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | reth-era-downloader | Deleted |
 | reth-era-utils | Deleted |
 | [reth-errors](../../vendor/reth-errors/Cargo.toml) | Consolidate; retain required code |
-| [reth-eth-wire](../../vendor/reth-eth-wire/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | `reth-ethereum-consensus` | Deleted after fixture migration |
 | `reth-ethereum-engine-primitives` | Deleted; test payload fixtures retained behind test-utils |

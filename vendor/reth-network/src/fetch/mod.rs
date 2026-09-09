@@ -16,16 +16,16 @@ use std::{
 use alloy_primitives::B256;
 use base_execution_network_types::PeerId;
 use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_wire::BlockAccessLists;
+use base_execution_network_wire::Capabilities;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::GetBlockAccessLists;
+use base_execution_network_wire::GetBlockBodies;
+use base_execution_network_wire::GetBlockHeaders;
+use base_execution_network_wire::GetReceipts;
+use base_execution_network_wire::SnapProtocolMessage;
 pub use client::FetchClient;
 use futures::StreamExt;
-use reth_eth_wire::BlockAccessLists;
-use reth_eth_wire::Capabilities;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::GetBlockAccessLists;
-use reth_eth_wire::GetBlockBodies;
-use reth_eth_wire::GetBlockHeaders;
-use reth_eth_wire::GetReceipts;
-use reth_eth_wire::SnapProtocolMessage;
 use reth_network_api::test_utils::PeersHandle;
 use reth_network_p2p::{
     block_access_lists::client::BalRequirement,
@@ -859,8 +859,8 @@ mod tests {
     use alloy_primitives::B512;
     use base_common_types_chain::Header;
     use base_execution_network_wire::AccountRangeMessage;
+    use base_execution_network_wire::Capability;
     use base_execution_network_wire::GetAccountRangeMessage;
-    use reth_eth_wire::Capability;
 
     use super::*;
     use crate::{PeersConfig, peers::PeersManager};

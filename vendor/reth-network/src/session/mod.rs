@@ -22,6 +22,20 @@ use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_common_runtime_tasks::Runtime;
 use base_execution_network_types::PeerId;
 use base_execution_network_types::SessionsConfig;
+use base_execution_network_wire::BlockRangeUpdate;
+use base_execution_network_wire::Capabilities;
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::ECIESError;
+use base_execution_network_wire::ECIESStream;
+use base_execution_network_wire::EthRlpxHandshake;
+use base_execution_network_wire::EthSnapStream;
+use base_execution_network_wire::EthStream;
+use base_execution_network_wire::EthStreamError;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::HANDSHAKE_TIMEOUT;
+use base_execution_network_wire::HelloMessageWithProtocols;
+use base_execution_network_wire::UnauthedP2PStream;
+use base_execution_network_wire::UnifiedStatus;
 pub use conn::EthRlpxConnection;
 use counter::SessionCounter;
 use futures::{FutureExt, StreamExt, future::Either, io};
@@ -30,20 +44,6 @@ pub use handle::{
     ActiveSessionHandle, ActiveSessionMessage, PendingSessionEvent, PendingSessionHandle,
     SessionCommand,
 };
-use base_execution_network_wire::ECIESError;
-use base_execution_network_wire::ECIESStream;
-use reth_eth_wire::BlockRangeUpdate;
-use reth_eth_wire::Capabilities;
-use reth_eth_wire::DisconnectReason;
-use reth_eth_wire::EthSnapStream;
-use reth_eth_wire::EthStream;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::HANDSHAKE_TIMEOUT;
-use reth_eth_wire::HelloMessageWithProtocols;
-use reth_eth_wire::UnauthedP2PStream;
-use reth_eth_wire::UnifiedStatus;
-use reth_eth_wire::errors::EthStreamError;
-use reth_eth_wire::handshake::EthRlpxHandshake;
 pub use reth_network_api::{Direction, PeerInfo};
 use reth_network_api::{PeerRequest, PeerRequestSender};
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
@@ -1111,7 +1111,7 @@ async fn authenticate_stream(
 ) -> PendingSessionEvent {
     // Base serves only ETH and the native SNAP/2 protocol.
     hello.protocols.retain(|protocol| {
-        protocol.cap.is_eth() || protocol.cap == reth_eth_wire::Capability::snap_2()
+        protocol.cap.is_eth() || protocol.cap == base_execution_network_wire::Capability::snap_2()
     });
 
     let authenticated_peer_id = stream.inner().remote_id();

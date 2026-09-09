@@ -22,15 +22,15 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 use tracing::{debug, trace};
 
+use crate::CanDisconnect;
 use crate::DisconnectReason;
 use crate::HelloMessage;
 use crate::HelloMessageWithProtocols;
-use crate::capability::SharedCapabilities;
-use crate::disconnect::CanDisconnect;
-use crate::errors::P2PHandshakeError;
-use crate::errors::P2PStreamError;
-use crate::pinger::Pinger;
-use crate::pinger::PingerEvent;
+use crate::P2PHandshakeError;
+use crate::P2PStreamError;
+use crate::Pinger;
+use crate::PingerEvent;
+use crate::SharedCapabilities;
 
 /// [`MAX_PAYLOAD_SIZE`] is the maximum size of an uncompressed message payload.
 /// This is defined in [EIP-706](https://eips.ethereum.org/EIPS/eip-706).
@@ -479,7 +479,7 @@ where
             // first decode disconnect reasons, because they can be encoded in a variety of forms
             // over the wire, in both snappy compressed and uncompressed forms.
             //
-            // see: [crate::disconnect::tests::test_decode_known_reasons]
+            // see: [crate::tests::test_decode_known_reasons]
             let id = bytes[0];
             if id == P2PMessageID::Disconnect as u8 {
                 // We can't handle the error here because disconnect reasons are encoded as both:
@@ -878,7 +878,7 @@ mod tests {
     use crate::Capability;
     use crate::EthVersion;
     use crate::ProtocolVersion;
-    use crate::capability::SharedCapability;
+    use crate::SharedCapability;
     use crate::test_utils::eth_hello;
 
     /// A sink that records started frames and counts flushes, to observe batching behavior.

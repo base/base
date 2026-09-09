@@ -12,13 +12,13 @@ use alloy_primitives::B256;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_network_types::PeerId;
 use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_wire::BlockAccessLists;
 use base_execution_network_wire::GetAccountRangeMessage;
 use base_execution_network_wire::GetBlockAccessListsMessage;
 use base_execution_network_wire::GetByteCodesMessage;
 use base_execution_network_wire::GetStorageRangesMessage;
 use base_execution_network_wire::SnapProtocolMessage;
 use futures::{future, future::Either};
-use reth_eth_wire::BlockAccessLists;
 use reth_network_api::test_utils::PeersHandle;
 use reth_network_p2p::{
     BlockClient,

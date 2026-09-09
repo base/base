@@ -15,16 +15,16 @@ use base_execution_network_types::PeerKind;
 use base_execution_network_types::Reputation;
 use base_execution_network_types::ReputationChangeKind;
 use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
+use base_execution_network_wire::BlockRangeUpdate;
+use base_execution_network_wire::BroadcastPoolTransactions;
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::NewPooledTransactionHashes;
+use base_execution_network_wire::SharedTransactions;
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reth_discv4::{Discv4, NatResolver};
 use reth_discv5::Discv5;
-use reth_eth_wire::BlockRangeUpdate;
-use reth_eth_wire::BroadcastPoolTransactions;
-use reth_eth_wire::DisconnectReason;
-use reth_eth_wire::NewPooledTransactionHashes;
-use reth_eth_wire::SharedTransactions;
 use reth_network_api::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerInfo, PeerRequest, Peers,
@@ -530,7 +530,7 @@ impl NetworkSyncUpdater for NetworkHandle {
     }
 
     /// Updates the advertised block range.
-    fn update_block_range(&self, update: reth_eth_wire::BlockRangeUpdate) {
+    fn update_block_range(&self, update: base_execution_network_wire::BlockRangeUpdate) {
         self.send_message(NetworkHandleMessage::InternalBlockRangeUpdate(update));
     }
 

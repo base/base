@@ -5,19 +5,19 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_execution_network_wire::RawCapabilityMessage;
-use futures::{Sink, SinkExt, Stream, StreamExt};
 use base_execution_network_wire::ECIESStream;
-use reth_eth_wire::EthBroadcastMessage;
-use reth_eth_wire::EthMessage;
-use reth_eth_wire::EthSnapMessage;
-use reth_eth_wire::EthSnapStream;
-use reth_eth_wire::EthStream;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::P2PStream;
-use reth_eth_wire::SnapProtocolMessage;
-use reth_eth_wire::errors::EthStreamError;
-use reth_eth_wire::errors::P2PStreamError;
+use base_execution_network_wire::EthBroadcastMessage;
+use base_execution_network_wire::EthMessage;
+use base_execution_network_wire::EthSnapMessage;
+use base_execution_network_wire::EthSnapStream;
+use base_execution_network_wire::EthStream;
+use base_execution_network_wire::EthStreamError;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::P2PStream;
+use base_execution_network_wire::P2PStreamError;
+use base_execution_network_wire::RawCapabilityMessage;
+use base_execution_network_wire::SnapProtocolMessage;
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use tokio::net::TcpStream;
 
 /// The type of the underlying peer network connection.

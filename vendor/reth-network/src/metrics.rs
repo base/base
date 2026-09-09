@@ -3,8 +3,8 @@ use base_common_observability_metrics::{
     metrics::{Counter, Gauge},
 };
 use base_common_types_chain::TxType;
+use base_execution_network_wire::DisconnectReason;
 use metrics::Histogram;
-use reth_eth_wire::DisconnectReason;
 
 /// Scope for monitoring transactions sent from the manager to the tx manager
 pub(crate) const NETWORK_POOL_TRANSACTIONS_SCOPE: &str = "network.pool.transactions";
@@ -256,7 +256,7 @@ pub struct TransactionsManagerMetrics {
 #[derive(Metrics)]
 #[metrics(scope = "network")]
 pub struct TransactionFetcherMetrics {
-    /// Currently active outgoing [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions)
+    /// Currently active outgoing [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions)
     /// requests.
     pub(crate) inflight_transaction_requests: Gauge,
     /// Number of inflight requests at which the
@@ -265,7 +265,7 @@ pub struct TransactionFetcherMetrics {
     /// measure.
     pub(crate) capacity_inflight_requests: Counter,
     /// Hashes in currently active outgoing
-    /// [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions) requests.
+    /// [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions) requests.
     pub(crate) hashes_inflight_transaction_requests: Gauge,
     /// How often we failed to send a request to the peer because the channel was full.
     pub(crate) egress_peer_channel_full: Counter,
@@ -274,7 +274,7 @@ pub struct TransactionFetcherMetrics {
     /// Total number of fetched transactions.
     pub(crate) fetched_transactions: Counter,
     /// Total number of transactions that were received in
-    /// [`PooledTransactions`](reth_eth_wire::PooledTransactions) responses, that weren't
+    /// [`PooledTransactions`](base_execution_network_wire::PooledTransactions) responses, that weren't
     /// requested.
     pub(crate) unsolicited_transactions: Counter,
     /* ================ SEARCH DURATION ================ */

@@ -2,17 +2,17 @@
 
 use std::io;
 
+use crate::EthVersion;
+use crate::SnapProtocolError;
 use alloy_chains::Chain;
 use alloy_eip2124::ValidationError;
 use alloy_primitives::B256;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::SnapProtocolError;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 
 use crate::DisconnectReason;
 use crate::MessageError;
+use crate::P2PStreamError;
 use crate::ParseVersionError;
-use crate::errors::P2PStreamError;
 
 /// Errors when sending/receiving messages
 #[derive(thiserror::Error, Debug)]

@@ -7,10 +7,10 @@ use alloy_primitives::B512;
 use async_trait::async_trait;
 use base_execution_network_wire::ECIESError;
 use base_execution_network_wire::ECIESStream;
-use reth_eth_wire::HelloMessage;
-use reth_eth_wire::UnauthedP2PStream;
-use reth_eth_wire::errors::P2PHandshakeError;
-use reth_eth_wire::errors::P2PStreamError;
+use base_execution_network_wire::HelloMessage;
+use base_execution_network_wire::P2PHandshakeError;
+use base_execution_network_wire::P2PStreamError;
+use base_execution_network_wire::UnauthedP2PStream;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -251,10 +251,10 @@ mod tests {
     use std::{error::Error as _, future, time::Duration};
 
     use alloy_primitives::B512;
+    use base_execution_network_wire::DisconnectReason;
     use base_execution_network_wire::ECIESStream;
-    use reth_eth_wire::DisconnectReason;
-    use reth_eth_wire::HelloMessage;
-    use reth_eth_wire::UnauthedP2PStream;
+    use base_execution_network_wire::HelloMessage;
+    use base_execution_network_wire::UnauthedP2PStream;
     use secp256k1::{PublicKey, Secp256k1, SecretKey};
     use tokio::{net::TcpListener, sync::oneshot, time::Instant};
 

@@ -6,12 +6,12 @@ use std::sync::Arc;
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_types_chain::{BaseBlock as Block, Header};
+use base_execution_network_wire::BlockAccessLists;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::GetBlockAccessLists;
+use base_execution_network_wire::HeadersDirection;
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
-use reth_eth_wire::BlockAccessLists;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::GetBlockAccessLists;
-use reth_eth_wire::HeadersDirection;
 use reth_network::{
     BlockDownloaderProvider, NetworkEventListenerProvider,
     eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
@@ -349,7 +349,7 @@ async fn test_eth68_get_receipts() {
         handle0.send_request(
             *handle1.peer_id(),
             reth_network::PeerRequest::GetReceipts {
-                request: reth_eth_wire::GetReceipts(vec![block_hash]),
+                request: base_execution_network_wire::GetReceipts(vec![block_hash]),
                 response: tx,
             },
         );
@@ -522,7 +522,7 @@ async fn test_eth69_get_receipts() {
         handle0.send_request(
             *handle1.peer_id(),
             reth_network::PeerRequest::GetReceipts69 {
-                request: reth_eth_wire::GetReceipts(vec![block_hash]),
+                request: base_execution_network_wire::GetReceipts(vec![block_hash]),
                 response: tx,
             },
         );

@@ -62,7 +62,7 @@ impl Protocol {
 
     /// Consumes the type and returns a tuple of the [Capability] and number of messages.
     #[inline]
-    pub(crate) fn split(self) -> (Capability, u8) {
+    pub fn split(self) -> (Capability, u8) {
         (self.cap, self.messages)
     }
 
@@ -80,11 +80,11 @@ impl From<EthVersion> for Protocol {
 
 /// A helper type to keep track of the protocol version and number of messages used by the protocol.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ProtoVersion {
+pub struct ProtoVersion {
     /// Number of messages for a protocol
-    pub(crate) messages: u8,
+    pub messages: u8,
     /// Version of the protocol
-    pub(crate) version: usize,
+    pub version: usize,
 }
 
 #[cfg(test)]

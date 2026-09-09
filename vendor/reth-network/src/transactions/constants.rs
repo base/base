@@ -2,7 +2,7 @@
 
 pub use base_execution_network_wire::SOFT_LIMIT_COUNT_HASHES_IN_NEW_POOLED_TRANSACTIONS_BROADCAST_MESSAGE;
 
-/// Default soft limit for the byte size of a [`Transactions`](reth_eth_wire::Transactions)
+/// Default soft limit for the byte size of a [`Transactions`](base_execution_network_wire::Transactions)
 /// broadcast message.
 ///
 /// Default is 128 KiB.
@@ -11,15 +11,15 @@ pub const DEFAULT_SOFT_LIMIT_BYTE_SIZE_TRANSACTIONS_BROADCAST_MESSAGE: usize = 1
 /* ================ REQUEST-RESPONSE ================ */
 
 /// Recommended soft limit for the number of hashes in a
-/// [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions) request.
+/// [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions) request.
 ///
 /// Spec'd at 256 hashes (8 KiB).
 ///
 /// <https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getpooledtransactions-0x09>
 pub const SOFT_LIMIT_COUNT_HASHES_IN_GET_POOLED_TRANSACTIONS_REQUEST: usize = 256;
 
-/// Soft limit for the byte size of a [`PooledTransactions`](reth_eth_wire::PooledTransactions)
-/// response on assembling a [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions)
+/// Soft limit for the byte size of a [`PooledTransactions`](base_execution_network_wire::PooledTransactions)
+/// response on assembling a [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions)
 /// request.
 ///
 /// Spec'd at 2 MiB.
@@ -72,10 +72,10 @@ pub mod tx_fetcher {
     /* ============== SCALARS OF MESSAGES ============== */
 
     /// Default soft limit for the byte size of a
-    /// [`PooledTransactions`](reth_eth_wire::PooledTransactions) response on assembling a
-    /// [`GetPooledTransactions`](reth_eth_wire::PooledTransactions) request. This defaults to less
+    /// [`PooledTransactions`](base_execution_network_wire::PooledTransactions) response on assembling a
+    /// [`GetPooledTransactions`](base_execution_network_wire::PooledTransactions) request. This defaults to less
     /// than the [`SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE`], at 2 MiB, used when
-    /// assembling a [`PooledTransactions`](reth_eth_wire::PooledTransactions) response.
+    /// assembling a [`PooledTransactions`](base_execution_network_wire::PooledTransactions) response.
     ///
     /// Default is 128 KiB.
     pub const DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ: usize = 128 * 1024;
@@ -107,7 +107,7 @@ pub mod tx_fetcher {
 
     /* ==================== CONCURRENCY ==================== */
 
-    /// Default maximum concurrent [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions)
+    /// Default maximum concurrent [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions)
     /// requests.
     ///
     /// Default is the product of [`DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS_PER_PEER`], which
@@ -118,7 +118,7 @@ pub mod tx_fetcher {
         DEFAULT_MAX_COUNT_PEERS_INBOUND + DEFAULT_MAX_COUNT_PEERS_OUTBOUND;
 
     /// Default maximum number of concurrent
-    /// [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions)s to allow per peer. This
+    /// [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions)s to allow per peer. This
     /// number reflects concurrent requests for different hashes.
     ///
     /// Default is 1 request.
@@ -173,7 +173,7 @@ pub mod tx_fetcher {
     /* ====== SCALARS FOR USE ON FETCH PENDING HASHES ====== */
 
     /// Default soft limit for the number of hashes in a
-    /// [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions) request, when it is filled
+    /// [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions) request, when it is filled
     /// from hashes pending fetch.
     ///
     /// Default is half of the [`SOFT_LIMIT_COUNT_HASHES_IN_GET_POOLED_TRANSACTIONS_REQUEST`]
@@ -181,9 +181,9 @@ pub mod tx_fetcher {
     pub const DEFAULT_SOFT_LIMIT_COUNT_HASHES_IN_GET_POOLED_TRANSACTIONS_REQUEST_ON_FETCH_PENDING_HASHES:
     usize = SOFT_LIMIT_COUNT_HASHES_IN_GET_POOLED_TRANSACTIONS_REQUEST / 2;
 
-    /// Default soft limit for a [`PooledTransactions`](reth_eth_wire::PooledTransactions) response
+    /// Default soft limit for a [`PooledTransactions`](base_execution_network_wire::PooledTransactions) response
     /// when it's used as expected response in calibrating the filling of a
-    /// [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions) request, when the request
+    /// [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions) request, when the request
     /// is filled from hashes pending fetch.
     ///
     /// Default is half of
@@ -250,8 +250,8 @@ pub mod tx_fetcher {
     pub const MEDIAN_BYTE_SIZE_SMALL_LEGACY_TX_ENCODED: usize = 120;
 
     /// Marginal on the number of hashes to preallocate memory for in a
-    /// [`GetPooledTransactions`](reth_eth_wire::GetPooledTransactions) request, when packed
-    /// according to the [`Eth68`](reth_eth_wire::EthVersion::Eth68) protocol version. To make
+    /// [`GetPooledTransactions`](base_execution_network_wire::GetPooledTransactions) request, when packed
+    /// according to the [`Eth68`](base_execution_network_wire::EthVersion::Eth68) protocol version. To make
     /// sure enough memory is preallocated in most cases, it's sensible to use a margin. This,
     /// since the capacity is calculated based on median value
     /// [`MEDIAN_BYTE_SIZE_SMALL_LEGACY_TX_ENCODED`]. There may otherwise be a noteworthy number of

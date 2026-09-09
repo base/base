@@ -205,13 +205,15 @@ async fn rejects_blob_transaction_gossip() {
     // Bypass the Base send API to simulate an incompatible peer's raw wire message.
     let mut tx_gen = TransactionGenerator::new(rand::rng());
     let blob = tx_gen.gen_eip4844();
-    let encoded = alloy_rlp::encode(reth_eth_wire::Transactions(vec![blob]));
+    let encoded = alloy_rlp::encode(base_execution_network_wire::Transactions(vec![blob]));
     peer0.network().send_eth_message(
         *peer1.peer_id(),
-        reth_network::message::PeerMessage::Other(reth_eth_wire::RawCapabilityMessage::eth(
-            reth_eth_wire::EthMessageID::Transactions,
-            encoded.into(),
-        )),
+        reth_network::message::PeerMessage::Other(
+            base_execution_network_wire::RawCapabilityMessage::eth(
+                base_execution_network_wire::EthMessageID::Transactions,
+                encoded.into(),
+            ),
+        ),
     );
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while let Some(event) = events.next().await {

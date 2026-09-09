@@ -29,10 +29,10 @@ use base_execution_network_types::ReputationChangeOutcome;
 use base_execution_network_types::ReputationChangeWeights;
 use base_execution_network_types::is_connection_failed_reputation;
 use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::EthStreamError;
 use futures::StreamExt;
 use rand::Rng;
-use reth_eth_wire::DisconnectReason;
-use reth_eth_wire::errors::EthStreamError;
 use reth_network_api::test_utils::{PeerCommand, PeersHandle};
 use thiserror::Error;
 use tokio::{
@@ -1526,11 +1526,11 @@ mod tests {
     use base_execution_network_types::Peer;
     use base_execution_network_types::ReputationChangeKind;
     use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-    use reth_eth_wire::DisconnectReason;
-    use reth_eth_wire::errors::EthHandshakeError;
-    use reth_eth_wire::errors::EthStreamError;
-    use reth_eth_wire::errors::P2PHandshakeError;
-    use reth_eth_wire::errors::P2PStreamError;
+    use base_execution_network_wire::DisconnectReason;
+    use base_execution_network_wire::EthHandshakeError;
+    use base_execution_network_wire::EthStreamError;
+    use base_execution_network_wire::P2PHandshakeError;
+    use base_execution_network_wire::P2PStreamError;
     use reth_network_api::Direction;
     use url::Host;
 
@@ -3325,10 +3325,12 @@ mod tests {
             peers.on_active_session_dropped(
                 &socket_addr,
                 &peer,
-                &EthStreamError::InvalidMessage(reth_eth_wire::MessageError::Invalid(
-                    reth_eth_wire::EthVersion::Eth68,
-                    reth_eth_wire::EthMessageID::Status,
-                )),
+                &EthStreamError::InvalidMessage(
+                    base_execution_network_wire::MessageError::Invalid(
+                        base_execution_network_wire::EthVersion::Eth68,
+                        base_execution_network_wire::EthMessageID::Status,
+                    ),
+                ),
             );
 
             if peers.peers.get(&peer).unwrap().is_banned() {

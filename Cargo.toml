@@ -140,7 +140,6 @@ members = [
   "vendor/reth-engine-primitives",
   "vendor/reth-engine-tree",
   "vendor/reth-engine-util",
-  "vendor/reth-eth-wire",
   "crates/execution/network/wire",
   "vendor/reth-etl",
   "vendor/reth-execution-cache",
@@ -468,7 +467,6 @@ reth-network = { path = "vendor/reth-network", default-features = false }
 reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }
 base-common-io-files = { path = "crates/common/io/files", default-features = false }
 reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
-reth-eth-wire = { path = "vendor/reth-eth-wire", default-features = false }
 reth-provider = { path = "vendor/reth-provider", default-features = false }
 reth-mdbx-sys = { path = "vendor/reth-mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }

@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use alloy_primitives::TxHash;
 use base_common_runtime_tasks::Runtime;
-use base_execution_state_api::NoopProvider;
-use reth_eth_wire::EthVersion;
-use reth_network_api::{PeerKind, PeerRequest, PeerRequestSender};
 use base_execution_network_types::PeerId;
+use base_execution_network_wire::EthVersion;
+use base_execution_state_api::NoopProvider;
+use reth_network_api::{PeerKind, PeerRequest, PeerRequestSender};
 use secp256k1::SecretKey;
 use tokio::sync::mpsc;
 use tracing::trace;

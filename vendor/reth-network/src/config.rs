@@ -10,7 +10,12 @@ use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_network_types::PeersConfig;
 use base_execution_network_types::SessionsConfig;
 use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
+use base_execution_network_wire::EthHandshake;
+use base_execution_network_wire::EthRlpxHandshake;
+use base_execution_network_wire::HelloMessage;
+use base_execution_network_wire::HelloMessageWithProtocols;
 use base_execution_network_wire::MAX_MESSAGE_SIZE;
+use base_execution_network_wire::UnifiedStatus;
 use base_execution_state_api::{
     BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
@@ -18,11 +23,6 @@ use base_execution_state_api::{
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
 use reth_dns_discovery::DnsDiscoveryConfig;
-use reth_eth_wire::HelloMessage;
-use reth_eth_wire::HelloMessageWithProtocols;
-use reth_eth_wire::UnifiedStatus;
-use reth_eth_wire::handshake::EthHandshake;
-use reth_eth_wire::handshake::EthRlpxHandshake;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
@@ -324,7 +324,7 @@ impl NetworkConfigBuilder {
     /// Sets the `HelloMessage` to send when connecting to peers.
     ///
     /// ```
-    /// # use reth_eth_wire::HelloMessage;
+    /// # use base_execution_network_wire::HelloMessage;
     /// # use reth_network::NetworkConfigBuilder;
     /// # fn builder(builder: NetworkConfigBuilder) {
     /// let peer_id = builder.get_peer_id();

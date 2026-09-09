@@ -4,12 +4,12 @@ use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
 use base_execution_network_types::PeerKind;
 use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_wire::Capabilities;
+use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::ECIESError;
-use reth_eth_wire::Capabilities;
-use reth_eth_wire::DisconnectReason;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::UnifiedStatus;
-use reth_eth_wire::errors::EthStreamError;
+use base_execution_network_wire::EthStreamError;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::UnifiedStatus;
 use reth_network_api::PeerInfo;
 use tokio::sync::{
     mpsc::{self, error::SendError},

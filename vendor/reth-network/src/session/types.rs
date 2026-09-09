@@ -9,8 +9,8 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_execution_network_wire::BlockRangeUpdate;
 use parking_lot::RwLock;
-use reth_eth_wire::BlockRangeUpdate;
 
 /// Information about the range of full blocks available from a peer.
 ///

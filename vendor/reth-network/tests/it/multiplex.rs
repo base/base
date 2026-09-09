@@ -3,9 +3,9 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use reth_eth_wire::Capability;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::protocol::Protocol;
+use base_execution_network_wire::Capability;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::Protocol;
 use reth_network::{
     BlockDownloaderProvider,
     test_utils::{PeerConfig, TestPool, Testnet},

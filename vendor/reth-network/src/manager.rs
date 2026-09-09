@@ -35,10 +35,10 @@ use base_common_runtime_tasks::shutdown::GracefulShutdown;
 use base_common_types_chain::BaseBlock;
 use base_execution_network_types::ReputationChangeKind;
 use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_wire::DisconnectReason;
 use base_execution_state_api::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
-use reth_eth_wire::DisconnectReason;
 use reth_network_api::{
     EthProtocolInfo, NetworkEvent, NetworkStatus, PeerInfo, PeerRequest,
     events::{PeerEvent, SessionInfo},

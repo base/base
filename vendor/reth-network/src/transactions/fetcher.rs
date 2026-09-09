@@ -41,16 +41,16 @@ use base_common_types_chain::EthereumTxEnvelope;
 use base_common_types_chain::TxEip4844;
 use base_common_types_chain::transaction::PooledTransaction;
 use base_execution_network_types::PeerId;
+use base_execution_network_wire::DedupPayload;
+use base_execution_network_wire::GetPooledTransactions;
+use base_execution_network_wire::HandleMempoolData;
+use base_execution_network_wire::HandleVersionedMempoolData;
+use base_execution_network_wire::PartiallyValidData;
+use base_execution_network_wire::RequestTxHashes;
+use base_execution_network_wire::ValidAnnouncementData;
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;
-use reth_eth_wire::DedupPayload;
-use reth_eth_wire::GetPooledTransactions;
-use reth_eth_wire::HandleMempoolData;
-use reth_eth_wire::HandleVersionedMempoolData;
-use reth_eth_wire::PartiallyValidData;
-use reth_eth_wire::RequestTxHashes;
-use reth_eth_wire::ValidAnnouncementData;
 use reth_network_api::PeerRequest;
 use reth_network_p2p::error::{RequestError, RequestResult};
 use reth_primitives_traits::SignedTransaction;
@@ -261,7 +261,7 @@ impl TransactionFetcher {
     }
 
     /// Packages hashes for a [`GetPooledTxRequest`] from an
-    /// [`Eth68`](reth_eth_wire::EthVersion::Eth68) announcement up to limit as defined by protocol
+    /// [`Eth68`](base_execution_network_wire::EthVersion::Eth68) announcement up to limit as defined by protocol
     /// version 68. Takes a [`RequestTxHashes`] buffer as parameter for filling with hashes to
     /// request.
     ///
@@ -328,7 +328,7 @@ impl TransactionFetcher {
     }
 
     /// Packages hashes for a [`GetPooledTxRequest`] from an
-    /// [`Eth66`](reth_eth_wire::EthVersion::Eth66) announcement up to limit as defined by
+    /// [`Eth66`](base_execution_network_wire::EthVersion::Eth66) announcement up to limit as defined by
     /// protocol version 66. Takes a [`RequestTxHashes`] buffer as parameter for filling with
     /// hashes to request.
     ///
@@ -1053,8 +1053,8 @@ impl TxFetchMetadata {
     }
 
     /// Returns the size of the transaction, if its hash has been received in any
-    /// [`Eth68`](reth_eth_wire::EthVersion::Eth68) announcement. If the transaction hash has only
-    /// been seen in [`Eth66`](reth_eth_wire::EthVersion::Eth66) announcements so far, this will
+    /// [`Eth68`](base_execution_network_wire::EthVersion::Eth68) announcement. If the transaction hash has only
+    /// been seen in [`Eth66`](base_execution_network_wire::EthVersion::Eth66) announcements so far, this will
     /// return `None`.
     pub const fn tx_encoded_len(&self) -> Option<usize> {
         self.tx_encoded_length

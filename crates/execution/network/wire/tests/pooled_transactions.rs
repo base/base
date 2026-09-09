@@ -5,9 +5,9 @@ use std::{fs, path::PathBuf};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::hex;
 use alloy_rlp::{Decodable, Encodable};
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::PooledTransactions;
-use reth_eth_wire::ProtocolMessage;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::PooledTransactions;
+use base_execution_network_wire::ProtocolMessage;
 use test_fuzz::test_fuzz;
 
 /// Pre-Osaka pooled transaction type using EIP-4844 sidecar format.

@@ -18,22 +18,22 @@ use alloy_eips::merge::EPOCH_SLOTS;
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
 use base_execution_network_types::PeerId;
+use base_execution_network_wire::Capabilities;
+use base_execution_network_wire::DisconnectP2P;
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::EthBroadcastMessage;
+use base_execution_network_wire::EthHandshakeError;
+use base_execution_network_wire::EthMessage;
+use base_execution_network_wire::EthSnapMessage;
+use base_execution_network_wire::EthStreamError;
+use base_execution_network_wire::MessageError;
+use base_execution_network_wire::NewBlockPayload;
 use base_execution_network_wire::NewPooledTransactionHashes;
 use base_execution_network_wire::RawCapabilityMessage;
 use base_execution_network_wire::RequestPair;
 use base_execution_network_wire::SnapProtocolMessage;
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
-use reth_eth_wire::Capabilities;
-use reth_eth_wire::DisconnectP2P;
-use reth_eth_wire::DisconnectReason;
-use reth_eth_wire::EthBroadcastMessage;
-use reth_eth_wire::EthMessage;
-use reth_eth_wire::EthSnapMessage;
-use reth_eth_wire::MessageError;
-use reth_eth_wire::NewBlockPayload;
-use reth_eth_wire::errors::EthHandshakeError;
-use reth_eth_wire::errors::EthStreamError;
 use reth_network_api::{PeerRequest, RequestMessage};
 use reth_network_p2p::{error::RequestError, snap::client::SnapResponse};
 use reth_primitives_traits::Block;
@@ -1317,23 +1317,23 @@ mod tests {
     use base_execution_network_wire::AccountRangeMessage;
     use base_execution_network_wire::BlockAccessLists;
     use base_execution_network_wire::BlockAccessListsMessage;
+    use base_execution_network_wire::ECIESStream;
+    use base_execution_network_wire::EthHandshake;
     use base_execution_network_wire::EthMessageID;
+    use base_execution_network_wire::EthStream;
     use base_execution_network_wire::GetAccountRangeMessage;
+    use base_execution_network_wire::GetBlockAccessLists;
     use base_execution_network_wire::GetBlockAccessListsMessage;
+    use base_execution_network_wire::GetBlockBodies;
+    use base_execution_network_wire::HelloMessageWithProtocols;
     use base_execution_network_wire::MAX_MESSAGE_SIZE;
     use base_execution_network_wire::NewPooledTransactionHashes72;
+    use base_execution_network_wire::P2PStream;
+    use base_execution_network_wire::Protocol;
+    use base_execution_network_wire::UnauthedEthStream;
+    use base_execution_network_wire::UnauthedP2PStream;
+    use base_execution_network_wire::UnifiedStatus;
     use futures::task::noop_waker;
-    use base_execution_network_wire::ECIESStream;
-    use reth_eth_wire::EthStream;
-    use reth_eth_wire::GetBlockAccessLists;
-    use reth_eth_wire::GetBlockBodies;
-    use reth_eth_wire::HelloMessageWithProtocols;
-    use reth_eth_wire::P2PStream;
-    use reth_eth_wire::UnauthedEthStream;
-    use reth_eth_wire::UnauthedP2PStream;
-    use reth_eth_wire::UnifiedStatus;
-    use reth_eth_wire::handshake::EthHandshake;
-    use reth_eth_wire::protocol::Protocol;
     use reth_network_p2p::error::RequestResult;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::{
@@ -1512,7 +1512,7 @@ mod tests {
     }
 
     /// Returns a [`SessionBuilder`] whose hello also advertises `snap/2`, so the negotiated
-    /// session ends up on an [`EthSnapStream`](reth_eth_wire::EthSnapStream) connection instead
+    /// session ends up on an [`EthSnapStream`](base_execution_network_wire::EthSnapStream) connection instead
     /// of a plain `eth`-only one.
     fn snap_session_builder() -> SessionBuilder {
         let mut builder = SessionBuilder::default();

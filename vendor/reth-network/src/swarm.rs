@@ -7,12 +7,12 @@ use std::{
 };
 
 use base_execution_network_types::PeerId;
+use base_execution_network_wire::Capabilities;
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::EthStreamError;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::UnifiedStatus;
 use futures::Stream;
-use reth_eth_wire::Capabilities;
-use reth_eth_wire::DisconnectReason;
-use reth_eth_wire::EthVersion;
-use reth_eth_wire::UnifiedStatus;
-use reth_eth_wire::errors::EthStreamError;
 use reth_network_api::{PeerRequest, PeerRequestSender};
 use tracing::trace;
 

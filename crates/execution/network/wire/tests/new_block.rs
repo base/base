@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf};
 
 use alloy_primitives::hex;
 use alloy_rlp::Decodable;
-use reth_eth_wire::NewBlock;
+use base_execution_network_wire::NewBlock;
 
 #[test]
 fn decode_new_block_network() {

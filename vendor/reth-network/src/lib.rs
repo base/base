@@ -150,6 +150,8 @@ mod trusted_peers_resolver;
 
 pub use base_execution_network_types::PeersConfig;
 pub use base_execution_network_types::SessionsConfig;
+pub use base_execution_network_wire::DisconnectReason;
+pub use base_execution_network_wire::HelloMessageWithProtocols;
 pub use builder::NetworkBuilder;
 pub use config::{NetworkConfig, NetworkConfigBuilder};
 pub use discovery::Discovery;
@@ -158,8 +160,6 @@ pub use flattened_response::FlattenedResponse;
 pub use manager::NetworkManager;
 pub use metrics::TxTypesCounter;
 pub use network::NetworkHandle;
-pub use reth_eth_wire::DisconnectReason;
-pub use reth_eth_wire::HelloMessageWithProtocols;
 pub use reth_network_api::{
     BlockDownloaderProvider, DiscoveredEvent, DiscoveryEvent, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, PeerRequest, PeerRequestSender, Peers, PeersInfo,

@@ -10,12 +10,12 @@ use crate::ProtocolVersion;
 /// The default tcp port for p2p.
 ///
 /// Note: this is the same as discovery port: `DEFAULT_DISCOVERY_PORT`
-pub(crate) const DEFAULT_TCP_PORT: u16 = 30303;
+pub const DEFAULT_TCP_PORT: u16 = 30303;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::Protocol;
+use crate::Protocol;
 
 /// This is a superset of [`HelloMessage`] that provides additional protocol [Protocol] information
 /// about the number of messages used by each capability in order to do proper message ID
@@ -48,7 +48,7 @@ impl HelloMessageWithProtocols {
     /// Starts a new `HelloMessageProtocolsBuilder`
     ///
     /// ```
-    /// use reth_eth_wire::HelloMessageWithProtocols;
+    /// use base_execution_network_wire::HelloMessageWithProtocols;
     /// use base_execution_network_types::pk2id;
     /// use secp256k1::{SecretKey, SECP256K1};
     /// let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -144,7 +144,7 @@ impl HelloMessage {
     /// Starts a new `HelloMessageBuilder`
     ///
     /// ```
-    /// use reth_eth_wire::HelloMessage;
+    /// use base_execution_network_wire::HelloMessage;
     /// use base_execution_network_types::pk2id;
     /// use secp256k1::{SecretKey, SECP256K1};
     /// let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -240,8 +240,8 @@ mod tests {
     use crate::EthVersion;
     use crate::HelloMessage;
     use crate::HelloMessageWithProtocols;
+    use crate::P2PMessage;
     use crate::ProtocolVersion;
-    use crate::p2pstream::P2PMessage;
 
     #[test]
     fn test_hello_encoding_round_trip() {

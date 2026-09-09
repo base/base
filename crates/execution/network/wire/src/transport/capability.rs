@@ -10,12 +10,12 @@ use derive_more::{Deref, DerefMut};
 use crate::Capability;
 use crate::EthMessageID;
 use crate::EthVersion;
+use crate::MAX_RESERVED_MESSAGE_ID;
+use crate::P2PHandshakeError;
+use crate::P2PStreamError;
 use crate::ParseVersionError;
-use crate::errors::P2PHandshakeError;
-use crate::errors::P2PStreamError;
-use crate::p2pstream::MAX_RESERVED_MESSAGE_ID;
-use crate::protocol::ProtoVersion;
-use crate::protocol::Protocol;
+use crate::ProtoVersion;
+use crate::Protocol;
 
 /// This represents a shared capability, its version, and its message id offset.
 ///
@@ -55,7 +55,7 @@ impl SharedCapability {
     /// if the capability is custom).
     ///
     /// Returns an error if the offset is equal or less than [`MAX_RESERVED_MESSAGE_ID`].
-    pub(crate) fn new(
+    pub fn new(
         name: &str,
         version: u8,
         offset: u8,
@@ -76,7 +76,7 @@ impl SharedCapability {
     }
 
     /// Creates a new [`SharedCapability`] based on the given name, offset, and version.
-    pub(crate) const fn eth(version: EthVersion, offset: u8) -> Self {
+    pub const fn eth(version: EthVersion, offset: u8) -> Self {
         Self::Eth { version, offset }
     }
 
@@ -401,9 +401,9 @@ impl UnsupportedCapabilityError {
 
 #[cfg(test)]
 mod tests {
+    use crate::RawCapabilityMessage;
     use alloy_primitives::bytes::Bytes;
     use alloy_rlp::{Decodable, Encodable};
-    use base_execution_network_wire::RawCapabilityMessage;
 
     use super::*;
     use crate::Capabilities;

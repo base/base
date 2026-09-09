@@ -2,7 +2,7 @@
 
 use alloy_eip2124::Head;
 use base_common_chain_config::BaseChainSpec;
-use reth_eth_wire::UnifiedStatus;
+use base_execution_network_wire::UnifiedStatus;
 
 use crate::NetworkConfigBuilder;
 

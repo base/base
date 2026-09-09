@@ -8,12 +8,12 @@ use std::{
 use tokio::time::{Instant, Sleep};
 use tokio_stream::Stream;
 
-use crate::errors::PingerError;
+use crate::PingerError;
 
 /// The pinger is a simple state machine that sends a ping, waits for a pong,
 /// and transitions to timeout if the pong is not received within the timeout.
 #[derive(Debug)]
-pub(crate) struct Pinger {
+pub struct Pinger {
     /// The timer used for the next ping.
     ping_timer: Pin<Box<Sleep>>,
     /// The last task waker registered with the ping timer.
@@ -43,7 +43,7 @@ pub(crate) struct Pinger {
 impl Pinger {
     /// Creates a new [`Pinger`] with the given ping interval duration,
     /// and timeout duration.
-    pub(crate) fn new(ping_interval: Duration, timeout_duration: Duration) -> Self {
+    pub fn new(ping_interval: Duration, timeout_duration: Duration) -> Self {
         let now = Instant::now();
         let ping_timer = tokio::time::sleep_until(now + ping_interval);
         let timeout_timer = tokio::time::sleep(timeout_duration);
@@ -60,7 +60,7 @@ impl Pinger {
 
     /// Mark a pong as received, and transition the pinger to the `Ready` state if it was in the
     /// `WaitingForPong` state. Resets readiness by resetting the ping interval.
-    pub(crate) fn on_pong(&mut self) -> Result<(), PingerError> {
+    pub fn on_pong(&mut self) -> Result<(), PingerError> {
         match self.state {
             PingState::Ready => Err(PingerError::UnexpectedPong),
             PingState::WaitingForPong => {
@@ -83,16 +83,13 @@ impl Pinger {
     }
 
     /// Returns the current state of the pinger.
-    pub(crate) const fn state(&self) -> PingState {
+    pub const fn state(&self) -> PingState {
         self.state
     }
 
     /// Polls the state of the pinger and returns whether a new ping needs to be sent or if a
     /// previous ping timed out.
-    pub(crate) fn poll_ping(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<PingerEvent, PingerError>> {
+    pub fn poll_ping(&mut self, cx: &mut Context<'_>) -> Poll<Result<PingerEvent, PingerError>> {
         match self.state() {
             PingState::Ready => {
                 // Skip polling the timer while it already holds an equivalent waker for a live
@@ -147,7 +144,7 @@ impl Stream for Pinger {
 
 /// This represents the possible states of the pinger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PingState {
+pub enum PingState {
     /// There are no pings in flight, or all pings have been responded to, and we are ready to send
     /// a ping at a later point.
     Ready,
@@ -161,7 +158,7 @@ pub(crate) enum PingState {
 /// [`Ping`](super::P2PMessage::Ping)
 /// message to send, or an indication that the peer should be timed out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PingerEvent {
+pub enum PingerEvent {
     /// A new [`Ping`](super::P2PMessage::Ping) message should be sent.
     Ping,
 

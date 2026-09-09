@@ -1,7 +1,5 @@
 //! Utilities for testing p2p protocol.
 
-#![allow(missing_docs)]
-
 use std::net::SocketAddr;
 
 use alloy_chains::Chain;
@@ -12,6 +10,7 @@ use secp256k1::{SECP256K1, SecretKey};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
+use crate::DEFAULT_TCP_PORT;
 use crate::EthVersion;
 use crate::HelloMessageWithProtocols;
 use crate::P2PStream;
@@ -20,8 +19,8 @@ use crate::Status;
 use crate::StatusMessage;
 use crate::UnauthedP2PStream;
 use crate::UnifiedStatus;
-use crate::hello::DEFAULT_TCP_PORT;
 
+/// A TCP protocol stream with length-delimited framing for tests.
 pub type P2pPassthroughTcpStream = P2PStream<Framed<TcpStream, LengthDelimitedCodec>>;
 
 /// Returns a new testing `HelloMessage` and new secretkey
@@ -75,7 +74,7 @@ pub mod proto {
 
     use super::*;
     use crate::Capability;
-    use crate::protocol::Protocol;
+    use crate::Protocol;
 
     /// Returns a new testing `HelloMessage` with eth and the test protocol
     pub fn test_hello() -> (HelloMessageWithProtocols, SecretKey) {

@@ -31,7 +31,6 @@ reth-discv5 = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
-reth-eth-wire = { workspace = true }
 reth-provider = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-db-common = { workspace = true }
@@ -76,7 +75,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-state-types = {workspace = true, features = ["clap"]}
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
-base-execution-network-wire = { workspace = true, features = ["transport"]}
+base-execution-network-wire = {workspace = true, features = ["transport"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-network-types = { workspace = true, features = ["secp256k1"] }
@@ -96,7 +95,7 @@ arbitrary = [
     "dep:arbitrary",
     "dep:proptest-arbitrary-interop",
     "reth-db-api/arbitrary",
-    "reth-eth-wire/arbitrary",
+    "base-execution-network-wire/arbitrary",
     "reth-db/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
