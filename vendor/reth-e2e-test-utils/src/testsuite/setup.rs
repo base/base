@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_node_core::{ComponentBuilder, RethRpcAddOns};
+use base_node_core::ComponentBuilder;
 use eyre::{Result, eyre};
 use reth_engine_primitives::TreeConfig;
 use reth_node_core::primitives::RecoveredBlock;
@@ -128,27 +128,21 @@ impl Setup {
     }
 
     /// Apply the setup to the environment
-    pub async fn apply<AO>(
+    pub async fn apply(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
-    ) -> Result<()>
-    where
-        AO: RethRpcAddOns + 'static,
-    {
+        node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    ) -> Result<()> {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_(env, node_factory)).await
     }
 
     /// Apply the setup to the environment
-    async fn apply_<AO>(
+    async fn apply_(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
-    ) -> Result<()>
-    where
-        AO: RethRpcAddOns + 'static,
-    {
+        node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    ) -> Result<()> {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
 

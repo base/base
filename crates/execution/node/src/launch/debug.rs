@@ -20,7 +20,7 @@ use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use super::LaunchNode;
-use crate::{NodeHandle, rpc::RethRpcAddOns};
+use crate::NodeHandle;
 
 /// Concrete conversions used by the debug launcher.
 #[derive(Debug)]
@@ -103,11 +103,10 @@ pub struct DebugNodeLauncherFuture<L, Target, R, B = DefaultDebugBlockProvider<R
     mining_mode: Option<MiningMode<base_node_context::BaseNodePool<BlockchainProvider>>>,
 }
 
-impl<L, Target, AddOns, R, B> DebugNodeLauncherFuture<L, Target, R, B>
+impl<L, Target, R, B> DebugNodeLauncherFuture<L, Target, R, B>
 where
     R: Serialize + DeserializeOwned + 'static,
-    AddOns: RethRpcAddOns,
-    L: LaunchNode<Target, Node = NodeHandle<AddOns>>,
+    L: LaunchNode<Target, Node = NodeHandle>,
     B: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
     /// Sets a custom payload attributes builder for local mining in dev mode.
@@ -179,7 +178,7 @@ where
         }
     }
 
-    async fn launch_node(self) -> eyre::Result<NodeHandle<AddOns>> {
+    async fn launch_node(self) -> eyre::Result<NodeHandle> {
         let Self {
             inner,
             target,
@@ -324,34 +323,32 @@ where
     }
 }
 
-impl<L, Target, AddOns, R, B> IntoFuture for DebugNodeLauncherFuture<L, Target, R, B>
+impl<L, Target, R, B> IntoFuture for DebugNodeLauncherFuture<L, Target, R, B>
 where
     Target: Send + 'static,
     R: Serialize + DeserializeOwned + 'static,
-    AddOns: RethRpcAddOns + 'static,
-    L: LaunchNode<Target, Node = NodeHandle<AddOns>> + 'static,
+    L: LaunchNode<Target, Node = NodeHandle> + 'static,
     B: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData>
         + Clone
         + 'static,
 {
-    type Output = eyre::Result<NodeHandle<AddOns>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = eyre::Result<NodeHandle<AddOns>>> + Send>>;
+    type Output = eyre::Result<NodeHandle>;
+    type IntoFuture = Pin<Box<dyn Future<Output = eyre::Result<NodeHandle>> + Send>>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.launch_node())
     }
 }
 
-impl<L, Target, AddOns, R> LaunchNode<Target> for DebugNodeLauncher<L, R>
+impl<L, Target, R> LaunchNode<Target> for DebugNodeLauncher<L, R>
 where
     Target: Send + 'static,
     R: Serialize + DeserializeOwned + 'static,
-    AddOns: RethRpcAddOns + 'static,
-    L: LaunchNode<Target, Node = NodeHandle<AddOns>> + 'static,
+    L: LaunchNode<Target, Node = NodeHandle> + 'static,
     DefaultDebugBlockProvider<R>:
         PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
-    type Node = NodeHandle<AddOns>;
+    type Node = NodeHandle;
     type Future = DebugNodeLauncherFuture<L, Target, R>;
 
     fn launch_node(self, target: Target) -> Self::Future {

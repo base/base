@@ -92,10 +92,7 @@ use tokio::sync::{
     oneshot, watch,
 };
 
-use crate::{
-    BuilderContext, ExExLauncher, hooks::OnComponentInitializedHook,
-    launch_components::ComponentBuilder,
-};
+use crate::{BuilderContext, ExExLauncher, launch_components::ComponentBuilder};
 
 /// Reusable setup for launching a node.
 ///
@@ -834,7 +831,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
     pub async fn with_components(
         self,
         components_builder: ComponentBuilder,
-        on_component_initialized: Box<dyn OnComponentInitializedHook<BaseNodeContext>>,
+        on_component_initialized: Box<dyn FnOnce(BaseNodeContext) -> eyre::Result<()> + Send>,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
@@ -850,7 +847,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
         let node_adapter = (components_builder.build)(&builder_ctx).await?;
 
         debug!(target: "reth::cli", "calling on_component_initialized hook");
-        on_component_initialized.on_event(node_adapter.clone())?;
+        on_component_initialized(node_adapter.clone())?;
 
         let components_container = WithComponents {
             db_provider_container: WithMeteredProvider {

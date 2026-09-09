@@ -16,11 +16,11 @@ use tokio::time::sleep;
 use tracing::info;
 
 use crate::{
-    BaseNode, BaseNodeAddOns, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
+    BaseNode, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
-type ProofHistoryNodeBuilder = WithLaunchContext<NodeBuilderWithComponents<BaseNodeAddOns>>;
+type ProofHistoryNodeBuilder = WithLaunchContext<NodeBuilderWithComponents>;
 
 /// - no proofs history (plain node),
 /// - in-mem proofs storage,

@@ -7,7 +7,7 @@
 
 use std::future::Future;
 
-use base_node_context::{BaseNodeContext, NodeAddOns};
+use base_node_context::BaseNodeContext;
 use reth_exex::ExExContext;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::RocksDBProvider;
@@ -17,16 +17,13 @@ use crate::{
     hooks::NodeHooks,
     launch::LaunchNode,
     launch_components::ComponentBuilder,
-    rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
+    rpc::{RethRpcServerHandles, RpcContext},
 };
 
 /// A fully type configured node builder.
 ///
 /// Supports adding additional addons to the node.
-pub struct NodeBuilderWithComponents<AO>
-where
-    AO: NodeAddOns,
-{
+pub struct NodeBuilderWithComponents {
     /// All settings for how the node should be configured.
     pub config: NodeConfig,
     /// Adapter for the underlying node types and database
@@ -36,20 +33,17 @@ where
     /// container for type specific components
     pub components_builder: ComponentBuilder,
     /// Additional node extensions.
-    pub add_ons: AO,
+    pub add_ons: crate::BaseAddOns,
     /// Hooks invoked as the node starts.
-    pub hooks: NodeHooks<AO>,
+    pub hooks: NodeHooks,
     /// Execution extensions installed on this node.
     pub exexs: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx>)>,
 }
 
-impl NodeBuilderWithComponents<()> {
+impl NodeBuilderWithComponents {
     /// Advances the state of the node builder to the next state where all customizable
-    /// [`NodeAddOns`] types are configured.
-    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<AO>
-    where
-        AO: NodeAddOns,
-    {
+    /// Base RPC services are configured.
+    pub fn with_add_ons(self, add_ons: crate::BaseAddOns) -> NodeBuilderWithComponents {
         let Self { config, database, rocksdb_provider, components_builder, .. } = self;
 
         NodeBuilderWithComponents {
@@ -64,10 +58,7 @@ impl NodeBuilderWithComponents<()> {
     }
 }
 
-impl<AO> NodeBuilderWithComponents<AO>
-where
-    AO: NodeAddOns,
-{
+impl NodeBuilderWithComponents {
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(mut self, hook: F) -> Self
     where
@@ -80,7 +71,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_on_node_started(hook);
         self
@@ -116,41 +107,17 @@ where
         self
     }
 
-    /// Modifies the addons with the given closure.
-    ///
-    /// This method provides access to methods on the addons type that don't have
-    /// direct builder methods. It's useful for advanced configuration scenarios
-    /// where you need to call addon-specific methods.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use tower::layer::util::Identity;
-    ///
-    /// let builder = NodeBuilder::new(config)
-    ///
-    ///     .with_components(BaseNode::components())
-    ///     .with_add_ons(BaseAddOns::default())
-    ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
-    /// ```
-    ///
-    /// # See also
-    ///
-    /// - [`NodeAddOns`] trait for available addon types
-    /// - [`crate::NodeBuilderWithComponents::extend_rpc_modules`] for RPC module configuration
+    /// Updates Base RPC service configuration with the given closure.
     pub fn map_add_ons<F>(mut self, f: F) -> Self
     where
-        F: FnOnce(AO) -> AO,
+        F: FnOnce(crate::BaseAddOns) -> crate::BaseAddOns,
     {
         self.add_ons = f(self.add_ons);
         self
     }
 }
 
-impl<AO> NodeBuilderWithComponents<AO>
-where
-    AO: RethRpcAddOns,
-{
+impl NodeBuilderWithComponents {
     /// Launches the node with the given launcher.
     pub fn launch_with<L>(self, launcher: L) -> L::Future
     where
@@ -170,7 +137,7 @@ where
             + 'static,
     {
         self.map_add_ons(|mut add_ons| {
-            add_ons.hooks_mut().set_on_rpc_started(hook);
+            add_ons.rpc_add_ons.hooks.set_on_rpc_started(hook);
             add_ons
         })
     }
@@ -185,7 +152,7 @@ where
             + 'static,
     {
         self.map_add_ons(|mut add_ons| {
-            add_ons.hooks_mut().set_extend_rpc_modules(hook);
+            add_ons.rpc_add_ons.hooks.set_extend_rpc_modules(hook);
             add_ons
         })
     }

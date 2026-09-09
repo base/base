@@ -3,36 +3,27 @@ use base_execution_rpc::{
     BaseDebugWitnessApi, BaseEthApiBuilder, BaseEthConfigApiServer, BaseEthConfigHandler,
     BaseMinerExtApi, BaseNodeEthApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
 };
-use base_execution_txpool::{BasePooledTx, TransactionPool};
-use base_node_context::NodeAddOns;
-use reth_provider::providers::BlockchainProvider;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 
-use crate::{
-    Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
-    RpcHandle,
-};
+use crate::{RethRpcServerHandles, RpcAddOns, RpcContext};
 
-/// Add-ons w.r.t. Base.
-///
-/// This type provides Base-specific addons to the node and exposes the RPC server and engine
-/// API.
+/// Base public RPC services and shared payload-builder settings.
 #[derive(Debug)]
-pub struct BaseAddOns<RpcMiddleware = Identity> {
+pub struct BaseAddOns {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
-    pub rpc_add_ons: RpcAddOns<RpcMiddleware>,
+    pub rpc_add_ons: RpcAddOns,
     /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
-impl<RpcMiddleware> BaseAddOns<RpcMiddleware> {
+impl BaseAddOns {
     /// Creates a new instance from components.
     pub const fn new(
-        rpc_add_ons: RpcAddOns<RpcMiddleware>,
+        rpc_add_ons: RpcAddOns,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
     ) -> Self {
@@ -53,23 +44,7 @@ impl BaseAddOns {
     }
 }
 
-impl<RpcMiddleware> BaseAddOns<RpcMiddleware> {
-    /// Sets the RPC middleware stack for processing RPC requests.
-    ///
-    /// This method configures a custom middleware stack that will be applied to all RPC requests
-    /// across HTTP, `WebSocket`, and IPC transports. The middleware is applied to the RPC service
-    /// layer, allowing you to intercept, modify, or enhance RPC request processing.
-    ///
-    /// See also [`RpcAddOns::with_rpc_middleware`].
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<T> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
-        BaseAddOns::new(
-            rpc_add_ons.with_rpc_middleware(rpc_middleware),
-            da_config,
-            gas_limit_config,
-        )
-    }
-
+impl BaseAddOns {
     /// Sets the hook that is run once the rpc server is started.
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
@@ -98,16 +73,12 @@ impl<RpcMiddleware> BaseAddOns<RpcMiddleware> {
     }
 }
 
-impl<RpcMiddleware> NodeAddOns for BaseAddOns<RpcMiddleware>
-where
-    RpcMiddleware: RethRpcMiddleware,
-{
-    type Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
-
-    async fn launch_add_ons(
+impl BaseAddOns {
+    /// Launches public RPC with Base execution and miner methods.
+    pub async fn launch_add_ons(
         self,
         ctx: base_node_context::AddOnsContext<'_>,
-    ) -> eyre::Result<Self::Handle> {
+    ) -> eyre::Result<crate::BaseNodeRpcHandle> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         let eth_config =
             BaseEthConfigHandler::new(ctx.node.provider().clone(), ctx.node.evm_config().clone());
@@ -146,23 +117,10 @@ where
     }
 }
 
-impl<RpcMiddleware> RethRpcAddOns for BaseAddOns<RpcMiddleware>
-where
-    <base_node_context::BaseNodePool<BlockchainProvider> as TransactionPool>::Transaction:
-        BasePooledTx,
-    RpcMiddleware: RethRpcMiddleware,
-{
-    fn hooks_mut(
-        &mut self,
-    ) -> &mut crate::RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>> {
-        self.rpc_add_ons.hooks_mut()
-    }
-}
-
 /// A regular Base EVM and executor builder.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct BaseAddOnsBuilder<RpcMiddleware = Identity> {
+pub struct BaseAddOnsBuilder {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
@@ -174,8 +132,6 @@ pub struct BaseAddOnsBuilder<RpcMiddleware = Identity> {
     gas_limit_config: Option<GasLimitConfig>,
     /// Minimum suggested priority fee (tip)
     min_suggested_priority_fee: u64,
-    /// RPC middleware to use
-    rpc_middleware: RpcMiddleware,
     /// Optional tokio runtime to use for the RPC server.
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
@@ -188,13 +144,12 @@ impl Default for BaseAddOnsBuilder {
             da_config: None,
             gas_limit_config: None,
             min_suggested_priority_fee: 1_000_000,
-            rpc_middleware: Identity::new(),
             tokio_runtime: None,
         }
     }
 }
 
-impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
+impl BaseAddOnsBuilder {
     /// With a [`SequencerClient`].
     pub fn with_sequencer(mut self, sequencer_client: Option<String>) -> Self {
         self.sequencer_url = sequencer_client;
@@ -232,40 +187,17 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
         self.tokio_runtime = tokio_runtime;
         self
     }
-
-    /// Configure the RPC middleware to use
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOnsBuilder<T> {
-        let Self {
-            sequencer_url,
-            sequencer_headers,
-            da_config,
-            gas_limit_config,
-            min_suggested_priority_fee,
-            tokio_runtime,
-            ..
-        } = self;
-        BaseAddOnsBuilder {
-            sequencer_url,
-            sequencer_headers,
-            da_config,
-            gas_limit_config,
-            min_suggested_priority_fee,
-            rpc_middleware,
-            tokio_runtime,
-        }
-    }
 }
 
-impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
+impl BaseAddOnsBuilder {
     /// Builds an instance of [`BaseAddOns`].
-    pub fn build(self) -> BaseAddOns<RpcMiddleware> {
+    pub fn build(self) -> BaseAddOns {
         let Self {
             sequencer_url,
             sequencer_headers,
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
-            rpc_middleware,
             tokio_runtime,
             ..
         } = self;
@@ -276,7 +208,6 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
                     .with_sequencer(sequencer_url)
                     .with_sequencer_headers(sequencer_headers)
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
-                rpc_middleware,
             )
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),

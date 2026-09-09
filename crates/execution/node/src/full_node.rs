@@ -19,13 +19,13 @@ use reth_rpc_builder::RpcServerHandle;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 
-use crate::{EngineShutdown, NodeAddOns, rpc::RethRpcAddOns};
+use crate::EngineShutdown;
 
 /// The launched node with all components including RPC handlers.
 ///
 /// This can be used to interact with the launched node.
 #[derive(Debug)]
-pub struct FullNode<AddOns: NodeAddOns> {
+pub struct FullNode {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
@@ -51,10 +51,10 @@ pub struct FullNode<AddOns: NodeAddOns> {
     /// The data dir of the node.
     pub data_dir: ChainPath<DataDirPath>,
     /// The handle to launched add-ons
-    pub add_ons_handle: AddOns::Handle,
+    pub add_ons_handle: crate::BaseNodeRpcHandle,
 }
 
-impl<AddOns: NodeAddOns> Clone for FullNode<AddOns> {
+impl Clone for FullNode {
     fn clone(&self) -> Self {
         Self {
             evm_config: self.evm_config.clone(),
@@ -74,35 +74,29 @@ impl<AddOns: NodeAddOns> Clone for FullNode<AddOns> {
     }
 }
 
-impl<AddOns> FullNode<AddOns>
-where
-    AddOns: NodeAddOns,
-{
+impl FullNode {
     /// Returns the chain spec of the node.
     pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.provider.chain_spec()
     }
 }
 
-impl<AddOns> FullNode<AddOns>
-where
-    AddOns: RethRpcAddOns,
-{
+impl FullNode {
     /// Returns the [`RpcServerHandle`] to the started rpc server.
     pub const fn rpc_server_handle(&self) -> &RpcServerHandle {
         &self.add_ons_handle.rpc_server_handles.rpc
     }
 }
 
-impl<AddOns: NodeAddOns> Deref for FullNode<AddOns> {
-    type Target = AddOns::Handle;
+impl Deref for FullNode {
+    type Target = crate::BaseNodeRpcHandle;
 
     fn deref(&self) -> &Self::Target {
         &self.add_ons_handle
     }
 }
 
-impl<AddOns: NodeAddOns> DerefMut for FullNode<AddOns> {
+impl DerefMut for FullNode {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.add_ons_handle
     }

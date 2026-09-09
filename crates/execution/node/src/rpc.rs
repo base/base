@@ -12,7 +12,7 @@ use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::{
     AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, RpcNodeCore,
 };
-use base_node_context::{AddOnsContext, NodeAddOns};
+use base_node_context::AddOnsContext;
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
@@ -22,7 +22,6 @@ use reth_engine_primitives::TreeConfig;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
 use reth_provider::providers::BlockchainProvider;
-pub use reth_rpc_builder::{Identity, Stack, middleware::RethRpcMiddleware};
 use reth_rpc_builder::{
     RpcModuleBuilder, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
     config::RethRpcServerConfig,
@@ -32,6 +31,9 @@ use reth_storage_overlay::OverlayManager;
 use reth_tracing::tracing::{debug, info};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
+
+/// Handles for the Base node's public RPC services.
+pub type BaseNodeRpcHandle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
 
 /// Contains the handles to the spawned RPC servers.
 ///
@@ -43,11 +45,12 @@ pub struct RethRpcServerHandles {
 }
 
 /// Contains hooks that are called during the rpc setup.
-pub struct RpcHooks<EthApi> {
+pub struct RpcHooks<EthApi: RpcNodeCore> {
     /// Hooks to run once RPC server is running.
-    pub on_rpc_started: Box<dyn OnRpcStarted<EthApi>>,
+    pub on_rpc_started:
+        Box<dyn FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
     /// Hooks to run to configure RPC server API.
-    pub extend_rpc_modules: Box<dyn ExtendRpcModules<EthApi>>,
+    pub extend_rpc_modules: Box<dyn FnOnce(RpcContext<'_, EthApi>) -> eyre::Result<()> + Send>,
 }
 
 impl<EthApi> Default for RpcHooks<EthApi>
@@ -55,7 +58,7 @@ where
     EthApi: RpcNodeCore,
 {
     fn default() -> Self {
-        Self { on_rpc_started: Box::<()>::default(), extend_rpc_modules: Box::<()>::default() }
+        Self { on_rpc_started: Box::new(|_, _| Ok(())), extend_rpc_modules: Box::new(|_| Ok(())) }
     }
 }
 
@@ -64,40 +67,22 @@ where
     EthApi: RpcNodeCore,
 {
     /// Sets the hook that is run once the rpc server is started.
-    pub(crate) fn set_on_rpc_started<F>(&mut self, hook: F) -> &mut Self
+    pub fn set_on_rpc_started<F>(&mut self, hook: F) -> &mut Self
     where
-        F: OnRpcStarted<EthApi> + 'static,
+        F: FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()>
+            + Send
+            + 'static,
     {
         self.on_rpc_started = Box::new(hook);
         self
     }
 
-    /// Sets the hook that is run once the rpc server is started.
-    #[expect(unused)]
-    pub(crate) fn on_rpc_started<F>(mut self, hook: F) -> Self
-    where
-        F: OnRpcStarted<EthApi> + 'static,
-    {
-        self.set_on_rpc_started(hook);
-        self
-    }
-
     /// Sets the hook that is run to configure the rpc modules.
-    pub(crate) fn set_extend_rpc_modules<F>(&mut self, hook: F) -> &mut Self
+    pub fn set_extend_rpc_modules<F>(&mut self, hook: F) -> &mut Self
     where
-        F: ExtendRpcModules<EthApi> + 'static,
+        F: FnOnce(RpcContext<'_, EthApi>) -> eyre::Result<()> + Send + 'static,
     {
         self.extend_rpc_modules = Box::new(hook);
-        self
-    }
-
-    /// Sets the hook that is run to configure the rpc modules.
-    #[expect(unused)]
-    pub(crate) fn extend_rpc_modules<F>(mut self, hook: F) -> Self
-    where
-        F: ExtendRpcModules<EthApi> + 'static,
-    {
-        self.set_extend_rpc_modules(hook);
         self
     }
 }
@@ -111,68 +96,6 @@ where
             .field("on_rpc_started", &"...")
             .field("extend_rpc_modules", &"...")
             .finish()
-    }
-}
-
-/// Event hook that is called once the rpc server is started.
-pub trait OnRpcStarted<EthApi: RpcNodeCore>: Send {
-    /// The hook that is called once the rpc server is started.
-    fn on_rpc_started(
-        self: Box<Self>,
-        ctx: RpcContext<'_, EthApi>,
-        handles: RethRpcServerHandles,
-    ) -> eyre::Result<()>;
-}
-
-impl<EthApi, F> OnRpcStarted<EthApi> for F
-where
-    F: FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send,
-    EthApi: RpcNodeCore,
-{
-    fn on_rpc_started(
-        self: Box<Self>,
-        ctx: RpcContext<'_, EthApi>,
-        handles: RethRpcServerHandles,
-    ) -> eyre::Result<()> {
-        (*self)(ctx, handles)
-    }
-}
-
-impl<EthApi> OnRpcStarted<EthApi> for ()
-where
-    EthApi: RpcNodeCore,
-{
-    fn on_rpc_started(
-        self: Box<Self>,
-        _: RpcContext<'_, EthApi>,
-        _: RethRpcServerHandles,
-    ) -> eyre::Result<()> {
-        Ok(())
-    }
-}
-
-/// Event hook that is called when the rpc server is started.
-pub trait ExtendRpcModules<EthApi: RpcNodeCore>: Send {
-    /// The hook that is called once the rpc server is started.
-    fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, EthApi>) -> eyre::Result<()>;
-}
-
-impl<EthApi, F> ExtendRpcModules<EthApi> for F
-where
-    F: FnOnce(RpcContext<'_, EthApi>) -> eyre::Result<()> + Send,
-    EthApi: RpcNodeCore,
-{
-    fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, EthApi>) -> eyre::Result<()> {
-        (*self)(ctx)
-    }
-}
-
-impl<EthApi> ExtendRpcModules<EthApi> for ()
-where
-    EthApi: RpcNodeCore,
-{
-    fn extend_rpc_modules(self: Box<Self>, _: RpcContext<'_, EthApi>) -> eyre::Result<()> {
-        Ok(())
     }
 }
 
@@ -346,7 +269,8 @@ pub struct RpcSetupContext<'a, EthApi: RpcNodeCore> {
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
     pub registry: RpcRegistry<EthApi>,
-    pub on_rpc_started: Box<dyn OnRpcStarted<EthApi>>,
+    pub on_rpc_started:
+        Box<dyn FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
 }
 
 impl<EthApi: RpcNodeCore> fmt::Debug for RpcSetupContext<'_, EthApi> {
@@ -359,109 +283,43 @@ impl<EthApi: RpcNodeCore> fmt::Debug for RpcSetupContext<'_, EthApi> {
 ///
 /// This struct can be used to provide the RPC server functionality. It is responsible for launching
 /// the public HTTP and WebSocket RPC servers. It is intended to be used and
-/// modified as part of the [`NodeAddOns`] see for example `OpRpcAddons`, `EthereumAddOns`.
+/// extended with Base execution RPC handlers.
 ///
 /// It can be modified to register RPC API handlers, see [`RpcAddOns::launch_add_ons_with`] which
 /// takes a closure that provides access to all the configured modules (namespaces), and is invoked
 /// just before the servers are launched. This can be used to extend the node with custom RPC
 /// methods or even replace existing method handlers, see also [`TransportRpcModules`].
-pub struct RpcAddOns<RpcMiddleware = Identity> {
+pub struct RpcAddOns {
     /// Additional RPC add-ons.
     pub hooks: RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>>,
     /// Builder for `EthApi`
     eth_api_builder: BaseEthApiBuilder,
 
-    /// Configurable RPC middleware stack.
-    ///
-    /// This middleware is applied to all RPC requests across all transports (HTTP, WS, IPC).
-    /// See [`RpcAddOns::with_rpc_middleware`] for more details.
-    rpc_middleware: RpcMiddleware,
     /// Optional custom tokio runtime for the RPC server.
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
 
-impl<RpcMiddleware> Debug for RpcAddOns<RpcMiddleware> {
+impl Debug for RpcAddOns {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcAddOns")
             .field("hooks", &self.hooks)
             .field("eth_api_builder", &"...")
-            .field("rpc_middleware", &"...")
             .finish()
     }
 }
 
-impl<RpcMiddleware> RpcAddOns<RpcMiddleware> {
+impl RpcAddOns {
     /// Creates a new instance of the RPC add-ons.
-    pub fn new(eth_api_builder: BaseEthApiBuilder, rpc_middleware: RpcMiddleware) -> Self {
-        Self { hooks: RpcHooks::default(), eth_api_builder, rpc_middleware, tokio_runtime: None }
-    }
-
-    /// Sets the RPC middleware stack for processing RPC requests.
-    ///
-    /// This method configures a custom middleware stack that will be applied to all RPC requests
-    /// across HTTP, `WebSocket`, and IPC transports. The middleware is applied to the RPC service
-    /// layer, allowing you to intercept, modify, or enhance RPC request processing.
-    ///
-    ///
-    /// # How It Works
-    ///
-    /// The middleware uses the Tower ecosystem's `Layer` pattern. When an RPC server is started,
-    /// the configured middleware stack is applied to create a layered service that processes
-    /// requests in the order the layers were added.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use reth_rpc_builder::{RpcServiceBuilder, RpcRequestMetrics};
-    /// use tower::Layer;
-    ///
-    /// // Simple example with metrics
-    /// let metrics_layer = RpcRequestMetrics::new(metrics_recorder);
-    /// let with_metrics = rpc_addons.with_rpc_middleware(
-    ///     RpcServiceBuilder::new().layer(metrics_layer)
-    /// );
-    ///
-    /// // Composing multiple middleware layers
-    /// let middleware_stack = RpcServiceBuilder::new()
-    ///     .layer(rate_limit_layer)
-    ///     .layer(logging_layer)
-    ///     .layer(metrics_layer);
-    /// let with_full_stack = rpc_addons.with_rpc_middleware(middleware_stack);
-    /// ```
-    ///
-    /// # Notes
-    ///
-    /// - Middleware is applied to the RPC service layer, not the HTTP transport layer
-    /// - The default middleware is `Identity` (no-op), which passes through requests unchanged
-    /// - Middleware layers are applied in the order they are added via `.layer()`
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> RpcAddOns<T> {
-        let Self { hooks, eth_api_builder, tokio_runtime, .. } = self;
-        RpcAddOns { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
+    pub fn new(eth_api_builder: BaseEthApiBuilder) -> Self {
+        Self { hooks: RpcHooks::default(), eth_api_builder, tokio_runtime: None }
     }
 
     /// Sets the tokio runtime for the RPC servers.
     ///
     /// Caution: This runtime must not be created from within asynchronous context.
-    pub fn with_tokio_runtime(self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
-        let Self { hooks, eth_api_builder, rpc_middleware, .. } = self;
-        Self { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
-    }
-
-    /// Add a new layer `T` to the configured [`RpcServiceBuilder`].
-    pub fn layer_rpc_middleware<T>(self, layer: T) -> RpcAddOns<Stack<RpcMiddleware, T>> {
-        let Self { hooks, eth_api_builder, rpc_middleware, tokio_runtime } = self;
-        let rpc_middleware = Stack::new(rpc_middleware, layer);
-        RpcAddOns { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
-    }
-
-    /// Optionally adds a new layer `T` to the configured [`RpcServiceBuilder`].
-    #[expect(clippy::type_complexity)]
-    pub fn option_layer_rpc_middleware<T>(
-        self,
-        layer: Option<T>,
-    ) -> RpcAddOns<Stack<RpcMiddleware, Either<T, Identity>>> {
-        let layer = layer.map(Either::Left).unwrap_or(Either::Right(Identity::new()));
-        self.layer_rpc_middleware(layer)
+    pub fn with_tokio_runtime(mut self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
+        self.tokio_runtime = tokio_runtime;
+        self
     }
 
     /// Sets the hook that is run once the rpc server is started.
@@ -492,16 +350,13 @@ impl<RpcMiddleware> RpcAddOns<RpcMiddleware> {
     }
 }
 
-impl Default for RpcAddOns<Identity> {
+impl Default for RpcAddOns {
     fn default() -> Self {
-        Self::new(BaseEthApiBuilder::default(), Default::default())
+        Self::new(BaseEthApiBuilder::default())
     }
 }
 
-impl<RpcMiddleware> RpcAddOns<RpcMiddleware>
-where
-    RpcMiddleware: RethRpcMiddleware,
-{
+impl RpcAddOns {
     /// Launches public RPC and invokes the configured extension and lifecycle hooks.
     pub async fn launch_add_ons_with<F>(
         self,
@@ -513,18 +368,12 @@ where
             RpcModuleContainer<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
         ) -> eyre::Result<()>,
     {
-        let rpc_middleware = self.rpc_middleware.clone();
         let tokio_runtime = self.tokio_runtime.clone();
         let mut setup = self.setup_rpc_components(ctx, ext).await?;
-        let server_config = setup
-            .config
-            .rpc
-            .rpc_server_config()
-            .set_rpc_middleware(rpc_middleware)
-            .with_tokio_runtime(tokio_runtime);
+        let server_config = setup.config.rpc.rpc_server_config().with_tokio_runtime(tokio_runtime);
         let rpc = Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
         let handles = RethRpcServerHandles { rpc };
-        setup.on_rpc_started.on_rpc_started(
+        (setup.on_rpc_started)(
             RpcContext {
                 node: setup.node,
                 config: setup.config,
@@ -606,19 +455,16 @@ where
         let RpcHooks { on_rpc_started, extend_rpc_modules } = hooks;
 
         ext(RpcModuleContainer { modules: ctx.modules, registry: ctx.registry })?;
-        extend_rpc_modules.extend_rpc_modules(ctx)?;
+        extend_rpc_modules(ctx)?;
 
         Ok(RpcSetupContext { node, config, modules, registry, on_rpc_started })
     }
 
     /// Helper to launch the RPC server
-    async fn launch_rpc_server_internal<M>(
-        server_config: RpcServerConfig<M>,
+    async fn launch_rpc_server_internal(
+        server_config: RpcServerConfig,
         modules: &TransportRpcModules,
-    ) -> eyre::Result<RpcServerHandle>
-    where
-        M: RethRpcMiddleware,
-    {
+    ) -> eyre::Result<RpcServerHandle> {
         let handle = server_config.start(modules).await?;
 
         if let Some(addr) = handle.http_local_addr() {
@@ -629,35 +475,6 @@ where
         }
 
         Ok(handle)
-    }
-}
-
-impl<RpcMiddleware> NodeAddOns for RpcAddOns<RpcMiddleware>
-where
-    RpcMiddleware: RethRpcMiddleware,
-{
-    type Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
-
-    async fn launch_add_ons(self, ctx: AddOnsContext<'_>) -> eyre::Result<Self::Handle> {
-        self.launch_add_ons_with(ctx, |_| Ok(())).await
-    }
-}
-
-/// Helper trait implemented for add-ons producing [`RpcHandle`]. Used by common node launcher
-/// implementations.
-pub trait RethRpcAddOns:
-    NodeAddOns<Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>>
-{
-    /// Returns a mutable reference to RPC hooks.
-    fn hooks_mut(&mut self) -> &mut RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
-}
-
-impl<RpcMiddleware> RethRpcAddOns for RpcAddOns<RpcMiddleware>
-where
-    Self: NodeAddOns<Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>>,
-{
-    fn hooks_mut(&mut self) -> &mut RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>> {
-        &mut self.hooks
     }
 }
 

@@ -80,7 +80,7 @@ mod launch_components;
 pub use launch_components::*;
 
 mod handle;
-use base_node_context::NodeAddOns;
+
 pub use handle::*;
 pub use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethNetworkConfig, RethTransactionPoolConfig},

@@ -16,7 +16,7 @@ use crate::types::{BaseNodeAddOns, BaseNodeComponents};
 type BaseEthApi = base_execution_rpc::BaseEthApi<BaseNodeComponents>;
 
 /// Convenience alias for the full Base node handle produced after launch.
-type BaseFullNode = FullNode<BaseNodeAddOns>;
+type BaseFullNode = FullNode;
 
 /// Alias for the RPC context used by Base extensions.
 pub type BaseRpcContext<'a> = RpcContext<'a, BaseEthApi>;
@@ -40,7 +40,7 @@ type BoxExExFactory = Box<
 >;
 
 /// The configured Base builder shared by standard and full-block payload services.
-pub type RethNodeBuilder = WithLaunchContext<NodeBuilderWithComponents<BaseNodeAddOns>>;
+pub type RethNodeBuilder = WithLaunchContext<NodeBuilderWithComponents>;
 
 /// Pure hook accumulator for the Base node builder.
 ///

@@ -1,6 +1,6 @@
 //! RPC integration tests.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::{BaseNode, NodeBuilder, NodeHandle};
@@ -33,12 +33,35 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
 
     let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
 
+    let hooks = Arc::new(Mutex::new(Vec::new()));
+    let components_hook = hooks.clone();
+    let modules_hook = hooks.clone();
+    let rpc_hook = hooks.clone();
+    let started_hook = hooks.clone();
     let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
         .testing_node(exec)
         .with_components(BaseNode::default().components().into_builder())
         .with_add_ons(add_ons)
+        .on_component_initialized(move |_| {
+            components_hook.lock().unwrap().push("components");
+            Ok(())
+        })
+        .extend_rpc_modules(move |_| {
+            modules_hook.lock().unwrap().push("modules");
+            Ok(())
+        })
+        .on_rpc_started(move |_, _| {
+            rpc_hook.lock().unwrap().push("rpc");
+            Ok(())
+        })
+        .on_node_started(move |_| {
+            started_hook.lock().unwrap().push("node");
+            Ok(())
+        })
         .launch()
         .await?;
+
+    assert_eq!(*hooks.lock().unwrap(), ["components", "modules", "rpc", "node"]);
 
     let api = node.add_ons_handle.admin_api();
 

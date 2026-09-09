@@ -7,9 +7,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_node_core::{
-    ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, RethRpcAddOns,
-};
+use base_node_core::{ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_primitives_traits::AlloyBlockHeader;
@@ -97,13 +95,10 @@ where
     }
 
     /// Builds and launches the test nodes.
-    pub async fn build<AO>(
+    pub async fn build(
         self,
-        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
-    ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
-    where
-        AO: RethRpcAddOns + 'static,
-    {
+        node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    ) -> eyre::Result<(Vec<NodeHelperType>, Wallet)> {
         let runtime = Runtime::test();
 
         let network_config = NetworkArgs {

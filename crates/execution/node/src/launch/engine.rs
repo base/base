@@ -36,7 +36,7 @@ use crate::{
     Attached, EngineShutdown, FullNode, LaunchContext, LaunchContextWith, LaunchNode,
     NodeBuilderWithComponents, NodeHandle, WithConfigs,
     hooks::NodeHooks,
-    rpc::{BasicEngineValidatorBuilder, RethRpcAddOns, RpcHandle},
+    rpc::{BasicEngineValidatorBuilder, RpcHandle},
     setup::build_networked_pipeline,
 };
 
@@ -61,13 +61,7 @@ impl EngineNodeLauncher {
         Self { ctx: LaunchContext::new(task_executor, data_dir), engine_tree_config }
     }
 
-    async fn launch_node<AO>(
-        self,
-        target: NodeBuilderWithComponents<AO>,
-    ) -> eyre::Result<NodeHandle<AO>>
-    where
-        AO: RethRpcAddOns,
-    {
+    async fn launch_node(self, target: NodeBuilderWithComponents) -> eyre::Result<NodeHandle> {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
             database,
@@ -403,7 +397,7 @@ impl EngineNodeLauncher {
             add_ons_handle: RpcHandle { rpc_server_handles, rpc_registry },
         };
         // Notify on node started
-        on_node_started.on_event(FullNode::clone(&full_node))?;
+        on_node_started(FullNode::clone(&full_node))?;
 
         ctx.spawn_ethstats(engine_events_for_ethstats).await?;
 
@@ -416,14 +410,11 @@ impl EngineNodeLauncher {
     }
 }
 
-impl<AO> LaunchNode<NodeBuilderWithComponents<AO>> for EngineNodeLauncher
-where
-    AO: RethRpcAddOns + 'static,
-{
-    type Node = NodeHandle<AO>;
+impl LaunchNode<NodeBuilderWithComponents> for EngineNodeLauncher {
+    type Node = NodeHandle;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
 
-    fn launch_node(self, target: NodeBuilderWithComponents<AO>) -> Self::Future {
+    fn launch_node(self, target: NodeBuilderWithComponents) -> Self::Future {
         Box::pin(self.launch_node(target))
     }
 }

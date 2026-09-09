@@ -4266,7 +4266,6 @@ dependencies = [
  "base-execution-evm",
  "base-execution-payload-builder",
  "base-execution-txpool",
- "eyre",
  "reth-engine-primitives",
  "reth-network",
  "reth-node-core",

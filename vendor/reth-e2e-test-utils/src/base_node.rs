@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use crate::{NodeHelperType, transaction::TransactionTestContext, wallet::Wallet};
 
 /// Base Node Helper type
-pub type BaseTestNode = NodeHelperType<base_node_core::BaseNodeAddOns>;
+pub type BaseTestNode = NodeHelperType;
 
 /// Base node integration-test helpers.
 #[derive(Debug)]

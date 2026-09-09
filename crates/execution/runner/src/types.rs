@@ -14,7 +14,7 @@ pub type BaseNodeComponents = base_node_context::BaseNodeContext;
 pub type BaseNodeAddOns = BaseAddOns;
 
 /// Handle returned by the Base node launcher.
-pub type BaseNodeHandle = NodeHandle<BaseNodeAddOns>;
+pub type BaseNodeHandle = NodeHandle;
 
 /// A [`BlockchainProvider`] instance.
 pub type BaseProvider = BlockchainProvider;

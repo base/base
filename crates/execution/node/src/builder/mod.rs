@@ -9,7 +9,7 @@ use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{PoolConfig, PoolTransaction, TransactionPool};
-use base_node_context::{BaseNodeContext, NodeAddOns};
+use base_node_context::BaseNodeContext;
 use futures::Future;
 use reth_exex::ExExContext;
 use reth_network::{
@@ -38,7 +38,7 @@ use crate::{
     WithConfigs,
     full_node::FullNode,
     launch_components::ComponentBuilder,
-    rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
+    rpc::{RethRpcServerHandles, RpcContext},
 };
 
 mod states;
@@ -256,13 +256,13 @@ impl NodeBuilder<reth_db::DatabaseEnv> {
     pub fn with_components(
         self,
         components_builder: ComponentBuilder,
-    ) -> NodeBuilderWithComponents<()> {
+    ) -> NodeBuilderWithComponents {
         NodeBuilderWithComponents {
             config: self.config,
             database: self.database,
             rocksdb_provider: self.rocksdb_provider,
             components_builder,
-            add_ons: (),
+            add_ons: crate::BaseAddOns::default(),
             hooks: crate::hooks::NodeHooks::default(),
             exexs: Vec::new(),
         }
@@ -310,7 +310,7 @@ impl WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
     pub fn with_components(
         self,
         components_builder: ComponentBuilder,
-    ) -> WithLaunchContext<NodeBuilderWithComponents<()>> {
+    ) -> WithLaunchContext<NodeBuilderWithComponents> {
         WithLaunchContext {
             builder: self.builder.with_components(components_builder),
             task_executor: self.task_executor,
@@ -318,13 +318,13 @@ impl WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
     }
 }
 
-impl WithLaunchContext<NodeBuilderWithComponents<()>> {
+impl WithLaunchContext<NodeBuilderWithComponents> {
     /// Advances the state of the node builder to the next state where all customizable
-    /// [`NodeAddOns`] types are configured.
-    pub fn with_add_ons<AO>(self, add_ons: AO) -> WithLaunchContext<NodeBuilderWithComponents<AO>>
-    where
-        AO: NodeAddOns,
-    {
+    /// Base RPC services are configured.
+    pub fn with_add_ons(
+        self,
+        add_ons: crate::BaseAddOns,
+    ) -> WithLaunchContext<NodeBuilderWithComponents> {
         WithLaunchContext {
             builder: self.builder.with_add_ons(add_ons),
             task_executor: self.task_executor,
@@ -332,10 +332,7 @@ impl WithLaunchContext<NodeBuilderWithComponents<()>> {
     }
 }
 
-impl<AO> WithLaunchContext<NodeBuilderWithComponents<AO>>
-where
-    AO: RethRpcAddOns,
-{
+impl WithLaunchContext<NodeBuilderWithComponents> {
     /// Returns a reference to the node builder's config.
     pub const fn config(&self) -> &NodeConfig {
         &self.builder.config
@@ -402,36 +399,15 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
     }
 
-    /// Modifies the addons with the given closure.
-    ///
-    /// This method provides access to methods on the addons type that don't have
-    /// direct builder methods. It's useful for advanced configuration scenarios
-    /// where you need to call addon-specific methods.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use tower::layer::util::Identity;
-    ///
-    /// let builder = NodeBuilder::new(config)
-    ///
-    ///     .with_components(BaseNode::components())
-    ///     .with_add_ons(BaseAddOns::default())
-    ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
-    /// ```
-    ///
-    /// # See also
-    ///
-    /// - [`NodeAddOns`] trait for available addon types
-    /// - [`crate::NodeBuilderWithComponents::extend_rpc_modules`] for RPC module configuration
+    /// Updates Base RPC service configuration with the given closure.
     pub fn map_add_ons<F>(self, f: F) -> Self
     where
-        F: FnOnce(AO) -> AO,
+        F: FnOnce(crate::BaseAddOns) -> crate::BaseAddOns,
     {
         Self { builder: self.builder.map_add_ons(f), task_executor: self.task_executor }
     }
@@ -530,7 +506,7 @@ where
     /// Launches the node with the given launcher.
     pub async fn launch_with<L>(self, launcher: L) -> eyre::Result<L::Node>
     where
-        L: LaunchNode<NodeBuilderWithComponents<AO>>,
+        L: LaunchNode<NodeBuilderWithComponents>,
     {
         launcher.launch_node(self.builder).await
     }
@@ -553,9 +529,9 @@ where
     /// Launches the node with the [`EngineNodeLauncher`] that sets up engine API consensus and rpc
     pub async fn launch(
         self,
-    ) -> eyre::Result<<EngineNodeLauncher as LaunchNode<NodeBuilderWithComponents<AO>>>::Node>
+    ) -> eyre::Result<<EngineNodeLauncher as LaunchNode<NodeBuilderWithComponents>>::Node>
     where
-        EngineNodeLauncher: LaunchNode<NodeBuilderWithComponents<AO>>,
+        EngineNodeLauncher: LaunchNode<NodeBuilderWithComponents>,
     {
         let launcher = self.engine_api_launcher();
         self.builder.launch_with(launcher).await
@@ -568,11 +544,10 @@ where
     pub fn launch_with_debug_capabilities<R>(
         self,
         config: DebugNodeConfig<R>,
-    ) -> <DebugNodeLauncher<EngineNodeLauncher, R> as LaunchNode<
-        NodeBuilderWithComponents<AO>,
-    >>::Future
-    where DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents<AO>>,
-{
+    ) -> <DebugNodeLauncher<EngineNodeLauncher, R> as LaunchNode<NodeBuilderWithComponents>>::Future
+    where
+        DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents>,
+    {
         let Self { builder, task_executor } = self;
 
         let engine_tree_config = builder.config.tree_config();

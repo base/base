@@ -4,4 +4,4 @@
 mod components;
 pub use components::{BaseNodeContext, BaseNodePool};
 mod add_ons;
-pub use add_ons::{AddOnsContext, NodeAddOns};
+pub use add_ons::AddOnsContext;

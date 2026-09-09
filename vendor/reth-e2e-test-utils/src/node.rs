@@ -7,7 +7,7 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::BlockHeader;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_rpc::BaseEthApi;
-use base_node_core::{FullNode, RethRpcAddOns};
+use base_node_core::FullNode;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
@@ -24,12 +24,9 @@ use crate::{network::NetworkTestContext, payload::PayloadTestContext, rpc::RpcTe
 
 /// A helper struct to handle node actions
 #[expect(missing_debug_implementations)]
-pub struct NodeTestContext<AddOns>
-where
-    AddOns: RethRpcAddOns,
-{
+pub struct NodeTestContext {
     /// The core structure representing the full node.
-    pub inner: FullNode<AddOns>,
+    pub inner: FullNode,
     /// Context for testing payload-related features.
     pub payload: PayloadTestContext,
     /// Context for testing network functionalities.
@@ -40,13 +37,10 @@ where
     pub canonical_stream: CanonStateNotificationStream,
 }
 
-impl<AddOns> NodeTestContext<AddOns>
-where
-    AddOns: RethRpcAddOns,
-{
+impl NodeTestContext {
     /// Creates a new test node
     pub async fn new(
-        node: FullNode<AddOns>,
+        node: FullNode,
         attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + 'static,
     ) -> eyre::Result<Self> {
         Ok(Self {
@@ -76,10 +70,7 @@ where
         &mut self,
         length: u64,
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
-    ) -> eyre::Result<Vec<BaseBuiltPayload>>
-    where
-        AddOns: RethRpcAddOns,
-    {
+    ) -> eyre::Result<Vec<BaseBuiltPayload>> {
         let mut chain = Vec::with_capacity(length as usize);
         for i in 0..length {
             let raw_tx = tx_generator(i).await;

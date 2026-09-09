@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
 use base_execution_payload_builder::PayloadId;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_node_core::{ComponentBuilder, RethRpcAddOns};
+use base_node_core::ComponentBuilder;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
 
@@ -301,13 +301,10 @@ impl TestBuilder {
     }
 
     /// Run the test scenario
-    pub async fn run<AO>(
+    pub async fn run(
         mut self,
-        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
-    ) -> Result<()>
-    where
-        AO: RethRpcAddOns + 'static,
-    {
+        node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    ) -> Result<()> {
         let mut setup = self.setup.take();
 
         if let Some(ref mut s) = setup {

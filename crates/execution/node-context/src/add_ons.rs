@@ -1,12 +1,10 @@
 //! Traits for configuring a node.
 
-use std::future::Future;
-
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_node_core::node_config::NodeConfig;
 use reth_tokio_util::EventSender;
 
-/// Context passed to [`NodeAddOns::launch_add_ons`],
+/// Components and configuration available while launching Base RPC services.
 #[derive(Debug, Clone)]
 pub struct AddOnsContext<'a> {
     /// Node with all configured components.
@@ -17,52 +15,4 @@ pub struct AddOnsContext<'a> {
     pub beacon_engine_handle: ConsensusEngineHandle,
     /// Notification channel for engine API events
     pub engine_events: EventSender<ConsensusEngineEvent>,
-}
-
-/// Starts node services and returns their shared handles.
-pub trait NodeAddOns: Send {
-    /// Handle to add-ons.
-    ///
-    /// This type is returned by [`launch_add_ons`](Self::launch_add_ons) and represents a
-    /// handle to the launched services. It must be `Clone` to allow multiple components to
-    /// hold references and should provide methods to interact with the running services.
-    ///
-    /// For RPC add-ons, this typically includes:
-    /// - Server handles to access local addresses and shutdown methods
-    /// - RPC module registry for runtime inspection of available methods
-    /// - Configured middleware and transport-specific settings
-    /// - For Engine API implementations, this also includes handles for consensus layer
-    ///   communication
-    type Handle: Send + Sync + Clone;
-
-    /// Configures and launches the add-ons.
-    ///
-    /// This method is called once during node startup after all core components are initialized.
-    /// It receives an [`AddOnsContext`] that provides access to:
-    ///
-    /// - The fully configured node with all its components
-    /// - Node configuration for reading settings
-    /// - Engine API handles for consensus layer communication
-    ///
-    /// The implementation should:
-    /// 1. Use the context to configure the add-on services
-    /// 2. Launch any background tasks using the node's task executor
-    /// 3. Return a handle that allows interaction with the launched services
-    ///
-    /// # Errors
-    ///
-    /// This method may fail if the add-ons cannot be properly configured or launched,
-    /// for example due to port binding issues or invalid configuration.
-    fn launch_add_ons(
-        self,
-        ctx: AddOnsContext<'_>,
-    ) -> impl Future<Output = eyre::Result<Self::Handle>> + Send;
-}
-
-impl NodeAddOns for () {
-    type Handle = ();
-
-    async fn launch_add_ons(self, _components: AddOnsContext<'_>) -> eyre::Result<Self::Handle> {
-        Ok(())
-    }
 }
