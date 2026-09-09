@@ -2239,7 +2239,6 @@ dependencies = [
  "base-batcher-core",
  "base-batcher-encoding-channel",
  "base-batcher-source",
- "base-blobs",
  "base-builder-core",
  "base-common-chain-config",
  "base-common-network",
@@ -2331,7 +2330,6 @@ dependencies = [
  "auto_impl",
  "base-batcher-encoding-channel",
  "base-batcher-source",
- "base-blobs",
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
@@ -2415,17 +2413,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-blobs"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-protocol",
- "rstest",
- "thiserror 2.0.19",
 ]
 
 [[package]]

@@ -31,7 +31,6 @@ members = [
   "bin/snapshotter",
   "bin/websocket-proxy",
   "crates/batcher/admin",
-  "crates/batcher/blobs",
   "crates/batcher/cli",
   "crates/batcher/core",
   "crates/batcher/encoding/channel",
@@ -403,7 +402,6 @@ base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier", defa
 base-prover-service-protocol = { path = "crates/proof/prover-service/protocol", default-features = false }
 
 # Batcher
-base-blobs = { path = "crates/batcher/blobs", default-features = false }
 base-batcher-cli = { path = "crates/batcher/cli", default-features = false }
 base-batcher-core = { path = "crates/batcher/core", default-features = false }
 base-batcher-admin = { path = "crates/batcher/admin", default-features = false }

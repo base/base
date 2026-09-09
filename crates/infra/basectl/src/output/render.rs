@@ -154,7 +154,7 @@ pub fn render_l1_blocks_table<'a>(
                 Style::default().fg(Color::White)
             };
 
-            let blobs_style = if l1_block.base_blobs > 0 {
+            let blobs_style = if l1_block.base_batcher_encoding_channel > 0 {
                 Style::default().fg(COLOR_BASE_BLUE)
             } else if l1_block.total_blobs > 0 {
                 Style::default().fg(Color::Yellow)

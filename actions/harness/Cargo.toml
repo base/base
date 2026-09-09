@@ -26,7 +26,6 @@ alloy-primitives = { workspace = true }
 base-batcher-source = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-node = { workspace = true }
-base-batcher-encoding-channel = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-rpc = { workspace = true }
 base-consensus-engine = { workspace = true }
@@ -36,6 +35,7 @@ reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-batcher-encoding-channel = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
@@ -58,8 +58,8 @@ base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 
 [dev-dependencies]
-base-blobs = { workspace = true }
 base-execution-evm-precompiles = {workspace = true}
+base-batcher-encoding-channel = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "rt", "macros"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }

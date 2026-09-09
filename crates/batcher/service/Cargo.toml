@@ -19,11 +19,11 @@ base-common-network = {workspace = true}
 base-batcher-admin = { workspace = true }
 base-batcher-source = { workspace = true }
 base-balance-monitor = { workspace = true }
-base-batcher-encoding-channel = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
+base-batcher-encoding-channel = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }

@@ -3,7 +3,7 @@
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
 
-use crate::encoder::BlobEncoder;
+use crate::BlobEncoder;
 
 /// Errors returned by [`BlobDecoder::decode`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -116,7 +116,7 @@ pub struct L1BlockInfo {
     /// Total number of blobs in this L1 block.
     pub total_blobs: u64,
     /// Number of blobs from the Base batcher.
-    pub base_blobs: u64,
+    pub base_batcher_encoding_channel: u64,
 }
 
 /// How the L1 watcher connects to the L1 node.
@@ -264,14 +264,14 @@ fn extract_l1_block_info(
     batcher_address: Address,
 ) -> L1BlockInfo {
     let mut total_blobs: u64 = 0;
-    let mut base_blobs: u64 = 0;
+    let mut base_batcher_encoding_channel: u64 = 0;
 
     for tx in block.transactions.txns() {
         if let Some(blob_hashes) = tx.blob_versioned_hashes() {
             let blob_count = blob_hashes.len() as u64;
             total_blobs += blob_count;
             if tx.inner.signer() == batcher_address {
-                base_blobs += blob_count;
+                base_batcher_encoding_channel += blob_count;
             }
         }
     }
@@ -280,6 +280,6 @@ fn extract_l1_block_info(
         block_number: block.header.number,
         timestamp: block.header.timestamp,
         total_blobs,
-        base_blobs,
+        base_batcher_encoding_channel,
     }
 }

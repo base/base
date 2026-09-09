@@ -56,7 +56,7 @@ pub struct L1Block {
     /// Total number of blobs in this L1 block.
     pub total_blobs: u64,
     /// Number of blobs submitted by the Base batcher.
-    pub base_blobs: u64,
+    pub base_batcher_encoding_channel: u64,
     /// Number of L2 blocks attributed to this L1 block.
     pub l2_blocks_submitted: Option<u64>,
     /// Total DA bytes from L2 blocks attributed to this L1 block.
@@ -72,7 +72,7 @@ impl L1Block {
             block_number: info.block_number,
             timestamp: info.timestamp,
             total_blobs: info.total_blobs,
-            base_blobs: info.base_blobs,
+            base_batcher_encoding_channel: info.base_batcher_encoding_channel,
             l2_blocks_submitted: None,
             l2_da_bytes: None,
             l2_block_range: None,
@@ -86,12 +86,12 @@ impl L1Block {
 
     /// Returns true if this L1 block contains blobs from the Base batcher.
     pub const fn has_base_blobs(&self) -> bool {
-        self.base_blobs > 0
+        self.base_batcher_encoding_channel > 0
     }
 
     /// Returns a formatted string of base/total blob counts.
     pub fn blobs_display(&self) -> String {
-        format!("{}/{}", self.base_blobs, self.total_blobs)
+        format!("{}/{}", self.base_batcher_encoding_channel, self.total_blobs)
     }
 
     /// Returns the number of attributed L2 blocks as a display string.
@@ -102,10 +102,10 @@ impl L1Block {
     /// Returns the DA-to-L1 compression ratio, if data is available.
     pub fn compression_ratio(&self) -> Option<f64> {
         let da_bytes = self.l2_da_bytes?;
-        if self.base_blobs == 0 {
+        if self.base_batcher_encoding_channel == 0 {
             return None;
         }
-        let l1_bytes = self.base_blobs * BLOB_SIZE;
+        let l1_bytes = self.base_batcher_encoding_channel * BLOB_SIZE;
         Some(da_bytes as f64 / l1_bytes as f64)
     }
 
@@ -364,7 +364,7 @@ impl DaTracker {
 
         let l1_block = L1Block::from_info(info);
 
-        if l1_block.base_blobs > 0 {
+        if l1_block.base_batcher_encoding_channel > 0 {
             self.last_base_blob_time = Some(Instant::now());
         }
 
@@ -385,7 +385,7 @@ impl DaTracker {
             .l1_blocks
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.base_blobs > 0 && b.l2_blocks_submitted.is_none())
+            .filter(|(_, b)| b.base_batcher_encoding_channel > 0 && b.l2_blocks_submitted.is_none())
             .map(|(i, _)| i)
             .collect();
 
@@ -396,7 +396,8 @@ impl DaTracker {
         // Process oldest first (l1_blocks is newest-first, so reverse)
         unmatched.reverse();
 
-        let total_blobs: u64 = unmatched.iter().map(|&i| self.l1_blocks[i].base_blobs).sum();
+        let total_blobs: u64 =
+            unmatched.iter().map(|&i| self.l1_blocks[i].base_batcher_encoding_channel).sum();
         if total_blobs == 0 {
             return;
         }
@@ -411,7 +412,7 @@ impl DaTracker {
         let mut allocated: u64 = 0;
 
         for (nth, &idx) in unmatched.iter().enumerate() {
-            let blobs = self.l1_blocks[idx].base_blobs;
+            let blobs = self.l1_blocks[idx].base_batcher_encoding_channel;
             let floor = l2_delta * blobs / total_blobs;
             // Fractional remainder scaled by total_blobs to avoid floats:
             // remainder = (l2_delta * blobs) % total_blobs
@@ -476,7 +477,7 @@ impl DaTracker {
             return None;
         }
         let total: u64 = blocks.iter().map(|b| b.total_blobs).sum();
-        let base: u64 = blocks.iter().map(|b| b.base_blobs).sum();
+        let base: u64 = blocks.iter().map(|b| b.base_batcher_encoding_channel).sum();
         if total > 0 { Some(base as f64 / total as f64) } else { None }
     }
 

@@ -7,7 +7,7 @@ use base_batcher_encoding_channel::{
     BatchPipeline, BatcherMetrics, BlobPayload, DaEgress, DaType, EncoderConfig, FrameEncoder,
     SubmissionId, SubmissionPayload,
 };
-use base_blobs::{BlobEncodeError, BlobEncoder};
+use base_batcher_encoding_channel::{BlobEncodeError, BlobEncoder};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;

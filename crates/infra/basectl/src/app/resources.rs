@@ -516,7 +516,7 @@ mod tests {
                 block_number: 123,
                 timestamp: 456,
                 total_blobs: 2,
-                base_blobs: 1,
+                base_batcher_encoding_channel: 1,
             })
             .unwrap();
 

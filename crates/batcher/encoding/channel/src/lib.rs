@@ -40,3 +40,6 @@ mod metrics;
 pub use metrics::BatcherMetrics;
 
 pub mod test_utils;
+
+mod blobs;
+pub use blobs::{BlobDecodeError, BlobDecoder, BlobEncodeError, BlobEncoder};

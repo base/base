@@ -13,10 +13,9 @@ workspace = true
 
 [dependencies]
 auto_impl = { workspace = true }
-base-blobs = { workspace = true }
 base-tx-manager = { workspace = true }
 base-batcher-source = { workspace = true }
-base-batcher-encoding-channel = { workspace = true }
+base-batcher-encoding-channel = {workspace = true}
 tracing = { workspace = true, features = ["std"] }
 async-trait = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }

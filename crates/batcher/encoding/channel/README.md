@@ -43,7 +43,7 @@ while let Some(sub) = encoder.next_submission() {
     match sub.payload() {
         SubmissionPayload::Blobs(blobs) => {
             for blob in blobs {
-                let encoded = base_blobs::BlobEncoder::encode_packed(blob.frames())?;
+                let encoded = base_batcher_encoding_channel::BlobEncoder::encode_packed(blob.frames())?;
             }
         }
         SubmissionPayload::Calldata(frame) => {
@@ -72,6 +72,8 @@ Every `next_submission()` must be followed by `confirm` or `requeue`.
 submissions remain pending and cannot be leased again.
 
 `FrameEncoder::to_calldata` is `[DERIVATION_VERSION_0] ++ frame.encode()`.
-Blob payloads use `base_blobs::BlobEncoder::encode_packed`.
+Blob payloads use `base_batcher_encoding_channel::BlobEncoder::encode_packed`.
 
 Channel compression is implemented locally with Brotli. The encoder owns both complete-channel and incremental compression.
+
+Blob encoding and decoding live alongside channel framing, with the same EIP-4844 payload format.
