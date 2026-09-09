@@ -10,5 +10,3 @@ pub use static_file_provider::StaticFileProviderFactory;
 mod rocksdb_provider;
 pub use rocksdb_provider::RocksDBProviderFactory;
 
-mod full;
-pub use full::FullProvider;
