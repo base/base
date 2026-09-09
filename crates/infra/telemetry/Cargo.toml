@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 discv5 = { workspace = true }
-reth-ecies = { workspace = true }
 async-trait = { workspace = true }
 reth-eth-wire = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -28,6 +27,7 @@ anyhow = { workspace = true, features = ["default", "std"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
 secp256k1 = { workspace = true, features = ["default", "rand"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
+base-execution-network-wire = { workspace = true, features = ["transport"]}
 clap = { workspace = true, features = ["default", "derive", "env", "std"] }
 base-common-observability-health = { workspace = true, features = ["axum-server"] }
 base-execution-network-types = { workspace = true, features = ["default", "secp256k1"] }

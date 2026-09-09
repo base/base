@@ -5,7 +5,8 @@ use std::{fmt, io, net::SocketAddr, time::Duration};
 
 use alloy_primitives::B512;
 use async_trait::async_trait;
-use reth_ecies::{ECIESError, stream::ECIESStream};
+use base_execution_network_wire::ECIESError;
+use base_execution_network_wire::ECIESStream;
 use reth_eth_wire::HelloMessage;
 use reth_eth_wire::UnauthedP2PStream;
 use reth_eth_wire::errors::P2PHandshakeError;
@@ -250,7 +251,7 @@ mod tests {
     use std::{error::Error as _, future, time::Duration};
 
     use alloy_primitives::B512;
-    use reth_ecies::stream::ECIESStream;
+    use base_execution_network_wire::ECIESStream;
     use reth_eth_wire::DisconnectReason;
     use reth_eth_wire::HelloMessage;
     use reth_eth_wire::UnauthedP2PStream;

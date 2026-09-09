@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin};
 
 use base_execution_network_wire::DisconnectReason;
 use futures::{Sink, SinkExt};
-use reth_ecies::stream::ECIESStream;
+use base_execution_network_wire::ECIESStream;
 use tokio::io::AsyncWrite;
 use tokio_util::codec::{Encoder, Framed};
 

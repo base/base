@@ -136,7 +136,6 @@ members = [
   "vendor/reth-dns-discovery",
   "vendor/reth-downloaders",
   "vendor/reth-e2e-test-utils",
-  "vendor/reth-ecies",
   "vendor/reth-engine-local",
   "vendor/reth-engine-primitives",
   "vendor/reth-engine-tree",
@@ -457,7 +456,6 @@ reth-db = { path = "vendor/reth-db", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
-reth-ecies = { path = "vendor/reth-ecies", default-features = false }
 reth-prune = { path = "vendor/reth-prune", default-features = false }
 reth-discv4 = { path = "vendor/reth-discv4", default-features = false }
 reth-discv5 = { path = "vendor/reth-discv5", default-features = false }

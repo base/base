@@ -3598,6 +3598,7 @@ dependencies = [
 name = "base-execution-network-wire"
 version = "0.0.0"
 dependencies = [
+ "aes",
  "alloy-chains",
  "alloy-eip7928",
  "alloy-eips",
@@ -3608,15 +3609,31 @@ dependencies = [
  "arbitrary",
  "base-common-codec-macros",
  "base-common-types-chain",
+ "base-execution-network-types",
+ "byteorder",
  "bytes",
+ "cipher",
+ "concat-kdf",
+ "ctr",
  "derive_more",
+ "digest 0.10.7",
+ "futures",
+ "hmac 0.12.1",
+ "pin-project",
  "proptest",
  "proptest-arbitrary-interop",
+ "rand 0.8.7",
  "rand 0.9.5",
  "reth-primitives-traits",
+ "secp256k1 0.30.0",
  "serde",
+ "sha2 0.10.9",
  "test-case",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -5093,6 +5110,7 @@ dependencies = [
  "axum",
  "base-common-observability-health",
  "base-execution-network-types",
+ "base-execution-network-wire",
  "base-trusted-proxy",
  "clap",
  "discv5",
@@ -5103,7 +5121,6 @@ dependencies = [
  "libp2p-identity",
  "mockall",
  "reqwest",
- "reth-ecies",
  "reth-eth-wire",
  "secp256k1 0.30.0",
  "serde",
@@ -13637,6 +13654,7 @@ dependencies = [
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-types",
+ "base-execution-network-wire",
  "base-execution-state-api",
  "base-execution-state-types",
  "base-node-core",
@@ -13665,7 +13683,6 @@ dependencies = [
  "reth-discv4",
  "reth-discv5",
  "reth-downloaders",
- "reth-ecies",
  "reth-eth-wire",
  "reth-exex",
  "reth-net-nat",
@@ -14002,32 +14019,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-ecies"
-version = "0.0.0"
-dependencies = [
- "aes",
- "alloy-primitives",
- "alloy-rlp",
- "base-execution-network-types",
- "byteorder",
- "cipher",
- "concat-kdf",
- "ctr",
- "digest 0.10.7",
- "futures",
- "hmac 0.12.1",
- "pin-project",
- "rand 0.8.7",
- "secp256k1 0.30.0",
- "sha2 0.10.9",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "reth-engine-local"
 version = "0.0.0"
 dependencies = [
@@ -14179,7 +14170,6 @@ dependencies = [
  "proptest-arbitrary-interop",
  "rand 0.8.7",
  "rand 0.9.5",
- "reth-ecies",
  "reth-primitives-traits",
  "secp256k1 0.30.0",
  "serde",
@@ -14414,7 +14404,6 @@ dependencies = [
  "reth-discv4",
  "reth-discv5",
  "reth-dns-discovery",
- "reth-ecies",
  "reth-eth-wire",
  "reth-network",
  "reth-network-api",

@@ -7,7 +7,7 @@ use std::{
 
 use base_execution_network_wire::RawCapabilityMessage;
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use reth_ecies::stream::ECIESStream;
+use base_execution_network_wire::ECIESStream;
 use reth_eth_wire::EthBroadcastMessage;
 use reth_eth_wire::EthMessage;
 use reth_eth_wire::EthSnapMessage;

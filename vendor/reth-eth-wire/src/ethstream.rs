@@ -359,7 +359,7 @@ mod tests {
     use base_execution_network_types::pk2id;
     use base_execution_network_wire::UnifiedStatus;
     use futures::{SinkExt, StreamExt};
-    use reth_ecies::stream::ECIESStream;
+    use base_execution_network_wire::ECIESStream;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::net::{TcpListener, TcpStream};
     use tokio_util::codec::Decoder;

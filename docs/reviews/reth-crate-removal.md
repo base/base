@@ -102,7 +102,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-dns-discovery](../../vendor/reth-dns-discovery/Cargo.toml) | Retain shared infrastructure |
 | [reth-downloaders](../../vendor/reth-downloaders/Cargo.toml) | Retain shared infrastructure |
 | [reth-e2e-test-utils](../../vendor/reth-e2e-test-utils/Cargo.toml) | Test support; retain or migrate |
-| [reth-ecies](../../vendor/reth-ecies/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-local](../../vendor/reth-engine-local/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-engine-primitives](../../vendor/reth-engine-primitives/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-tree](../../vendor/reth-engine-tree/Cargo.toml) | Retain shared infrastructure |

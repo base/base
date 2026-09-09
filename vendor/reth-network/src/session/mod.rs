@@ -30,7 +30,8 @@ pub use handle::{
     ActiveSessionHandle, ActiveSessionMessage, PendingSessionEvent, PendingSessionHandle,
     SessionCommand,
 };
-use reth_ecies::{ECIESError, stream::ECIESStream};
+use base_execution_network_wire::ECIESError;
+use base_execution_network_wire::ECIESStream;
 use reth_eth_wire::BlockRangeUpdate;
 use reth_eth_wire::Capabilities;
 use reth_eth_wire::DisconnectReason;

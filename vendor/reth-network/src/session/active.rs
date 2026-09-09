@@ -1323,7 +1323,7 @@ mod tests {
     use base_execution_network_wire::MAX_MESSAGE_SIZE;
     use base_execution_network_wire::NewPooledTransactionHashes72;
     use futures::task::noop_waker;
-    use reth_ecies::stream::ECIESStream;
+    use base_execution_network_wire::ECIESStream;
     use reth_eth_wire::EthStream;
     use reth_eth_wire::GetBlockAccessLists;
     use reth_eth_wire::GetBlockBodies;

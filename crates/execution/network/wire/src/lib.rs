@@ -51,3 +51,12 @@ mod snap;
 pub use alloy_eips::eip1898::{BlockHashOrNumber, HashOrNumber};
 pub use alloy_eips::eip2718::Encodable2718;
 pub use snap::*;
+
+#[cfg(feature = "transport")]
+mod ecies;
+#[cfg(feature = "transport")]
+pub use ecies::{
+    DEFAULT_BACKPRESSURE_BOUNDARY, ECIES, ECIESCodec, ECIESError, ECIESErrorImpl, ECIESState,
+    ECIESStream, EciesCrypto, EgressECIESValue, EncryptedMessage, IngressECIESValue, MAC,
+    RLPxSymmetricKeys,
+};

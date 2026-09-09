@@ -2,7 +2,7 @@
 
 use base_execution_network_types::{AnyNode, pk2id};
 use clap::{Parser, Subcommand};
-use reth_ecies::stream::ECIESStream;
+use base_execution_network_wire::ECIESStream;
 use reth_eth_wire::HelloMessage;
 use reth_eth_wire::UnauthedP2PStream;
 use reth_network::config::rng_secret_key;

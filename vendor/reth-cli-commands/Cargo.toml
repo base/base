@@ -25,7 +25,6 @@ humantime = { workspace = true }
 itertools = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
-reth-ecies = { workspace = true }
 reth-prune = { workspace = true }
 reth-db-api = { workspace = true }
 reth-discv5 = { workspace = true }
@@ -77,6 +76,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-state-types = {workspace = true, features = ["clap"]}
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
+base-execution-network-wire = { workspace = true, features = ["transport"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-network-types = { workspace = true, features = ["secp256k1"] }

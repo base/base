@@ -19,7 +19,6 @@ workspace = true
 snap = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
-reth-ecies = { workspace = true }
 pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
@@ -35,9 +34,9 @@ alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 tokio-util = { workspace = true, features = ["default", "codec", "io"] }
-base-execution-network-wire = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
+base-execution-network-wire = {features = ["default", "transport"], workspace = true}
 
 [dev-dependencies]
 serde = { workspace = true }

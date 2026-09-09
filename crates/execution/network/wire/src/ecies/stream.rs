@@ -22,9 +22,11 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_util::codec::{Decoder, Framed};
 use tracing::{instrument, trace};
 
-use crate::{
-    ECIESError, EgressECIESValue, IngressECIESValue, codec::ECIESCodec, error::ECIESErrorImpl,
-};
+use crate::ECIESCodec;
+use crate::ECIESError;
+use crate::ECIESErrorImpl;
+use crate::EgressECIESValue;
+use crate::IngressECIESValue;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 

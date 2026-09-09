@@ -6,56 +6,29 @@ use alloy_primitives::{
     bytes::{BufMut, Bytes, BytesMut},
 };
 use alloy_rlp::{Encodable, Rlp, RlpEncodable, RlpMaxEncodedLen};
+use base_execution_network_types::{id2pk, pk2id};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use ctr::Ctr64BE;
 use digest::crypto_common::KeyIvInit;
 use rand_08::{Rng, thread_rng as rng};
-use base_execution_network_types::{id2pk, pk2id};
 use secp256k1::{
     PublicKey, SECP256K1, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
-use sha2::Sha256;
 
-use crate::{
-    ECIESError,
-    error::ECIESErrorImpl,
-    mac::MAC,
-    util::{hmac_sha256, sha256},
-};
+use crate::ECIESError;
+use crate::ECIESErrorImpl;
+use crate::EciesCrypto;
+use crate::MAC;
 
 const PROTOCOL_VERSION: usize = 4;
-
-/// Computes the shared secret with ECDH and strips the y coordinate after computing the shared
-/// secret.
-///
-/// This uses the given remote public key and local (ephemeral) secret key to [compute a shared
-/// secp256k1 point](secp256k1::ecdh::shared_secret_point) and slices off the y coordinate from the
-/// returned pair, returning only the bytes of the x coordinate as a [`B256`].
-fn ecdh_x(public_key: &PublicKey, secret_key: &SecretKey) -> B256 {
-    B256::from_slice(&secp256k1::ecdh::shared_secret_point(public_key, secret_key)[..32])
-}
-
-/// This is the NIST SP 800-56A Concatenation Key Derivation Function (KDF) using SHA-256.
-///
-/// Internally this uses [`concat_kdf::derive_key_into`] to derive a key into the given `dest`
-/// slice.
-///
-/// # Panics
-/// * If the `dest` is empty
-/// * If the `dest` len is greater than or equal to the hash output len * the max counter value. In
-///   this case, the hash output len is 32 bytes, and the max counter value is 2^32 - 1. So the dest
-///   cannot have a len greater than 32 * 2^32 - 1.
-fn kdf(secret: B256, s1: &[u8], dest: &mut [u8]) {
-    concat_kdf::derive_key_into::<Sha256>(secret.as_slice(), s1, dest).unwrap();
-}
 
 pub struct ECIES {
     secret_key: SecretKey,
     public_key: PublicKey,
     remote_public_key: Option<PublicKey>,
 
-    pub(crate) remote_id: Option<PeerId>,
+    pub remote_id: Option<PeerId>,
 
     ephemeral_secret_key: SecretKey,
     ephemeral_public_key: PublicKey,
@@ -111,7 +84,7 @@ fn split_at_mut<T>(arr: &mut [T], idx: usize) -> Result<(&mut [T], &mut [T]), EC
 /// For Bob to decrypt the message `R || iv || c || d`, he derives the shared secret `S = Px` where
 /// `(Px, Py) = kB * R` as well as the encryption and authentication keys `kE || kM = KDF(S, 32)`.
 ///
-/// Bob verifies the authenticity of the message by checking whether `d == MAC(sha256(kM), iv ||
+/// Bob verifies the authenticity of the message by checking whether `d == MAC(EciesCrypto::sha256(kM), iv ||
 /// c)` then obtains the plaintext as `m = AES(kE, iv || c)`.
 #[derive(Debug)]
 pub struct EncryptedMessage<'a> {
@@ -179,7 +152,7 @@ impl<'a> EncryptedMessage<'a> {
     pub fn derive_keys(&self, secret_key: &SecretKey) -> RLPxSymmetricKeys {
         // perform ECDH to get the shared secret, using the remote public key from the message and
         // the given secret key
-        let x = ecdh_x(&self.public_key, secret_key);
+        let x = EciesCrypto::ecdh_x(&self.public_key, secret_key);
         let mut key = [0u8; 32];
 
         // The RLPx spec describes the key derivation process as:
@@ -190,17 +163,17 @@ impl<'a> EncryptedMessage<'a> {
         //
         // NOTE: The RLPx spec does not define an `OtherInfo` parameter, and this is unused in
         // other implementations, so we use an empty slice.
-        kdf(x, &[], &mut key);
+        EciesCrypto::kdf(x, &[], &mut key);
 
         let enc_key = B128::from_slice(&key[..16]);
 
         // The MAC tag check operation described is:
         //
-        // d == MAC(sha256(kM), iv || c)
+        // d == MAC(EciesCrypto::sha256(kM), iv || c)
         //
         // where kM is the result of the above KDF, iv is the IV, and c is the encrypted data.
         // Because the hash of kM is ultimately used as the mac key, we perform that hashing here.
-        let mac_key = sha256(&key[16..32]);
+        let mac_key = EciesCrypto::sha256(&key[16..32]);
 
         RLPxSymmetricKeys { enc_key, mac_key }
     }
@@ -209,7 +182,7 @@ impl<'a> EncryptedMessage<'a> {
     pub fn check_integrity(&self, keys: &RLPxSymmetricKeys) -> Result<(), ECIESError> {
         // The MAC tag check operation described is:
         //
-        // d == MAC(sha256(kM), iv || c)
+        // d == MAC(EciesCrypto::sha256(kM), iv || c)
         //
         // NOTE: The RLPx spec does not show here that the `auth_data` is required for checking the
         // tag.
@@ -228,7 +201,7 @@ impl<'a> EncryptedMessage<'a> {
         //
         // enc, err := ecies.Encrypt(rand.Reader, h.remote, h.wbuf.data, nil, prefix)
         // ```
-        let check_tag = hmac_sha256(
+        let check_tag = EciesCrypto::hmac_sha256(
             keys.mac_key.as_ref(),
             &[self.iv.as_slice(), self.encrypted_data],
             &self.auth_data,
@@ -375,12 +348,12 @@ impl ECIES {
             &PublicKey::from_secret_key(SECP256K1, &secret_key).serialize_uncompressed(),
         );
 
-        let x = ecdh_x(&self.remote_public_key.unwrap(), &secret_key);
+        let x = EciesCrypto::ecdh_x(&self.remote_public_key.unwrap(), &secret_key);
         let mut key = [0u8; 32];
-        kdf(x, &[], &mut key);
+        EciesCrypto::kdf(x, &[], &mut key);
 
         let enc_key = B128::from_slice(&key[..16]);
-        let mac_key = sha256(&key[16..32]);
+        let mac_key = EciesCrypto::sha256(&key[16..32]);
 
         let iv = B128::random();
         let mut encryptor = Ctr64BE::<Aes128>::new((&enc_key.0).into(), (&iv.0).into());
@@ -390,8 +363,11 @@ impl ECIES {
 
         let total_size: u16 = u16::try_from(65 + 16 + data.len() + 32).unwrap();
 
-        let tag =
-            hmac_sha256(mac_key.as_ref(), &[iv.as_slice(), &encrypted], &total_size.to_be_bytes());
+        let tag = EciesCrypto::hmac_sha256(
+            mac_key.as_ref(),
+            &[iv.as_slice(), &encrypted],
+            &total_size.to_be_bytes(),
+        );
 
         out.extend_from_slice(iv.as_slice());
         out.extend_from_slice(&encrypted);
@@ -410,7 +386,7 @@ impl ECIES {
     }
 
     fn create_auth_unencrypted(&self) -> BytesMut {
-        let x = ecdh_x(&self.remote_public_key.unwrap(), &self.secret_key);
+        let x = EciesCrypto::ecdh_x(&self.remote_public_key.unwrap(), &self.secret_key);
         let msg = x ^ self.nonce;
         let (rec_id, sig) = SECP256K1
             .sign_ecdsa_recoverable(
@@ -486,13 +462,15 @@ impl ECIES {
         self.remote_public_key = Some(id2pk(remote_id)?);
         self.remote_nonce = Some(data.get_next()?.ok_or(ECIESErrorImpl::InvalidAuthData)?);
 
-        let x = ecdh_x(&self.remote_public_key.unwrap(), &self.secret_key);
+        let x = EciesCrypto::ecdh_x(&self.remote_public_key.unwrap(), &self.secret_key);
         self.remote_ephemeral_public_key = Some(SECP256K1.recover_ecdsa(
             &secp256k1::Message::from_digest((x ^ self.remote_nonce.unwrap()).0),
             &signature,
         )?);
-        self.ephemeral_shared_secret =
-            Some(ecdh_x(&self.remote_ephemeral_public_key.unwrap(), &self.ephemeral_secret_key));
+        self.ephemeral_shared_secret = Some(EciesCrypto::ecdh_x(
+            &self.remote_ephemeral_public_key.unwrap(),
+            &self.ephemeral_secret_key,
+        ));
 
         Ok(())
     }
@@ -564,8 +542,10 @@ impl ECIES {
             Some(id2pk(data.get_next()?.ok_or(ECIESErrorImpl::InvalidAckData)?)?);
         self.remote_nonce = Some(data.get_next()?.ok_or(ECIESErrorImpl::InvalidAckData)?);
 
-        self.ephemeral_shared_secret =
-            Some(ecdh_x(&self.remote_ephemeral_public_key.unwrap(), &self.ephemeral_secret_key));
+        self.ephemeral_shared_secret = Some(EciesCrypto::ecdh_x(
+            &self.remote_ephemeral_public_key.unwrap(),
+            &self.ephemeral_secret_key,
+        ));
         Ok(())
     }
 
@@ -754,7 +734,7 @@ mod tests {
         let remote_public_key = id2pk(hex!("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").into()).unwrap();
 
         assert_eq!(
-            ecdh_x(&remote_public_key, &our_secret_key),
+            EciesCrypto::ecdh_x(&remote_public_key, &our_secret_key),
             hex!("821ce7e01ea11b111a52b2dafae8a3031a372d83bdf1a78109fa0783c2b9d5d3")
         )
     }
@@ -967,7 +947,7 @@ mod tests {
         let len_range = 1..65;
         for len in len_range {
             let mut dest = vec![1u8; len];
-            kdf(
+            EciesCrypto::kdf(
                 b256!("0x7000000000000000000000000000000000000000000000000000000000000007"),
                 &[0x01, 0x33, 0x70, 0xbe, 0xef],
                 &mut dest,

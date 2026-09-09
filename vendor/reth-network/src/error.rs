@@ -4,7 +4,7 @@ use std::{fmt, io, io::ErrorKind, net::SocketAddr};
 
 use base_execution_network_types::BackoffKind;
 use reth_dns_discovery::resolver::NetError;
-use reth_ecies::ECIESErrorImpl;
+use base_execution_network_wire::ECIESErrorImpl;
 use reth_eth_wire::DisconnectReason;
 use reth_eth_wire::errors::EthHandshakeError;
 use reth_eth_wire::errors::EthStreamError;

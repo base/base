@@ -7,7 +7,11 @@ use secp256k1::SecretKey;
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{instrument, trace};
 
-use crate::{ECIESError, ECIESErrorImpl, EgressECIESValue, IngressECIESValue, algorithm::ECIES};
+use crate::ECIES;
+use crate::ECIESError;
+use crate::ECIESErrorImpl;
+use crate::EgressECIESValue;
+use crate::IngressECIESValue;
 
 /// The max size that the initial handshake packet can be. Currently 2KiB.
 const MAX_INITIAL_HANDSHAKE_SIZE: usize = 2048;
@@ -46,12 +50,12 @@ pub enum ECIESState {
 
 impl ECIESCodec {
     /// Create a new server codec using the given secret key
-    pub(crate) fn new_server(secret_key: SecretKey) -> Result<Self, ECIESError> {
+    pub fn new_server(secret_key: SecretKey) -> Result<Self, ECIESError> {
         Ok(Self { ecies: ECIES::new_server(secret_key)?, state: ECIESState::Auth })
     }
 
     /// Create a new client codec using the given secret key and the server's public id
-    pub(crate) fn new_client(secret_key: SecretKey, remote_id: PeerId) -> Result<Self, ECIESError> {
+    pub fn new_client(secret_key: SecretKey, remote_id: PeerId) -> Result<Self, ECIESError> {
         Ok(Self { ecies: ECIES::new_client(secret_key, remote_id)?, state: ECIESState::Auth })
     }
 }

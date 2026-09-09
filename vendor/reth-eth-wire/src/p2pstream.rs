@@ -68,7 +68,7 @@ const PING_INTERVAL: Duration = Duration::from_secs(60);
 /// `p2p` stream.
 ///
 /// Note: this default is rather low because it is expected that the [`P2PStream`] wraps an
-/// [`ECIESStream`](reth_ecies::stream::ECIESStream) which internally already buffers a few MB of
+/// [`ECIESStream`](base_execution_network_wire::ECIESStream) which internally already buffers a few MB of
 /// encoded data.
 const MAX_P2P_CAPACITY: usize = 2;
 

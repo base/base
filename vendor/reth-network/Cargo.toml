@@ -24,7 +24,6 @@ itertools = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
-reth-ecies = { workspace = true }
 rustc-hash = { workspace = true }
 discv5-reth = { workspace = true }
 pin-project = { workspace = true }
@@ -56,10 +55,10 @@ enr = { workspace = true, features = ["serde", "rust-secp256k1"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-execution-network-wire = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
+base-execution-network-wire = {features = ["default", "transport"], workspace = true}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
 
