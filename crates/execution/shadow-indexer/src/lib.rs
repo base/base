@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
-mod extension;
-pub use extension::{ShadowIndexerConfig, ShadowIndexerExtension};
+mod config;
+pub use config::ShadowIndexerConfig;
 
 mod exex;
 pub use exex::ShadowIndexerExEx;

@@ -5,7 +5,10 @@ use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
-use base_execution_rpc::{AdminApi, BaseEthApi, BaseEthApiBuilder, DevSigner, EthApiCtx};
+use base_execution_rpc::{
+    AdminApi, BaseEthApi, BaseEthApiBuilder, BaseEthConfigApiServer,
+    DebugExecutionWitnessApiServer, DevSigner, EthApiCtx, MinerApiExtServer,
+};
 use base_node_context::{AddOnsContext, BaseNodePool};
 pub use jsonrpsee::{
     core::middleware::layer::Either,
@@ -36,59 +39,6 @@ pub type BaseNodeRpcHandle = RpcHandle;
 pub struct RethRpcServerHandles {
     /// The regular RPC server handle to all configured transports.
     pub rpc: RpcServerHandle,
-}
-
-/// Contains hooks that are called during the rpc setup.
-pub struct RpcHooks {
-    /// Hooks to run once RPC server is running.
-    pub on_rpc_started:
-        Box<dyn FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
-    /// Hooks to run to configure RPC server API.
-    pub extend_rpc_modules: Box<dyn FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send>,
-}
-
-impl Default for RpcHooks {
-    fn default() -> Self {
-        Self { on_rpc_started: Box::new(|_, _| Ok(())), extend_rpc_modules: Box::new(|_| Ok(())) }
-    }
-}
-
-impl RpcHooks {
-    /// Sets the hook that is run once the rpc server is started.
-    pub fn set_on_rpc_started<F>(&mut self, hook: F) -> &mut Self
-    where
-        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
-    {
-        self.on_rpc_started = Box::new(hook);
-        self
-    }
-
-    /// Sets the hook that is run to configure the rpc modules.
-    pub fn set_extend_rpc_modules<F>(&mut self, hook: F) -> &mut Self
-    where
-        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
-    {
-        self.extend_rpc_modules = Box::new(hook);
-        self
-    }
-}
-
-impl fmt::Debug for RpcHooks {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RpcHooks")
-            .field("on_rpc_started", &"...")
-            .field("extend_rpc_modules", &"...")
-            .finish()
-    }
-}
-
-/// Helper container for the parameters commonly passed to RPC module extension functions.
-#[expect(missing_debug_implementations)]
-pub struct RpcModuleContainer<'a> {
-    /// Holds installed modules per transport type.
-    pub modules: &'a mut TransportRpcModules,
-    /// A Helper type the holds instances of the configured modules.
-    pub registry: &'a mut RpcRegistryInner,
 }
 
 /// Helper container for [`RpcRegistryInner`], [`TransportRpcModules`] and
@@ -208,8 +158,6 @@ pub struct RpcSetupContext<'a> {
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
     pub registry: RpcRegistryInner,
-    pub on_rpc_started:
-        Box<dyn FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
 }
 
 impl fmt::Debug for RpcSetupContext<'_> {
@@ -232,7 +180,6 @@ pub struct RpcAddOns {
     /// Runtime settings for Base RPC services.
     pub services: crate::BaseRpcServices,
     /// Additional RPC add-ons.
-    pub hooks: RpcHooks,
     /// Builder for `EthApi`
     eth_api_builder: BaseEthApiBuilder,
 
@@ -242,22 +189,14 @@ pub struct RpcAddOns {
 
 impl Debug for RpcAddOns {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RpcAddOns")
-            .field("hooks", &self.hooks)
-            .field("eth_api_builder", &"...")
-            .finish()
+        f.debug_struct("RpcAddOns").field("eth_api_builder", &"...").finish()
     }
 }
 
 impl RpcAddOns {
     /// Creates a new instance of the RPC add-ons.
     pub fn new(eth_api_builder: BaseEthApiBuilder) -> Self {
-        Self {
-            services: Default::default(),
-            hooks: RpcHooks::default(),
-            eth_api_builder,
-            tokio_runtime: None,
-        }
+        Self { services: Default::default(), eth_api_builder, tokio_runtime: None }
     }
 
     /// Sets the tokio runtime for the RPC servers.
@@ -265,24 +204,6 @@ impl RpcAddOns {
     /// Caution: This runtime must not be created from within asynchronous context.
     pub fn with_tokio_runtime(mut self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
         self.tokio_runtime = tokio_runtime;
-        self
-    }
-
-    /// Sets the hook that is run once the rpc server is started.
-    pub fn on_rpc_started<F>(mut self, hook: F) -> Self
-    where
-        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
-    {
-        self.hooks.set_on_rpc_started(hook);
-        self
-    }
-
-    /// Sets the hook that is run to configure the rpc modules.
-    pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
-    where
-        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
-    {
-        self.hooks.set_extend_rpc_modules(hook);
         self
     }
 }
@@ -295,41 +216,31 @@ impl Default for RpcAddOns {
 
 impl RpcAddOns {
     /// Launches public RPC and invokes the configured extension and lifecycle hooks.
-    pub async fn launch_add_ons_with<F>(
+    pub async fn launch_add_ons(
         self,
         ctx: AddOnsContext<'_>,
-        ext: F,
-    ) -> eyre::Result<RpcHandle>
-    where
-        F: FnOnce(RpcModuleContainer<'_>) -> eyre::Result<()>,
-    {
+        da_config: base_execution_payload_builder::config::BaseDAConfig,
+        gas_limit_config: base_execution_payload_builder::config::GasLimitConfig,
+        node_services: &crate::PreparedNodeServices,
+    ) -> eyre::Result<RpcHandle> {
         let tokio_runtime = self.tokio_runtime.clone();
-        let mut setup = self.setup_rpc_components(ctx, ext).await?;
+        let setup =
+            self.setup_rpc_components(ctx, da_config, gas_limit_config, node_services).await?;
         let server_config = setup.config.rpc.rpc_server_config().with_tokio_runtime(tokio_runtime);
         let rpc = Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
         let handles = RethRpcServerHandles { rpc };
-        (setup.on_rpc_started)(
-            RpcContext {
-                node: setup.node,
-                config: setup.config,
-                registry: &mut setup.registry,
-                modules: &mut setup.modules,
-            },
-            handles.clone(),
-        )?;
         Ok(RpcHandle { rpc_server_handles: handles, rpc_registry: setup.registry })
     }
 
     /// Common setup for RPC server initialization
-    async fn setup_rpc_components<'a, F>(
+    async fn setup_rpc_components<'a>(
         self,
         ctx: AddOnsContext<'a>,
-        ext: F,
-    ) -> eyre::Result<RpcSetupContext<'a>>
-    where
-        F: FnOnce(RpcModuleContainer<'_>) -> eyre::Result<()>,
-    {
-        let Self { eth_api_builder, hooks, services, .. } = self;
+        da_config: base_execution_payload_builder::config::BaseDAConfig,
+        gas_limit_config: base_execution_payload_builder::config::GasLimitConfig,
+        node_services: &crate::PreparedNodeServices,
+    ) -> eyre::Result<RpcSetupContext<'a>> {
+        let Self { eth_api_builder, services, .. } = self;
 
         let AddOnsContext { node, config, beacon_engine_handle, engine_events } = ctx;
 
@@ -387,12 +298,37 @@ impl RpcAddOns {
         };
 
         services.register(&mut ctx)?;
-        let RpcHooks { on_rpc_started, extend_rpc_modules } = hooks;
 
-        ext(RpcModuleContainer { modules: ctx.modules, registry: ctx.registry })?;
-        extend_rpc_modules(ctx)?;
+        let eth_config = base_execution_rpc::BaseEthConfigHandler::new(
+            node.provider().clone(),
+            node.evm_config().clone(),
+        );
+        ctx.modules.merge_if_module_configured(
+            reth_rpc_server_types::RethRpcModule::Eth,
+            eth_config.into_rpc(),
+        )?;
+        let payload = base_execution_payload_builder::BasePayloadBuilder::new(
+            node.pool().clone(),
+            node.provider().clone(),
+            node.evm_config().clone(),
+        );
+        let witness = base_execution_rpc::BaseDebugWitnessApi::new(
+            node.provider().clone(),
+            node.task_executor().clone(),
+            payload,
+        );
+        ctx.modules.merge_if_module_configured(
+            reth_rpc_server_types::RethRpcModule::Debug,
+            witness.into_rpc(),
+        )?;
+        let miner = base_execution_rpc::BaseMinerExtApi::new(da_config, gas_limit_config);
+        ctx.modules.add_or_replace_if_module_configured(
+            reth_rpc_server_types::RethRpcModule::Miner,
+            miner.into_rpc(),
+        )?;
+        node_services.register_rpc(&mut ctx)?;
 
-        Ok(RpcSetupContext { node, config, modules, registry, on_rpc_started })
+        Ok(RpcSetupContext { node, config, modules, registry })
     }
 
     /// Helper to launch the RPC server

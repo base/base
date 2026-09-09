@@ -15,7 +15,6 @@ use alloy_rpc_client::RpcClient;
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::{Ethereum, PrivateKeySigner};
 use base_common_rpc_types::Base;
-use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;
@@ -322,8 +321,8 @@ pub struct SystemTestStackBuilder {
     shadow_start_block: Option<u64>,
     tmpfs_datadirs: bool,
     l1_fault_injection: bool,
-    extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
-    extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    builder_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
+    client_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
@@ -485,8 +484,11 @@ impl SystemTestStackBuilder {
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard builder
     /// wiring without forking this crate.
-    pub fn with_builder_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
-        self.extra_builder_extensions.push(extension);
+    pub fn with_builder_shadow_indexer(
+        mut self,
+        config: base_shadow_indexer::ShadowIndexerConfig,
+    ) -> Self {
+        self.builder_shadow_indexer = Some(config);
         self
     }
 
@@ -495,10 +497,6 @@ impl SystemTestStackBuilder {
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
     /// method — onto the standard client wiring without forking this crate.
-    pub fn with_client_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
-        self.extra_client_extensions.push(extension);
-        self
-    }
 
     /// Enables the L1 upgrade signal: deploys a mock `ProtocolVersions` contract to L1, seeds
     /// it with the options' schedule, and starts both consensus nodes (and, when an execution
@@ -769,8 +767,8 @@ impl SystemTestStackBuilder {
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,
             shadow_sequencers,
-            extra_builder_extensions: self.extra_builder_extensions,
-            extra_client_extensions: self.extra_client_extensions,
+            builder_shadow_indexer: self.builder_shadow_indexer,
+            client_shadow_indexer: self.client_shadow_indexer,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

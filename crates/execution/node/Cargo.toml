@@ -25,6 +25,7 @@ reth-stages = { workspace = true }
 reth-network = { workspace = true }
 alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
+alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
@@ -42,14 +43,19 @@ reth-static-file = { workspace = true }
 base-node-context = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
+base-tx-forwarding = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
+base-shadow-indexer = { workspace = true }
+base-txpool-tracing = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 reth-rpc-server-types = { workspace = true }
+base-shadow-indexer-db = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 base-execution-eip8130-rpc = { workspace = true }
+url = { workspace = true, features = ["default"] }
 reth-consensus-debug-client = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -94,12 +100,14 @@ reth-trie = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-genesis = { workspace = true  }
+alloy-hardforks = { workspace = true }
 base-common-evm = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-execution-rpc = { workspace = true }
+base-common-genesis = { workspace = true }
 base-common-network = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-rpc-types = { workspace = true }

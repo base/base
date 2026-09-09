@@ -89,7 +89,7 @@ impl ShadowSequencer {
             p2p_port: None,
             metrics_port: None,
             enable_experimental_validity_transactions: false,
-            extra_extensions: Vec::new(),
+            shadow_indexer: None,
             block_time: Duration::from_secs(config.rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,

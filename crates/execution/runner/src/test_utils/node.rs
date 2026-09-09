@@ -18,7 +18,7 @@ use reth_node_core::{
 };
 use reth_tasks::Runtime;
 
-use crate::{BaseNode, BaseNodeExtension, BaseProvider, NodeHooks, test_utils::engine::EngineApi};
+use crate::{BaseNode, BaseProvider, test_utils::engine::EngineApi};
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = BaseProvider;
@@ -59,7 +59,7 @@ impl fmt::Debug for LocalNode {
 impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec.
     pub async fn new(
-        extensions: Vec<Box<dyn BaseNodeExtension>>,
+        services: base_node_core::NodeServices,
         rpc: base_node_core::BaseRpcServices,
         chain_spec: Arc<BaseChainSpec>,
     ) -> Result<Self> {
@@ -98,14 +98,9 @@ impl LocalNode {
             .with_launch_context(exec.clone())
             .with_components(base_node.components().into_builder())
             .with_add_ons(add_ons)
-            .on_component_initialized(move |_ctx| Ok(()));
+            .with_services(services);
 
-        let NodeHandle { node: node_handle, node_exit_future } = extensions
-            .into_iter()
-            .fold(NodeHooks::new(), |b, ext| ext.apply(b))
-            .apply_to(builder)
-            .launch()
-            .await?;
+        let NodeHandle { node: node_handle, node_exit_future } = builder.launch().await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()

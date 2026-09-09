@@ -19,7 +19,6 @@ use base_common_network::{Ethereum, PrivateKeySigner, TransactionBuilder};
 use base_common_rpc_types::{Base, BaseTransactionRequest};
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
-use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 use base_upgrade_signal::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
@@ -92,9 +91,9 @@ pub struct L2StackConfig {
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
     /// Additional node extensions installed on the builder, after its built-in RPC wiring.
-    pub extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    pub builder_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
     /// Additional node extensions installed on the client, after its built-in extensions.
-    pub extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    pub client_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
 }
 
 /// Configuration for the shadow sequencers running alongside the active sequencer.
@@ -216,7 +215,7 @@ impl L2Stack {
             metrics_port: None,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
-            extra_extensions: config.extra_builder_extensions,
+            shadow_indexer: config.builder_shadow_indexer,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,
@@ -306,7 +305,7 @@ impl L2Stack {
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
             upgrade_signal: config.execution_upgrade_signal.clone(),
-            extra_extensions: config.extra_client_extensions,
+            shadow_indexer: config.client_shadow_indexer,
         };
         let client = InProcessClient::start(client_config)
             .await

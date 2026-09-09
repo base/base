@@ -1,12 +1,7 @@
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
-use base_execution_rpc::{
-    BaseDebugWitnessApi, BaseEthApiBuilder, BaseEthConfigApiServer, BaseEthConfigHandler,
-    BaseMinerExtApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
-};
-use reth_rpc_server_types::RethRpcModule;
-use reth_tracing::tracing::debug;
+use base_execution_rpc::BaseEthApiBuilder;
 
-use crate::{RethRpcServerHandles, RpcAddOns, RpcContext};
+use crate::RpcAddOns;
 
 /// Base public RPC services and shared payload-builder settings.
 #[derive(Debug)]
@@ -44,67 +39,16 @@ impl BaseAddOns {
     }
 }
 
-impl BaseAddOns {
-    /// Sets the hook that is run once the rpc server is started.
-    pub fn on_rpc_started<F>(mut self, hook: F) -> Self
-    where
-        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
-    {
-        self.rpc_add_ons = self.rpc_add_ons.on_rpc_started(hook);
-        self
-    }
-
-    /// Sets the hook that is run to configure the rpc modules.
-    pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
-    where
-        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
-    {
-        self.rpc_add_ons = self.rpc_add_ons.extend_rpc_modules(hook);
-        self
-    }
-}
+impl BaseAddOns {}
 
 impl BaseAddOns {
     /// Launches public RPC with Base execution and miner methods.
     pub async fn launch_add_ons(
         self,
         ctx: base_node_context::AddOnsContext<'_>,
+        services: &crate::PreparedNodeServices,
     ) -> eyre::Result<crate::BaseNodeRpcHandle> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
-        let eth_config =
-            BaseEthConfigHandler::new(ctx.node.provider().clone(), ctx.node.evm_config().clone());
-
-        let builder = base_execution_payload_builder::BasePayloadBuilder::new(
-            ctx.node.pool().clone(),
-            ctx.node.provider().clone(),
-            ctx.node.evm_config().clone(),
-        );
-        // Install additional rollup-specific RPC methods.
-        let debug_ext = BaseDebugWitnessApi::<_, _>::new(
-            ctx.node.provider().clone(),
-            ctx.node.task_executor().clone(),
-            builder,
-        );
-        let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
-
-        rpc_add_ons
-            .launch_add_ons_with(ctx, move |container| {
-                let crate::RpcModuleContainer { modules, .. } = container;
-
-                modules.merge_if_module_configured(RethRpcModule::Eth, eth_config.into_rpc())?;
-
-                debug!(target: "reth::cli", "Installing debug payload witness rpc endpoint");
-                modules.merge_if_module_configured(RethRpcModule::Debug, debug_ext.into_rpc())?;
-
-                // extend the miner namespace if configured in the regular http server
-                modules.add_or_replace_if_module_configured(
-                    RethRpcModule::Miner,
-                    miner_ext.into_rpc(),
-                )?;
-
-                Ok(())
-            })
-            .await
+        self.rpc_add_ons.launch_add_ons(ctx, self.da_config, self.gas_limit_config, services).await
     }
 }
 

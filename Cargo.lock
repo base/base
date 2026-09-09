@@ -3581,7 +3581,6 @@ name = "base-execution-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
- "alloy-eip2124",
  "alloy-eips",
  "alloy-hardforks",
  "alloy-primitives",
@@ -3601,7 +3600,6 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-observability-events",
- "base-proofs-extension",
  "base-reth-cli",
  "base-shadow-indexer",
  "base-shadow-indexer-db",
@@ -3613,7 +3611,6 @@ dependencies = [
  "eyre",
  "futures",
  "humantime",
- "jsonrpsee",
  "proptest",
  "reqwest",
  "reth-cli-commands",
@@ -4262,8 +4259,10 @@ name = "base-node-core"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-eip2124",
  "alloy-eips",
  "alloy-genesis",
+ "alloy-hardforks",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
@@ -4273,6 +4272,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
+ "base-common-genesis",
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
@@ -4290,7 +4290,11 @@ dependencies = [
  "base-node-context",
  "base-node-core",
  "base-protocol",
+ "base-shadow-indexer",
+ "base-shadow-indexer-db",
+ "base-tx-forwarding",
  "base-txpool-rpc",
+ "base-txpool-tracing",
  "base-upgrade-signal",
  "clap",
  "criterion 0.8.2",
@@ -4350,6 +4354,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4377,12 +4382,12 @@ dependencies = [
  "base-node-runner",
  "base-protocol",
  "base-test-utils",
+ "base-tx-forwarding",
  "base-txpool-rpc",
  "criterion 0.8.2",
  "eyre",
  "futures",
  "reth-db",
- "reth-exex",
  "reth-network",
  "reth-node-core",
  "reth-primitives-traits",
@@ -4883,22 +4888,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proofs-extension"
-version = "0.0.0"
-dependencies = [
- "base-execution-exex",
- "base-execution-rpc",
- "base-execution-trie",
- "base-node-core",
- "base-node-runner",
- "eyre",
- "reth-db",
- "reth-tasks",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-proposer"
 version = "0.0.0"
 dependencies = [
@@ -5155,7 +5144,6 @@ dependencies = [
  "base-execution-evm",
  "base-metrics",
  "base-node-context",
- "base-node-runner",
  "base-shadow-indexer-db",
  "chrono",
  "eyre",
@@ -5370,7 +5358,6 @@ dependencies = [
  "base-tx-forwarding",
  "base-tx-manager",
  "base-txpool-rpc",
- "base-txpool-tracing",
  "base-upgrade-signal",
  "chrono",
  "clap",
@@ -5597,7 +5584,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "tracing",
 ]
 
 [[package]]

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use alloy_eip2124::{EnrForkIdEntry, ForkFilter, ForkId, Head};
 use base_common_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
     PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
     UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
@@ -20,6 +19,8 @@ use reth_rpc_server_types::RethRpcModule;
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;
+
+use crate::{FullNode, RpcContext as BaseRpcContext};
 
 /// Configuration for execution-node upgrade signal schedule reads.
 #[derive(Debug, Clone)]
@@ -341,69 +342,62 @@ impl RuntimeForkFilterNetwork for NetworkHandle {
     }
 }
 
-/// Execution-node extension that registers runtime admin refresh and optional live metrics.
+/// Runtime upgrade monitoring and admin refresh share one wake-up signal.
 #[derive(Debug)]
-pub struct ExecutionUpgradeSignalRuntimeExtension {
-    /// Extension configuration.
+pub struct ExecutionUpgradeSignalRuntime {
+    /// Upgrade schedule source and activation policy.
     pub config: ExecutionUpgradeSignalConfig,
+    /// Wakes the P2P fork-filter observer after an admin update.
+    pub filter_refresh: Arc<Notify>,
 }
 
-impl ExecutionUpgradeSignalRuntimeExtension {
-    /// Creates a new execution upgrade signal runtime extension.
-    pub const fn new(config: ExecutionUpgradeSignalConfig) -> Self {
-        Self { config }
+impl ExecutionUpgradeSignalRuntime {
+    /// Prepares the shared upgrade observer.
+    pub fn new(config: ExecutionUpgradeSignalConfig) -> Self {
+        Self { config, filter_refresh: Arc::new(Notify::new()) }
     }
-}
 
-impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+    /// Registers runtime admin refresh when the activation policy enables it.
+    pub fn register_rpc(&self, ctx: &mut BaseRpcContext<'_>) -> eyre::Result<()> {
+        if self.config.signal_config.mode.allows_runtime_admin() {
+            ExecutionUpgradeSignal::register_runtime_refresh_rpc(
+                ctx,
+                self.config.clone(),
+                self.filter_refresh.clone(),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Starts monitoring upgrades using the live node services.
+    pub fn start(self, ctx: FullNode) -> eyre::Result<()> {
         let config = self.config;
+        let filter_refresh = self.filter_refresh;
+        let poll_interval = config.signal_config.l1_block_tag.poll_interval();
+        let reader = config.signal_config.reader(config.l1_rpc.clone())?;
+        // Live updates are re-applied automatically, matching the manual
+        // `admin_refreshUpgradeSignal` path.
+        let auto_refresher = config.signal_config.mode.allows_runtime_admin().then(|| {
+            UpgradeSignalRefresher::new(
+                config.signal_config.clone(),
+                reader.clone(),
+                ctx.chain_spec().chain().id(),
+                UpgradeSignalMetricLayer::Execution,
+            )
+        });
+        let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution);
 
-        // Wakes the monitor task to reconcile the advertised P2P fork filter the moment an
-        // `admin_refreshUpgradeSignal` call commits a schedule change, rather than waiting for the
-        // next L1 poll. Created unconditionally; only signalled when runtime admin is enabled.
-        let filter_refresh = Arc::new(Notify::new());
+        // Captured for the P2P fork-filter fix: after a runtime schedule change the node must
+        // re-derive its advertised fork id from the updated chain spec and install it on the
+        // live network, or it partitions from fresh peers at activation.
+        let network = ctx.network.clone();
+        let provider = ctx.provider.clone();
+        let chain_spec = ctx.chain_spec();
+        let executor = ctx.task_executor;
 
-        let hooks = if config.signal_config.mode.allows_runtime_admin() {
-            let rpc_config = config.clone();
-            let filter_refresh = Arc::clone(&filter_refresh);
-            hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-                ExecutionUpgradeSignal::register_runtime_refresh_rpc(
-                    ctx,
-                    rpc_config,
-                    filter_refresh,
-                )
-            })
-        } else {
-            hooks
-        };
-
-        hooks.add_node_started_hook(move |ctx| {
-            let poll_interval = config.signal_config.l1_block_tag.poll_interval();
-            let reader = config.signal_config.reader(config.l1_rpc.clone())?;
-            // Live updates are re-applied automatically, matching the manual
-            // `admin_refreshUpgradeSignal` path.
-            let auto_refresher = config.signal_config.mode.allows_runtime_admin().then(|| {
-                UpgradeSignalRefresher::new(
-                    config.signal_config.clone(),
-                    reader.clone(),
-                    ctx.chain_spec().chain().id(),
-                    UpgradeSignalMetricLayer::Execution,
-                )
-            });
-            let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution);
-
-            // Captured for the P2P fork-filter fix: after a runtime schedule change the node must
-            // re-derive its advertised fork id from the updated chain spec and install it on the
-            // live network, or it partitions from fresh peers at activation.
-            let network = ctx.network.clone();
-            let provider = ctx.provider.clone();
-            let chain_spec = ctx.chain_spec();
-            let executor = ctx.task_executor;
-
-            // Spawned as a critical task so a fail-closed panic propagates to reth's TaskManager and
-            // exits the process non-zero, instead of being silently swallowed by a plain spawn.
-            executor.spawn_critical_with_graceful_shutdown_signal(
+        // Spawned as a critical task so a fail-closed panic propagates to reth's TaskManager and
+        // exits the process non-zero, instead of being silently swallowed by a plain spawn.
+        executor.spawn_critical_with_graceful_shutdown_signal(
                 "upgrade-signal-monitor",
                 |signal| {
                     Box::pin(async move {
@@ -483,17 +477,8 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                 },
             );
 
-            info!(target: "upgrade_signal", "execution upgrade signal metrics observer spawned");
-            Ok(())
-        })
-    }
-}
-
-impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
-    type Config = ExecutionUpgradeSignalConfig;
-
-    fn from_config(config: Self::Config) -> Self {
-        Self::new(config)
+        info!(target: "upgrade_signal", "execution upgrade signal metrics observer spawned");
+        Ok(())
     }
 }
 

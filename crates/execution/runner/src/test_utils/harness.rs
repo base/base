@@ -24,14 +24,11 @@ use reth_provider::{
 };
 use tokio::time::sleep;
 
-use crate::{
-    BaseNodeExtension, FromExtensionConfig,
-    test_utils::{
-        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
-        engine::EngineApi,
-        node::{LocalNode, LocalNodeProvider},
-        tracing::init_silenced_tracing,
-    },
+use crate::test_utils::{
+    BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
+    engine::EngineApi,
+    node::{LocalNode, LocalNodeProvider},
+    tracing::init_silenced_tracing,
 };
 
 /// A block that has been built and accepted via `engine_newPayload` but not yet
@@ -50,7 +47,7 @@ pub struct PreparedBlock {
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
     rpc: base_node_core::BaseRpcServices,
-    extensions: Vec<Box<dyn BaseNodeExtension>>,
+    services: base_node_core::NodeServices,
     chain_spec: Option<Arc<BaseChainSpec>>,
 }
 
@@ -61,18 +58,10 @@ impl TestHarnessBuilder {
     }
 
     /// Add an extension to be applied during node launch using its config type.
-    pub fn with_ext<T: FromExtensionConfig + 'static>(mut self, config: T::Config) -> Self {
-        self.extensions.push(Box::new(T::from_config(config)));
-        self
-    }
 
     /// Add a pre-constructed extension to be applied during node launch.
     ///
     /// Prefer [`with_ext`](Self::with_ext) for simpler configuration.
-    pub fn with_extension(mut self, ext: impl BaseNodeExtension + 'static) -> Self {
-        self.extensions.push(Box::new(ext));
-        self
-    }
 
     /// Configures sequencer transaction ingress.
     pub fn with_builder_rpc(mut self, config: base_txpool_rpc::BuilderApiConfig) -> Self {
@@ -89,6 +78,12 @@ impl TestHarnessBuilder {
     /// Configures bundle metering.
     pub fn with_metering(mut self) -> Self {
         self.rpc.metering = Some(base_metering::MeteringConfig::enabled());
+        self
+    }
+
+    /// Configures the built-in transaction forwarder.
+    pub fn with_forwarding(mut self, config: base_tx_forwarding::TxForwardingConfig) -> Self {
+        self.services.forwarding = Some(config);
         self
     }
 
@@ -109,7 +104,7 @@ impl TestHarnessBuilder {
             Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, self.rpc, chain_spec).await?;
+        let node = LocalNode::new(self.services, self.rpc, chain_spec).await?;
         let engine = node.engine_api();
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

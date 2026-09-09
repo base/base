@@ -4,6 +4,8 @@ mod priority;
 
 mod rpc;
 
+mod proofs;
+
 mod custom_genesis;
 
 const fn main() {}

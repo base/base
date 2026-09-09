@@ -35,7 +35,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate::{
     Attached, EngineShutdown, FullNode, LaunchContext, LaunchContextWith, LaunchNode,
     NodeBuilderWithComponents, NodeHandle, WithConfigs,
-    hooks::NodeHooks,
     rpc::{BasicEngineValidatorBuilder, RpcHandle},
     setup::build_networked_pipeline,
 };
@@ -67,12 +66,11 @@ impl EngineNodeLauncher {
             database,
             rocksdb_provider,
             components_builder,
-            hooks,
-            exexs: installed_exex,
+            services,
             add_ons,
             config,
         } = target;
-        let NodeHooks { on_component_initialized, on_node_started, .. } = hooks;
+        let mut services = services.prepare()?;
 
         // Create the overlay manager that will be shared across the provider and engine.
         let overlay_manager =
@@ -117,10 +115,12 @@ impl EngineNodeLauncher {
             .with_blockchain_db(move |provider_factory| {
                 Ok(BlockchainProvider::new(provider_factory)?)
             })?
-            .with_components(components_builder, on_component_initialized).await?;
+            .with_components(components_builder).await?;
 
-        // spawn exexs if any
-        let maybe_exex_manager_handle = ctx.launch_exex(installed_exex).await?;
+        services.start_tracing(ctx.node_adapter());
+
+        // spawn the configured canonical processors
+        let maybe_exex_manager_handle = ctx.launch_exex(services.execution_services()).await?;
 
         // create pipeline
         let network_handle = ctx.node_adapter().network().clone();
@@ -254,7 +254,7 @@ impl EngineNodeLauncher {
         );
 
         let RpcHandle { rpc_server_handles, rpc_registry } =
-            add_ons.launch_add_ons(add_ons_ctx).await?;
+            add_ons.launch_add_ons(add_ons_ctx, &services).await?;
 
         // Create engine shutdown handle
         let (engine_shutdown, shutdown_rx) = EngineShutdown::new();
@@ -396,8 +396,7 @@ impl EngineNodeLauncher {
             data_dir: ctx.data_dir().clone(),
             add_ons_handle: RpcHandle { rpc_server_handles, rpc_registry },
         };
-        // Notify on node started
-        on_node_started(FullNode::clone(&full_node))?;
+        services.start(&full_node)?;
 
         ctx.spawn_ethstats(engine_events_for_ethstats).await?;
 

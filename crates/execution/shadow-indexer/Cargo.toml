@@ -18,7 +18,6 @@ reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-base-node-runner = { workspace = true }
 reth-network-api = { workspace = true }
 base-node-context = { workspace = true }
 base-execution-evm = { workspace = true }

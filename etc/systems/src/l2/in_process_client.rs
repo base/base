@@ -6,13 +6,10 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use base_builder_core::test_utils::get_available_port;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_cli::{
-    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
-};
+use base_execution_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
 use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
-use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
+use base_node_runner::BaseNode;
+use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Context, Result, eyre};
 use reth_db::{ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use reth_node_core::{
@@ -24,8 +21,6 @@ use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
-
-type BuiltExtensions = Vec<Box<dyn BaseNodeExtension>>;
 
 /// Source for the chain spec used to start an in-process client node.
 #[derive(Debug, Clone)]
@@ -76,7 +71,7 @@ pub struct InProcessClientConfig {
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
     /// method — onto the standard in-process client wiring without forking this crate.
-    pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    pub shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -222,18 +217,16 @@ impl InProcessClient {
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_components(base_node.components().into_builder())
-            .with_add_ons(add_ons)
-            .on_component_initialized(move |_ctx| Ok(()));
+            .with_add_ons(add_ons);
 
-        let mut extensions = Self::build_extensions(&config)?;
-        extensions.extend(config.extra_extensions);
-
-        let NodeHandle { node: node_handle, node_exit_future } = extensions
-            .into_iter()
-            .fold(NodeHooks::new(), |b, ext| ext.apply(b))
-            .apply_to(builder)
-            .launch()
-            .await?;
+        let services = base_node_core::NodeServices {
+            forwarding: config.tx_forwarding_config,
+            upgrade_signal: config.upgrade_signal,
+            shadow_indexer: config.shadow_indexer,
+            ..Default::default()
+        };
+        let NodeHandle { node: node_handle, node_exit_future } =
+            builder.with_services(services).launch().await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
@@ -345,37 +338,6 @@ impl InProcessClient {
         let args = DatabaseArguments::new(ClientVersion::default())
             .with_geometry_max_size(Some(100 * 1024 * 1024));
         init_db(path, args).wrap_err("Failed to create test database")
-    }
-
-    ///
-    fn build_extensions(config: &InProcessClientConfig) -> Result<BuiltExtensions> {
-        let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
-
-        // TxPool extension (tracing disabled for client)
-
-        // TxPool RPC extension (management + status APIs)
-
-        // TxPool tracing extension (tracing disabled for client)
-        let txpool_config = TxpoolConfig {
-            tracing_enabled: false,
-            tracing_logs_enabled: false,
-            transaction_event_node_role: None,
-        };
-        extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
-
-        // TxForwarding extension (optional - forwards txs to builder RPC)
-        if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
-            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
-        }
-
-        // Upgrade signal runtime extension (optional - live L1 schedule polling)
-        if let Some(ref signal_config) = config.upgrade_signal {
-            extensions.push(Box::new(ExecutionUpgradeSignalRuntimeExtension::from_config(
-                signal_config.clone(),
-            )));
-        }
-
-        Ok(extensions)
     }
 }
 

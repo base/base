@@ -16,11 +16,9 @@ serde_json = { workspace = true }
 base-metrics = { workspace = true }
 reth-provider = { workspace = true }
 alloy-primitives = { workspace = true }
-base-node-runner = { workspace = true }
 base-execution-txpool = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
-tracing = { workspace = true, features = ["std"] }
 lru = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }

@@ -13,12 +13,12 @@ use reth_provider::CanonStateSubscriptions;
 use reth_tracing::tracing::{debug, info};
 use tracing::Instrument;
 
-use crate::{WithConfigs, exex::BoxedLaunchExEx};
+use crate::WithConfigs;
 
 /// Can launch execution extensions.
 pub struct ExExLauncher {
     head: Head,
-    extensions: Vec<(String, Box<dyn BoxedLaunchExEx>)>,
+    extensions: Vec<crate::BaseExecutionService>,
     components: base_node_context::BaseNodeContext,
     config_container: WithConfigs,
     /// The threshold for the number of blocks in the WAL before emitting a warning.
@@ -32,7 +32,7 @@ impl ExExLauncher {
     pub const fn new(
         head: Head,
         components: base_node_context::BaseNodeContext,
-        extensions: Vec<(String, Box<dyn BoxedLaunchExEx>)>,
+        extensions: Vec<crate::BaseExecutionService>,
         config_container: WithConfigs,
     ) -> Self {
         Self {
@@ -88,7 +88,8 @@ impl ExExLauncher {
         let mut exex_handles = Vec::with_capacity(extensions.len());
         let mut exexes = Vec::with_capacity(extensions.len());
 
-        for (id, exex) in extensions {
+        for exex in extensions {
+            let id = exex.id().to_string();
             // create a new exex handle
             let (handle, events, notifications) = ExExHandle::new(
                 id.clone(),
@@ -115,7 +116,7 @@ impl ExExLauncher {
                 let span = reth_tracing::tracing::info_span!("exex", id);
 
                 // init the exex
-                let exex = exex.launch(context).instrument(span.clone()).await?;
+                let exex = exex.run(context);
 
                 // spawn it as a crit task
                 executor.spawn_critical_task(
@@ -176,7 +177,10 @@ impl Debug for ExExLauncher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExExLauncher")
             .field("head", &self.head)
-            .field("extensions", &self.extensions.iter().map(|(id, _)| id).collect::<Vec<_>>())
+            .field(
+                "extensions",
+                &self.extensions.iter().map(crate::BaseExecutionService::id).collect::<Vec<_>>(),
+            )
             .field("components", &"...")
             .field("config_container", &self.config_container)
             .field("wal_blocks_warning", &self.wal_blocks_warning)

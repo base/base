@@ -16,8 +16,8 @@ pub use subscription::tracex_subscription;
 mod tracker;
 pub use tracker::Tracker;
 
-mod extension;
-pub use extension::{TxPoolExtension, TxpoolConfig};
+mod config;
+pub use config::TxpoolConfig;
 
 mod metrics;
 pub use metrics::Metrics;

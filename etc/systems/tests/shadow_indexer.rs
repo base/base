@@ -7,8 +7,7 @@
 
 use std::time::Duration;
 
-use base_node_runner::FromExtensionConfig;
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
 use base_shadow_indexer_db::{PgConnectionParams, ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
@@ -47,17 +46,17 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
         max_connections: 5,
         connection_timeout: Duration::from_secs(5),
     };
-    let ext = Box::new(ShadowIndexerExtension::from_config(ShadowIndexerConfig {
+    let ext = ShadowIndexerConfig {
         enabled: true,
         db: db_config.clone(),
         builder_version: "e2e-test".to_string(),
         retention: ShadowRetentionConfig { period: RETENTION_PERIOD, interval: RETENTION_INTERVAL },
-    }));
+    };
 
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_builder_extension(ext)
+        .with_builder_shadow_indexer(ext)
         .build()
         .await?;
 

@@ -19,7 +19,6 @@ reth-tasks = { workspace = true }
 reth-discv5 = { workspace = true }
 reth-db-api = { workspace = true }
 reth-network = { workspace = true }
-alloy-eip2124 = { workspace = true }
 reth-provider = { workspace = true }
 reth-cli-util = { workspace = true }
 base-metering = { workspace = true }
@@ -34,7 +33,6 @@ reth-node-metrics = { workspace = true }
 base-execution-trie = { workspace = true }
 base-builder-metering = { workspace = true }
 reth-rpc-server-types = { workspace = true }
-base-proofs-extension = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 base-observability-events = { workspace = true }
 tar = { workspace = true, features = ["default"] }
@@ -44,7 +42,6 @@ eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-jsonrpsee = { workspace = true, features = ["server"] }
 secp256k1 = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 reth-net-nat = { workspace = true, features = ["default"] }

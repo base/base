@@ -831,7 +831,6 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
     pub async fn with_components(
         self,
         components_builder: ComponentBuilder,
-        on_component_initialized: Box<dyn FnOnce(BaseNodeContext) -> eyre::Result<()> + Send>,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
@@ -845,9 +844,6 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
 
         debug!(target: "reth::cli", "creating components");
         let node_adapter = (components_builder.build)(&builder_ctx).await?;
-
-        debug!(target: "reth::cli", "calling on_component_initialized hook");
-        on_component_initialized(node_adapter.clone())?;
 
         let components_container = WithComponents {
             db_provider_container: WithMeteredProvider {
@@ -1010,7 +1006,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx>)>,
+        installed_exex: Vec<crate::BaseExecutionService>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1027,10 +1023,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     ///     .await
     /// ```
     #[expect(clippy::type_complexity)]
-    pub fn exex_launcher(
-        &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx>)>,
-    ) -> ExExLauncher {
+    pub fn exex_launcher(&self, installed_exex: Vec<crate::BaseExecutionService>) -> ExExLauncher {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),

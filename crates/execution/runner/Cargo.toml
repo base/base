@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-reth-exex = { workspace = true }
 reth-provider = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }
@@ -21,12 +20,12 @@ reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
 base-protocol = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
-futures = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
 base-txpool-rpc = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
+base-tx-forwarding = { workspace = true, optional = true }
 base-common-chains = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
@@ -50,6 +49,7 @@ workspace = true
 [dev-dependencies]
 serde_json = { workspace = true }
 base-protocol = { workspace = true }
+futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 criterion = { workspace = true, features = ["default", "async_tokio", "html_reports"] }
@@ -59,6 +59,7 @@ harness = false
 
 [features]
 test-utils = [
+    "dep:base-tx-forwarding",
     "dep:base-txpool-rpc",
     "dep:base-metering",
     "dep:base-common-chains",

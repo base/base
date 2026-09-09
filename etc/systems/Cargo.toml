@@ -71,7 +71,7 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
-base-txpool-tracing = { workspace = true, features = ["default"] }
+base-shadow-indexer = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
@@ -104,7 +104,6 @@ base-common-rpc-types-engine = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
-base-shadow-indexer = { workspace = true, features = ["default"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 

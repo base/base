@@ -11,7 +11,7 @@ use base_builder_core::{BlockServiceBuilder, BuilderConfig, test_utils::get_avai
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
-use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
+use base_node_runner::BaseNode;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -53,7 +53,7 @@ pub struct InProcessBuilderConfig {
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
     /// in-process builder wiring without forking this crate.
-    pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    pub shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
     /// Interval used by the payload builder.
     pub block_time: Duration,
     /// Optional canonical block persistence threshold.
@@ -157,7 +157,10 @@ impl InProcessBuilder {
         let p2p_port = node_config.network.port;
 
         let accept_validity_transactions = config.enable_experimental_validity_transactions;
-        let extra_extensions = config.extra_extensions;
+        let services = base_node_core::NodeServices {
+            shadow_indexer: config.shadow_indexer,
+            ..Default::default()
+        };
         addons.rpc_add_ons.services.builder = Some(base_builder_core::BuilderApiConfig::new(
             accept_validity_transactions,
             DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -167,21 +170,15 @@ impl InProcessBuilder {
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone());
-        let hooks = NodeHooks::new();
-        let launched = extra_extensions
-            .into_iter()
-            .fold(hooks, |hooks, ext| ext.apply(hooks))
-            .apply_to(
-                node_builder
-                    .with_components(
-                        base_node
-                            .components()
-                            .payload(BlockServiceBuilder::build(builder_config))
-                            .into_builder(),
-                    )
-                    .with_add_ons(addons)
-                    .on_component_initialized(move |_ctx| Ok(())),
+        let launched = node_builder
+            .with_components(
+                base_node
+                    .components()
+                    .payload(BlockServiceBuilder::build(builder_config))
+                    .into_builder(),
             )
+            .with_add_ons(addons)
+            .with_services(services)
             .launch()
             .await;
 

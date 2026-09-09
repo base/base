@@ -15,7 +15,7 @@ use base_execution_txpool::{
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
-use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
+use base_tx_forwarding::TxForwardingConfig;
 use base_txpool_rpc::SendRawTransactionValidityOptions;
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
@@ -111,11 +111,8 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
     // below before its one-second RPC timeout expires.
     let config = TxForwardingConfig::new(vec![slow.url.clone(), healthy.url.clone()]);
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness = TestHarness::builder()
-        .with_ext::<TxForwardingExtension>(config)
-        .with_chain_spec(chain_spec)
-        .build()
-        .await?;
+    let harness =
+        TestHarness::builder().with_forwarding(config).with_chain_spec(chain_spec).build().await?;
     let raw = signed_eip1559_transaction();
     let _pending = harness.provider().send_raw_transaction(&raw).await?;
 
@@ -158,7 +155,7 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness = TestHarness::builder()
         .with_validity(DEFAULT_MAX_VALIDITY_PREDICATES)
-        .with_ext::<TxForwardingExtension>(config)
+        .with_forwarding(config)
         .with_chain_spec(chain_spec)
         .build()
         .await?;

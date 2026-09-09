@@ -97,7 +97,7 @@ impl SnapshotL2Stack {
             metrics_port: None,
             block_time: block_interval.duration(),
             enable_experimental_validity_transactions: false,
-            extra_extensions: Vec::new(),
+            shadow_indexer: None,
             persistence_threshold: Some(0),
             persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
                 block_interval,
@@ -146,7 +146,7 @@ impl SnapshotL2Stack {
             tx_forwarding_config: None,
             upgrade_signal: None,
             enable_experimental_validity_transactions: false,
-            extra_extensions: Vec::new(),
+            shadow_indexer: None,
         })
         .await
         .wrap_err("failed to start snapshot client")?;

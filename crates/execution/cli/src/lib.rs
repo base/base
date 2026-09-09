@@ -27,6 +27,9 @@ use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
 use base_cli_utils::CliRunner;
+pub use base_node_core::{
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, RuntimeForkFilterNetwork,
+};
 use base_node_core::{NodeBuilder, RollupArgs, WithLaunchContext};
 use chainspec::BaseChainSpecParser;
 use clap::Parser;
@@ -45,11 +48,6 @@ use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 pub use standard_node::{
     MeteringArgs, ResourceMeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs,
     StandardBaseRethNode, StandardNodeArgs,
-};
-mod upgrade_signal;
-pub use upgrade_signal::{
-    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
-    RuntimeForkFilterNetwork,
 };
 
 /// The main base-reth cli interface.

@@ -10,11 +10,7 @@ use base_node_core::{BasePayloadServiceBuilder, NodeHandle, RollupArgs};
 use eyre::Result;
 use tracing::info;
 
-use crate::{
-    BaseNode, BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig, NodeHooks,
-};
-
-type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
+use crate::{BaseNode, BaseNodeBuilder, BaseNodeHandle};
 
 /// Handle to a launched Base execution node.
 #[derive(Debug)]
@@ -30,7 +26,7 @@ pub struct BaseNodeRunner {
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
     /// Registered builder extensions.
-    extensions: Vec<Box<dyn BaseNodeExtension>>,
+    pub services: base_node_core::NodeServices,
     /// Payload service builder.
     service_builder: Option<BasePayloadServiceBuilder>,
     /// Shared DA configuration for the node and payload builder.
@@ -44,8 +40,6 @@ pub struct BaseNodeRunner {
     resource_metering: Option<ResourceMeteringConfig>,
     /// Shared rejection cache for permanently rejected transaction hashes.
     rejection_cache: Option<RejectionCache>,
-    /// Binary-owned callbacks to run after the node has started.
-    started_callbacks: Vec<StartedCallback>,
 }
 
 impl BaseNodeRunner {
@@ -54,14 +48,13 @@ impl BaseNodeRunner {
         Self {
             rpc: Default::default(),
             rollup_args,
-            extensions: Vec::new(),
+            services: Default::default(),
             service_builder: None,
             da_config: None,
             gas_limit_config: None,
             manifest_precheck_enabled: true,
             resource_metering: None,
             rejection_cache: None,
-            started_callbacks: Vec::new(),
         }
     }
 }
@@ -70,13 +63,12 @@ impl fmt::Debug for BaseNodeRunner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseNodeRunner")
             .field("rollup_args", &self.rollup_args)
-            .field("extensions", &self.extensions.len())
+            .field("services", &self.services)
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache", &self.rejection_cache)
-            .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
 }
@@ -118,19 +110,6 @@ impl BaseNodeRunner {
         self
     }
 
-    /// Registers a new builder extension.
-    pub fn install_ext<T: FromExtensionConfig + 'static>(&mut self, config: T::Config) {
-        self.extensions.push(Box::new(T::from_config(config)));
-    }
-
-    /// Registers a callback to run after the node has started.
-    pub fn add_started_callback<F>(&mut self, callback: F)
-    where
-        F: FnOnce() -> Result<()> + Send + 'static,
-    {
-        self.started_callbacks.push(Box::new(callback));
-    }
-
     /// Applies all Base-specific wiring to the supplied builder, launches the node, and waits for
     /// shutdown.
     pub async fn run(self, builder: BaseNodeBuilder) -> Result<()> {
@@ -153,14 +132,13 @@ impl BaseNodeRunner {
         let Self {
             rollup_args,
             mut rpc,
-            extensions,
+            mut services,
             service_builder,
             da_config,
             gas_limit_config,
             manifest_precheck_enabled,
             resource_metering,
             rejection_cache,
-            started_callbacks,
         } = self;
         let mut base_node = BaseNode::new(rollup_args.clone());
         if let Some(da_config) = da_config {
@@ -176,6 +154,7 @@ impl BaseNodeRunner {
         if let Some(rejection_cache) = &rejection_cache {
             base_node = base_node.with_rejection_cache(rejection_cache.clone());
         }
+        services.proofs = Some(rollup_args.clone());
         let components = base_node.components();
         let components = match service_builder {
             Some(mut service_builder) => {
@@ -202,14 +181,9 @@ impl BaseNodeRunner {
         let builder = builder
             .with_components(components.into_builder())
             .with_add_ons(add_ons)
-            .on_component_initialized(move |_ctx| Ok(()));
+            .with_services(services);
 
-        let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
-        let hooks = started_callbacks
-            .into_iter()
-            .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));
-
-        hooks.apply_to(builder).launch().await
+        builder.launch().await
     }
 }
 

@@ -2,6 +2,9 @@
 
 base_metrics::define_metrics! {
     reth_transaction_tracing
+    #[describe("Time spent in the mempool before a transaction event")]
+    #[label(event)]
+    tx_event: histogram,
     #[describe("Time taken for a transaction to be included in a block from when it's marked as pending")]
     inclusion_duration: histogram,
     #[describe("Number of transactions included in a block within the healthy threshold")]

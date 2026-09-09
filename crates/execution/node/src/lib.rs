@@ -58,9 +58,6 @@ pub use setup::*;
 mod txpool_prewarm;
 pub use txpool_prewarm::*;
 
-mod hooks;
-pub use hooks::*;
-
 mod launch;
 pub use launch::*;
 
@@ -89,3 +86,11 @@ pub use reth_node_core::{
 
 mod rpc_services;
 pub use rpc_services::BaseRpcServices;
+
+mod upgrade_signal;
+pub use upgrade_signal::{
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntime,
+    RuntimeForkFilterNetwork,
+};
+mod services;
+pub use services::{NodeServices, PreparedNodeServices, ShadowIndexerRuntime};

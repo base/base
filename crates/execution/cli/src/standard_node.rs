@@ -16,24 +16,20 @@ use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
-use base_proofs_extension::ProofsHistoryExtension;
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
 use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
-    TxForwardingExtension,
 };
 use base_txpool_rpc::DEFAULT_MAX_VALIDITY_PREDICATES;
-use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
+use base_txpool_tracing::TxpoolConfig;
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use tracing::warn;
 use url::Url;
 
-use crate::upgrade_signal::{
-    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
-};
+use crate::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
 
 /// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
@@ -504,7 +500,7 @@ impl StandardBaseRethNode {
             return Ok(());
         };
 
-        runner.install_ext::<ExecutionUpgradeSignalRuntimeExtension>(config);
+        runner.services.upgrade_signal = Some(config);
 
         Ok(())
     }
@@ -590,7 +586,7 @@ impl StandardBaseRethNode {
             tracing::warn!(error = %err, "transaction event journal disabled");
         }
 
-        runner.install_ext::<TxPoolExtension>(TxpoolConfig {
+        runner.services.tracing = Some(TxpoolConfig {
             tracing_enabled: args.rpc.enable_transaction_tracing
                 || args.rpc.enable_transaction_event_journal
                 || transaction_event_env.enabled,
@@ -623,24 +619,20 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.rpc.metering = Some(metering_config);
-        runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
+        runner.services.shadow_indexer = Some((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
             runner.rpc.validity = Some(args.rpc.experimental_validity_max_predicates);
         }
-        runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
-        runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
+        runner.services.forwarding = Some(tx_forwarding_config);
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         Ok(runner)
     }
 
     /// Builds a standard runner with process version metrics registered on startup.
     pub fn runner_with_version_metrics(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
-        let mut runner = Self::runner(args)?;
-        runner.add_started_callback(|| {
-            base_cli_utils::register_version_metrics!();
-            Ok(())
-        });
+        let runner = Self::runner(args)?;
+        base_cli_utils::register_version_metrics!();
         Ok(runner)
     }
 

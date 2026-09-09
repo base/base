@@ -8,9 +8,6 @@ use std::sync::Arc;
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{PoolConfig, TransactionPool};
-use base_node_context::BaseNodeContext;
-use futures::Future;
-use reth_exex::ExExContext;
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
     transactions::{
@@ -34,10 +31,7 @@ use tracing::{info, trace, warn};
 
 use crate::{
     BlockReaderFor, DebugNodeConfig, DebugNodeLauncher, EngineNodeLauncher, LaunchNode,
-    WithConfigs,
-    full_node::FullNode,
-    launch_components::ComponentBuilder,
-    rpc::{RethRpcServerHandles, RpcContext},
+    WithConfigs, launch_components::ComponentBuilder,
 };
 
 mod states;
@@ -262,8 +256,7 @@ impl NodeBuilder<reth_db::DatabaseEnv> {
             rocksdb_provider: self.rocksdb_provider,
             components_builder,
             add_ons: crate::BaseAddOns::default(),
-            hooks: crate::hooks::NodeHooks::default(),
-            exexs: Vec::new(),
+            services: crate::NodeServices::default(),
         }
     }
 }
@@ -318,6 +311,12 @@ impl WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
 }
 
 impl WithLaunchContext<NodeBuilderWithComponents> {
+    /// Supplies the runtime settings for Base's built-in background services.
+    pub fn with_services(mut self, services: crate::NodeServices) -> Self {
+        self.builder.services = services;
+        self
+    }
+
     /// Advances the state of the node builder to the next state where all customizable
     /// Base RPC services are configured.
     pub fn with_add_ons(
@@ -382,115 +381,6 @@ impl WithLaunchContext<NodeBuilderWithComponents> {
         F: FnOnce(Self) -> Self,
     {
         if cond { f(self) } else { self }
-    }
-
-    /// Sets the hook that is run once the node's components are initialized.
-    pub fn on_component_initialized<F>(self, hook: F) -> Self
-    where
-        F: FnOnce(BaseNodeContext) -> eyre::Result<()> + Send + 'static,
-    {
-        Self {
-            builder: self.builder.on_component_initialized(hook),
-            task_executor: self.task_executor,
-        }
-    }
-
-    /// Sets the hook that is run once the node has started.
-    pub fn on_node_started<F>(self, hook: F) -> Self
-    where
-        F: FnOnce(FullNode) -> eyre::Result<()> + Send + 'static,
-    {
-        Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
-    }
-
-    /// Updates Base RPC service configuration with the given closure.
-    pub fn map_add_ons<F>(self, f: F) -> Self
-    where
-        F: FnOnce(crate::BaseAddOns) -> crate::BaseAddOns,
-    {
-        Self { builder: self.builder.map_add_ons(f), task_executor: self.task_executor }
-    }
-
-    /// Sets the hook that is run once the rpc server is started.
-    pub fn on_rpc_started<F>(self, hook: F) -> Self
-    where
-        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
-    {
-        Self { builder: self.builder.on_rpc_started(hook), task_executor: self.task_executor }
-    }
-
-    /// Sets the hook that is run to configure the rpc modules.
-    ///
-    /// This hook can obtain the node's components (txpool, provider, etc.) and can modify the
-    /// modules that the RPC server installs.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-    ///
-    /// #[derive(Clone)]
-    /// struct CustomApi<Pool> { pool: Pool }
-    ///
-    /// #[rpc(server, namespace = "custom")]
-    /// impl CustomApi {
-    ///     #[method(name = "hello")]
-    ///     async fn hello(&self) -> RpcResult<String> {
-    ///         Ok("World".to_string())
-    ///     }
-    /// }
-    ///
-    /// let node = NodeBuilder::new(config)
-    ///
-    ///     .with_components(BaseNode::default().components().into_builder())
-    ///     .with_add_ons(BaseNode::default().add_ons_builder().build())
-    ///     .extend_rpc_modules(|ctx| {
-    ///         // Access node components, so they can used by the CustomApi
-    ///         let pool = ctx.pool().clone();
-    ///
-    ///         // Add custom RPC namespace
-    ///         ctx.modules.merge_configured(CustomApi { pool }.into_rpc())?;
-    ///
-    ///         Ok(())
-    ///     })
-    ///     .build()?;
-    /// ```
-    pub fn extend_rpc_modules<F>(self, hook: F) -> Self
-    where
-        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
-    {
-        Self { builder: self.builder.extend_rpc_modules(hook), task_executor: self.task_executor }
-    }
-
-    /// Installs an `ExEx` (Execution Extension) in the node.
-    ///
-    /// # Note
-    ///
-    /// The `ExEx` ID must be unique.
-    pub fn install_exex<F, R, E>(self, exex_id: impl Into<String>, exex: F) -> Self
-    where
-        F: FnOnce(ExExContext) -> R + Send + 'static,
-        R: Future<Output = eyre::Result<E>> + Send,
-        E: Future<Output = eyre::Result<()>> + Send,
-    {
-        Self {
-            builder: self.builder.install_exex(exex_id, exex),
-            task_executor: self.task_executor,
-        }
-    }
-
-    /// Installs an `ExEx` (Execution Extension) in the node if the condition is true.
-    ///
-    /// # Note
-    ///
-    /// The `ExEx` ID must be unique.
-    pub fn install_exex_if<F, R, E>(self, cond: bool, exex_id: impl Into<String>, exex: F) -> Self
-    where
-        F: FnOnce(ExExContext) -> R + Send + 'static,
-        R: Future<Output = eyre::Result<E>> + Send,
-        E: Future<Output = eyre::Result<()>> + Send,
-    {
-        if cond { self.install_exex(exex_id, exex) } else { self }
     }
 
     /// Launches the node with the given launcher.

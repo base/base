@@ -1,194 +1,145 @@
-//! Node launcher with proof history support.
+//! Proof history storage, RPCs, and canonical block processing.
 
 use std::{sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
 use base_execution_trie::{
-    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
+    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, ProofsProgress,
+    RocksdbProofsStorage,
 };
-use eyre::ErrReport;
-use futures::FutureExt;
-use reth_db::DatabaseEnv;
+use futures::future::BoxFuture;
 use reth_db_api::database_metrics::DatabaseMetrics;
-use reth_tasks::TaskExecutor;
-use tokio::time::sleep;
-use tracing::info;
+use reth_exex::ExExContext;
 
-use crate::{
-    BaseNode, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
-    args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
-};
+use crate::{FullNode, ProofsHistoryDbBackend, RollupArgs, RpcContext};
 
-type ProofHistoryNodeBuilder = WithLaunchContext<NodeBuilderWithComponents>;
+/// Proof-history storage supported by the Base node.
+#[derive(Debug, Clone)]
+pub enum ProofHistoryBackend {
+    /// MDBX proof snapshots.
+    Mdbx(Arc<MdbxProofsStorage>),
+    /// RocksDB proof snapshots.
+    Rocksdb(Arc<RocksdbProofsStorage>),
+}
 
-/// - no proofs history (plain node),
-/// - in-mem proofs storage,
-/// - on-disk proofs storage.
-pub async fn launch_node_with_proof_history(
-    builder: WithLaunchContext<NodeBuilder<DatabaseEnv>>,
-    args: RollupArgs,
-) -> eyre::Result<(), ErrReport> {
-    let RollupArgs {
-        sequencer,
-        discovery_v4,
-        sequencer_headers,
-        min_suggested_priority_fee,
-        txpool_ordering,
-        max_inflight_delegated_slots,
-        mempool_sender_limit,
-        mempool_payer_limit,
-        mempool_trusted_delegation_targets,
-        proofs_history,
-        proofs_history_storage_path,
-        proofs_history_db,
-        proofs_history_rocksdb,
-        proofs_history_mdbx,
-        proofs_history_window,
-        proofs_history_prune_interval,
-        proofs_history_verification_interval,
-        upgrade_signal,
-        upgrade_signal_l1_rpc,
-    } = args;
+/// Prepared proof history shared by RPC and canonical processing.
+#[derive(Debug, Clone)]
+pub struct ProofHistory {
+    /// Open proof storage.
+    pub backend: ProofHistoryBackend,
+    /// Number of canonical blocks retained.
+    pub window: u64,
+    /// Delay between pruning passes.
+    pub prune_interval: Duration,
+    /// Interval for verifying persisted proofs.
+    pub verification_interval: u64,
+}
 
-    // Start from the concrete Base components.
-    let node = BaseNode::new(RollupArgs {
-        sequencer,
-        discovery_v4,
-        sequencer_headers,
-        min_suggested_priority_fee,
-        txpool_ordering,
-        max_inflight_delegated_slots,
-        mempool_sender_limit,
-        mempool_payer_limit,
-        mempool_trusted_delegation_targets,
-        proofs_history: false,
-        proofs_history_storage_path: None,
-        proofs_history_db: ProofsHistoryDbBackend::default(),
-        proofs_history_rocksdb: Default::default(),
-        proofs_history_mdbx: Default::default(),
-        proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
-        proofs_history_prune_interval: Duration::from_secs(15),
-        proofs_history_verification_interval: 0,
-        upgrade_signal,
-        upgrade_signal_l1_rpc,
-    });
-    let mut node_builder = builder
-        .with_components(node.components().into_builder())
-        .with_add_ons(node.add_ons_builder().build());
-
-    if proofs_history {
-        let path = proofs_history_storage_path.ok_or_else(|| {
+impl ProofHistory {
+    /// Opens the configured proof database before node launch.
+    pub fn open(args: &RollupArgs) -> eyre::Result<Self> {
+        let path = args.proofs_history_storage_path.as_ref().ok_or_else(|| {
             eyre::eyre!("--proofs-history requires --proofs-history.storage-path")
         })?;
-        info!(target: "reth::cli", "Using on-disk storage for proofs history");
-        proofs_history_db.ensure_storage_path_matches(&path)?;
-
-        match proofs_history_db {
-            ProofsHistoryDbBackend::Rocksdb => {
-                let rocksdb = Arc::new(
-                    RocksdbProofsStorage::new_with_options(
-                        &path,
-                        proofs_history_rocksdb.storage_options()?,
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
-                );
-                node_builder = install_proofs_history(
-                    node_builder,
-                    rocksdb,
-                    proofs_history_window,
-                    proofs_history_prune_interval,
-                    proofs_history_verification_interval,
-                );
-            }
+        args.proofs_history_db.ensure_storage_path_matches(path)?;
+        let backend = match args.proofs_history_db {
             ProofsHistoryDbBackend::Mdbx => {
-                let mdbx = Arc::new(
-                    MdbxProofsStorage::new_with_options(
-                        &path,
-                        proofs_history_mdbx.storage_options(),
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
-                );
-                node_builder = install_proofs_history(
-                    node_builder,
-                    mdbx,
-                    proofs_history_window,
-                    proofs_history_prune_interval,
-                    proofs_history_verification_interval,
-                );
+                ProofHistoryBackend::Mdbx(Arc::new(MdbxProofsStorage::new_with_options(
+                    path,
+                    args.proofs_history_mdbx.storage_options(),
+                )?))
             }
+            ProofsHistoryDbBackend::Rocksdb => {
+                ProofHistoryBackend::Rocksdb(Arc::new(RocksdbProofsStorage::new_with_options(
+                    path,
+                    args.proofs_history_rocksdb.storage_options()?,
+                )?))
+            }
+        };
+        Ok(Self {
+            backend,
+            window: args.proofs_history_window,
+            prune_interval: args.proofs_history_prune_interval,
+            verification_interval: args.proofs_history_verification_interval,
+        })
+    }
+
+    /// Adds proof-history methods to the node's built-in APIs.
+    pub fn register_rpc(&self, ctx: &mut RpcContext<'_>) -> eyre::Result<()> {
+        match &self.backend {
+            ProofHistoryBackend::Mdbx(storage) => Self::register_backend(storage.clone(), ctx),
+            ProofHistoryBackend::Rocksdb(storage) => Self::register_backend(storage.clone(), ctx),
         }
     }
 
-    // In all cases (with or without proofs), launch the node.
-    let handle = node_builder.launch_with_debug_capabilities(BaseNode::debug_config()).await?;
-    handle.node_exit_future.await
-}
-
-fn install_proofs_history<S>(
-    node_builder: ProofHistoryNodeBuilder,
-    storage_backend: Arc<S>,
-    proofs_history_window: u64,
-    proofs_history_prune_interval: Duration,
-    proofs_history_verification_interval: u64,
-) -> ProofHistoryNodeBuilder
-where
-    S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
-{
-    let storage: BaseProofsStorage<Arc<S>> = Arc::clone(&storage_backend).into();
-    let storage_exec = storage.clone();
-
-    node_builder
-        .on_node_started(move |node| {
-            spawn_proofs_db_metrics(
-                node.task_executor,
-                storage_backend,
-                node.config.metrics.push_gateway_interval,
-            );
-            Ok(())
-        })
-        .install_exex("proofs-history", async move |exex_context| {
-            Ok(BaseProofsExEx::builder(exex_context, storage_exec)
-                .with_proofs_history_window(proofs_history_window)
-                .with_proofs_history_prune_interval(proofs_history_prune_interval)
-                .with_verification_interval(proofs_history_verification_interval)
-                .build()
-                .run()
-                .boxed())
-        })
-        .extend_rpc_modules(move |ctx| {
-            let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
-            let debug_ext = DebugApiExt::new(
-                ctx.node().provider().clone(),
+    /// Registers the proof handlers with their selected storage backend.
+    pub fn register_backend<S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static>(
+        backend: Arc<S>,
+        ctx: &mut RpcContext<'_>,
+    ) -> eyre::Result<()> {
+        let storage: BaseProofsStorage<Arc<S>> = backend.into();
+        ctx.modules.replace_configured(
+            EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone()).into_rpc(),
+        )?;
+        ctx.modules.replace_configured(
+            DebugApiExt::new(
+                ctx.provider().clone(),
                 ctx.registry.eth_api().clone(),
                 storage,
                 ctx.node().task_executor().clone(),
                 ctx.node().evm_config().clone(),
-            );
-            ctx.modules.replace_configured(api_ext.into_rpc())?;
-            ctx.modules.replace_configured(debug_ext.into_rpc())?;
-            Ok(())
-        })
-}
+            )
+            .into_rpc(),
+        )?;
+        Ok(())
+    }
 
-/// Spawns a task that periodically reports metrics for the proofs DB.
-fn spawn_proofs_db_metrics<S>(
-    executor: TaskExecutor,
-    storage: Arc<S>,
-    metrics_report_interval: Duration,
-) where
-    S: DatabaseMetrics + Send + Sync + 'static,
-{
-    executor.spawn_critical_task("base-proofs-storage-metrics", async move {
-        info!(
-            target: "reth::cli",
-            ?metrics_report_interval,
-            "Starting Base proofs storage metrics task"
-        );
-
-        loop {
-            sleep(metrics_report_interval).await;
-            storage.report_metrics();
+    /// Exposes proof progress and starts storage metrics.
+    pub fn start(&self, node: &FullNode) -> eyre::Result<()> {
+        match &self.backend {
+            ProofHistoryBackend::Mdbx(storage) => Self::start_backend(storage.clone(), node),
+            ProofHistoryBackend::Rocksdb(storage) => Self::start_backend(storage.clone(), node),
         }
-    });
+    }
+
+    /// Starts the shared backend's metrics and progress tracking.
+    pub fn start_backend<S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static>(
+        storage: Arc<S>,
+        node: &FullNode,
+    ) -> eyre::Result<()> {
+        node.proofs_progress
+            .set(ProofsProgress::new(storage.clone()))
+            .map_err(|_| eyre::eyre!("proofs history progress already registered"))?;
+        let interval = node.config.metrics.push_gateway_interval;
+        node.task_executor.spawn_critical_task("base-proofs-storage-metrics", async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                storage.report_metrics();
+            }
+        });
+        Ok(())
+    }
+
+    /// Runs canonical proof processing with the selected backend.
+    pub fn run(self, ctx: ExExContext) -> BoxFuture<'static, eyre::Result<()>> {
+        match self.backend {
+            ProofHistoryBackend::Mdbx(storage) => Box::pin(
+                BaseProofsExEx::builder(ctx, storage.into())
+                    .with_proofs_history_prune_interval(self.prune_interval)
+                    .with_proofs_history_window(self.window)
+                    .with_verification_interval(self.verification_interval)
+                    .build()
+                    .run(),
+            ),
+            ProofHistoryBackend::Rocksdb(storage) => Box::pin(
+                BaseProofsExEx::builder(ctx, storage.into())
+                    .with_proofs_history_prune_interval(self.prune_interval)
+                    .with_proofs_history_window(self.window)
+                    .with_verification_interval(self.verification_interval)
+                    .build()
+                    .run(),
+            ),
+        }
+    }
 }

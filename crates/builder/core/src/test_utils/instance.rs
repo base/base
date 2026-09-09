@@ -209,8 +209,7 @@ impl LocalInstance {
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_components(components.into_builder())
-            .with_add_ons(add_ons)
-            .on_component_initialized(move |_ctx| Ok(()));
+            .with_add_ons(add_ons);
 
         let node_handle = builder.launch().await?;
         let pool_monitor = node_handle.node.pool.all_transactions_event_listener();
