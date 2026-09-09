@@ -10,10 +10,10 @@ use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber,
 };
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 #[cfg(feature = "db-api")]
 use reth_db_api::mock::TxMock;
 use reth_db_models::{AccountBeforeTx, StoredBlockBodyIndices};
@@ -185,7 +185,10 @@ impl BlockReaderIdExt for NoopProvider {
         Ok(None)
     }
 
-    fn header_by_id(&self, _id: BlockId) -> ProviderResult<Option<base_common_types_chain::Header>> {
+    fn header_by_id(
+        &self,
+        _id: BlockId,
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(None)
     }
 }
@@ -359,7 +362,10 @@ impl HeaderProvider for NoopProvider {
         Ok(None)
     }
 
-    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<base_common_types_chain::Header>> {
+    fn header_by_number(
+        &self,
+        _num: u64,
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(None)
     }
 

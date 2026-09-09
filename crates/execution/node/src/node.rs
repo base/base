@@ -8,10 +8,10 @@ use std::{
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::BasePayloadAttributes;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, RejectionCache,
@@ -228,7 +228,7 @@ impl BaseNode {
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BaseChainSpec;
+    /// use base_common_chain_config::BaseChainSpec;
     /// use base_node_core::BaseNode;
     /// use std::sync::Arc;
     ///
@@ -242,7 +242,7 @@ impl BaseNode {
     /// # Open a `ProviderFactory` with custom config
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BaseChainSpecBuilder;
+    /// use base_common_chain_config::BaseChainSpecBuilder;
     /// use base_node_core::BaseNode;
     /// use reth_provider::providers::ReadOnlyConfig;
     ///

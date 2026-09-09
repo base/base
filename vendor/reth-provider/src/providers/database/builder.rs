@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use reth_db::{
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
     open_db_read_only,
@@ -30,7 +30,7 @@ impl ProviderFactoryBuilder {
     /// This is recommended when the new read-only instance is used with an active node.
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BaseChainSpec;
+    /// use base_common_chain_config::BaseChainSpec;
     /// use reth_provider::providers::{ProviderFactoryBuilder};
     ///
     /// fn demo(
@@ -47,7 +47,7 @@ impl ProviderFactoryBuilder {
     /// This is recommended when no changes to the database are expected (e.g. no active node)
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BaseChainSpec;
+    /// use base_common_chain_config::BaseChainSpec;
     /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
     /// fn demo(
@@ -71,7 +71,7 @@ impl ProviderFactoryBuilder {
     /// [`ReadOnlyConfig::disable_long_read_transaction_safety`].
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BaseChainSpec;
+    /// use base_common_chain_config::BaseChainSpec;
     /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
     /// fn demo(

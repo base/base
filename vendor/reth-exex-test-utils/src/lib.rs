@@ -16,7 +16,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::NoopPayloadBuilderService;
 use base_execution_txpool::Pool;
@@ -232,12 +232,12 @@ pub async fn test_exex_context_with_chain_spec(
     ))
 }
 
-/// Creates a new [`ExExContext`] with (mainnet)[`std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())`] chain spec.
+/// Creates a new [`ExExContext`] with (mainnet)[`std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())`] chain spec.
 ///
 /// For more information see [`test_exex_context_with_chain_spec`].
 pub async fn test_exex_context() -> eyre::Result<(ExExContext, TestExExHandle)> {
     test_exex_context_with_chain_spec(std::sync::Arc::new(
-        base_execution_chainspec::BaseChainSpec::mainnet(),
+        base_common_chain_config::BaseChainSpec::mainnet(),
     ))
     .await
 }

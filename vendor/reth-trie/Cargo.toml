@@ -40,9 +40,8 @@ parking_lot = { workspace = true, optional = true, features = ["default"] }
 assert_matches = { workspace = true }
 base-evm-handler = { workspace = true }
 reth-stages-types = { workspace = true }
+base-common-chain-config = {workspace = true}
 base-common-types-chain = { workspace = true }
-base-common-chain-config = { workspace = true }
-base-execution-chainspec = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }

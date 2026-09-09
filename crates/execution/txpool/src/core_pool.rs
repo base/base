@@ -7,7 +7,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, B128, B256, TxHash, map::AddressSet};
-use base_execution_chainspec::ChainSpecProvider;
+use base_common_chain_config::ChainSpecProvider;
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
@@ -118,7 +118,7 @@ where
     ///
     /// use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
     /// use reth_tasks::Runtime;
-    /// use base_execution_chainspec::ChainSpecProvider;
+    /// use base_common_chain_config::ChainSpecProvider;
     /// use reth_transaction_pool::{
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };

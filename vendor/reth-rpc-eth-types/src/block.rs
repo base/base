@@ -34,7 +34,8 @@ impl<R> CachedTransaction<R> {
     /// Returns the `Recovered<&T>` transaction at the cached index.
     pub fn recovered_transaction(
         &self,
-    ) -> Option<Recovered<&<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction>> {
+    ) -> Option<Recovered<&<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction>>
+    {
         self.block.recovered_transaction(self.tx_index)
     }
 
@@ -127,7 +128,7 @@ impl BlockAndReceipts {
                 Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
                 Receipt = base_common_types_chain::BaseReceipt,
-            > + base_execution_chainspec::ChainSpecProvider
+            > + base_common_chain_config::ChainSpecProvider
             + Clone
             + Send
             + Sync
@@ -158,7 +159,7 @@ where
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
-        > + base_execution_chainspec::ChainSpecProvider
+        > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -197,7 +198,7 @@ impl CachedTransaction<BaseReceipt> {
                 Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
                 Receipt = base_common_types_chain::BaseReceipt,
-            > + base_execution_chainspec::ChainSpecProvider
+            > + base_common_chain_config::ChainSpecProvider
             + Clone
             + Send
             + Sync

@@ -5,7 +5,7 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_core::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;

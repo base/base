@@ -8,11 +8,11 @@ use std::{
 };
 
 use alloy_primitives::Bytes;
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BlockHeader, Transaction};
 use base_common_types_payload::{ForkchoiceState, PayloadStatus};
 use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BaseEvmConfig, BlockBuilder, BlockBuilderOutcome};
 use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_payload_types::BaseBuiltPayload;

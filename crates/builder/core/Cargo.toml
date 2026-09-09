@@ -95,8 +95,6 @@ tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
-base-common-chain-config = { workspace = true, features = ["default"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
@@ -104,6 +102,7 @@ base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
+base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
@@ -133,7 +132,7 @@ base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
-default = [ "jemalloc", "metrics" ]
+default = ["jemalloc", "metrics"]
 metrics = [
     "base-txpool-rpc/metrics",
     "base-common-evm/metrics",
@@ -144,17 +143,13 @@ metrics = [
     "base-execution-evm/metrics",
     "reth-trie/metrics",
 ]
-jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
-jemalloc-prof = [
-	"jemalloc",
-	"reth-cli-util/jemalloc-prof",
-	"tikv-jemallocator?/profiling",
-]
-min-error-logs = [ "tracing/release_max_level_error" ]
-min-warn-logs = [ "tracing/release_max_level_warn" ]
-min-info-logs = [ "tracing/release_max_level_info" ]
-min-debug-logs = [ "tracing/release_max_level_debug" ]
-min-trace-logs = [ "tracing/release_max_level_trace" ]
+jemalloc = ["dep:tikv-jemallocator", "reth-cli-util/jemalloc"]
+jemalloc-prof = ["jemalloc", "reth-cli-util/jemalloc-prof", "tikv-jemallocator?/profiling"]
+min-error-logs = ["tracing/release_max_level_error"]
+min-warn-logs = ["tracing/release_max_level_warn"]
+min-info-logs = ["tracing/release_max_level_info"]
+min-debug-logs = ["tracing/release_max_level_debug"]
+min-trace-logs = ["tracing/release_max_level_trace"]
 test-utils = [
     "base-bundles/test-utils",
     "base-common-chain-config/test-utils",

@@ -77,7 +77,7 @@
 //! writing the derived node configuration and updating prune or index-stage checkpoints. A
 //! successful command leaves a data directory that matches the snapshot shape that was selected.
 
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 mod archive;
 pub mod config_gen;
 mod extract;
@@ -1269,7 +1269,7 @@ mod tests {
         let err = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(args.resolve_manifest_source(
-                base_execution_chainspec::BaseChainSpec::sepolia().chain_id(),
+                base_common_chain_config::BaseChainSpec::sepolia().chain_id(),
             ))
             .unwrap_err();
 
@@ -1293,7 +1293,7 @@ mod tests {
         let source = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(args.resolve_manifest_source(
-                base_execution_chainspec::BaseChainSpec::sepolia().chain_id(),
+                base_common_chain_config::BaseChainSpec::sepolia().chain_id(),
             ))
             .unwrap();
 
@@ -1374,7 +1374,7 @@ mod tests {
     fn startup_node_command_omits_default_chain_arg() {
         let command = startup_node_command_for_binary::<BaseTestChainSpecParser>(
             "reth",
-            &base_execution_chainspec::BaseChainSpec::mainnet(),
+            &base_common_chain_config::BaseChainSpec::mainnet(),
         );
 
         assert_eq!(command, "reth node");
@@ -1384,7 +1384,7 @@ mod tests {
     fn startup_node_command_includes_non_default_chain_arg() {
         let command = startup_node_command_for_binary::<BaseTestChainSpecParser>(
             "reth",
-            &base_execution_chainspec::BaseChainSpec::sepolia(),
+            &base_common_chain_config::BaseChainSpec::sepolia(),
         );
 
         assert_eq!(command, "reth node --chain base-sepolia");
@@ -1394,7 +1394,7 @@ mod tests {
     fn startup_node_command_uses_running_binary_name() {
         let command = startup_node_command_for_binary::<BaseTestChainSpecParser>(
             "tempo",
-            &base_execution_chainspec::BaseChainSpec::sepolia(),
+            &base_common_chain_config::BaseChainSpec::sepolia(),
         );
 
         assert_eq!(command, "tempo node --chain base-sepolia");

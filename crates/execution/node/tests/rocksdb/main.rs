@@ -12,10 +12,10 @@ use reth_e2e_test_utils::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
+use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_rpc::{
     Transaction, TransactionInput, TransactionReceipt, TransactionRequest,
 };
-use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;

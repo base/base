@@ -1,8 +1,8 @@
 use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use alloy_primitives::B256;
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BaseBlockBody as BlockBody;
-use base_execution_chainspec::BaseChainSpec;
 use reth_network_p2p::test_utils::TestFullBlockClient;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;

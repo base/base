@@ -9,12 +9,12 @@ use std::{
 use alloy_eips::eip7840::BlobParams;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BlockHeader, Transaction};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_evm_context::{Block, Cfg as _};
 use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
     EvmEnvFor, TxResult,

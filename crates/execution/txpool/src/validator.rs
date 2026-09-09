@@ -13,6 +13,7 @@ use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chain_config::DaFootprintGasScalarUpdate;
 use base_common_chain_config::Upgrades;
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_precompiles::NonceManagerStorage;
 use base_common_types_chain::{
@@ -22,7 +23,6 @@ use base_common_types_chain::{
 };
 use base_evm_context::JournalCheckpoint;
 use base_evm_handler::state::{AccountInfo, Bytecode};
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
@@ -2163,6 +2163,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
     use base_common_chain_config::ChainConfig;
+    use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
         AccountChange, AccountChangeChannel, BaseTransactionSigned, BaseTxEnvelope, ChangeType,
@@ -2170,7 +2171,6 @@ mod tests {
         SignableTransaction, SignedAccountChanges, SignedChange, TxDeposit, TxEip1559, TxEip8130,
         transaction::SignerRecoverable,
     };
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{

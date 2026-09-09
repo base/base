@@ -5,11 +5,11 @@ use std::sync::Arc;
 use alloy_eips::eip1559::INITIAL_BASE_FEE;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes};
+use base_common_chain_config::{BaseChainSpecBuilder, ChainSpecProvider};
 use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction, Header,
     TxEip1559, TxReceipt, constants::ETH_TO_WEI,
 };
-use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor};
 use reth_config::config::StageConfig;
@@ -192,7 +192,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
     let initial_balance = U256::from(ETH_TO_WEI) * U256::from(1000);
     let chain_spec = Arc::new(
         BaseChainSpecBuilder::default()
-            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
+            .chain(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -208,7 +208,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
                     ),
                 ]
                 .into(),
-                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                ..std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                     .genesis
                     .clone()
             })

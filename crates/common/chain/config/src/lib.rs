@@ -64,3 +64,18 @@ pub use schedule::ChainUpgrades;
 
 mod fork;
 pub use fork::ExecutionFork;
+
+mod basefee;
+pub use basefee::*;
+
+mod builder;
+pub use builder::BaseChainSpecBuilder;
+
+mod spec;
+pub use spec::{BaseChainSpec, BaseChainSpecError, GenesisInfo};
+
+mod provider;
+pub use provider::ChainSpecProvider;
+
+mod display;
+pub use display::UpgradeDisplay;

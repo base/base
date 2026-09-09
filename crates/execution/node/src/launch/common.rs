@@ -35,7 +35,7 @@ use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Dur
 use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::TransactionPool;

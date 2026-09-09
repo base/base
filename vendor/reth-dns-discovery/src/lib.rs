@@ -434,7 +434,7 @@ mod tests {
             .add_value(
                 b"eth",
                 &EnrForkIdEntry::from(
-                    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                         .latest_fork_id(),
                 ),
             )
@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(
             node_record_update.fork_id,
             Some(
-                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                     .latest_fork_id()
             )
         );
@@ -469,7 +469,7 @@ mod tests {
             .add_value(
                 b"eth",
                 &EnrForkIdEntry::from(
-                    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                         .latest_fork_id(),
                 ),
             )
@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(
             node_record_update.fork_id,
             Some(
-                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                     .latest_fork_id()
             )
         );
@@ -539,7 +539,7 @@ mod tests {
             LinkEntry { domain: "nodes.example.org".to_string(), pubkey: secret_key.public() };
 
         let mut builder = Enr::builder();
-        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+        let fork_id = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
             .hardfork_fork_id(EthereumHardfork::Frontier)
             .unwrap();
         builder

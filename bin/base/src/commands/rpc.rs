@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use base_cli_utils::CliRunner;
+use base_common_chain_config::BaseChainSpec;
 use base_consensus_cli::{
     CliMetrics, ConsensusFollowNodeArgs, ConsensusNodeArgs, ConsensusNodeConfigArgs,
     ConsensusNodeOverrides, ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
@@ -10,7 +11,6 @@ use base_consensus_cli::{
 };
 use base_consensus_engine::LocalEngineClient;
 use base_consensus_providers::{L1RpcProvider, LocalL2Provider};
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
@@ -173,8 +173,8 @@ impl RpcCommand {
 mod tests {
     use std::process::Command;
 
+    use base_common_chain_config::BaseChainSpec;
     use base_consensus_cli::ConsensusNodeConfigArgs;
-    use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
 
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};

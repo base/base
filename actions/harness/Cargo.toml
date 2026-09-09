@@ -53,9 +53,8 @@ reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }
-base-common-chain-config = {workspace = true, features = ["default", "std"]}
+base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 

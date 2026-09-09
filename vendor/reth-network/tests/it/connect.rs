@@ -650,7 +650,7 @@ async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -
         .disable_discovery()
         .peer_config(peers_config)
         .build_with_noop_provider(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
 
     NetworkManager::new(config).await.unwrap()
@@ -724,7 +724,7 @@ async fn test_connect_peer_in_different_network_should_fail() {
         .disable_discovery()
         .peer_config(peers_config)
         .build_with_noop_provider(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
     let network = NetworkManager::new(config).await.unwrap();

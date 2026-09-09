@@ -15,12 +15,12 @@ use alloy_primitives::{
     keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo,
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
-use base_execution_chainspec::BaseChainSpec;
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
 use reth_db::transaction::{DbTx, DbTxMut};
@@ -154,7 +154,7 @@ impl MockEthProvider {
             receipts: Default::default(),
             accounts: Default::default(),
             chain_spec: Arc::new(
-                base_execution_chainspec::BaseChainSpecBuilder::base_mainnet().build(),
+                base_common_chain_config::BaseChainSpecBuilder::base_mainnet().build(),
             ),
             state_roots: Default::default(),
             block_body_indices: Default::default(),
@@ -553,7 +553,10 @@ impl HeaderProvider for MockEthProvider {
         Ok(lock.get(&block_hash).cloned())
     }
 
-    fn header_by_number(&self, num: u64) -> ProviderResult<Option<base_common_types_chain::Header>> {
+    fn header_by_number(
+        &self,
+        num: u64,
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         let lock = self.headers.lock();
         Ok(lock.values().find(|h| h.number() == num).cloned())
     }

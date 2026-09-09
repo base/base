@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_storage_errors::provider::ProviderResult;
@@ -33,7 +33,7 @@ pub type MockNodeDatabase = Arc<TempDatabase<DatabaseEnv>>;
 /// Creates test provider factory with mainnet chain spec.
 pub fn create_test_provider_factory() -> ProviderFactory {
     create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
-        base_execution_chainspec::BaseChainSpec::mainnet(),
+        base_common_chain_config::BaseChainSpec::mainnet(),
     ))
 }
 

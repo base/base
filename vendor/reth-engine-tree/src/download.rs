@@ -288,8 +288,8 @@ mod tests {
 
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
@@ -307,11 +307,11 @@ mod tests {
             let chain_spec = Arc::new(
                 BaseChainSpecBuilder::default()
                     .chain(
-                        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                             .chain(),
                     )
                     .genesis(
-                        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                             .genesis
                             .clone(),
                     )

@@ -1,9 +1,9 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
 use alloy_primitives::{Address, Bytes, TxHash};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,
     ValidityPredicate,
@@ -298,13 +298,13 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
     use alloy_signer::SignerSync;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, SignableTransaction,
         TxEip1559, TxEip8130,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use base_execution_txpool::{
         NoopTransactionPool, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_txpool::{PoolConfig, TransactionPool};
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,

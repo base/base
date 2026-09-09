@@ -6,11 +6,11 @@ use std::{
 
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_evm_handler::database::PlainStorageRevert;
-use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;

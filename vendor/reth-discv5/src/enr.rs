@@ -85,7 +85,7 @@ mod tests {
         let key = CombinedKey::generate_secp256k1();
 
         let mut buf = Vec::new();
-        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+        let fork_id = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
             .hardfork_fork_id(EthereumHardfork::Frontier);
         fork_id.unwrap().encode(&mut buf);
 

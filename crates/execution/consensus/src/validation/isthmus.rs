@@ -130,9 +130,9 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_primitives::{B256, U256, keccak256};
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
     use base_evm_handler::database::BundleState;
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_db_common::init::init_genesis;
     use reth_provider::{
         StateWriter, providers::BlockchainProvider,

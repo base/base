@@ -4,8 +4,8 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{BaseBlock, BaseReceipt};
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
 use reth_dns_discovery::DnsDiscoveryConfig;
@@ -739,7 +739,7 @@ mod tests {
     use alloy_genesis::Genesis;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::U256;
-    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_common_chain_config::BaseChainSpecBuilder;
     use reth_discv5::build_local_enr;
     use reth_storage_api::noop::NoopProvider;
 
@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn test_network_fork_filter_default() {
         let mut chain_spec =
-            Arc::clone(&std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+            Arc::clone(&std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
 
         // remove any `next` fields we would have by removing all hardforks
         Arc::make_mut(&mut chain_spec).config.upgrades = Default::default();

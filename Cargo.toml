@@ -68,7 +68,6 @@ members = [
   "crates/consensus/safedb",
   "crates/consensus/service",
   "crates/consensus/sources",
-  "crates/execution/chainspec",
   "crates/execution/cli",
   "crates/execution/consensus",
   "crates/execution/eip8130",
@@ -389,7 +388,6 @@ base-execution-txpool = { path = "crates/execution/txpool", default-features = f
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
 base-shadow-indexer = { path = "crates/execution/shadow-indexer", default-features = false }
-base-execution-chainspec = { path = "crates/execution/chainspec", default-features = false }
 base-execution-consensus = { path = "crates/execution/consensus", default-features = false }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
 base-execution-payload-builder = { path = "crates/execution/payload", default-features = false }

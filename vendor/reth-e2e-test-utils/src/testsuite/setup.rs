@@ -4,9 +4,9 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_payload::{ForkchoiceState, PayloadAttributes};
 use base_evm_handler::state::EvmState;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::{Result, eyre};
 use reth_engine_primitives::TreeConfig;

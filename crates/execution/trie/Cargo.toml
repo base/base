@@ -13,17 +13,16 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
-thiserror = { workspace = true }
 auto_impl = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 derive_more = { workspace = true }
 base-metrics = { workspace = true }
 reth-provider = { workspace = true }
 base-evm-handler = { workspace = true }
-
 reth-storage-api = { workspace = true }
-static_assertions = { workspace = true }
 reth-storage-errors = {workspace = true}
+static_assertions = { workspace = true }
 metrics = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 bytes = { workspace = true, features = ["default"] }
@@ -32,21 +31,22 @@ reth-tasks = { workspace = true, features = ["rayon"]}
 reth-trie = { workspace = true, features = ["serde"] }
 tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
-rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 parking_lot = { workspace = true, features = ["default"] }
+rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 tokio = { workspace = true, features = ["default", "sync"] }
-reth-db = { workspace = true, features = ["default", "mdbx"] }
 crossbeam-utils = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["default", "mdbx"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["alloy"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
+base-common-types-chain = { workspace = true, features = ["alloy"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["dashmap", "std"]}
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 reth-trie-sparse = { workspace = true, features = ["trie-debug"], optional = true }
+
 [dev-dependencies]
 mockall = { workspace = true }
 test-case = { workspace = true }
@@ -57,7 +57,7 @@ reth-storage-errors = { workspace = true }
 reth-storage-overlay = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
@@ -66,12 +66,13 @@ serial_test = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
+reth-db = { workspace = true, features = ["default", "test-utils"] }
 secp256k1 = { workspace = true, features = ["default", "rand", "std"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 tokio = { workspace = true, features = ["default", "test-util", "rt-multi-thread", "macros", "rt"] }
 base-common-types-chain = { workspace = true, features = ["reth", "alloy", "test-utils", "serde", "std"] }
+
 [[bench]]
 name = "witness_reads"
 harness = false

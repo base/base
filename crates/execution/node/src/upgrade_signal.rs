@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use alloy_eip2124::{EnrForkIdEntry, ForkFilter, ForkId, Head};
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
-use base_execution_chainspec::BaseChainSpec;
 use base_upgrade_signal::{
     PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
     UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
@@ -486,8 +486,8 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_hardforks::{EthereumHardfork, ForkCondition};
     use alloy_primitives::Address;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
-    use base_execution_chainspec::BaseChainSpec;
     use base_upgrade_signal::UpgradeSignalDefaults;
 
     use super::*;
@@ -663,7 +663,7 @@ mod tests {
     /// runtime schedule changes, is a no-op while it is unchanged, and is idempotent afterwards.
     #[test]
     fn refresh_advertised_fork_filter_tracks_runtime_schedule_changes() {
-        use base_execution_chainspec::BaseChainSpecBuilder;
+        use base_common_chain_config::BaseChainSpecBuilder;
 
         // A unique chain id keeps this test's runtime-registry mutation from racing the sibling
         // chain-spec tests, which read fork conditions through the same process-global registry
@@ -740,7 +740,7 @@ mod tests {
     /// the race where an admin refresh mutates the schedule before the monitor takes its baseline.
     #[test]
     fn refresh_advertised_fork_filter_forces_initial_install_when_uninstalled() {
-        use base_execution_chainspec::BaseChainSpecBuilder;
+        use base_common_chain_config::BaseChainSpecBuilder;
 
         let chain_id = 9_100_101;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -789,7 +789,7 @@ mod tests {
     /// install as complete and suppressing reconciliation until another schedule change.
     #[test]
     fn refresh_advertised_fork_filter_retries_after_failed_install() {
-        use base_execution_chainspec::BaseChainSpecBuilder;
+        use base_common_chain_config::BaseChainSpecBuilder;
 
         let chain_id = 9_100_102;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -853,7 +853,7 @@ mod tests {
     async fn install_fork_filter_refreshes_opel_discovery_enr() {
         use std::net::Ipv4Addr;
 
-        use base_execution_chainspec::BaseChainSpecBuilder;
+        use base_common_chain_config::BaseChainSpecBuilder;
         use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
         use reth_network::{NetworkConfigBuilder, NetworkManager};
         use reth_tasks::Runtime;

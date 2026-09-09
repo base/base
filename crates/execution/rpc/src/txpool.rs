@@ -1,6 +1,7 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
+use crate::TxPoolApiServer;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_common_types_chain::Transaction;
@@ -9,7 +10,6 @@ use base_common_types_rpc::{
 };
 use base_execution_txpool::{AllPoolTransactions, TransactionPool};
 use jsonrpsee::core::RpcResult;
-use crate::TxPoolApiServer;
 use tracing::trace;
 
 /// `txpool` API implementation.
@@ -36,7 +36,7 @@ where
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
-        > + base_execution_chainspec::ChainSpecProvider
+        > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -63,7 +63,7 @@ where
                     Block = base_common_types_chain::BaseBlock,
                     Transaction = base_common_types_chain::BaseTxEnvelope,
                     Receipt = base_common_types_chain::BaseReceipt,
-                > + base_execution_chainspec::ChainSpecProvider
+                > + base_common_chain_config::ChainSpecProvider
                 + Clone
                 + Send
                 + Sync
@@ -100,7 +100,7 @@ where
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
-        > + base_execution_chainspec::ChainSpecProvider
+        > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync

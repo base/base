@@ -22,7 +22,7 @@ fn status() -> UnifiedStatus {
 }
 
 fn fork_filter() -> ForkFilter {
-    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+    std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
         .fork_filter(Default::default())
 }
 

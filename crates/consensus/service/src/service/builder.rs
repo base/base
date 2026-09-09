@@ -276,12 +276,12 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256};
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::Upgrades;
     use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
     use base_consensus_disc::LocalNode as DiscoveryNode;
     use base_consensus_engine::{EngineClient, LocalEngineClient};
     use base_consensus_providers::LocalL2Provider;
-    use base_execution_chainspec::BaseChainSpec;
     use base_node_runner::test_utils::LocalNode;
     use discv5::enr::k256::ecdsa::SigningKey;
     use libp2p::Multiaddr;

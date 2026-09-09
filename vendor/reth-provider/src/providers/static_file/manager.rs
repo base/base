@@ -9,11 +9,11 @@ use std::{
 use alloy_chains::NamedChain;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, Header,
     transaction::{TransactionMeta, TxHashRef},
 };
-use base_execution_chainspec::ChainSpecProvider;
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
 use reth_db::{
@@ -2548,7 +2548,9 @@ impl HeaderProvider for StaticFileProvider {
         self.find_static_file(StaticFileSegment::Headers, |jar_provider| {
             Ok(jar_provider
                 .cursor()?
-                .get_two::<HeaderWithHashMask<base_common_types_chain::Header>>((&block_hash).into())?
+                .get_two::<HeaderWithHashMask<base_common_types_chain::Header>>(
+                    (&block_hash).into(),
+                )?
                 .and_then(|(header, hash)| {
                     if hash == block_hash {
                         return Some(header);

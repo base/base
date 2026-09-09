@@ -5,12 +5,12 @@ use std::sync::Arc;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
+use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction, BlockHeader, Header, SignableTransaction, TxEip2930,
     constants::ETH_TO_WEI,
 };
-use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{BaseEvmConfig, Executor};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
@@ -79,14 +79,14 @@ struct TestScenario {
 fn chain_spec_with_address(address: Address) -> Arc<BaseChainSpec> {
     Arc::new(
         BaseChainSpecBuilder::default()
-            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
+            .chain(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [(
                     address,
                     GenesisAccount { balance: U256::from(10 * ETH_TO_WEI), ..Default::default() },
                 )]
                 .into(),
-                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                ..std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                     .genesis
                     .clone()
             })

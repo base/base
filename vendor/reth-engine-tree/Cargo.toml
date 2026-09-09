@@ -16,24 +16,23 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-db = { workspace = true }
 metrics = { workspace = true }
-thiserror = { workspace = true }
+reth-db = { workspace = true }
 reth-trie = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-prune = { workspace = true }
 base-state = { workspace = true }
+reth-prune = { workspace = true }
 reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
-base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
+base-evm-handler = { workspace = true }
+reth-chain-state = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
-reth-chain-state = { workspace = true }
-
 reth-storage-errors = {workspace = true}
-reth-execution-types = { workspace = true }
 reth-execution-cache = { workspace = true }
+reth-execution-types = { workspace = true }
 base-execution-consensus = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-payload-builder = { workspace = true }
@@ -43,43 +42,44 @@ indexmap = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-prune-types = { workspace = true, optional = true }
-schnellru = { workspace = true, features = ["default"] }
 reth-static-file = { workspace = true, optional = true }
+schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, features = ["common"] }
 moka = { workspace = true, features = ["default", "sync"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-execution-chainspec = { workspace = true, optional = true }
+base-common-chain-config = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-execution-trie = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
+reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, optional = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
 base-execution-evm = { workspace = true, features = ["metrics", "optional-balance-check", "optional-no-base-fee"] }
+
 [dev-dependencies]
 reth-db-api = { workspace = true }
-reth-db-common = { workspace = true }
 assert_matches = { workspace = true }
+reth-db-common = { workspace = true }
 base-common-evm = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-static-file = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"] }
 proptest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-tracing = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
@@ -93,7 +93,7 @@ reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 test-utils = [
-    "dep:base-execution-chainspec",
+    "dep:base-common-chain-config",
     "reth-chain-state/test-utils",
     "base-execution-consensus/test-utils",
     "reth-db/test-utils",

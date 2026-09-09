@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, U64, hex::decode, uint};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use base_common_types_rpc::BlockTransactionsKind;
 use base_common_types_rpc::{
@@ -20,7 +21,6 @@ use base_evm_handler::{
     Database, DatabaseCommit,
     database::{BundleRetention, State},
 };
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
 use base_execution_txpool::TransactionPool;
 use futures::Stream;

@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
+use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_types_chain::{
@@ -13,7 +14,6 @@ use base_common_types_chain::{
 use base_common_types_rpc::{
     BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt, TransactionReceiptFields,
 };
-use base_execution_chainspec::ChainSpecProvider;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_storage_api::BlockReader;
@@ -391,12 +391,12 @@ impl BaseReceiptBuilder {
 mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, Block, BlockBody, Eip658Value, TxEip7702,
         transaction::TransactionMeta,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
 
     use super::*;

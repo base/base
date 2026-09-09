@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_hardforks::{ForkId, Head};
 use alloy_primitives::{B256, U256, hex};
 use alloy_rlp::{BufMut, Encodable, RlpDecodable, RlpEncodable};
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::{BlockRangeUpdate, EthVersion};
@@ -784,7 +784,7 @@ mod tests {
             (base_common_chain_config::BaseUpgrade::Granite, ForkCondition::Timestamp(13)),
         ];
 
-        let mut chainspec = base_execution_chainspec::BaseChainSpecBuilder::default()
+        let mut chainspec = base_common_chain_config::BaseChainSpecBuilder::default()
             .genesis(genesis)
             .chain(Chain::from_id(1337));
 

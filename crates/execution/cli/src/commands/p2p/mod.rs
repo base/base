@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::BlockHashOrNumber;
 use backon::Retryable;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::p2p::{DownloadArgs, enode, rlpx};
 use reth_cli_util::hash_or_num_value_parser;

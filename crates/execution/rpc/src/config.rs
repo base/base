@@ -10,10 +10,10 @@ use alloy_eips::{
 };
 use alloy_primitives::Address;
 use base_common_chain_config::Upgrades;
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::BlockHeader;
 use base_evm_handler::Precompile;
 use base_evm_handler::database::EmptyDB;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::{BaseEvmConfig, Evm, PrecompilesMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_primitives_traits::header::HeaderMut;
@@ -204,7 +204,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_eips::{eip4844::BLOB_TX_MIN_BLOB_GASPRICE, eip7910::SystemContract};
-    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_common_chain_config::BaseChainSpecBuilder;
 
     use super::BaseForkConfig;
 

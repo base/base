@@ -75,14 +75,13 @@ base-common-types-payload = { workspace = true, features = ["std"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 prometheus-scraper = { version = "0.2.0", default-features = false }
-base-common-chain-config = {workspace = true, features = ["default"]}
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
+base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
@@ -107,10 +106,10 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 [features]
-default = [ "upgrade-signal" ]
+default = ["upgrade-signal"]
 # The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
 # contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
 # time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
 # dependency. External consumers that only need the core L1+L2 stack disable this feature
 # (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
-upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
+upgrade-signal = ["base-test-utils/contracts", "dep:base-test-utils"]

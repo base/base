@@ -2,8 +2,8 @@
 
 use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
-use base_common_types_chain::{BaseTxEnvelope, BlockHeader, Transaction as _};
 use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
+use base_common_types_chain::{BaseTxEnvelope, BlockHeader, Transaction as _};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, BlockOverrides, BlockTransactionsKind,
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
@@ -308,7 +308,7 @@ where
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
-        > + base_execution_chainspec::ChainSpecProvider
+        > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -424,7 +424,7 @@ where
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
-        > + base_execution_chainspec::ChainSpecProvider
+        > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -505,7 +505,7 @@ where
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
-        > + base_execution_chainspec::ChainSpecProvider
+        > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync

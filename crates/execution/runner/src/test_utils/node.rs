@@ -4,8 +4,8 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
+use base_common_chain_config::BaseChainSpec;
 use base_common_network::Base;
-use base_execution_chainspec::BaseChainSpec;
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
 use reth_db::{
@@ -166,10 +166,10 @@ mod tests {
 
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::B256;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_payload::{
         BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, ForkchoiceState, PayloadAttributes,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use base_node_core::{BaseNode, NodeConfig, RollupArgs};
     use base_test_utils::build_test_genesis;

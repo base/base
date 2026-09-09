@@ -9,7 +9,7 @@ use std::{
 
 use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
-use base_execution_chainspec::ChainSpecProvider;
+use base_common_chain_config::ChainSpecProvider;
 use base_execution_evm::CancelOnDrop;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,

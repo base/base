@@ -610,9 +610,9 @@ mod tests {
 
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_evm_handler::{database::BundleState, state::AccountInfo};
-    use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
 

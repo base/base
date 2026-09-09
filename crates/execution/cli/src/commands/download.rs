@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::Parser;
 use eyre::Result;
 use futures::StreamExt;

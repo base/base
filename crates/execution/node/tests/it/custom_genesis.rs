@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
+use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_types_chain::BlockHeader;
-use base_common_types_rpc::BlockNumberOrTag;
 use base_common_types_payload::ForkchoiceState;
-use base_execution_chainspec::BaseChainSpecBuilder;
+use base_common_types_rpc::BlockNumberOrTag;
 use base_node_core::NodeConfig;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{

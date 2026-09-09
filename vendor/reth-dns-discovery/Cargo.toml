@@ -24,8 +24,8 @@ serde = { workspace = true, optional = true }
 dashmap = { workspace = true, features = ["inline"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
-tokio-stream = { workspace = true, features = ["default"] }
 reth-tokio-util = { workspace = true, features = ["time"] }
+tokio-stream = { workspace = true, features = ["default"] }
 data-encoding = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 tokio = { workspace = true, features = ["io-util", "net", "time"] }
@@ -33,15 +33,17 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 hickory-resolver = { workspace = true, features = ["default", "tokio"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "serde"] }
+
 [dev-dependencies]
 alloy-chains = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
+
 [features]
 serde = [
     "dep:serde",

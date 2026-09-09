@@ -14,38 +14,42 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+bytes = { workspace = true }
 either = { workspace = true }
 alloy-rlp = { workspace = true }
-thiserror = { workspace = true }
 auto_impl = { workspace = true }
+thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-tx-macros = { workspace = true }
+modular-bitfield = { workspace = true  }
 reth-codecs-derive = { workspace = true }
 visibility = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
-modular-bitfield = { workspace = true, optional = false }
+alloy-trie = { workspace = true,  features = ["ethereum"]}
 reth-zstd-compressors = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "alloc"]  }
 c-kzg = { workspace = true, features = ["serde"], optional = true }
 borsh = { workspace = true, features = ["derive"], optional = true }
-bytes = { workspace = true }
+alloy-eips = { workspace = true, features = ["serde", "kzg-sidecar"]}
 rand_08 = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
-alloy-primitives = { workspace = true, features = ["rlp", "map-foldhash"] }
-alloy-trie = { workspace = true, optional = false, features = ["ethereum"]}
-serde = { workspace = true, features = ["derive", "alloc"], optional = false }
-serde_with = { workspace = true, optional = true, features = ["default", "macros"] }
-alloy-eips = { workspace = true, features = ["serde", "kzg-sidecar"],optional = false}
-parity-scale-codec = { workspace = true, features = ["default", "bytes"], optional = true }
 once_cell = { workspace = true, features = [
-    "critical-section",
     "race",
     "alloc",
 ] }
+alloy-primitives = { workspace = true, features = ["rlp", "map-foldhash"] }
+serde_with = { workspace = true, optional = true, features = ["default", "macros"] }
 k256 = { workspace = true, features = [
     "ecdsa",
     "ecdsa",
+], optional = true }
+parity-scale-codec = { workspace = true, features = ["default", "bytes"], optional = true }
+secp256k1 = { workspace = true, features = [
+    "recovery",
+    "global-context",
+    "std",
 ], optional = true }
 derive_more = { workspace = true, features = [
     "as_ref",
@@ -55,22 +59,18 @@ derive_more = { workspace = true, features = [
     "deref_mut",
     "into_iterator",
 ] }
-secp256k1 = { workspace = true, features = [
-    "recovery",
-    "global-context",
-    "std",
-], optional = true }
+
 [dev-dependencies]
 test-fuzz = { workspace = true }
 alloy-signer = { workspace = true }
 assert_matches_1_5 = { workspace = true }
 base-common-network = { workspace = true }
-proptest-arbitrary-interop = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
+proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"]}
 rand_08 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"]}
 arbitrary = { workspace = true, features = ["derive"] }
 proptest = { workspace = true, features = ["default"] }
 bincode = { workspace = true, features = ["default", "serde"] }
@@ -138,9 +138,22 @@ serde = [
     "alloy-tx-macros/serde",
 ]
 serde-bincode-compat = ["serde_with", "alloy-eips/serde-bincode-compat"]
-reth = ["dep:reth-zstd-compressors", "k256", "serde", "serde-bincode-compat", "std", "alloy"]
+reth = [
+    "dep:reth-zstd-compressors",
+    "k256",
+    "serde",
+    "serde-bincode-compat",
+    "std",
+    "alloy",
+]
 alloy = ["dep:alloy-genesis", "dep:reth-zstd-compressors"]
-test-utils = ["std", "alloy", "arbitrary", "dep:visibility", "dep:arbitrary"]
+test-utils = [
+    "std",
+    "alloy",
+    "arbitrary",
+    "dep:visibility",
+    "dep:arbitrary",
+]
 borsh = ["dep:borsh", "alloy-primitives/borsh", "alloy-eips/borsh"]
 crypto-backend = []
 secp256k1 = ["dep:secp256k1", "alloy-primitives/secp256k1"]

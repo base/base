@@ -11,6 +11,7 @@ use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
 use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
@@ -23,7 +24,6 @@ use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_node::{
     EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
 };
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, CancelOnDrop};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,

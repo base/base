@@ -7,15 +7,17 @@ use std::{
 };
 
 use alloy_eips::eip7840::BlobParams;
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 #[cfg(test)]
 use base_common_types_chain::EthereumTxEnvelope;
 #[cfg(test)]
 use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
-use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt};
+use base_common_types_chain::{
+    BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt,
+};
 use base_common_types_rpc::TxGasAndReward;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures::{
     FutureExt, Stream, StreamExt,
     future::{Fuse, FusedFuture},

@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use base_execution_chainspec::BaseChainSpecBuilder;
+use base_common_chain_config::BaseChainSpecBuilder;
 use base_execution_trie::InitializationJob;
 use base_node_core::{
     BaseNode, NodeConfig, ProofHistory, ProofHistoryBackend, ProofsHistoryDbBackend, RollupArgs,

@@ -22,7 +22,6 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 rayon = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-trie = { workspace = true, optional = true }
@@ -35,8 +34,8 @@ alloy-rpc-types-debug = { workspace = true, optional = true }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
+base-common-chain-config = {features = ["default"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
-base-common-chain-config = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 
 [dev-dependencies]
@@ -45,20 +44,23 @@ alloy-eips = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-chain-config = { workspace = true }
-base-execution-chainspec = { workspace = true, features = ["default"] }
+base-common-chain-config = {features = ["std"], workspace = true}
 base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 
 [features]
 default = ["metrics", "std"]
-metrics = ["base-common-evm/metrics", "std", "dep:metrics", "dep:reth-metrics"]
+metrics = [
+    "base-common-evm/metrics",
+    "std",
+    "dep:metrics",
+    "dep:reth-metrics",
+]
 std = [
     "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "base-common-chain-config/std",
     "base-common-evm/std",
-    "base-execution-chainspec/std",
     "base-evm-handler/std",
     "reth-primitives-traits/std",
     "thiserror/std",

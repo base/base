@@ -161,7 +161,7 @@ impl NetworkManager {
     /// use reth_network::{NetworkConfig, NetworkManager};
     /// use reth_tasks::Runtime;
     /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
-    ///     .build_with_noop_provider(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+    ///     .build_with_noop_provider(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     /// let manager = NetworkManager::eth(config).await;
     /// # }
     /// ```

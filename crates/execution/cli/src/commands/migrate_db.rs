@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_alloy_consensus::OpPrimitives;
-use base_execution_chainspec::{BaseChainSpec, OpChainSpec};
+use base_common_chain_config::{BaseChainSpec, OpChainSpec};
 use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 

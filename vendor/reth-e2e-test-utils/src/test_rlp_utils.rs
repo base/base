@@ -6,11 +6,11 @@ use alloy_eips::eip4895::Withdrawals;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B64, B256, U256};
 use alloy_rlp::Encodable;
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
     constants::EMPTY_WITHDRAWALS,
 };
-use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::{Block as BlockTrait, SealedBlock};
 use tracing::debug;
 

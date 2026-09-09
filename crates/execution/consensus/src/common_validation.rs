@@ -3,8 +3,8 @@
 use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::B256;
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
-use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::{
     BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
@@ -435,17 +435,19 @@ pub fn validate_against_parent_4844<H: BlockHeader>(
 mod tests {
     use alloy_eips::eip4895::Withdrawals;
     use alloy_primitives::{Bytes, Signature, U256};
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::{BlockBody, Header};
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_primitives_traits::proofs;
 
     use super::*;
 
     fn mock_tx(nonce: u64) -> base_common_types_chain::BaseTxEnvelope {
-        base_common_types_chain::BaseTxEnvelope::Legacy(base_common_types_chain::Signed::new_unhashed(
-            base_common_types_chain::TxLegacy { nonce, ..Default::default() },
-            Signature::new(U256::ZERO, U256::ZERO, true),
-        ))
+        base_common_types_chain::BaseTxEnvelope::Legacy(
+            base_common_types_chain::Signed::new_unhashed(
+                base_common_types_chain::TxLegacy { nonce, ..Default::default() },
+                Signature::new(U256::ZERO, U256::ZERO, true),
+            ),
+        )
     }
 
     #[test]

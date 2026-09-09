@@ -9,8 +9,8 @@ use std::{
 
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics};
 use num_traits::Zero;
@@ -738,8 +738,8 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, hex_literal::hex, keccak256};
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_evm_handler::database::{AccountStatus, BundleAccount};
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use reth_db_api::{
         models::metadata::StorageSettings,

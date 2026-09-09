@@ -298,16 +298,16 @@ mod tests {
         eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_CODE},
     };
     use alloy_primitives::{B256, U256, keccak256};
+    use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_evm::L1BlockInfo;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
         SystemAddresses, TxDeposit,
     };
-    use base_common_evm::L1BlockInfo;
     use base_evm_handler::{
         database::{BundleState, CacheDB, EmptyDB},
         state::{AccountInfo, Bytecode},
     };
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
     use reth_tasks::Runtime;
 

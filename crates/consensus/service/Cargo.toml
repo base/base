@@ -72,7 +72,6 @@ alloy-transport-http = { workspace = true, features = ["default", "reqwest", "re
 mockall = { workspace = true }
 arbitrary = { workspace = true }
 base-common-network = { workspace = true }
-base-execution-chainspec = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
@@ -87,7 +86,7 @@ base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
-base-common-chain-config = { workspace = true, features = ["test-utils"] }
+base-common-chain-config = {features = ["test-utils"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["arbitrary", "std"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
 

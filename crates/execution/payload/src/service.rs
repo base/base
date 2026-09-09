@@ -11,8 +11,8 @@ use std::{
 };
 
 use alloy_primitives::{B256, BlockTimestamp};
-use base_common_types_payload::PayloadId;
 use base_common_types_chain::BlockHeader;
+use base_common_types_payload::PayloadId;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadBuilderError, PayloadEvents,
     PayloadKind,
@@ -211,7 +211,7 @@ pub struct PayloadBuilderService<Client, Pool, St>
 where
     Client: reth_storage_api::StateProviderFactory
         + reth_storage_api::BlockReaderIdExt
-        + base_execution_chainspec::ChainSpecProvider
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Unpin
         + 'static,
@@ -249,7 +249,7 @@ impl<Client, Pool, St> PayloadBuilderService<Client, Pool, St>
 where
     Client: reth_storage_api::StateProviderFactory
         + reth_storage_api::BlockReaderIdExt
-        + base_execution_chainspec::ChainSpecProvider
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Unpin
         + 'static,
@@ -403,7 +403,7 @@ impl<Client, Pool, St> Future for PayloadBuilderService<Client, Pool, St>
 where
     Client: reth_storage_api::StateProviderFactory
         + reth_storage_api::BlockReaderIdExt
-        + base_execution_chainspec::ChainSpecProvider
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Unpin
         + 'static,
@@ -677,12 +677,13 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use alloy_primitives::Address;
-    use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseBlock, Header};
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BaseOrdering, BaseTransactionPool, BaseTransactionValidator, EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
+        BaseOrdering, BaseTransactionPool, BaseTransactionValidator,
+        EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
     };
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::Runtime;
@@ -709,9 +710,12 @@ mod tests {
                     parent.hash_slow(),
                     BaseBlock { header: parent, body: Default::default() },
                 );
-                let validator = EthTransactionValidatorBuilder::new(provider.clone(), BaseEvmConfig::new(chain_spec.clone()))
-                    .build_with_tasks(Runtime::test())
-                    .map(BaseTransactionValidator::new);
+                let validator = EthTransactionValidatorBuilder::new(
+                    provider.clone(),
+                    BaseEvmConfig::new(chain_spec.clone()),
+                )
+                .build_with_tasks(Runtime::test())
+                .map(BaseTransactionValidator::new);
                 let pool = Pool::new(
                     validator,
                     BaseOrdering::default(),
@@ -719,7 +723,8 @@ mod tests {
                     Default::default(),
                 );
                 let pool = BaseTransactionPool::new(pool, BaseOrdering::default());
-                let builder = BasePayloadBuilder::new(pool, provider.clone(), BaseEvmConfig::new(chain_spec));
+                let builder =
+                    BasePayloadBuilder::new(pool, provider.clone(), BaseEvmConfig::new(chain_spec));
                 let generator = BasicPayloadJobGenerator::with_builder(
                     provider,
                     Runtime::test(),

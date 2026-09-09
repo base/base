@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
 use base_cli_utils::CliRunner;
+use base_common_chain_config::BaseChainSpec;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 use base_consensus_engine::LocalEngineClient;
 use base_consensus_providers::{L1RpcProvider, LocalL2Provider};
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::builder::TypedValueParser;
 
 #[derive(Debug, Clone)]
@@ -67,4 +67,3 @@ pub trait ChainSpecParser: Clone + Send + Sync + 'static {
         )
     }
 }
-

@@ -47,8 +47,8 @@ mod tests {
         B256, BlockNumber, Signature, U256, address, hex_literal::hex, keccak256,
     };
     use alloy_rlp::Decodable;
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, SignableTransaction, TxLegacy};
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use base_execution_evm::BaseEvmConfig;
     use reth_db::mdbx::{RW, cursor::Cursor};

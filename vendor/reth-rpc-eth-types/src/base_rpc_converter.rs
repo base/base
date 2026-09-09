@@ -1,6 +1,7 @@
 //! Concrete Base transaction, receipt, log, and header conversion.
 
 use alloy_primitives::{Signature, U256};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
     transaction::Recovered,
@@ -8,7 +9,6 @@ use base_common_types_chain::{
 use base_common_types_rpc::{
     BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
 };
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::{

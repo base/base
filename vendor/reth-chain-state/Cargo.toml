@@ -35,11 +35,12 @@ parking_lot = { workspace = true, features = ["default"] }
 base-common-network = { workspace = true, optional = true }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros"] }
-base-execution-chainspec = { workspace = true, optional = true}
+base-common-chain-config = { workspace = true, optional = true}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "std"] }
+
 [dev-dependencies]
 alloy-signer = { workspace = true }
 reth-testing-utils = { workspace = true }
@@ -70,5 +71,5 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-trie/test-utils",
     "reth-trie-sparse/test-utils",
-    "dep:base-execution-chainspec",
+    "dep:base-common-chain-config",
 ]

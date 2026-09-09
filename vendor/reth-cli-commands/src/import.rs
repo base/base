@@ -2,7 +2,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::ChainSpecParser;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
 use reth_node_core::version::version_metadata;
 use tracing::info;

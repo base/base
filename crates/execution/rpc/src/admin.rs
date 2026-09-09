@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::AdminApiServer;
 use alloy_genesis::ChainConfig;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::keccak256;
@@ -8,13 +9,12 @@ use alloy_rpc_types_admin::{
     Ports, ProtocolInfo,
 };
 use async_trait::async_trait;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::core::RpcResult;
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_peers::{AnyNode, NodeRecord};
 use reth_network_types::PeerKind;
-use crate::AdminApiServer;
 use reth_rpc_server_types::ToRpcResult;
 
 /// `admin` API implementation.

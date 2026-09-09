@@ -1726,6 +1726,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
@@ -1733,7 +1734,6 @@ mod tests {
         Eip8130Constants, Eip8130Signed, SignableTransaction, Transaction, TxEip1559, TxEip8130,
         transaction::{Recovered, SignerRecoverable},
     };
-    use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
         CanonicalStateUpdate, EthTransactionValidatorBuilder, InMemoryBlobStore, PoolConfig,

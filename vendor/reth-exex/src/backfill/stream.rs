@@ -232,10 +232,10 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, TxKind, U256, b256};
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use eyre::Result;
     use futures::StreamExt;
     use reth_db_common::init::init_genesis;

@@ -10,10 +10,10 @@
 
 use std::path::PathBuf;
 
+use base_common_chain_config::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
-use futures::Stream;
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::BaseEngineValidator;
+use futures::Stream;
 use reth_engine_primitives::BeaconEngineMessage;
 use tokio_util::either::Either;
 
@@ -137,12 +137,18 @@ pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
     {
         if let Some(frequency) = frequency {
             let validator = BaseEngineValidator::new(provider.chain_spec());
-            Either::Left(EngineReorg::new(self, provider, evm_config, validator, frequency, depth.unwrap_or_default()))
+            Either::Left(EngineReorg::new(
+                self,
+                provider,
+                evm_config,
+                validator,
+                frequency,
+                depth.unwrap_or_default(),
+            ))
         } else {
             Either::Right(self)
         }
     }
-
 }
 
 impl<S> EngineMessageStreamExt for S where S: Stream<Item = BeaconEngineMessage> {}

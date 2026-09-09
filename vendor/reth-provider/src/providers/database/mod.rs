@@ -13,10 +13,10 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
-use base_execution_chainspec::BaseChainSpec;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use reth_db::{init_db, mdbx::DatabaseArguments};
@@ -1010,7 +1010,7 @@ mod tests {
 
     use alloy_primitives::{B256, TxNumber};
     use assert_matches::assert_matches;
-    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_common_chain_config::BaseChainSpecBuilder;
     use reth_db::{
         mdbx::DatabaseArguments,
         test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},

@@ -18,19 +18,19 @@ workspace = true
 [dependencies]
 tokio = { workspace = true }
 metrics = { workspace = true }
-thiserror = { workspace = true }
 rmp-serde = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 reth-config = { workspace = true }
-reth-network = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
+reth-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
-reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
+reth-prune-types = { workspace = true }
 base-node-context = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -41,16 +41,17 @@ itertools = { workspace = true, features = ["use_std"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
+
 [dev-dependencies]
 alloy-genesis = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

@@ -344,7 +344,7 @@ mod tests {
         let mut rng = generators::rng();
         let provider_factory = ProviderFactory::new(
             create_test_rw_db(),
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
             StaticFileProviderBuilder::read_write(create_test_static_files_dir().0.keep())
                 .with_blocks_per_file(1)
                 .build()

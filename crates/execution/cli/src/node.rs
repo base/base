@@ -3,7 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use base_cli_utils::CliContext;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_node_core::{NodeHandle, NodeLaunch};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};

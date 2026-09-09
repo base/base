@@ -15,13 +15,13 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use assert_matches::assert_matches;
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BaseBlock;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
     ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
     PayloadAttributes as EthPayloadAttributes,
 };
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::PayloadServiceCommand;
@@ -477,7 +477,7 @@ impl TestBlockFactory {
 #[test]
 fn test_tree_persist_block_batch() {
     let tree_config = TreeConfig::default();
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
 
     // we need more than tree_config.persistence_threshold() +1 blocks to
@@ -517,7 +517,7 @@ fn test_tree_persist_block_batch() {
 #[tokio::test]
 async fn test_tree_persist_blocks() {
     let tree_config = TreeConfig::default();
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
 
     // we need more than tree_config.persistence_threshold() +1 blocks to
@@ -550,7 +550,7 @@ async fn test_tree_persist_blocks() {
 fn on_new_persisted_block_queues_sparse_trie_prune_request() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(blocks.clone());
     let persisted = blocks[0].recovered_block().num_hash();
     test_harness.tree.persistence_state.finish(persisted, persisted);
@@ -564,7 +564,7 @@ fn on_new_persisted_block_queues_sparse_trie_prune_request() {
 fn on_new_persisted_block_queues_sparse_trie_prune_with_in_memory_blocks() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(blocks.clone());
     let persisted = blocks[0].recovered_block().num_hash();
     test_harness.tree.persistence_state.finish(persisted, persisted);
@@ -585,7 +585,7 @@ fn on_new_persisted_block_skips_sparse_trie_prune_when_state_root_task_disabled(
 
     for config in configs {
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ))
         .with_blocks(blocks.clone());
         test_harness.tree.config = config;
@@ -622,7 +622,7 @@ fn persistence_handoff_waits_for_active_payload_jobs() {
         .with_memory_block_buffer_target(0);
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness = TestHarness::with_config(
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
         config,
     )
     .with_blocks(blocks.clone());
@@ -670,7 +670,7 @@ fn persistence_handoff_waits_for_active_payload_jobs() {
 fn pending_persisted_handoff_keeps_engine_messages_responsive() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness = TestHarness::with_config(
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
         TreeConfig::default().with_has_enough_parallelism(true),
     )
     .with_blocks(blocks.clone());
@@ -717,7 +717,7 @@ fn pending_persisted_handoff_keeps_engine_messages_responsive() {
 fn persist_until_complete_updates_frontiers_without_in_memory_handoff() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(blocks.clone());
     let persisted = blocks.last().unwrap().recovered_block().num_hash();
     let persisted_hash = persisted.hash;
@@ -746,7 +746,7 @@ fn persist_until_complete_updates_frontiers_without_in_memory_handoff() {
 #[test]
 fn backfill_action_skips_while_payload_build_is_active() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     let payload_build = test_harness.tree.payload_builds.acquire();
     let action = BackfillAction::Start(B256::random().into());
 
@@ -768,7 +768,7 @@ fn backfill_action_skips_while_payload_build_is_active() {
 fn backfill_action_skips_while_persisted_handoff_is_pending() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness = TestHarness::with_config(
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
         TreeConfig::default().with_has_enough_parallelism(true),
     )
     .with_blocks(blocks.clone());
@@ -808,7 +808,7 @@ fn configured_persistence_suppression_tracks_payload_job_lifetime() {
         .with_suppress_persistence_during_build(true);
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let test_harness = TestHarness::with_config(
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
         config,
     )
     .with_blocks(blocks);
@@ -823,7 +823,7 @@ fn configured_persistence_suppression_tracks_payload_job_lifetime() {
 #[test]
 fn remove_blocks_clears_pending_sparse_trie_prune_request() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     test_harness.tree.persistence_state.last_persisted_block =
         BlockNumHash { hash: B256::random(), number: 10 };
     test_harness.tree.state.set_pending_sparse_trie_prune(true);
@@ -841,7 +841,7 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
         .with_share_sparse_trie_with_payload_builder(true);
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..2).collect();
     let mut test_harness = TestHarness::with_config(
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
         config,
     )
     .with_blocks(blocks);
@@ -883,7 +883,7 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
 async fn test_in_memory_state_trait_impl() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(0..10).collect();
     let test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(blocks.clone());
 
     for executed_block in blocks {
@@ -911,7 +911,7 @@ async fn test_engine_request_during_backfill() {
         .get_executed_blocks(0..tree_config.persistence_threshold())
         .collect();
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(blocks)
             .with_backfill_state(BackfillSyncState::Active);
 
@@ -948,7 +948,7 @@ fn test_disconnected_payload() {
     let payload = ExecutionPayloadV1::from_block_unchecked(hash, &block);
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()));
 
     let outcome = test_harness
         .tree
@@ -973,7 +973,7 @@ fn test_disconnected_block() {
     let sealed = block.seal_slow();
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()));
 
     let outcome = test_harness.tree.insert_block(sealed.clone()).unwrap();
     assert_eq!(
@@ -995,7 +995,7 @@ fn test_validated_payload_bal_is_inserted_into_store() {
     let raw_bal = Bytes::from_static(&[0xc0]);
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(vec![parent]);
     let bal_store = BalStoreHandle::new(InMemoryBalStore::default());
     test_harness.tree.provider.bal_store = bal_store.clone();
@@ -1030,7 +1030,7 @@ async fn test_holesky_payload() {
     let payload = ExecutionPayloadV1::from_block_unchecked(hash, &block);
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()))
             .with_backfill_state(BackfillSyncState::Active);
 
     let (tx, rx) = oneshot::channel();
@@ -1057,7 +1057,7 @@ async fn test_holesky_payload() {
 fn test_backpressure_waits_for_persistence_before_reading_incoming() {
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(1..4).collect();
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(blocks.clone());
     test_harness.tree.config = test_harness
         .tree
@@ -1131,7 +1131,7 @@ fn test_backpressure_excludes_in_memory_buffer() {
         let blocks: Vec<_> =
             TestBlockBuilder::eth().get_executed_blocks(1..canonical_tip + 1).collect();
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ))
         .with_blocks(blocks.clone());
         test_harness.tree.config = test_harness
@@ -1152,7 +1152,7 @@ fn test_backpressure_excludes_in_memory_buffer() {
 #[tokio::test]
 async fn test_tree_state_on_new_head_reorg() {
     reth_tracing::init_test_tracing();
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
 
     // Set persistence_threshold to 1
     let mut test_harness = TestHarness::new(chain_spec);
@@ -1278,7 +1278,7 @@ async fn test_tree_state_on_new_head_reorg() {
 fn test_tree_state_on_new_head_deep_fork() {
     reth_tracing::init_test_tracing();
 
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
     let mut test_block_builder = TestBlockBuilder::eth();
 
@@ -1343,7 +1343,7 @@ fn test_tree_state_on_new_head_deep_fork() {
 
 #[tokio::test]
 async fn test_get_canonical_blocks_to_persist() {
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
     let mut test_block_builder = TestBlockBuilder::eth();
 
@@ -1408,7 +1408,7 @@ async fn test_get_canonical_blocks_to_persist() {
 #[test]
 fn test_threshold_persistence_with_state_masking_blocks() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     let blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(0..9).collect();
     test_harness = test_harness.with_blocks(blocks.clone());
     test_harness.tree.persistence_state.last_state_trie_persisted_block =
@@ -1456,7 +1456,7 @@ fn test_threshold_persistence_with_state_masking_blocks() {
 
 #[tokio::test]
 async fn test_engine_tree_fcu_missing_head() {
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
 
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
@@ -1484,7 +1484,7 @@ async fn test_engine_tree_fcu_missing_head() {
 async fn test_engine_tree_live_sync_transition_required_blocks_requested() {
     reth_tracing::init_test_tracing();
 
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
 
     let base_chain: Vec<_> = test_harness.block_builder.get_executed_blocks(0..1).collect();
@@ -1558,7 +1558,7 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
     // This was causing "nonce too low" errors when discard_reorged_transactions is enabled
 
     reth_tracing::init_test_tracing();
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
 
     // Create test harness
     let mut test_harness = TestHarness::new(chain_spec.clone());
@@ -1636,7 +1636,7 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
 #[tokio::test]
 async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
     reth_tracing::init_test_tracing();
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
     let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..5).collect();
@@ -1715,7 +1715,7 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 #[tokio::test]
 async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build() {
     reth_tracing::init_test_tracing();
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
     let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
     let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..5).collect();
@@ -1780,7 +1780,7 @@ fn test_on_new_payload_canonical_insertion() {
     let payload1 = ExecutionPayloadV1::from_block_unchecked(hash1, &block1);
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()));
 
     // Case 1: Submit payload when NOT sync target head - should be syncing (disconnected)
     let outcome1 = test_harness
@@ -1810,7 +1810,7 @@ fn test_on_new_payload_invalid_ancestor() {
 
     // Use Holesky test data
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()));
 
     // Read block 1 from test data
     let s1 = include_str!("../../test-data/holesky/1.rlp");
@@ -1885,7 +1885,7 @@ fn test_on_new_payload_backfill_buffering() {
 
     // Initialize test harness with backfill sync active
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()))
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()))
             .with_backfill_state(BackfillSyncState::Active);
 
     // Submit payload during backfill
@@ -1920,7 +1920,7 @@ fn test_on_new_payload_malformed_payload() {
     reth_tracing::init_test_tracing();
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()));
 
     // Use test data
     let s = include_str!("../../test-data/holesky/1.rlp");
@@ -1969,7 +1969,7 @@ fn test_state_root_strategy_paths() {
     reth_tracing::init_test_tracing();
 
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
 
     // Test multiple scenarios to ensure different state-root job paths are taken:
     // 1. The default strategy spawns the sparse-trie state-root task.
@@ -2040,7 +2040,7 @@ fn test_validate_block_synchronous_strategy_during_persistence() {
     reth_tracing::init_test_tracing();
 
     let mut test_harness = ValidatorTestHarness::new(std::sync::Arc::new(
-        base_execution_chainspec::BaseChainSpec::mainnet(),
+        base_common_chain_config::BaseChainSpec::mainnet(),
     ));
 
     // Set up persistence action to force `Synchronous` strategy
@@ -2055,9 +2055,9 @@ fn test_validate_block_synchronous_strategy_during_persistence() {
 
     // Create valid block
     let mut block_factory =
-        TestBlockFactory::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        TestBlockFactory::new(base_common_chain_config::BaseChainSpec::mainnet());
     let genesis_hash =
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).genesis_hash();
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()).genesis_hash();
     let valid_block = block_factory.create_valid_block(genesis_hash);
 
     // Test that Synchronous strategy executes during active persistence without panicking
@@ -2072,12 +2072,12 @@ fn test_validate_block_multiple_scenarios() {
 
     // Test multiple scenarios to ensure comprehensive coverage
     let mut test_harness = ValidatorTestHarness::new(std::sync::Arc::new(
-        base_execution_chainspec::BaseChainSpec::mainnet(),
+        base_common_chain_config::BaseChainSpec::mainnet(),
     ));
     let mut block_factory =
-        TestBlockFactory::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        TestBlockFactory::new(base_common_chain_config::BaseChainSpec::mainnet());
     let genesis_hash =
-        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).genesis_hash();
+        std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()).genesis_hash();
 
     // Scenario 1: Valid block validation (test execution, not result)
     let valid_block = block_factory.create_valid_block(genesis_hash);
@@ -2113,7 +2113,7 @@ mod check_invalid_ancestors_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Create a valid block payload
@@ -2141,7 +2141,7 @@ mod check_invalid_ancestors_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Read block 1
@@ -2193,7 +2193,7 @@ mod check_invalid_ancestors_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Create a genesis-like payload with parent_hash = B256::ZERO
@@ -2219,7 +2219,7 @@ mod check_invalid_ancestors_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Mark an ancestor as invalid
@@ -2252,7 +2252,7 @@ mod check_invalid_ancestors_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Read block 1
@@ -2321,7 +2321,7 @@ mod payload_execution_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Create a valid payload
@@ -2348,7 +2348,7 @@ mod payload_execution_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Create a malformed payload that will fail validation
@@ -2370,7 +2370,7 @@ mod payload_execution_tests {
         reth_tracing::init_test_tracing();
 
         let mut test_harness = TestHarness::new(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
         // Create a valid payload
@@ -2427,7 +2427,7 @@ mod forkchoice_updated_tests {
     /// Test that validates the forkchoice state pre-validation logic
     #[tokio::test]
     async fn test_validate_forkchoice_state() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
 
         // Test 1: Zero head block hash should return early with invalid state
@@ -2473,7 +2473,7 @@ mod forkchoice_updated_tests {
     /// Test that verifies canonical head handling
     #[tokio::test]
     async fn test_handle_canonical_head() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
 
         // Create test blocks
@@ -2509,7 +2509,7 @@ mod forkchoice_updated_tests {
     /// Test that verifies chain update application
     #[tokio::test]
     async fn test_apply_chain_update() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
 
         // Create a chain of blocks
@@ -2545,7 +2545,7 @@ mod forkchoice_updated_tests {
     /// Test that verifies missing block handling
     #[tokio::test]
     async fn test_handle_missing_block() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let test_harness = TestHarness::new(chain_spec);
 
         let state = ForkchoiceState {
@@ -2576,7 +2576,7 @@ mod forkchoice_updated_tests {
     async fn test_on_forkchoice_updated_integration() {
         reth_tracing::init_test_tracing();
 
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
 
         // Create test blocks
@@ -2624,7 +2624,7 @@ mod forkchoice_updated_tests {
     /// Test edge case: FCU with invalid ancestor
     #[tokio::test]
     async fn test_fcu_with_invalid_ancestor() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
 
         // Mark a block as invalid
@@ -2644,7 +2644,7 @@ mod forkchoice_updated_tests {
     /// Test `OpStack` specific behavior with canonical head
     #[tokio::test]
     async fn test_opstack_canonical_head_behavior() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_harness = TestHarness::new(chain_spec);
 
         // Set engine kind to OpStack
@@ -2670,11 +2670,14 @@ mod forkchoice_updated_tests {
 
     #[test]
     fn test_update_reorg_metrics() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let test_harness = TestHarness::new(chain_spec);
 
         let seal_header = |number: u64| {
-            SealedHeader::seal_slow(base_common_types_chain::Header { number, ..Default::default() })
+            SealedHeader::seal_slow(base_common_types_chain::Header {
+                number,
+                ..Default::default()
+            })
         };
 
         // Set finalized=30, safe=50 to test all three commitment levels
@@ -2694,7 +2697,7 @@ mod forkchoice_updated_tests {
     /// Test that engine termination persists all blocks and signals completion.
     #[test]
     fn test_engine_termination_with_everything_persisted() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
 
         // Create 10 blocks to persist
@@ -2744,7 +2747,7 @@ mod forkchoice_updated_tests {
 
     #[test]
     fn test_engine_termination_catches_up_state_trie_at_database_tip() {
-        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         let mut test_block_builder = TestBlockBuilder::eth().with_chain_spec((*chain_spec).clone());
         let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..11).collect();
         let database_tip = blocks.last().unwrap().recovered_block().num_hash();
@@ -2798,7 +2801,7 @@ mod forkchoice_updated_tests {
 fn test_on_valid_downloaded_non_head_sync_target_continues_to_head() {
     reth_tracing::init_test_tracing();
 
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
 
     // Build blocks: genesis (0) and safe block (1).
@@ -2866,7 +2869,7 @@ fn test_on_valid_downloaded_non_head_sync_target_continues_to_head() {
 fn test_on_valid_downloaded_head_sync_target_returns_make_canonical() {
     reth_tracing::init_test_tracing();
 
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
 
     let blocks: Vec<_> = test_harness.block_builder.get_executed_blocks(0..2).collect();
@@ -2911,7 +2914,7 @@ fn test_on_valid_downloaded_head_sync_target_returns_make_canonical() {
 fn test_canonicalizing_downloaded_sync_target_head_updates_finalized() {
     reth_tracing::init_test_tracing();
 
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec);
 
     let blocks: Vec<_> = test_harness.block_builder.get_executed_blocks(0..3).collect();
@@ -2977,7 +2980,7 @@ fn test_canonicalizing_downloaded_sync_target_head_updates_finalized() {
 #[test]
 fn test_backfill_target_hash_eth_returns_finalized() {
     let test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     let head = B256::from([0xAA; 32]);
     let finalized = B256::from([0xBB; 32]);
     let state = ForkchoiceState {
@@ -2992,7 +2995,7 @@ fn test_backfill_target_hash_eth_returns_finalized() {
 #[test]
 fn test_backfill_target_hash_eth_returns_zero_finalized() {
     let test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     let head = B256::from([0xAA; 32]);
     let state = ForkchoiceState {
         head_block_hash: head,
@@ -3006,7 +3009,7 @@ fn test_backfill_target_hash_eth_returns_zero_finalized() {
 #[test]
 fn test_backfill_target_hash_opstack_returns_head() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     test_harness.tree.engine_kind = EngineApiKind::OpStack;
     let head = B256::from([0xAA; 32]);
     let finalized = B256::from([0xBB; 32]);
@@ -3023,7 +3026,7 @@ fn test_backfill_target_hash_opstack_returns_head() {
 #[test]
 fn test_backfill_sync_target_without_sync_state_returns_none() {
     let test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     assert_eq!(
         test_harness.tree.backfill_sync_target(0, MIN_BLOCKS_FOR_PIPELINE_RUN + 100, None),
         None
@@ -3035,7 +3038,7 @@ fn test_backfill_sync_target_without_sync_state_returns_none() {
 #[test]
 fn test_on_disconnected_downloaded_block_opstack_targets_head() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     test_harness.tree.engine_kind = EngineApiKind::OpStack;
 
     let head_hash = B256::from([0xAA; 32]);
@@ -3078,7 +3081,7 @@ fn test_on_disconnected_downloaded_block_opstack_targets_head() {
 #[test]
 fn test_on_disconnected_downloaded_block_eth_targets_finalized() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
 
     let head_hash = B256::from([0xAA; 32]);
     let finalized_hash = B256::from([0xBB; 32]);
@@ -3120,7 +3123,7 @@ fn test_on_disconnected_downloaded_block_eth_targets_finalized() {
 #[test]
 fn test_on_disconnected_downloaded_block_eth_zero_finalized_targets_head() {
     let mut test_harness =
-        TestHarness::new(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
+        TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
 
     let head_hash = B256::from([0xAA; 32]);
     test_harness.tree.state.forkchoice_state_tracker.set_latest(
@@ -3163,7 +3166,7 @@ fn test_on_disconnected_downloaded_block_eth_zero_finalized_targets_head() {
 async fn assert_post_backfill_recheck_retriggers_to_buffered_target(engine_kind: EngineApiKind) {
     reth_tracing::init_test_tracing();
 
-    let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+    let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
     let mut test_harness = TestHarness::new(chain_spec.clone());
     test_harness.tree.engine_kind = engine_kind;
 

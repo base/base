@@ -16,8 +16,8 @@ serde = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-serde_json = { workspace = true }
 reth-tasks = { workspace = true }
+serde_json = { workspace = true }
 base-metrics = { workspace = true }
 alloy-primitives = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -28,25 +28,22 @@ tokio-util = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
+
 [dev-dependencies]
 alloy-signer = { workspace = true }
 base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
 base-common-network = { workspace = true }
 base-common-types-chain = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 
 [features]
-default = [ "metrics" ]
-metrics = [
-	"base-metrics/metrics",
-	"base-observability-events/metrics",
-	"dep:metrics",
-]
+default = ["metrics"]
+metrics = ["base-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]

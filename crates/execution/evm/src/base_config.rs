@@ -4,6 +4,7 @@ use core::fmt::Debug;
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
@@ -20,7 +21,6 @@ use base_evm_handler::{
     database::State,
     primitives::{Address, B256, Bytes as RevmBytes},
 };
-use base_execution_chainspec::BaseChainSpec;
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
@@ -392,6 +392,7 @@ mod tests {
         map::{AddressMap, B256Map, HashMap},
     };
     use base_common_chain_config::BaseUpgrade;
+    use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_evm::BaseSpecId;
     use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
     use base_evm_context::{BlockEnv, CfgEnv};
@@ -402,7 +403,6 @@ mod tests {
         primitives::Log,
         state::AccountInfo,
     };
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
@@ -438,7 +438,7 @@ mod tests {
 
         // Build the BaseChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
         // upgrades
-        let chain_spec = base_execution_chainspec::BaseChainSpecBuilder::default()
+        let chain_spec = base_common_chain_config::BaseChainSpecBuilder::default()
             .chain(0.into())
             .genesis(Genesis::default())
             .bedrock_activated()

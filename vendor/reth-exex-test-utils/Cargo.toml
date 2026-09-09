@@ -16,8 +16,8 @@ workspace = true
 
 [dependencies]
 tokio = { workspace = true }
-thiserror = { workspace = true }
 reth-exex = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 reth-config = { workspace = true }
@@ -27,7 +27,7 @@ reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-execution-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }

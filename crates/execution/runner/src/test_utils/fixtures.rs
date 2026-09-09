@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_test_utils::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,

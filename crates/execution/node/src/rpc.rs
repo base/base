@@ -2,7 +2,7 @@
 
 use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 
-use base_execution_chainspec::ChainSpecProvider;
+use base_common_chain_config::ChainSpecProvider;
 use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::{

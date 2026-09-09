@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, TxKind, U256, b256};
+use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_chain::{
     BaseBlock, BaseBlockBody, BaseTypedTransaction, BlockHeader, Header, TxEip2930,
     constants::ETH_TO_WEI,
 };
-use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
@@ -29,14 +29,14 @@ pub(crate) fn chain_spec(address: Address) -> Arc<BaseChainSpec> {
     // provided sender
     Arc::new(
         BaseChainSpecBuilder::default()
-            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
+            .chain(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [(
                     address,
                     GenesisAccount { balance: U256::from(ETH_TO_WEI), ..Default::default() },
                 )]
                 .into(),
-                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                ..std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                     .genesis
                     .clone()
             })

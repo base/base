@@ -27,6 +27,7 @@ use base_builder_core::{
         ChainDriver, EngineApi, LocalInstance, LocalInstanceBuilder, node_config_with_chain_spec,
     },
 };
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::RollupConfig;
 use base_common_network::Base;
 use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
@@ -34,7 +35,6 @@ use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelo
 use base_consensus_node::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_txpool::BasePooledTransaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};

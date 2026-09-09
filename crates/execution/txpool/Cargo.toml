@@ -38,7 +38,6 @@ paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-precompile-storage = { workspace = true }
-base-execution-chainspec = { workspace = true }
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
@@ -57,7 +56,7 @@ reth-eth-wire-types = { workspace = true, features = ["default"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
-base-common-chain-config = {workspace = true, features = ["default"]}
+base-common-chain-config = {features = ["default"], workspace = true}
 proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
@@ -79,9 +78,9 @@ tempfile = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = {workspace = true, features = ["test-utils"]}
-base-execution-chainspec = { workspace = true, features = ["default"] }
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 tokio = { workspace = true, features = ["default", "time", "rt-multi-thread", "macros"] }

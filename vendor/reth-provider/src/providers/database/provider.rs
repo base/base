@@ -12,12 +12,12 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
     map::{AddressSet, B256Map, HashMap, hash_map},
 };
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, TxReceipt,
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_evm_handler::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
@@ -3520,9 +3520,9 @@ mod tests {
 
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
     use base_evm_handler::{database::BundleState, state::AccountInfo};
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;

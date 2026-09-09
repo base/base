@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Keccak256, U256, uint};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{Transaction as _, transaction::TxHashRef};
 use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
 use base_evm_handler::{DatabaseCommit, DatabaseRef};
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::Evm;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;

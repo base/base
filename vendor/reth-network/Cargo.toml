@@ -42,7 +42,7 @@ reth-dns-discovery = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-execution-consensus = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }

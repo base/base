@@ -5,9 +5,9 @@ use std::{
 };
 
 use alloy_chains::Chain;
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::ChainConfig;
 use base_consensus_cli::ConsensusChainArgs;
-use base_execution_chainspec::BaseChainSpec;
 use eyre::WrapErr;
 use figment::{
     Figment,

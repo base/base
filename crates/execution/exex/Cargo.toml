@@ -23,19 +23,21 @@ tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-trie = { workspace = true, features = ["serde-bincode-compat"] }
+
 [dev-dependencies]
 reth-exex-test-utils = { workspace = true }
 reth-primitives-traits = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde", "std"] }
+
 [package.metadata.cargo-udeps.ignore]
 development = [
     "reth-node-builder",
     "base-node-core",
-    "base-execution-chainspec",
+    "base-common-chain-config",
     "tempfile.workspace",
 ]
 
@@ -43,7 +45,6 @@ development = [
 test-utils = [
     "base-node-core/test-utils",
     "reth-db/test-utils",
-    "base-node-core/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "reth-trie/test-utils",

@@ -15,75 +15,75 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-url = { workspace = true }
 lz4 = { workspace = true }
-serde = { workspace = true }
+url = { workspace = true }
 rayon = { workspace = true }
-metrics = { workspace = true }
+serde = { workspace = true }
 fdlimit = { workspace = true }
+metrics = { workspace = true }
+humantime = { workspace = true }
 itertools = { workspace = true }
 reth-exex = { workspace = true }
-humantime = { workspace = true }
 alloy-eips = { workspace = true }
 reth-ecies = { workspace = true }
 reth-prune = { workspace = true }
 reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }
-reth-stages = { workspace = true }
 reth-discv5 = { workspace = true }
+reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-cli-util = { workspace = true }
 reth-eth-wire = { workspace = true }
 reth-provider = { workspace = true }
+base-cli-utils = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
-base-cli-utils = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-evm-handler = { workspace = true }
-reth-prune-types = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-node-events = { workspace = true }
+reth-prune-types = { workspace = true }
 reth-static-file = { workspace = true }
-reth-stages-types = { workspace = true }
+reth-storage-api = { workspace = true }
 reth-node-metrics = { workspace = true }
+reth-stages-types = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 arbitrary = { workspace = true, optional = true }
 socket2 = { workspace = true, features = ["all"] }
 tar = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["mdbx"] }
 eyre = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["mdbx"] }
 zstd = { workspace = true, features = ["default"] }
 blake3 = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
-reth-config = { workspace = true, features = ["serde"] }
-reth-trie-common = { workspace = true, optional = true }
-ratatui = { workspace = true, features = ["crossterm"] }
 crossterm = { workspace = true, features = ["default"] }
+ratatui = { workspace = true, features = ["crossterm"] }
+reth-config = { workspace = true, features = ["serde"] }
 reth-trie = { workspace = true, features = ["metrics"] }
+reth-trie-common = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-tracing = { workspace = true, features = ["attributes"] }
 reth-network = { workspace = true, features = ["serde"] }
-reth-discv4 = { workspace = true, features = ["default"] }
-human_bytes = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
 comfy-table = { workspace = true, features = ["default"] }
+human_bytes = { workspace = true, features = ["default"] }
+reth-discv4 = { workspace = true, features = ["default"] }
 reth-net-nat = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-static-file-types = { workspace = true, features = ["clap"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
-reth-network-peers = { workspace = true, features = ["secp256k1"] }
+reth-static-file-types = { workspace = true, features = ["clap"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
+reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default", "display"] }
@@ -113,6 +113,5 @@ arbitrary = [
     "reth-prune-types/arbitrary",
     "reth-stages-types/arbitrary",
     "reth-trie-common?/arbitrary",
-    "base-common-types-chain/arbitrary",
     "reth-primitives-traits/arbitrary",
 ]

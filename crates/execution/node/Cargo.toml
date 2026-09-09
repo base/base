@@ -79,10 +79,9 @@ reth-tracing = { workspace = true, features = ["default", "std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-base-common-chain-config = { workspace = true, features = ["default"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
+base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default", "std"] }
 base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }

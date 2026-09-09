@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use alloy_hardforks::EthereumHardforks;
+use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlockBody, BaseTxEnvelope, Header};
-use base_execution_chainspec::ChainSpecProvider;
 use reth_storage_errors::provider::ProviderResult;
 
 /// Reconstructs Base block bodies from transactions and the chain's fork schedule.

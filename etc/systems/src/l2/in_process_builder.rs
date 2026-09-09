@@ -8,7 +8,7 @@ use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use base_builder_core::{BuilderConfig, test_utils::get_available_port};
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};

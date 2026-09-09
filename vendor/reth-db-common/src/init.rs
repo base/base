@@ -5,8 +5,8 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{AddressMap, B256Map, B256Set, HashMap},
 };
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
-use base_execution_chainspec::BaseChainSpec;
 use reth_config::config::EtlConfig;
 use reth_db_api::{
     DatabaseError,
@@ -1017,7 +1017,7 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use alloy_genesis::Genesis;
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_chain_config::BaseChainSpec;
     use reth_db::DatabaseEnv;
     use reth_db_api::{
         Database,
@@ -1084,7 +1084,7 @@ mod tests {
 
         let collector = parse_accounts(&input[..], EtlConfig::new(None, 128)).unwrap();
         let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
         factory.set_storage_settings_cache(StorageSettings::v2());
         let block = 10;
@@ -1159,7 +1159,7 @@ mod tests {
 
         let collector = parse_accounts(&input[..], EtlConfig::new(None, 128)).unwrap();
         let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
         factory.set_storage_settings_cache(StorageSettings::v2());
         let static_files = factory.static_file_provider();
@@ -1241,7 +1241,7 @@ mod tests {
     #[test]
     fn success_init_genesis_mainnet() {
         let genesis_hash = init_genesis(&create_test_provider_factory_with_chain_spec(
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
         ))
         .unwrap();
 
@@ -1252,7 +1252,7 @@ mod tests {
     #[test]
     fn success_init_genesis_sepolia() {
         let genesis_hash = init_genesis(&create_test_provider_factory_with_chain_spec(
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()),
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()),
         ))
         .unwrap();
 
@@ -1263,7 +1263,7 @@ mod tests {
     #[test]
     fn success_init_genesis_zeronet() {
         let genesis_hash = init_genesis(&create_test_provider_factory_with_chain_spec(
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::zeronet()),
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::zeronet()),
         ))
         .unwrap();
 
@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn fail_init_inconsistent_db() {
         let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
         let static_file_provider = factory.static_file_provider();
         let rocksdb_provider = factory.rocksdb_provider();
@@ -1284,7 +1284,7 @@ mod tests {
         let genesis_hash = init_genesis(
             &ProviderFactory::new(
                 factory.into_db(),
-                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+                std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
                 reth_tasks::Runtime::test(),
@@ -1304,7 +1304,7 @@ mod tests {
     #[test]
     fn skip_genesis_hash_validation_accepts_mismatched_db() {
         let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::sepolia(),
+            base_common_chain_config::BaseChainSpec::sepolia(),
         ));
         let static_file_provider = factory.static_file_provider();
         let rocksdb_provider = factory.rocksdb_provider();
@@ -1313,7 +1313,7 @@ mod tests {
         let result = init_genesis_with_settings_and_validate(
             &ProviderFactory::new(
                 factory.into_db(),
-                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+                std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
                 reth_tasks::Runtime::test(),
@@ -1406,7 +1406,7 @@ mod tests {
     #[test]
     fn allow_same_storage_settings() {
         let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
         let settings = StorageSettings::v2();
         init_genesis_with_settings(&factory, settings).unwrap();

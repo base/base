@@ -5,7 +5,7 @@
 use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use base_builder_core::test_utils::get_available_port;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use base_tx_forwarding::TxForwardingConfig;

@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::ChainSpecParser;
 use alloy_primitives::B256;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use clap::Parser;

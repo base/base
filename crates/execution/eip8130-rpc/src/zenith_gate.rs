@@ -1,10 +1,10 @@
 //! Zenith fork-activation gate for EIP-8130 RPC reads.
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::EIP8130_PRE_ZENITH_RPC_ERROR;
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{
     ErrorObjectOwned,

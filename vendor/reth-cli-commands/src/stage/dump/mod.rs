@@ -2,7 +2,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::ChainSpecParser;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::Parser;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use reth_db_api::{

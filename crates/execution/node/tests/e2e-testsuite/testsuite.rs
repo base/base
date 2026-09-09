@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
+use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_payload::BasePayloadAttributes;
-use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use eyre::Result;
 use reth_e2e_test_utils::{

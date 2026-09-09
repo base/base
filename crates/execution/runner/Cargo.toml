@@ -29,7 +29,6 @@ base-tx-forwarding = { workspace = true, optional = true }
 base-node-core = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, optional = true}
 base-common-types-chain = { workspace = true, optional = true }
-base-common-chain-config = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true, optional = true}
 tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
@@ -37,9 +36,9 @@ alloy-genesis = { workspace = true, features = ["std"], optional = true }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
+base-common-chain-config = {optional = true, features = ["std"], workspace = true}
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
 base-common-types-payload = {workspace = true, optional = true, features = ["std"]}
-base-execution-chainspec = { workspace = true, features = ["default"], optional = true }
 base-common-types-rpc = { workspace = true, optional = true, features = ["serde", "std"] }
 
 [dev-dependencies]
@@ -63,7 +62,6 @@ test-utils = [
     "dep:base-common-types-chain",
     "dep:base-common-evm",
     "dep:base-protocol",
-    "dep:base-execution-chainspec",
     "dep:reth-network",
     "dep:tokio",
     "base-node-core/test-utils",

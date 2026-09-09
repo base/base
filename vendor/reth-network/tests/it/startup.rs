@@ -134,7 +134,7 @@ async fn test_tcp_port_node_record_no_discovery() {
         .listener_port(0)
         .disable_discovery()
         .build_with_noop_provider(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
     let network = NetworkManager::new(config).await.unwrap();
 
@@ -155,7 +155,7 @@ async fn test_tcp_port_node_record_discovery() {
         .discovery_port(0)
         .disable_dns_discovery()
         .build_with_noop_provider(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
     let network = NetworkManager::new(config).await.unwrap();
 
@@ -177,7 +177,7 @@ async fn test_node_record_address_with_nat() {
         .disable_dns_discovery()
         .listener_port(0)
         .build_with_noop_provider(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
 
     let network = NetworkManager::new(config).await.unwrap();
@@ -195,7 +195,7 @@ async fn test_node_record_address_with_nat_disable_discovery() {
         .disable_nat()
         .listener_port(0)
         .build_with_noop_provider(std::sync::Arc::new(
-            base_execution_chainspec::BaseChainSpec::mainnet(),
+            base_common_chain_config::BaseChainSpec::mainnet(),
         ));
 
     let network = NetworkManager::new(config).await.unwrap();

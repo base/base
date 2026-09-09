@@ -35,7 +35,6 @@ reth-execution-cache = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
 base-observability-events = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 derive_more = { workspace = true, features = ["full"]}
@@ -52,7 +51,7 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-base-common-chain-config = { workspace = true, features = ["default"] }
+base-common-chain-config = {features = ["default"], workspace = true}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
@@ -61,7 +60,7 @@ base-execution-evm = { workspace = true, features = ["default", "witness"] }
 metrics-exporter-prometheus = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default", "test-utils"] }
 

@@ -1298,11 +1298,11 @@ fn write_trie_debug_recorders(block_number: u64, recorders: &[(Option<B256>, Tri
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, map::HashMap};
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_evm_handler::state::{
         AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::OnStateHook;
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;

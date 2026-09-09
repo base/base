@@ -17,8 +17,8 @@ workspace = true
 
 [dependencies]
 metrics = { workspace = true }
-thiserror = { workspace = true }
 dyn-clone = { workspace = true }
+thiserror = { workspace = true }
 pin-project = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
@@ -26,26 +26,27 @@ reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 reth-tokio-util = { workspace = true }
 base-node-context = { workspace = true }
-reth-rpc-eth-types = { workspace = true }
 base-execution-evm = { workspace = true }
 base-execution-rpc = { workspace = true }
+reth-rpc-eth-types = { workspace = true }
 base-common-network = { workspace = true }
 reth-rpc-server-types = { workspace = true }
-reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }
-base-execution-chainspec = { workspace = true }
+reth-primitives-traits = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-execution-consensus = { workspace = true }
 tower = { workspace = true, features = ["full"] }
-serde = { workspace = true, features = ["derive"] }
 http = { workspace = true, features = ["default"] }
-reth-tasks = { workspace = true, features = ["rayon"] }
+serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server"] }
+reth-tasks = { workspace = true, features = ["rayon"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-metrics = { workspace = true, features = ["common"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
+
 [dev-dependencies]
 alloy-eips = { workspace = true }
 reth-network-peers = { workspace = true }

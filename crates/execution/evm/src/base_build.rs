@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::logs_bloom;
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
@@ -9,7 +10,6 @@ use base_common_types_chain::{
 };
 use base_evm_context::Block as _;
 use base_evm_handler::BlockExecutionError;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_execution_types::BlockExecutionResult;
 

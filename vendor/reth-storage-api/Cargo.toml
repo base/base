@@ -26,15 +26,16 @@ reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
-reth-db-api = { workspace = true, optional = true }
+base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }
+reth-db-api = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
 reth-tokio-util = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
+
 [dev-dependencies]
 mockall = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
@@ -61,11 +62,7 @@ std = [
     "alloy-eip7928/std",
 ]
 
-db-api = [
-    "dep:alloy-hardforks",
-    "dep:reth-db-api",
-    "dep:serde_json",
-]
+db-api = ["dep:alloy-hardforks", "dep:reth-db-api", "dep:serde_json"]
 
 serde = [
     "reth-db-models/serde",

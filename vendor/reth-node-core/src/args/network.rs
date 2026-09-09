@@ -11,7 +11,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::{
     Args,
     builder::{OsStr, Resettable},
@@ -1172,7 +1172,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_chain_config::BaseChainSpec;
     use clap::Parser;
     use reth_config::Config;
     use reth_network_peers::NodeRecord;

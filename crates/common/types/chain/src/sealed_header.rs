@@ -8,7 +8,9 @@ use bytes::BufMut;
 use derive_more::{AsRef, Deref};
 
 #[cfg(not(feature = "std"))]
-use once_cell::sync::OnceCell as OnceLock;
+use alloc::boxed::Box;
+#[cfg(not(feature = "std"))]
+use once_cell::race::OnceBox as OnceLock;
 #[cfg(feature = "std")]
 use std::sync::OnceLock;
 
@@ -42,7 +44,11 @@ impl SealedHeader {
     /// Creates the sealed header with the corresponding block hash.
     #[inline]
     pub fn new(header: Header, hash: BlockHash) -> Self {
-        Self { header, hash: hash.into() }
+        #[cfg(feature = "std")]
+        let hash = hash.into();
+        #[cfg(not(feature = "std"))]
+        let hash = OnceLock::with_value(Box::new(hash));
+        Self { header, hash }
     }
 
     /// Returns the sealed Header fields.
@@ -81,7 +87,14 @@ impl SealedHeader {
     /// Note: if the hash has not been computed yet, this will compute the hash:
     /// [`alloy_primitives::Sealable::hash_slow`].
     pub fn hash_ref(&self) -> &BlockHash {
-        self.hash.get_or_init(|| self.header.hash_slow())
+        #[cfg(feature = "std")]
+        {
+            self.hash.get_or_init(|| self.header.hash_slow())
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.hash.get_or_init(|| Box::new(self.header.hash_slow()))
+        }
     }
 
     /// Returns a copy of the block hash.
@@ -201,7 +214,11 @@ impl SealedHeader {
     /// Updates the block hash.
     #[inline]
     pub fn set_hash(&mut self, hash: BlockHash) {
-        self.hash = hash.into()
+        #[cfg(feature = "std")]
+        let hash = hash.into();
+        #[cfg(not(feature = "std"))]
+        let hash = OnceLock::with_value(Box::new(hash));
+        self.hash = hash
     }
 
     /// Returns a mutable reference to the header.

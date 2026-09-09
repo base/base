@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, keccak256};
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_evm::BaseTime;
 use base_common_types_chain::{BlockHeader, Predeploys};
 use base_common_types_payload::ExecutionData;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError,
@@ -264,12 +264,12 @@ impl BaseEngineValidator {
 mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B64, B256, U256, b64};
+    use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_chain_config::{BaseUpgrade, ChainConfig};
     use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, EMPTY_ROOT_HASH, Header, Sealable, TxDeposit,
     };
     use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;

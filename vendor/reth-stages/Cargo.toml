@@ -37,7 +37,7 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-execution-consensus = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }

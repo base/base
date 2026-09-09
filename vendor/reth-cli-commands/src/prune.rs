@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::ChainSpecParser;
 use base_cli_utils::CliContext;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::cancellation::CancellationToken;

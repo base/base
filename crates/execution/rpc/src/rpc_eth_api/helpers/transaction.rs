@@ -6,11 +6,11 @@ use std::sync::Arc;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
+use base_common_network::{TransactionBuilder, TransactionBuilder4844};
 use base_common_types_chain::{
     BaseTxEnvelope, BlockHeader, Transaction,
     transaction::{SignerRecoverable, TransactionMeta},
 };
-use base_common_network::{TransactionBuilder, TransactionBuilder4844};
 use base_common_types_rpc::{BaseTransactionRequest, TransactionInfo, state::EvmOverrides};
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
@@ -638,9 +638,9 @@ mod tests {
 
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::{Block, Header, Transaction};
     use base_common_types_rpc::request::TransactionRequest;
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_txpool::{
         TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,
     };

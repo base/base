@@ -1007,7 +1007,7 @@ mod test {
     #[test]
     fn build_enr_from_config() {
         const TCP_PORT: u16 = 30303;
-        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+        let fork_id = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
             .latest_fork_id();
 
         let config = Config::builder((Ipv4Addr::UNSPECIFIED, TCP_PORT).into())
@@ -1029,7 +1029,7 @@ mod test {
 
     #[test]
     fn get_fork_id_with_different_network_stack_ids() {
-        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+        let fork_id = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
             .latest_fork_id();
         let sk = SecretKey::new(&mut thread_rng());
 

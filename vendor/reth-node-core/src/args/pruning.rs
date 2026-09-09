@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, ops::Not, sync::OnceLock};
 
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, BlockNumber};
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::{Args, builder::RangedU64ValueParser};
 use reth_config::config::PruneConfig;
 use reth_prune_types::{
@@ -448,7 +448,7 @@ pub(crate) fn parse_receipts_log_filter(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_chain_config::BaseChainSpec;
     use clap::Parser;
 
     use super::*;

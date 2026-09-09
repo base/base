@@ -5,7 +5,7 @@ use std::{
 
 use crate::ChainSpecParser;
 use base_cli_utils::CliContext;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_db::version::{DB_VERSION, DatabaseVersionError, get_db_version};
 use reth_db_common::DbTool;

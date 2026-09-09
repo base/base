@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_cli_util::hash_or_num_value_parser;
 use reth_config::Config;

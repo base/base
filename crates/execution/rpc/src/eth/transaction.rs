@@ -3,10 +3,10 @@
 use std::{future::Future, time::Duration};
 
 use alloy_primitives::{B256, Bytes};
+use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
 use base_common_types_rpc::BaseTransactionReceipt;
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,

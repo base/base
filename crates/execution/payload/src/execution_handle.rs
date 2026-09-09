@@ -76,8 +76,8 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::B256;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
-    use base_execution_chainspec::BaseChainSpec;
     use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
     use tokio::sync::mpsc;
 

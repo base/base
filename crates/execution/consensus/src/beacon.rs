@@ -2,11 +2,11 @@ use alloc::{boxed::Box, format, sync::Arc};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
+use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
-use base_execution_chainspec::BaseChainSpec;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{GotExpected, RecoveredBlock, SealedBlock, SealedHeader};
 
@@ -399,11 +399,11 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
     use base_common_chain_config::BaseUpgrade;
+    use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_types_chain::{
         BaseReceipt, BaseTransactionSigned, BaseTypedTransaction, BlockBody, Eip658Value, Header,
         HoloceneExtraData, JovianExtraData, Receipt, TxEip7702, TxReceipt,
     };
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
 

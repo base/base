@@ -2,7 +2,7 @@
 
 use std::{path::Path, rc::Rc, sync::Arc};
 
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use boyer_moore_magiclen::BMByte;
 use eyre::Result;
 use reth_db_api::{

@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bloom};
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, TxReceipt, proofs::calculate_receipt_root,
 };
-use base_execution_chainspec::BaseChainSpec;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
     GotExpected, RecoveredBlock, SealedBlock, SealedHeader, receipt::gas_spent_by_transactions,

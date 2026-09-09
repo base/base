@@ -6,10 +6,10 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Bytes;
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
-use base_common_types_chain::SignableTransaction;
+use base_common_chain_config::BaseChainSpec;
 use base_common_network::TransactionBuilder;
+use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
 };

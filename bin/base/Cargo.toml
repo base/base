@@ -37,9 +37,8 @@ base-consensus-cli = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
-base-common-chain-config = { workspace = true, features = ["default"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
+base-common-chain-config = {features = ["default", "std"], workspace = true}
 
 [dev-dependencies]
 url = { workspace = true }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(cmd.command, Subcommands::ToBlock { target: BlockHashOrNumber::Number(100) });
         assert_eq!(
             cmd.env.chain.chain_id(),
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()).chain_id()
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::sepolia()).chain_id()
         );
     }
 }

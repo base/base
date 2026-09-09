@@ -7,11 +7,12 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
-use base_common_types_chain::{BlockHeader, Transaction as _};
+use base_common_chain_config::BaseChainSpec;
 use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
+use base_common_types_chain::{BlockHeader, Transaction as _};
 use base_evm_context::GasParams;
 use base_evm_handler::TxResult as _;
 use base_evm_handler::{
@@ -19,7 +20,6 @@ use base_evm_handler::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::EvmState,
 };
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
@@ -864,12 +864,12 @@ mod tests {
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
-    use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
+    use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_precompiles::{
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
+    use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
     use base_evm_handler::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
-    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::{

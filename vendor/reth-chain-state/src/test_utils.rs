@@ -7,14 +7,14 @@ use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, INITIAL_BASE_FEE};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, BlockNumber, U256, map::B256HashMap};
 use alloy_signer::SignerSync;
+use base_common_chain_config::BaseChainSpec;
+use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{
     BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559,
     TxReceipt,
 };
-use base_common_network::PrivateKeySigner;
 use base_evm_handler::{database::BundleState, state::AccountInfo};
-use base_execution_chainspec::BaseChainSpec;
 use rand::Rng;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_primitives_traits::{
@@ -65,7 +65,7 @@ impl Default for TestBlockBuilder {
         let signer_pk = PrivateKeySigner::random();
         let signer = signer_pk.address();
         Self {
-            chain_spec: base_execution_chainspec::BaseChainSpecBuilder::default()
+            chain_spec: base_common_chain_config::BaseChainSpecBuilder::default()
                 .genesis(Default::default())
                 .ecotone_activated()
                 .build(),

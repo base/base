@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use alloy_primitives::BlockNumber;
-use base_execution_chainspec::ChainSpecProvider;
+use base_common_chain_config::ChainSpecProvider;
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
 use reth_db_api::tables;
 use reth_stages_types::StageId;
@@ -692,7 +692,7 @@ mod tests {
     -> eyre::Result<()> {
         // Modify mainnet chainspec to include a single genesis storage slot
         let mut chain_spec =
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
         Arc::make_mut(&mut chain_spec).genesis.alloc.first_entry().unwrap().get_mut().storage =
             Some(From::from([(B256::random(), B256::random())]));
 

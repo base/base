@@ -50,7 +50,7 @@ impl Default for TestStageDB {
             temp_rocksdb_dir: rocksdb_dir,
             factory: ProviderFactory::new(
                 create_test_rw_db(),
-                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+                std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
                 reth_tasks::Runtime::test(),
@@ -70,7 +70,7 @@ impl TestStageDB {
             temp_rocksdb_dir: rocksdb_dir,
             factory: ProviderFactory::new(
                 create_test_rw_db_with_path(path),
-                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+                std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
                 reth_tasks::Runtime::test(),

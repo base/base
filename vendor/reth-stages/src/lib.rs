@@ -33,7 +33,7 @@
 //! # use base_execution_consensus::BaseBeaconConsensus;
 //! # use base_execution_consensus::BaseBeaconConsensus;
 //! #
-//! # let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
+//! # let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());
 //! # let consensus: Arc<BaseBeaconConsensus> = Arc::new(TestConsensus::test());
 //! # let headers_downloader = ReverseHeadersDownloaderBuilder::default().build(
 //! #    Arc::new(TestHeadersClient::default()),

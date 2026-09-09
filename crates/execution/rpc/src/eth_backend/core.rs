@@ -370,10 +370,10 @@ impl BaseEthApiInner {
 mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Signature, U64};
-    use base_common_types_rpc::FeeHistory;
+    use base_common_chain_config::ChainSpecProvider;
     use base_common_types_chain::{BaseTxEnvelope as TransactionSigned, Block, BlockBody, Header};
+    use base_common_types_rpc::FeeHistory;
     use base_common_types_rpc::{Bundle, StateContext, TransactionRequest};
-    use base_execution_chainspec::ChainSpecProvider;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
     use reth_provider::test_utils::MockEthProvider;

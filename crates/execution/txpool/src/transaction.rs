@@ -470,6 +470,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
     use alloy_signer::SignerSync;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
@@ -477,7 +478,6 @@ mod tests {
         Eip8130Constants, Eip8130Signed, EthereumTxEnvelope, SignableTransaction, TxDeposit,
         TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxEip8130, TxLegacy, transaction::Recovered,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,

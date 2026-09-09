@@ -246,12 +246,12 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
+    use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::BaseUpgrade;
     use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, DepositReceipt, Header, Receipt, Sealable, TxDeposit,
         TxReceipt,
     };
-    use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 
     use super::*;

@@ -20,11 +20,11 @@ tokio = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
-reth-db-api = { workspace = true }
 alloy-genesis = {workspace = true}
-reth-network = { workspace = true }
+reth-db-api = { workspace = true }
 alloy-signer = { workspace = true }
 futures-util = { workspace = true }
+reth-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -32,20 +32,20 @@ reth-tokio-util = { workspace = true }
 base-evm-handler = { workspace = true }
 reth-network-api = { workspace = true }
 reth-rpc-builder = { workspace = true }
-reth-stages-types = { workspace = true }
 base-node-context = { workspace = true }
+reth-stages-types = { workspace = true }
 reth-network-peers = { workspace = true }
-reth-rpc-server-types = { workspace = true }
 base-common-types-rpc = { workspace = true }
+reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-chainspec = { workspace = true }
+base-common-chain-config = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"] }
 derive_more = { workspace = true, features = ["full"] }
+serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
-reth-db = { workspace = true, features = ["test-utils"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-db = { workspace = true, features = ["test-utils"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }

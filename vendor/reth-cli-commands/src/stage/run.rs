@@ -7,7 +7,7 @@ use std::{any::Any, net::SocketAddr, sync::Arc};
 use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use base_cli_utils::CliContext;
-use base_execution_chainspec::BaseChainSpec;
+use base_common_chain_config::BaseChainSpec;
 use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::get_secret_key;

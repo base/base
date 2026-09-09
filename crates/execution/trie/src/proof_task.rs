@@ -1225,7 +1225,7 @@ pub enum AccountWorkerJob {
 mod tests {
     use std::sync::Arc;
 
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_chain_config::BaseChainSpec;
     use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
 
     use super::*;

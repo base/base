@@ -7,11 +7,11 @@ use std::{
 
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
+use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_types_payload::ForkchoiceState;
-use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
@@ -1007,9 +1007,9 @@ mod tests {
 
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
+    use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
     use base_evm_handler::database::{BundleState, OriginalValuesKnown};
-    use base_execution_chainspec::BaseChainSpec;
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{
@@ -1199,7 +1199,7 @@ mod tests {
     {
         provider_with_chain_spec_and_random_blocks(
             rng,
-            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+            std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
             database_blocks,
             in_memory_blocks,
             block_range_params,

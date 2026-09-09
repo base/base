@@ -17,18 +17,22 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+auto_impl = {workspace = true}
+thiserror = {workspace = true}
 tracing = { workspace = true }
 alloy-eips = {workspace = true}
-auto_impl = { workspace = true }
-thiserror = { workspace = true }
 alloy-chains = {workspace = true}
-alloy-genesis = { workspace = true }
+alloy-trie = { workspace = true }
+serde_json = { workspace = true }
+alloy-genesis = {workspace = true}
+alloy-eip2124 = { workspace = true }
 alloy-hardforks = {workspace = true}
 alloy-sol-types = { workspace = true }
-serde = { workspace = true, optional = true }
-base-common-types-chain = { workspace = true }
+serde = {optional = true, workspace = true}
+base-common-types-chain = {workspace = true}
 spin = {workspace = true, features = ["default"]}
-alloy-primitives = {workspace = true, features = ["map"]}
+alloy-primitives = {features = ["map"], workspace = true}
+base-common-types-rpc = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 derive_more = { workspace = true, features = ["display", "from", "try_from"] }
 
@@ -47,7 +51,38 @@ required-features = ["test-utils"]
 
 [features]
 default = []
-std = ["alloy-chains/std", "alloy-eips/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-sol-types/std", "base-common-types-chain/std", "derive_more/std", "serde?/std", "spin/std", "thiserror/std", "tracing/std"]
-serde = ["alloy-chains/serde", "alloy-eips/serde", "alloy-hardforks/serde", "alloy-primitives/serde", "base-common-types-chain/serde", "dep:serde"]
+std = [
+    "alloy-chains/std",
+    "alloy-eips/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "alloy-sol-types/std",
+    "base-common-types-chain/std",
+    "base-common-types-rpc/std",
+    "derive_more/std",
+    "serde?/std",
+    "serde_json/std",
+    "spin/std",
+    "thiserror/std",
+    "tracing/std",
+]
+serde = [
+    "alloy-chains/serde",
+    "alloy-eips/serde",
+    "alloy-hardforks/serde",
+    "alloy-primitives/serde",
+    "base-common-types-chain/serde",
+    "base-common-types-rpc/serde",
+    "dep:serde",
+]
 test-utils = []
-arbitrary = ["alloy-chains/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "alloy-sol-types/arbitrary", "base-common-types-chain/arbitrary", "dep:arbitrary", "std"]
+arbitrary = [
+    "alloy-chains/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-primitives/rand",
+    "alloy-sol-types/arbitrary",
+    "base-common-types-chain/arbitrary",
+    "dep:arbitrary",
+    "std",
+]
