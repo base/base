@@ -2238,7 +2238,6 @@ dependencies = [
  "async-trait",
  "base-batcher-encoding-channel",
  "base-batcher-service-driver",
- "base-batcher-source",
  "base-builder-core",
  "base-common-chain-config",
  "base-common-network",
@@ -2341,7 +2340,6 @@ dependencies = [
  "backon",
  "base-balance-monitor",
  "base-batcher-encoding-channel",
- "base-batcher-source",
  "base-common-network",
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
@@ -2356,6 +2354,7 @@ dependencies = [
  "httpmock",
  "jsonrpsee",
  "metrics",
+ "mockall",
  "rstest",
  "serde",
  "thiserror 2.0.19",
@@ -2363,23 +2362,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-batcher-source"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-trait",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-protocol",
- "derive_more",
- "futures",
- "mockall",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
 ]
 
 [[package]]

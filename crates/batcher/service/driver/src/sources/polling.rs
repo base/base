@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base_common_runtime_tasks::Clock;
 use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
-use base_common_runtime_tasks::Clock;
 
 use crate::{L2BlockEvent, SourceError, UnsafeBlockSource};
 

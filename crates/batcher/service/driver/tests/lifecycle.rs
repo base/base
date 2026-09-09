@@ -15,7 +15,9 @@ use base_batcher_service_driver::{
         Recorded, SubmissionStub, TrackingPipeline,
     },
 };
-use base_batcher_source::{ChannelBlockSource, L2BlockEvent, test_utils::InMemoryBlockSource};
+use base_batcher_service_driver::{
+    ChannelBlockSource, L2BlockEvent, test_utils::InMemoryBlockSource,
+};
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},

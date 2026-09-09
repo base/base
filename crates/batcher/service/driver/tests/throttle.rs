@@ -19,7 +19,7 @@ use base_batcher_service_driver::{
         TrackingThrottleClient,
     },
 };
-use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_batcher_service_driver::{L2BlockEvent, SourceError, UnsafeBlockSource};
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},

@@ -9,3 +9,5 @@ The driver integration targets cover reorgs, throttling, head tracking, lifecycl
 ```sh
 cargo test -p base-batcher-service-driver --features metrics,test-utils
 ```
+
+Block and L1-head polling, subscriptions, and source test fixtures live in this crate as well.

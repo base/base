@@ -2,11 +2,9 @@
 
 use std::time::Duration;
 
+use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
 use base_batcher_encoding_channel::{
     BatchPipeline, BatcherMetrics, DerivationReconciliation, StepError, StepResult,
-};
-use base_batcher_source::{
-    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_chain::BaseBlock;
@@ -623,14 +621,12 @@ mod tests {
         time::Duration,
     };
 
+    use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
     use alloy_primitives::{Address, B256, Bloom, Bytes};
     use base_batcher_encoding_channel::{
         BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
     };
     use base_batcher_encoding_channel::{BlobDecoder, BlobEncoder};
-    use base_batcher_source::{
-        L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
-    };
     use base_common_runtime_tasks::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},

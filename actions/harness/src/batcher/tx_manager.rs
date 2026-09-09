@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
-use base_batcher_source::L1HeadEvent;
+use base_batcher_service_driver::L1HeadEvent;
 use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{
     SignableTransaction, TxEip1559, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
@@ -93,7 +93,7 @@ pub struct Inner {
 /// [`mine_block`]: L1MinerTxManager::mine_block
 /// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
 /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+/// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
     inner: Arc<Mutex<Inner>>,
@@ -105,7 +105,7 @@ pub struct L1MinerTxManager {
     /// can advance the driver's L1 head.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+    /// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
     l1_head_tx: Option<mpsc::UnboundedSender<L1HeadEvent>>,
 }
 
@@ -130,7 +130,7 @@ impl L1MinerTxManager {
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
     /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+    /// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
     pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<L1HeadEvent>) -> Self {
         self.l1_head_tx = Some(tx);
         self
@@ -320,7 +320,7 @@ impl L1MinerTxManager {
     /// `in_flight.next().await`.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`InMemoryBlockSource::next`]: base_batcher_source::test_utils::InMemoryBlockSource
+    /// [`InMemoryBlockSource::next`]: base_batcher_service_driver::test_utils::InMemoryBlockSource
     pub fn mine_block(&self, l1: &mut L1Miner) -> u64 {
         self.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();

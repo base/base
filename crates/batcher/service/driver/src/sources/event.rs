@@ -29,7 +29,7 @@ pub enum L2BlockEvent {
         ///
         /// This is a "whole pipeline idle" signal, not scoped strictly to this flush's own
         /// frames: it never fires before them, but concurrent `Block` events arriving after
-        /// this one can delay it further (see `base_batcher_service_driver::AdminHandle::flush_and_wait`
+        /// this one can delay it further (see `crate::AdminHandle::flush_and_wait`
         /// for the full caveat, which applies here identically).
         ack: Option<oneshot::Sender<()>>,
     },

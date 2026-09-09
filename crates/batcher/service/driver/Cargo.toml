@@ -12,42 +12,43 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+async-trait = {workspace = true}
 auto_impl = { workspace = true }
-async-trait = { workspace = true}
 base-tx-manager = {workspace = true}
-base-batcher-source = {workspace = true}
 base-common-network = {workspace = true}
 base-balance-monitor = { workspace = true }
 metrics = { workspace = true, optional = true }
-tracing = {features = ["std"], workspace = true}
+tracing = {workspace = true, features = ["std"]}
 eyre = {workspace = true, features = ["default"]}
 base-batcher-encoding-channel = {workspace = true}
+thiserror = {workspace = true, features = ["std"]}
 url = { workspace = true, features = ["default"] }
-futures = {features = ["default"], workspace = true}
-thiserror = { workspace = true, features = ["std"] }
+futures = {workspace = true, features = ["default"]}
 backon = { workspace = true, features = ["default"] }
-base-protocol = {features = ["std"], workspace = true}
+base-protocol = {workspace = true, features = ["std"]}
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-common-types-rpc = { workspace = true, features = ["std"]}
-base-common-types-chain = {features = ["std"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["std"]}
 alloy-primitives = {features = ["serde", "std"], workspace = true}
-base-common-runtime-tasks = {features = ["tokio"], workspace = true}
+base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
-derive_more = {features = ["debug", "display", "from_str"], workspace = true}
+derive_more = {workspace = true, features = ["debug", "display", "from_str"]}
 jsonrpsee = {workspace = true, features = ["http-client", "macros", "server"]}
-tokio = {features = ["default", "macros", "rt", "sync", "time"], workspace = true}
+tokio = {workspace = true, features = ["default", "macros", "rt", "sync", "time"]}
 
 [dev-dependencies]
+mockall = { workspace = true }
 async-trait = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+base-common-types-chain = {workspace = true, features = ["std"]}
 base-common-types-rpc = { workspace = true, features = ["std"] }
-base-common-types-chain = { workspace = true, features = ["std"] }
-base-common-runtime-tasks = {features = ["test-utils"], workspace = true}
-tokio = {features = ["default", "macros", "rt", "rt-multi-thread", "time"], workspace = true}
+base-common-runtime-tasks = {workspace = true, features = ["test-utils"]}
+tokio = {workspace = true, features = ["default", "macros", "rt", "rt-multi-thread", "time"]}
 
 [[test]]
 name = "reorg"

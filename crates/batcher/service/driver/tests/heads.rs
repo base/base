@@ -14,7 +14,7 @@ use base_batcher_service_driver::{
         SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
-use base_batcher_source::{ChannelL1HeadSource, L1HeadEvent};
+use base_batcher_service_driver::{ChannelL1HeadSource, L1HeadEvent};
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},

@@ -18,7 +18,7 @@ use base_batcher_service_driver::{
         TrackingSource,
     },
 };
-use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
+use base_batcher_service_driver::{ChannelBlockSource, L2BlockEvent};
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},

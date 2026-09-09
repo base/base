@@ -6,7 +6,7 @@ use base_batcher_service_driver::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
-use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
+use base_batcher_service_driver::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_chain_config::RollupConfig;
 use base_common_network::PrivateKeySigner;
 use base_common_runtime_tasks::TokioRuntime;
@@ -96,9 +96,9 @@ pub enum BatcherError {
 ///
 /// [`advance`]: Batcher::advance
 /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
-/// [`L1HeadEvent::NewHead`]: base_batcher_source::L1HeadEvent
-/// [`L2BlockEvent::Flush`]: base_batcher_source::L2BlockEvent::Flush
+/// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
+/// [`L1HeadEvent::NewHead`]: base_batcher_service_driver::L1HeadEvent
+/// [`L2BlockEvent::Flush`]: base_batcher_service_driver::L2BlockEvent::Flush
 pub struct Batcher<S: L2BlockProvider> {
     /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
     l2_source: S,

@@ -1,8 +1,8 @@
 //! Error types for the batch driver.
 
+use crate::SourceError;
 use base_batcher_encoding_channel::BlobEncodeError;
 use base_batcher_encoding_channel::StepError;
-use base_batcher_source::SourceError;
 
 /// Errors produced by the [`BatchDriver`](crate::BatchDriver).
 #[derive(Debug, thiserror::Error)]

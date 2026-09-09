@@ -11,11 +11,11 @@ use crate::{
     AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
+use crate::{HybridL1HeadSource, PollingBlockSource, SourceError};
 use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_encoding_channel::{BatchEncoder, BatcherMetrics};
-use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
 use base_common_network::Base;
 use base_common_runtime_tasks::TokioRuntime;
 use base_common_runtime_tasks::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
@@ -70,7 +70,7 @@ enum L1Subscription {
     Null(NullL1HeadSubscription),
 }
 
-impl base_batcher_source::L1HeadSubscription for L1Subscription {
+impl crate::L1HeadSubscription for L1Subscription {
     fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
         match self {
             Self::Ws(ws) => ws.take_stream(),
@@ -212,7 +212,7 @@ impl BatcherService {
     /// [`NullL1HeadSubscription`] so that [`HybridL1HeadSource`] falls back
     /// entirely to polling.
     ///
-    /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
+    /// [`HybridL1HeadSource`]: crate::HybridL1HeadSource
     async fn build_l1_subscription(url: Option<&Url>) -> L1Subscription {
         let Some(url) = url else {
             return L1Subscription::Null(NullL1HeadSubscription::new());

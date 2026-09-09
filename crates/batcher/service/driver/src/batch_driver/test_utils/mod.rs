@@ -20,3 +20,8 @@ pub use builder::{DriverFixture, SubmissionStub};
 mod tx_manager;
 #[cfg(any(test, feature = "test-utils"))]
 pub use tx_manager::{ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager};
+
+mod in_memory;
+pub use in_memory::{
+    ChannelBlockSource, ChannelL1HeadSource, InMemoryBlockSource, InMemoryL1HeadSource,
+};

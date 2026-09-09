@@ -49,3 +49,11 @@ pub use batch_driver::{
     NoopThrottleClient, SubmissionQueue, ThrottleClient, ThrottleConfig, ThrottleController,
     ThrottleInfo, ThrottleParams, ThrottleStrategy, TxOutcome,
 };
+
+mod sources;
+pub use sources::{
+    ChannelBlockSource, ChannelL1HeadSource, HybridL1HeadSource, KeepAliveSubscription,
+    L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, L2BlockEvent,
+    PendingSubscription, PollingBlockSource, PollingSource, SourceError, StreamSubscription,
+    UnsafeBlockSource,
+};
