@@ -32,15 +32,13 @@ where
     if chain_spec.is_canyon_active_at_timestamp(timestamp)
         && !chain_spec.is_canyon_active_at_timestamp(timestamp.saturating_sub(2))
     {
-        // Load the create2 deployer account from the cache.
-        let mut acc_info = db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default();
-
-        // Update the account info with the create2 deployer codehash and bytecode.
-        acc_info.code_hash = CREATE_2_DEPLOYER_CODEHASH;
-        acc_info.code = Some(Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE)));
-
-        // Convert the cache account back into a revm account and mark it as touched.
-        let mut revm_acc: base_evm_handler::state::Account = acc_info.into();
+        // Capture the pre-state before installing code so incremental state-root hooks
+        // observe the deployment as an account change.
+        let mut revm_acc: base_evm_handler::state::Account =
+            db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default().into();
+        revm_acc.info.code_hash = CREATE_2_DEPLOYER_CODEHASH;
+        revm_acc.info.code =
+            Some(Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE)));
         revm_acc.mark_touch();
 
         // Commit the create2 deployer account to the database.

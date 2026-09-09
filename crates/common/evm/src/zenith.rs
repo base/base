@@ -57,7 +57,7 @@ where
 
     let mut updates = HashMap::default();
     for address in CODELESS_SYSTEM_ACCOUNTS {
-        let mut acc_info = db.basic(address)?.unwrap_or_default();
+        let acc_info = db.basic(address)?.unwrap_or_default();
 
         // Skip if the account already carries code (real deployment, or the stub
         // planted on a previous block); only an empty-code account needs it.
@@ -65,10 +65,10 @@ where
             continue;
         }
 
-        acc_info.code_hash = stub_hash;
-        acc_info.code = Some(stub.clone());
-
+        // Preserve the code-less pre-state for incremental state-root hooks.
         let mut revm_acc: base_evm_handler::state::Account = acc_info.into();
+        revm_acc.info.code_hash = stub_hash;
+        revm_acc.info.code = Some(stub.clone());
         revm_acc.mark_touch();
         updates.insert(address, revm_acc);
     }

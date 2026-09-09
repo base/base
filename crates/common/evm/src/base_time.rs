@@ -127,12 +127,12 @@ impl BaseTime {
         }
 
         let code = Bytecode::new_raw(Self::implementation_bytecode());
-        let mut implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
-        implementation_info.code_hash = code.hash_slow();
-        implementation_info.code = Some(code);
-
+        // Preserve the loaded pre-state before changing code: state-root hooks compare the
+        // committed account with its original info to detect this deployment.
         let mut implementation_account: base_evm_handler::state::Account =
-            implementation_info.into();
+            db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default().into();
+        implementation_account.info.code_hash = code.hash_slow();
+        implementation_account.info.code = Some(code);
         implementation_account.mark_touch();
 
         let mut proxy_account: base_evm_handler::state::Account = proxy_info.into();
@@ -187,6 +187,8 @@ mod tests {
     use alloy_primitives::{address, keccak256};
     use base_common_genesis::BaseUpgrade;
     use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
+    use base_evm_handler::{database::State, state::EvmState};
+    use std::sync::{Arc, Mutex};
 
     use super::*;
 
@@ -282,7 +284,23 @@ mod tests {
         )
         .unwrap();
 
+        let updates = Arc::new(Mutex::new(EvmState::default()));
+        let captured = Arc::clone(&updates);
+        let mut db =
+            State::builder().with_database(db).with_bundle_update().build().with_state_hook(Some(
+                Box::new(move |state: EvmState| {
+                    *captured.lock().unwrap() = state;
+                }),
+            ));
+
         BaseTime::ensure_predeploy(TestUpgrades(true), 100, &mut db).unwrap();
+
+        // Incremental state-root hashing must see the code installation as a change.
+        let streamed = updates.lock().unwrap();
+        let implementation = &streamed[&BaseTime::IMPLEMENTATION_ADDRESS];
+        assert_eq!(implementation.original_info(), AccountInfo::default());
+        assert_eq!(implementation.info.code_hash, BaseTime::IMPLEMENTATION_CODE_HASH);
+        drop(streamed);
 
         let proxy = db.basic(Predeploys::BASE_TIME).unwrap().unwrap();
         assert_eq!(proxy.code.unwrap().original_bytes(), BaseTime::proxy_bytecode());
