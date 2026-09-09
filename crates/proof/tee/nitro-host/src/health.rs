@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::Address;
-use base_health::{HealthzApiServer, HealthzResponse};
+use base_common_observability_health::{HealthzApiServer, HealthzResponse};
 use jsonrpsee::core::{RpcResult, async_trait};
 
 use super::registration::RegistrationChecker;

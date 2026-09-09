@@ -12,7 +12,7 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
-use base_health::HealthServer;
+use base_common_observability_health::HealthServer;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,

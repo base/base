@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Context;
 use axum::{Router, middleware};
-use base_health::HealthServer;
+use base_common_observability_health::HealthServer;
 use base_trusted_proxy::TrustedProxyConfig;
 use clap::{Args, builder::RangedU64ValueParser};
 use ipnet::IpNet;

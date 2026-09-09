@@ -43,7 +43,7 @@ tokio-util = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["default", "ring"] }
-base-health = { workspace = true, features = ["axum-server"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }

@@ -1,5 +1,5 @@
 [package]
-name = "base-health"
+name = "base-common-observability-health"
 description = "Shared health check RPC endpoint for JSON-RPC servers"
 version.workspace = true
 edition.workspace = true

@@ -36,7 +36,7 @@ x509-parser = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 alloy-provider = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
-base-health = { workspace = true, features = ["axum-server"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }

@@ -17,7 +17,7 @@ discv5 = { workspace = true }
 libp2p = { workspace = true }
 http-body = { workspace = true }
 async-trait = { workspace = true }
-base-health = { workspace = true }
+base-common-observability-health = { workspace = true }
 alloy-signer = { workspace = true }
 async-stream = { workspace = true }
 ethereum_ssz = { workspace = true }

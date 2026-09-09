@@ -11,7 +11,7 @@ use base_consensus_rpc::{
     WsRPC, WsServer,
 };
 use base_consensus_safedb::SafeDBReader;
-use base_health::EthHealthCheckLayer;
+use base_common_observability_health::EthHealthCheckLayer;
 use base_upgrade_signal::UpgradeSignalRefresher;
 use derive_more::Constructor;
 use http::StatusCode;

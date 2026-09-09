@@ -25,7 +25,7 @@ governor = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 anyhow = { workspace = true, features = ["default", "std"] }
-base-health = { workspace = true, features = ["axum-server"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
 secp256k1 = { workspace = true, features = ["default", "rand"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }

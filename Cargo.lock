@@ -2567,11 +2567,11 @@ dependencies = [
  "base-challenger",
  "base-cli-utils",
  "base-common-network",
+ "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-health",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
@@ -2691,6 +2691,28 @@ dependencies = [
  "tracing",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "base-common-observability-health"
+version = "0.0.0"
+dependencies = [
+ "alloy-transport-http",
+ "async-trait",
+ "axum",
+ "bytes",
+ "eyre",
+ "futures",
+ "http 1.4.2",
+ "http-body 1.1.0",
+ "jsonrpsee",
+ "reqwest",
+ "rstest",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -3028,6 +3050,7 @@ dependencies = [
  "backon",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-payload",
@@ -3042,7 +3065,6 @@ dependencies = [
  "base-consensus-safedb",
  "base-consensus-sources",
  "base-execution-trie",
- "base-health",
  "base-node-runner",
  "base-protocol",
  "base-upgrade-signal",
@@ -3830,28 +3852,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-health"
-version = "0.0.0"
-dependencies = [
- "alloy-transport-http",
- "async-trait",
- "axum",
- "bytes",
- "eyre",
- "futures",
- "http 1.4.2",
- "http-body 1.1.0",
- "jsonrpsee",
- "reqwest",
- "rstest",
- "serde",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
-]
-
-[[package]]
 name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
@@ -4425,7 +4425,7 @@ dependencies = [
  "alloy-signer",
  "async-trait",
  "base-common-chain-config",
- "base-health",
+ "base-common-observability-health",
  "base-proof-contracts",
  "base-proof-host",
  "base-proof-preimage",
@@ -4479,10 +4479,10 @@ dependencies = [
  "aws-sdk-elasticloadbalancingv2",
  "base-balance-monitor",
  "base-cli-utils",
+ "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-health",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-tee-nitro-verifier",
@@ -4552,11 +4552,11 @@ dependencies = [
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-health",
  "base-optimism-rpc",
  "base-proof-contracts",
  "base-proof-primitives",
@@ -5009,7 +5009,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "base-health",
+ "base-common-observability-health",
  "base-trusted-proxy",
  "clap",
  "discv5",

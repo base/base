@@ -16,7 +16,7 @@ tower = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-base-health = { workspace = true }
+base-common-observability-health = { workspace = true }
 alloy-signer = { workspace = true }
 base-proof-host = { workspace = true }
 alloy-primitives = { workspace = true }

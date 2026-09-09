@@ -1,4 +1,4 @@
-# `base-health`
+# `base-common-observability-health`
 
 Shared health check utilities for Base services.
 
@@ -11,11 +11,11 @@ port as the RPC server.
 
 ```toml
 [dependencies]
-base-health = { git = "https://github.com/base/base" }
+base-common-observability-health = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
-use base_health::{HealthzApiServer, HealthzRpc};
+use base_common_observability_health::{HealthzApiServer, HealthzRpc};
 use jsonrpsee::RpcModule;
 
 let mut module = RpcModule::new(());
@@ -33,14 +33,14 @@ Enable the feature:
 
 ```toml
 [dependencies]
-base-health = { git = "https://github.com/base/base", features = ["axum-server"] }
+base-common-observability-health = { git = "https://github.com/base/base", features = ["axum-server"] }
 ```
 
 ### Standalone server
 
 ```rust,ignore
 use std::sync::{Arc, atomic::AtomicBool};
-use base_health::HealthServer;
+use base_common_observability_health::HealthServer;
 use tokio_util::sync::CancellationToken;
 
 let ready = Arc::new(AtomicBool::new(false));
@@ -57,7 +57,7 @@ middleware. The returned `Router` has its state already applied (`Router<()>`),
 so it can be composed with other routers or middleware as needed:
 
 ```rust,ignore
-use base_health::HealthServer;
+use base_common_observability_health::HealthServer;
 
 let app = HealthServer::router(ready);
 let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;

@@ -39,7 +39,7 @@ base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
-base-health = { workspace = true, features = ["axum-server"] }
+base-common-observability-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }

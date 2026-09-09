@@ -114,7 +114,7 @@ members = [
   "crates/proof/worker",
   "crates/utilities/balance-monitor",
   "crates/utilities/cli",
-  "crates/utilities/health",
+  "crates/common/observability/health",
   "crates/common/observability/metrics",
   "crates/utilities/optimism-rpc",
   "crates/utilities/reth-cli",
@@ -421,7 +421,7 @@ base-batcher-encoder = { path = "crates/batcher/encoder", default-features = fal
 base-batcher-service = { path = "crates/batcher/service", default-features = false }
 
 # Utilities
-base-health = { path = "crates/utilities/health", default-features = false }
+base-common-observability-health = { path = "crates/common/observability/health", default-features = false }
 base-cli-utils = { path = "crates/utilities/cli", default-features = false }
 base-common-observability-metrics = { path = "crates/common/observability/metrics", default-features = false }
 base-common-runtime-tasks = { path = "crates/common/runtime/tasks", default-features = false }
