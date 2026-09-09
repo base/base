@@ -137,8 +137,9 @@ impl FollowCommand {
 
 #[cfg(test)]
 mod tests {
-    use crate::{cli::BaseCli, commands::BaseCommand};
     use clap::Parser;
+
+    use crate::{cli::BaseCli, commands::BaseCommand};
 
     const REQUIRED_FOLLOW_ARGS: &[&str] = &[
         "--source-l2-rpc",
