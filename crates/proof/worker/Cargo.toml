@@ -14,13 +14,14 @@ workspace = true
 [dependencies]
 tracing = { workspace = true }
 thiserror = { workspace = true }
-base-retry = { workspace = true }
 async-trait = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 base-prover-service-client = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "sync", "time"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["default", "test-util"] }

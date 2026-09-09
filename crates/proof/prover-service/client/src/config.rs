@@ -2,7 +2,7 @@
 
 use std::{fmt, time::Duration};
 
-use base_retry::RetryConfig;
+use base_common_runtime_tasks::RetryConfig;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,
     http_client::{HttpClient, HttpClientBuilder},

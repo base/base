@@ -7,7 +7,7 @@ use base_prover_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, ProverWorkerApiClient, RecordProofSessionRequest,
     RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
-use base_retry::RetryConfig;
+use base_common_runtime_tasks::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
@@ -282,7 +282,7 @@ mod tests {
         ProverWorkerApiServer, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,
         ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
-    use base_retry::RetryConfig;
+    use base_common_runtime_tasks::RetryConfig;
     use chrono::Utc;
     use jsonrpsee::{
         core::{RpcResult, async_trait, client::Error as JsonRpcClientError},

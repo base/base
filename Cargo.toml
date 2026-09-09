@@ -118,7 +118,6 @@ members = [
   "crates/utilities/metrics",
   "crates/utilities/optimism-rpc",
   "crates/utilities/reth-cli",
-  "crates/utilities/retry",
   "crates/common/runtime/tasks",
   "crates/testing/support",
   "crates/utilities/trusted-proxy",
@@ -425,7 +424,6 @@ base-batcher-encoder = { path = "crates/batcher/encoder", default-features = fal
 base-batcher-service = { path = "crates/batcher/service", default-features = false }
 
 # Utilities
-base-retry = { path = "crates/utilities/retry", default-features = false }
 base-health = { path = "crates/utilities/health", default-features = false }
 base-cli-utils = { path = "crates/utilities/cli", default-features = false }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }

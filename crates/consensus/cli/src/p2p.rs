@@ -23,7 +23,7 @@ use base_consensus_gossip::{
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
-use base_retry::RetryConfig;
+use base_common_runtime_tasks::RetryConfig;
 use clap::Parser;
 use discv5::enr::k256;
 use eyre::{Result, WrapErr};
@@ -282,7 +282,7 @@ pub struct P2PNetworkArgs {
     #[arg(
         long = "p2p.unsafe-block-signer.retry-max-attempts",
         env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_MAX_ATTEMPTS",
-        default_value_t = base_retry::DEFAULT_BOUNDED_MAX_ATTEMPTS
+        default_value_t = base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_ATTEMPTS
     )]
     pub unsafe_block_signer_retry_max_attempts: u32,
 
@@ -291,7 +291,7 @@ pub struct P2PNetworkArgs {
     #[arg(
         long = "p2p.unsafe-block-signer.retry-initial-delay",
         env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_INITIAL_DELAY",
-        default_value_t = base_retry::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
+        default_value_t = base_common_runtime_tasks::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
     )]
     pub unsafe_block_signer_retry_initial_delay: u64,
 
@@ -300,7 +300,7 @@ pub struct P2PNetworkArgs {
     #[arg(
         long = "p2p.unsafe-block-signer.retry-max-delay",
         env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_MAX_DELAY",
-        default_value_t = base_retry::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
+        default_value_t = base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
     )]
     pub unsafe_block_signer_retry_max_delay: u64,
 
@@ -1092,15 +1092,15 @@ mod tests {
         let args = MockCommand::parse_from(["test"]).p2p;
         assert_eq!(
             args.unsafe_block_signer_retry_max_attempts,
-            base_retry::DEFAULT_BOUNDED_MAX_ATTEMPTS
+            base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_ATTEMPTS
         );
         assert_eq!(
             args.unsafe_block_signer_retry_initial_delay,
-            base_retry::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
+            base_common_runtime_tasks::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
         );
         assert_eq!(
             args.unsafe_block_signer_retry_max_delay,
-            base_retry::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
+            base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
         );
     }
 

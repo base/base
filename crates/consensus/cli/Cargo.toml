@@ -16,7 +16,6 @@ dirs = { workspace = true }
 serde = { workspace = true }
 strum = { workspace = true }
 metrics = { workspace = true }
-base-retry = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
@@ -28,6 +27,7 @@ base-consensus-derive = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-sources = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -56,5 +56,5 @@ tempfile = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
-default = [ "otlp" ]
-otlp = [ "base-cli-utils/otlp" ]
+default = ["otlp"]
+otlp = ["base-cli-utils/otlp"]

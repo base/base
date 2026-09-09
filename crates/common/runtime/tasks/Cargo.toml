@@ -13,22 +13,25 @@ workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, optional = true, features = ["default"] }
 tokio-util = { workspace = true, optional = true, features = ["default"] }
 tokio-stream = { workspace = true, optional = true, features = ["default"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["default", "rt", "macros", "time", "sync"] }
+
 [features]
-default = [ "tokio" ]
+default = ["tokio"]
 tokio = [
-	"dep:tokio",
-	"dep:tokio-stream",
-	"dep:tokio-util",
-	"tokio/macros",
-	"tokio/rt",
-	"tokio/sync",
-	"tokio/time",
+    "dep:tokio",
+    "dep:tokio-stream",
+    "dep:tokio-util",
+    "tokio/macros",
+    "tokio/rt",
+    "tokio/sync",
+    "tokio/time",
 ]
-test-utils = [ "dep:rand" ]
+test-utils = ["dep:rand"]

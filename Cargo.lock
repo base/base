@@ -2388,7 +2388,6 @@ dependencies = [
  "base-consensus-rpc",
  "base-metrics",
  "base-protocol",
- "base-retry",
  "base-tx-manager",
  "derive_more",
  "eyre",
@@ -2698,6 +2697,7 @@ dependencies = [
 name = "base-common-runtime-tasks"
 version = "0.0.0"
 dependencies = [
+ "backon",
  "futures",
  "rand 0.9.5",
  "thiserror 2.0.19",
@@ -2825,6 +2825,7 @@ dependencies = [
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-engine",
@@ -2835,7 +2836,6 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-protocol",
- "base-retry",
  "base-upgrade-signal",
  "clap",
  "dirs",
@@ -4345,9 +4345,9 @@ dependencies = [
  "backon",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-rpc",
  "base-optimism-rpc",
- "base-retry",
  "metrics",
  "moka",
  "serde",
@@ -4517,9 +4517,9 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "backon",
+ "base-common-runtime-tasks",
  "base-prover-service-client",
  "base-prover-service-protocol",
- "base-retry",
  "chrono",
  "thiserror 2.0.19",
  "tokio",
@@ -4539,6 +4539,7 @@ dependencies = [
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-health",
@@ -4550,7 +4551,6 @@ dependencies = [
  "base-proof-submission",
  "base-prover-service-client",
  "base-prover-service-protocol",
- "base-retry",
  "base-tx-manager",
  "clap",
  "eyre",
@@ -4684,8 +4684,8 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "backon",
+ "base-common-runtime-tasks",
  "base-prover-service-protocol",
- "base-retry",
  "chrono",
  "jsonrpsee",
  "rstest",
@@ -4743,13 +4743,6 @@ dependencies = [
  "tempfile",
  "tracing",
  "zstd",
-]
-
-[[package]]
-name = "base-retry"
-version = "0.0.0"
-dependencies = [
- "backon",
 ]
 
 [[package]]
@@ -5188,9 +5181,9 @@ dependencies = [
  "alloy-transport",
  "backon",
  "base-common-chain-config",
+ "base-common-runtime-tasks",
  "base-common-types-rpc",
  "base-metrics",
- "base-retry",
  "clap",
  "eyre",
  "futures",

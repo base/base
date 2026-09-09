@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-base-retry = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
 base-tx-manager = { workspace = true }
@@ -30,11 +29,11 @@ backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
-base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
+base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }

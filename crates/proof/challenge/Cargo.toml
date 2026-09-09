@@ -15,13 +15,13 @@ workspace = true
 serde = { workspace = true }
 tracing = { workspace = true }
 alloy-rlp = { workspace = true }
-thiserror = { workspace = true }
 humantime = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 base-metrics = { workspace = true }
 base-protocol = { workspace = true }
-base-proof-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
+base-proof-rpc = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
@@ -29,32 +29,33 @@ base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-primitives = { workspace = true }
 base-proof-submission = { workspace = true }
+base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-prover-service-client = { workspace = true }
 serde_json = { workspace = true, optional = true }
 url = { workspace = true, features = ["default"] }
-eyre = { workspace = true, features = ["default"] }
 async-trait = { workspace = true, optional = true }
+eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-trie = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
-base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, optional = false}
 alloy-provider = { workspace = true, features = ["default"] }
-rustls = { workspace = true, features = ["default", "ring"] }
 base-common-types-rpc = { workspace = true, optional = true }
+rustls = { workspace = true, features = ["default", "ring"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-tokio = { workspace = true, features = ["default", "test-util"] }
 base-challenger = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
+metrics = ["base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics"]
 test-utils = [
     "base-common-types-rpc",
     "async-trait",

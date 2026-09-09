@@ -7,7 +7,7 @@ use base_prover_service_protocol::{
     ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
     ProverRequesterApiClient,
 };
-use base_retry::RetryConfig;
+use base_common_runtime_tasks::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
@@ -282,7 +282,7 @@ mod tests {
         ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
         ProverRequesterApiServer, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
-    use base_retry::RetryConfig;
+    use base_common_runtime_tasks::RetryConfig;
     use chrono::Utc;
     use jsonrpsee::{
         core::{RpcResult, client::Error as JsonRpcClientError},

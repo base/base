@@ -31,3 +31,9 @@ pub use tokio::TokioRuntime;
 pub mod deterministic;
 #[cfg(feature = "test-utils")]
 pub use deterministic::{Alarm, Config, Context, Executor, Runner, Sleeper, Task, Tasks};
+
+mod retry;
+pub use retry::{
+    DEFAULT_BOUNDED_INITIAL_DELAY, DEFAULT_BOUNDED_MAX_ATTEMPTS, DEFAULT_BOUNDED_MAX_DELAY,
+    DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, MIN_RETRY_DELAY, RetryConfig,
+};

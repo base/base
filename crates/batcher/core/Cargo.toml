@@ -22,20 +22,22 @@ async-trait = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["std"] }
-base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["default", "sync", "macros", "rt"] }
 derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
-base-common-types-chain = { workspace = true, features = ["std"], optional = false}
 base-common-types-rpc = { workspace = true, features = ["std"], optional = true }
+
 [dev-dependencies]
 async-trait = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
-base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
+
 [[test]]
 name = "reorg"
 required-features = ["test-utils"]
@@ -57,7 +59,7 @@ name = "pause_resume"
 required-features = ["test-utils"]
 
 [features]
-metrics = [ "base-batcher-encoder/metrics", "base-tx-manager/metrics" ]
+metrics = ["base-batcher-encoder/metrics", "base-tx-manager/metrics"]
 test-utils = [
     "base-protocol/test-utils",
     "base-common-runtime-tasks/test-utils",

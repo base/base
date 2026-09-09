@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use backon::Retryable;
 use base_common_chain_config::RollupConfig;
 use base_optimism_rpc::{OptimismRollupProviderExt, OutputAtBlock, SyncStatus};
-use base_retry::RetryConfig;
+use base_common_runtime_tasks::RetryConfig;
 use url::Url;
 
 use super::{

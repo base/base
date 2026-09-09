@@ -11,7 +11,7 @@ use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::g
 use backon::Retryable;
 use base_common_chain_config::BaseUpgrade;
 use base_common_types_rpc::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
-use base_retry::RetryConfig;
+use base_common_runtime_tasks::RetryConfig;
 use futures::future::try_join;
 use reqwest::Client;
 use tower::{ServiceExt, service_fn};
