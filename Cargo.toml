@@ -34,7 +34,7 @@ members = [
   "crates/batcher/cli",
   "crates/batcher/core",
   "crates/batcher/encoding/channel",
-  "crates/batcher/service",
+  "crates/batcher/service/driver",
   "crates/batcher/source",
   "crates/builder/cli",
   "crates/builder/core",
@@ -407,7 +407,7 @@ base-batcher-core = { path = "crates/batcher/core", default-features = false }
 base-batcher-admin = { path = "crates/batcher/admin", default-features = false }
 base-batcher-source = { path = "crates/batcher/source", default-features = false }
 base-batcher-encoding-channel = { path = "crates/batcher/encoding/channel", default-features = false }
-base-batcher-service = { path = "crates/batcher/service", default-features = false }
+base-batcher-service-driver = { path = "crates/batcher/service/driver", default-features = false }
 
 # Utilities
 base-common-observability-health = { path = "crates/common/observability/health", default-features = false }

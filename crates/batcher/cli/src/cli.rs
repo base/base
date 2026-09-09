@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_service::{BatcherConfig, BatcherService};
+use base_batcher_service_driver::{BatcherConfig, BatcherService};
 use base_cli_utils::RuntimeManager;
 use base_common_runtime_tasks::TokioRuntime;
 use base_tx_manager::{SignerConfig, TxManagerConfig};

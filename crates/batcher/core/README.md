@@ -51,7 +51,7 @@ the driver to invoke the same code path in both cases without special casing.
 This crate does not perform frame or blob encoding — those are handled by `base-batcher-encoding-channel`
 and `base-batcher-encoding-channel`. It does not implement L2 block sourcing or L1 head tracking — those come from
 `base-batcher-source`. Transaction signing, gas estimation, and confirmation polling belong to
-`base-tx-manager`. Service configuration and process startup live in `base-batcher-service`.
+`base-tx-manager`. Service configuration and process startup live in `base-batcher-service-driver`.
 
 ## License
 

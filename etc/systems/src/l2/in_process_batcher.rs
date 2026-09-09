@@ -1,12 +1,12 @@
 //! In-process batcher for L2 system test stacks.
 //!
-//! Runs `base-batcher-service` directly in the test process, eliminating the Docker
+//! Runs `base-batcher-service-driver` directly in the test process, eliminating the Docker
 //! dependency for the batch submission layer. Mirrors the pattern used by
 //! [`InProcessConsensus`](super::InProcessConsensus).
 
 use alloy_primitives::B256;
 use base_batcher_encoding_channel::DaType;
-use base_batcher_service::{BatcherConfig, BatcherService};
+use base_batcher_service_driver::{BatcherConfig, BatcherService};
 use base_common_network::PrivateKeySigner;
 use base_common_runtime_tasks::TokioRuntime;
 use base_tx_manager::SignerConfig;

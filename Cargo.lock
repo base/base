@@ -2307,7 +2307,7 @@ dependencies = [
  "alloy-primitives",
  "base-batcher-core",
  "base-batcher-encoding-channel",
- "base-batcher-service",
+ "base-batcher-service-driver",
  "base-cli-utils",
  "base-common-network",
  "base-common-runtime-tasks",
@@ -2366,7 +2366,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-service"
+name = "base-batcher-service-driver"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -5034,7 +5034,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base-batcher-encoding-channel",
- "base-batcher-service",
+ "base-batcher-service-driver",
  "base-builder-core",
  "base-common-chain-activation",
  "base-common-chain-config",

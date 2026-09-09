@@ -1,5 +1,5 @@
 [package]
-name = "base-batcher-service"
+name = "base-batcher-service-driver"
 description = "Batcher service: config, CLI arguments, and service startup"
 version.workspace = true
 edition.workspace = true

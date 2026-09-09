@@ -1,4 +1,4 @@
-# `base-batcher-service`
+# `base-batcher-service-driver`
 
 Batcher service configuration and startup glue.
 

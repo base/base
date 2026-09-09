@@ -25,5 +25,5 @@ base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-batcher-encoding-channel = { workspace = true, features = ["clap"] }
-base-batcher-service = { workspace = true, features = ["metrics"] }
+base-batcher-service-driver = { workspace = true, features = ["metrics"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
