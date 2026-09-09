@@ -24,7 +24,7 @@ revm-primitives = {workspace = true}
 alloy-primitives = {workspace = true}
 base-evm-context = {workspace = true}
 revm-interpreter = {workspace = true}
-base-precompile-macros = {workspace = true}
+base-execution-evm-macros = {workspace = true}
 base-common-types-chain = {workspace = true}
 base-common-chain-config = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }

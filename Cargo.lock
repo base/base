@@ -3290,8 +3290,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-types-chain",
+ "base-execution-evm-macros",
  "base-execution-evm-precompiles",
- "base-precompile-macros",
  "base64 0.22.1",
  "k256",
  "p256",
@@ -3373,6 +3373,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-evm-macros"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "base-execution-evm-precompiles"
 version = "0.0.0"
 dependencies = [
@@ -3382,7 +3392,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-evm-context",
- "base-precompile-macros",
+ "base-execution-evm-macros",
  "base-state",
  "criterion",
  "derive_more",
@@ -4041,16 +4051,6 @@ dependencies = [
  "base-common-network",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "base-precompile-macros"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

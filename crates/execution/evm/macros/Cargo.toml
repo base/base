@@ -1,5 +1,5 @@
 [package]
-name = "base-precompile-macros"
+name = "base-execution-evm-macros"
 description = "Procedural macros for type-safe EVM storage abstractions for Base native precompiles"
 version.workspace = true
 edition.workspace = true

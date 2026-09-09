@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256};
 use base_execution_evm_precompiles::{BasePrecompileError, Handler, Mapping, PrecompileResult, Result};
-use base_precompile_macros::contract;
+use base_execution_evm_macros::contract;
 
 use crate::IActivationRegistry;
 

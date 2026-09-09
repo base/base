@@ -19,7 +19,7 @@ thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-execution-evm-precompiles = {workspace = true}
-base-precompile-macros = { workspace = true }
+base-execution-evm-macros = { workspace = true }
 base64 = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 p256 = { workspace = true, features = ["default", "ecdsa"] }

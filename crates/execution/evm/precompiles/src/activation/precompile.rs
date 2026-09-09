@@ -4,7 +4,7 @@ use crate::DynPrecompile;
 use crate::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_macros::precompile;
+use base_execution_evm_macros::precompile;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,

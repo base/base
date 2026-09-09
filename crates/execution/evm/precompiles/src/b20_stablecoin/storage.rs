@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
 use base_execution_evm_precompiles::{BasePrecompileError, Handler, Result, StorageCtx};
-use base_precompile_macros::{StablecoinAccounting, Storable, TokenAccounting, contract};
+use base_execution_evm_macros::{StablecoinAccounting, Storable, TokenAccounting, contract};
 
 use crate::{B20CoreStorage, IB20Factory};
 

@@ -12,11 +12,11 @@ use crate::{
 };
 
 // Rust integers: (u)int8, (u)int16, (u)int32, (u)int64, (u)int128
-base_precompile_macros::storable_rust_ints!();
+base_execution_evm_macros::storable_rust_ints!();
 // Alloy integers: U8, I8, U16, I16, U32, I32, U64, I64, U128, I128, U256, I256
-base_precompile_macros::storable_alloy_ints!();
+base_execution_evm_macros::storable_alloy_ints!();
 // Alloy fixed bytes: FixedBytes<1> .. FixedBytes<32>
-base_precompile_macros::storable_alloy_bytes!();
+base_execution_evm_macros::storable_alloy_bytes!();
 
 // -- BOOL ---------------------------------------------------------------------
 
@@ -126,7 +126,7 @@ mod tests {
     }
 
     // Generate property tests for all primitive storage types
-    base_precompile_macros::gen_storable_tests!();
+    base_execution_evm_macros::gen_storable_tests!();
 
     #[test]
     fn bool_from_word_rejects_noncanonical() {

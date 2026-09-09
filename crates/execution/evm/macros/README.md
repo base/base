@@ -1,4 +1,4 @@
-# base-precompile-macros
+# base-execution-evm-macros
 
 Procedural macros for type-safe EVM storage abstractions for Base native precompiles.
 

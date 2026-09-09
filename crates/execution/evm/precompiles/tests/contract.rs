@@ -4,7 +4,7 @@
 //! typed getter/setter fields work round-trip, and collision detection fires.
 use alloy_primitives::{Address, U256, address, keccak256};
 use base_execution_evm_precompiles::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
-use base_precompile_macros::contract;
+use base_execution_evm_macros::contract;
 
 const TEST_ADDR: Address = address!("0000000000000000000000000000000000001234");
 
@@ -69,7 +69,7 @@ fn test_contract_macro_basic_roundtrip() {
 mod mapping_only_storable_layout {
     use alloy_primitives::{Address, U256};
     use base_execution_evm_precompiles::{Mapping, StorableType};
-    use base_precompile_macros::Storable;
+    use base_execution_evm_macros::Storable;
 
     #[derive(Debug, Clone, Storable)]
     struct MappingOnlyStorage {
@@ -138,7 +138,7 @@ fn test_contract_multiple_instances_independent() {
 mod namespaced_layout {
     use alloy_primitives::{Address, U256, address, uint};
     use base_execution_evm_precompiles::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
-    use base_precompile_macros::{Storable, contract};
+    use base_execution_evm_macros::{Storable, contract};
 
     use super::{data_slot, word_from_chunk};
 
@@ -306,7 +306,7 @@ mod type_namespaced_layouts {
     use base_execution_evm_precompiles::{
         Handler, Mapping, StorableType, StorageCtx, StorageKey, setup_storage,
     };
-    use base_precompile_macros::{Storable, contract};
+    use base_execution_evm_macros::{Storable, contract};
 
     use super::erc7201_root;
 
@@ -457,7 +457,7 @@ mod type_namespaced_layouts {
 mod namespaced_fields {
     use alloy_primitives::{Address, U256, address, uint};
     use base_execution_evm_precompiles::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
-    use base_precompile_macros::contract;
+    use base_execution_evm_macros::contract;
 
     use super::{data_slot, word_from_chunk};
 
@@ -527,7 +527,7 @@ mod struct_level_attribute_passthrough {
     mod allow_and_doc {
         use alloy_primitives::{Address, U256, address};
         use base_execution_evm_precompiles::{Handler, StorageCtx, setup_storage};
-        use base_precompile_macros::contract;
+        use base_execution_evm_macros::contract;
 
         const ATTR_ADDR: Address = address!("0000000000000000000000000000000000007777");
 
@@ -557,7 +557,7 @@ mod struct_level_attribute_passthrough {
     mod cfg_attr {
         use alloy_primitives::{Address, address};
         use base_execution_evm_precompiles::{Handler, StorageCtx, setup_storage};
-        use base_precompile_macros::contract;
+        use base_execution_evm_macros::contract;
 
         const CFG_ATTR_ADDR: Address = address!("0000000000000000000000000000000000007778");
 
@@ -588,7 +588,7 @@ mod packed_slot_layout {
     //! 2. Writing to one field does not bleed into any adjacent field's bit range.
     use alloy_primitives::{Address, U256, address};
     use base_execution_evm_precompiles::{Handler, StorageCtx, setup_storage};
-    use base_precompile_macros::contract;
+    use base_execution_evm_macros::contract;
 
     const PACKED_ADDR: Address = address!("0000000000000000000000000000000000009999");
 

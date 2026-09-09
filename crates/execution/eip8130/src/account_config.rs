@@ -4,7 +4,7 @@
 use alloy_primitives::{Address, B256, U256};
 use base_execution_evm_precompiles::{ContractStorage, Handler, Mapping, Result, Slot, StorageKey};
 use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
-use base_precompile_macros::contract;
+use base_execution_evm_macros::contract;
 
 /// Read-only view over the EIP-8130 `AccountConfiguration` system contract's
 /// storage, mirroring its layout (plain sequential slots, no ERC-7201

@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
 use base_execution_evm_precompiles::{Handler, Mapping, Result, StorageCtx, StorageOps, Word};
-use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
+use base_execution_evm_macros::{AssetAccounting, Storable, TokenAccounting, contract};
 
 use crate::B20CoreStorage;
 

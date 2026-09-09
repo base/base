@@ -562,7 +562,7 @@ mod tests {
     use super::*;
     use crate::{StorageFeatures, hashmap::setup_storage, packing::Word, storage_ctx::StorageCtx};
 
-    #[derive(Debug, Default, Clone, PartialEq, Eq, base_precompile_macros::Storable)]
+    #[derive(Debug, Default, Clone, PartialEq, Eq, base_execution_evm_macros::Storable)]
     struct DynamicRecord {
         value: String,
     }

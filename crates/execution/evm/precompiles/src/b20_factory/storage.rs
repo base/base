@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256, address, b256};
 use base_execution_evm_precompiles::Result;
-use base_precompile_macros::contract;
+use base_execution_evm_macros::contract;
 
 use crate::{B20_MAX_SUPPLY_CAP, B20Variant};
 

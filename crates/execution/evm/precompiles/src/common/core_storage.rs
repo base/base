@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
 use base_execution_evm_precompiles::{Mapping, Result, StorageOps, Word};
-use base_precompile_macros::Storable;
+use base_execution_evm_macros::Storable;
 
 use crate::TransferPolicyIds;
 

@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, LogData, U256, address};
 use base_execution_evm_precompiles::{Handler, Mapping, Result};
-use base_precompile_macros::contract;
+use base_execution_evm_macros::contract;
 
 use crate::PolicyAccounting;
 

@@ -14,9 +14,9 @@ use crate::{
 };
 
 // fixed-size arrays: [T; N] for primitive types T and sizes 1-32
-base_precompile_macros::storable_arrays!();
+base_execution_evm_macros::storable_arrays!();
 // nested arrays: [[T; M]; N] for small primitive types
-base_precompile_macros::storable_nested_arrays!();
+base_execution_evm_macros::storable_nested_arrays!();
 
 /// Type-safe handler for accessing fixed-size arrays `[T; N]` in storage.
 #[derive(Debug, Clone)]

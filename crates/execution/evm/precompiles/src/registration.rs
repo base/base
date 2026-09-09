@@ -15,7 +15,7 @@ use crate::storage_provider::PrecompileStorageProvider;
 ///
 /// ```ignore
 /// use base_execution_evm_precompiles::registration::NativePrecompile;
-/// use base_precompile_macros::contract;
+/// use base_execution_evm_macros::contract;
 ///
 /// #[contract(addr = MY_PRECOMPILE_ADDRESS)]
 /// pub struct MyPrecompile { ... }
