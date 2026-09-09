@@ -6,7 +6,7 @@ use super::*;
 use crate::ZstdConfig;
 
 /// Generates code to implement the `Compact` trait for a data type.
-pub fn generate_from_to(
+pub(crate) fn generate_from_to(
     ident: &Ident,
     attrs: &[Attribute],
     has_lifetime: bool,

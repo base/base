@@ -1,8 +1,8 @@
 //! Header types.
 
 use alloy_rlp::{Decodable, Encodable};
+use base_common_codec_macros::add_arbitrary_tests;
 use bytes::BufMut;
-use reth_codecs_derive::add_arbitrary_tests;
 
 /// Represents the direction for a headers request depending on the `reverse` field of the request.
 /// > The response must contain a number of block headers, of rising number when reverse is 0,

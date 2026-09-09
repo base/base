@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, B256, Bytes, ChainId, U256};
+use base_common_codec_macros::add_arbitrary_tests;
 use base_common_types_chain::TxEip4844 as AlloyTxEip4844;
-use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::{Compact, CompactPlaceholder};
 

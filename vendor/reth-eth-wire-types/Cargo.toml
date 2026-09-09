@@ -21,10 +21,10 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-codecs-derive = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-common-chain-config = { workspace = true }
+base-common-codec-macros = { workspace = true }
 alloy-chains = { workspace = true, features = ["rlp"] }
 derive_more = { workspace = true, features = ["full"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }

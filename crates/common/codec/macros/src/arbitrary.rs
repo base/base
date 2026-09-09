@@ -7,7 +7,7 @@ use quote::{ToTokens, quote};
 ///
 /// It accepts an optional integer number for the number of proptest cases. Otherwise, it will set
 /// it at 1000.
-pub fn maybe_generate_tests(
+pub(crate) fn maybe_generate_tests(
     args: TokenStream,
     type_ident: &impl ToTokens,
     mod_tests: &Ident,

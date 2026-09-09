@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_genesis::GenesisAccount as AlloyGenesisAccount;
 use alloy_primitives::{B256, Bytes, U256};
-use reth_codecs_derive::add_arbitrary_tests;
+use base_common_codec_macros::add_arbitrary_tests;
 
 use crate::Compact;
 

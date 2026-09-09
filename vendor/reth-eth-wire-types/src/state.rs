@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
+use base_common_codec_macros::add_arbitrary_tests;
 use derive_more::{Deref, IntoIterator};
-use reth_codecs_derive::add_arbitrary_tests;
 
 /// A request for state tree nodes corresponding to the given hashes.
 /// This message was removed in `eth/67`, only clients running `eth/66` or earlier will respond to

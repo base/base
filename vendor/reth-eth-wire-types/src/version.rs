@@ -4,9 +4,9 @@ use alloc::string::String;
 use core::{fmt, str::FromStr};
 
 use alloy_rlp::{Decodable, Encodable, Error as RlpError};
+use base_common_codec_macros::add_arbitrary_tests;
 use bytes::BufMut;
 use derive_more::Display;
-use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::alloc::string::ToString;
 

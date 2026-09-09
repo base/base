@@ -22,7 +22,7 @@ thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-tx-macros = { workspace = true }
 modular-bitfield = { workspace = true  }
-reth-codecs-derive = { workspace = true }
+base-common-codec-macros = { workspace = true }
 visibility = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }

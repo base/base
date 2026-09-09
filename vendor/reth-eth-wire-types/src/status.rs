@@ -5,7 +5,7 @@ use alloy_hardforks::{ForkId, Head};
 use alloy_primitives::{B256, U256, hex};
 use alloy_rlp::{BufMut, Encodable, RlpDecodable, RlpEncodable};
 use base_common_chain_config::BaseChainSpec;
-use reth_codecs_derive::add_arbitrary_tests;
+use base_common_codec_macros::add_arbitrary_tests;
 
 use crate::{BlockRangeUpdate, EthVersion};
 

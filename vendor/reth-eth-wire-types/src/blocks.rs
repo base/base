@@ -6,9 +6,9 @@ use alloc::vec::Vec;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
+use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
 use derive_more::{Deref, IntoIterator};
-use reth_codecs_derive::{add_arbitrary_tests, generate_tests};
 
 use crate::HeadersDirection;
 
@@ -545,11 +545,10 @@ mod tests {
         let body = BlockBodies::default();
         let mut buf = Vec::new();
         body.encode(&mut buf);
-        let decoded =
-            BlockBodies::<base_common_types_chain::BlockBody<EthereumTxEnvelope<TxEip4844>>>::decode(
-                &mut buf.as_slice(),
-            )
-            .unwrap();
+        let decoded = BlockBodies::<
+            base_common_types_chain::BlockBody<EthereumTxEnvelope<TxEip4844>>,
+        >::decode(&mut buf.as_slice())
+        .unwrap();
         assert_eq!(body, decoded);
     }
 }

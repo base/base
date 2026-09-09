@@ -1,14 +1,14 @@
 use super::*;
 
 #[derive(Debug)]
-pub struct StructHandler<'a> {
+pub(crate) struct StructHandler<'a> {
     fields_iterator: std::iter::Peekable<std::slice::Iter<'a, FieldTypes>>,
     lines: Vec<TokenStream2>,
     pub is_wrapper: bool,
 }
 
 impl<'a> StructHandler<'a> {
-    pub fn new(fields: &'a FieldList) -> Self {
+    pub(crate) fn new(fields: &'a FieldList) -> Self {
         StructHandler {
             lines: vec![],
             fields_iterator: fields.iter().peekable(),
@@ -16,11 +16,11 @@ impl<'a> StructHandler<'a> {
         }
     }
 
-    pub fn next_field(&mut self) -> Option<&'a FieldTypes> {
+    pub(crate) fn next_field(&mut self) -> Option<&'a FieldTypes> {
         self.fields_iterator.next()
     }
 
-    pub fn generate_to(mut self) -> Vec<TokenStream2> {
+    pub(crate) fn generate_to(mut self) -> Vec<TokenStream2> {
         while let Some(field) = self.next_field() {
             match field {
                 FieldTypes::EnumVariant(_) | FieldTypes::EnumUnnamedField(_) => unreachable!(),
@@ -30,7 +30,7 @@ impl<'a> StructHandler<'a> {
         self.lines
     }
 
-    pub fn generate_from(&mut self, known_types: &[&str]) -> Vec<TokenStream2> {
+    pub(crate) fn generate_from(&mut self, known_types: &[&str]) -> Vec<TokenStream2> {
         while let Some(field) = self.next_field() {
             match field {
                 FieldTypes::EnumVariant(_) | FieldTypes::EnumUnnamedField(_) => unreachable!(),

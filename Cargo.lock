@@ -2693,6 +2693,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-codec-macros"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "similar-asserts",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "base-common-network"
 version = "0.0.0"
 dependencies = [
@@ -2847,6 +2857,7 @@ dependencies = [
  "arbitrary",
  "assert_matches",
  "auto_impl",
+ "base-common-codec-macros",
  "base-common-network",
  "bincode 2.0.1",
  "borsh",
@@ -2862,7 +2873,6 @@ dependencies = [
  "proptest-arbitrary-interop",
  "rand 0.8.7",
  "rand 0.9.5",
- "reth-codecs-derive",
  "reth-zstd-compressors",
  "rstest",
  "secp256k1 0.30.0",
@@ -13782,16 +13792,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-codecs-derive"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "similar-asserts",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "reth-config"
 version = "0.0.0"
 dependencies = [
@@ -14284,13 +14284,13 @@ dependencies = [
  "alloy-trie",
  "arbitrary",
  "base-common-chain-config",
+ "base-common-codec-macros",
  "base-common-types-chain",
  "bytes",
  "derive_more",
  "proptest",
  "proptest-arbitrary-interop",
  "rand 0.9.5",
- "reth-codecs-derive",
  "reth-primitives-traits",
  "serde",
  "test-case",

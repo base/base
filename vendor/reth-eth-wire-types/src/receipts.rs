@@ -4,12 +4,12 @@ use alloc::vec::Vec;
 
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
+use base_common_codec_macros::add_arbitrary_tests;
 use base_common_types_chain::{
     EthereumReceipt as Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
     TxReceipt,
 };
 use derive_more::{Deref, IntoIterator};
-use reth_codecs_derive::add_arbitrary_tests;
 
 /// A request for transaction receipts from the given block hashes.
 #[derive(

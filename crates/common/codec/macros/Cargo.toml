@@ -1,5 +1,5 @@
 [package]
-name = "reth-codecs-derive"
+name = "base-common-codec-macros"
 description = "Derive macro for the Compact codec."
 version.workspace = true
 edition.workspace = true
@@ -20,7 +20,7 @@ autobenches = false
 readme = "README.md"
 
 [lib]
-name = "reth_codecs_derive"
+name = "base_common_codec_macros"
 path = "src/lib.rs"
 proc-macro = true
 
@@ -28,8 +28,10 @@ proc-macro = true
 syn = { workspace = true, features = ["default"] }
 quote = { workspace = true, features = ["default"] }
 proc-macro2 = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 similar-asserts = { workspace = true, features = ["default", "serde"] }
 syn = { workspace = true, features = ["default", "full", "extra-traits"] }
+
 [lints]
 workspace = true

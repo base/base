@@ -507,7 +507,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::B256;
-    use reth_codecs_derive::{Compact, add_arbitrary_tests};
+    use base_common_codec_macros::{Compact, add_arbitrary_tests};
     use serde::{Deserialize, Serialize};
 
     use super::*;

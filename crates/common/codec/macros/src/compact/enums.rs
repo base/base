@@ -1,14 +1,14 @@
 use super::*;
 
 #[derive(Debug)]
-pub struct EnumHandler<'a> {
+pub(crate) struct EnumHandler<'a> {
     current_variant_index: u8,
     fields_iterator: std::iter::Peekable<std::slice::Iter<'a, FieldTypes>>,
     enum_lines: Vec<TokenStream2>,
 }
 
 impl<'a> EnumHandler<'a> {
-    pub fn new(fields: &'a FieldList) -> Self {
+    pub(crate) fn new(fields: &'a FieldList) -> Self {
         EnumHandler {
             current_variant_index: 0u8,
             enum_lines: vec![],
@@ -16,11 +16,11 @@ impl<'a> EnumHandler<'a> {
         }
     }
 
-    pub fn next_field(&mut self) -> Option<&'a FieldTypes> {
+    pub(crate) fn next_field(&mut self) -> Option<&'a FieldTypes> {
         self.fields_iterator.next()
     }
 
-    pub fn generate_to(mut self, ident: &Ident) -> Vec<TokenStream2> {
+    pub(crate) fn generate_to(mut self, ident: &Ident) -> Vec<TokenStream2> {
         while let Some(field) = self.next_field() {
             match field {
                 //  The following method will advance the
@@ -32,7 +32,7 @@ impl<'a> EnumHandler<'a> {
         self.enum_lines
     }
 
-    pub fn generate_from(mut self, ident: &Ident) -> Vec<TokenStream2> {
+    pub(crate) fn generate_from(mut self, ident: &Ident) -> Vec<TokenStream2> {
         while let Some(field) = self.next_field() {
             match field {
                 //  The following method will advance the
@@ -48,7 +48,7 @@ impl<'a> EnumHandler<'a> {
     ///
     /// `fields_iterator` might look something like \[`VariantUnit`, `VariantUnnamedField`, Field,
     /// `VariantUnit`...\].
-    pub fn from(&mut self, variant_name: &str, ident: &Ident) {
+    pub(crate) fn from(&mut self, variant_name: &str, ident: &Ident) {
         let variant_name = format_ident!("{variant_name}");
         let current_variant_index = self.current_variant_index;
 
@@ -90,7 +90,7 @@ impl<'a> EnumHandler<'a> {
     ///
     /// `fields_iterator` might look something like [`VariantUnit`, `VariantUnnamedField`, Field,
     /// `VariantUnit`...].
-    pub fn to(&mut self, variant_name: &str, ident: &Ident) {
+    pub(crate) fn to(&mut self, variant_name: &str, ident: &Ident) {
         let variant_name = format_ident!("{variant_name}");
         let current_variant_index = self.current_variant_index;
 

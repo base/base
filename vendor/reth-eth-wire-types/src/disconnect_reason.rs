@@ -2,8 +2,8 @@
 
 use alloy_primitives::bytes::{Buf, BufMut};
 use alloy_rlp::{Decodable, Encodable, Header};
+use base_common_codec_macros::add_arbitrary_tests;
 use derive_more::Display;
-use reth_codecs_derive::add_arbitrary_tests;
 use thiserror::Error;
 
 /// `RLPx` disconnect reason.

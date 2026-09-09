@@ -4,8 +4,8 @@ use core::ops::Deref;
 
 use alloy_eips::eip7702::{Authorization as AlloyAuthorization, SignedAuthorization};
 use alloy_primitives::{Address, U256};
+use base_common_codec_macros::add_arbitrary_tests;
 use bytes::Buf;
-use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::Compact;
 

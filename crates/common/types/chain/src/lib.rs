@@ -161,8 +161,8 @@ pub mod private {
 }
 
 mod compact;
+pub use base_common_codec_macros::*;
 pub use compact::{Compact, CompactPlaceholder};
-pub use reth_codecs_derive::*;
 
 #[cfg(feature = "alloy")]
 pub mod alloy;

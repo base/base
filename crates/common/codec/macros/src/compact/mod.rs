@@ -27,7 +27,7 @@ type FieldType = String;
 type UseAlternative = bool;
 // Helper Alias type
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct StructFieldDescriptor {
+pub(crate) struct StructFieldDescriptor {
     name: String,
     ftype: String,
     is_compact: bool,
@@ -38,14 +38,14 @@ pub struct StructFieldDescriptor {
 type FieldList = Vec<FieldTypes>;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum FieldTypes {
+pub(crate) enum FieldTypes {
     StructField(StructFieldDescriptor),
     EnumVariant(String),
     EnumUnnamedField((FieldType, UseAlternative)),
 }
 
 /// Derives the `Compact` trait and its from/to implementations.
-pub fn derive(input: DeriveInput, zstd: Option<ZstdConfig>) -> TokenStream {
+pub(crate) fn derive(input: DeriveInput, zstd: Option<ZstdConfig>) -> TokenStream {
     let mut output = quote! {};
 
     let DeriveInput { ident, data, generics, attrs, .. } = input;
@@ -58,12 +58,12 @@ pub fn derive(input: DeriveInput, zstd: Option<ZstdConfig>) -> TokenStream {
     output.into()
 }
 
-pub fn has_lifetime(generics: &Generics) -> bool {
+pub(crate) fn has_lifetime(generics: &Generics) -> bool {
     generics.lifetimes().next().is_some()
 }
 
 /// Given a list of fields on a struct, extract their fields and types.
-pub fn get_fields(data: &Data) -> FieldList {
+pub(crate) fn get_fields(data: &Data) -> FieldList {
     let mut fields = vec![];
 
     match data {
@@ -187,7 +187,7 @@ fn should_use_alt_impl(ftype: &str, segment: &syn::PathSegment) -> bool {
 
 /// Given the field type in a string format, return the amount of bits necessary to save its maximum
 /// length.
-pub fn get_bit_size(ftype: &str) -> u8 {
+pub(crate) fn get_bit_size(ftype: &str) -> u8 {
     match ftype {
         "TransactionKind" | "TxKind" | "bool" | "Option" | "Signature" => 1,
         "TxType" | "OpTxType" => 2,
@@ -200,7 +200,7 @@ pub fn get_bit_size(ftype: &str) -> u8 {
 
 /// Given the field type in a string format, checks if its type should be added to the
 /// `StructFlags`.
-pub fn is_flag_type(ftype: &str) -> bool {
+pub(crate) fn is_flag_type(ftype: &str) -> bool {
     get_bit_size(ftype) > 0
 }
 

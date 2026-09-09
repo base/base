@@ -13,9 +13,9 @@ use alloy_rlp::{
     Decodable, Encodable, Header, RlpDecodable, RlpDecodableWrapper, RlpEncodable,
     RlpEncodableWrapper, decode_append,
 };
+use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use derive_more::{Constructor, Deref, DerefMut, From, IntoIterator};
-use reth_codecs_derive::{add_arbitrary_tests, generate_tests};
 use reth_primitives_traits::{Block, InMemorySize, SignedTransaction, sync::OnceLock};
 
 use crate::{EthMessage, EthVersion};
@@ -1772,7 +1772,9 @@ mod tests {
 
     fn signed_transaction() -> impl SignedTransaction {
         EthereumTxEnvelope::<TxEip4844>::new_unhashed(
-            base_common_types_chain::EthereumTypedTransaction::<TxEip4844>::Legacy(Default::default()),
+            base_common_types_chain::EthereumTypedTransaction::<TxEip4844>::Legacy(
+                Default::default(),
+            ),
             Signature::new(
                 U256::from_str(
                     "0x64b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12",

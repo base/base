@@ -2,8 +2,8 @@
 
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Bytes, ChainId, TxKind, U256};
+use base_common_codec_macros::add_arbitrary_tests;
 use base_common_types_chain::TxEip2930 as AlloyTxEip2930;
-use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::Compact;
 

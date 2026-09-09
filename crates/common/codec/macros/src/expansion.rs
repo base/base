@@ -1,14 +1,3 @@
-//! Derive macros for the Compact codec traits.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![allow(unreachable_pub, missing_docs)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -17,13 +6,12 @@ use syn::{
     parse_macro_input,
 };
 
-mod arbitrary;
-mod compact;
+use crate::{arbitrary, compact};
 
 #[derive(Clone)]
 pub(crate) struct ZstdConfig {
-    compressor: syn::Path,
-    decompressor: syn::Path,
+    pub compressor: syn::Path,
+    pub decompressor: syn::Path,
 }
 
 /// Derives the `Compact` trait for custom structs, optimizing serialization with a possible
@@ -55,14 +43,12 @@ pub(crate) struct ZstdConfig {
 ///   own encoding and do not rely on the bitflag struct.
 /// - `Bytes` fields and any types containing a `Bytes` field should be placed last to ensure
 ///   efficient decoding.
-#[proc_macro_derive(Compact, attributes(maybe_zero, reth_codecs))]
-pub fn derive(input: TokenStream) -> TokenStream {
+pub(crate) fn derive(input: TokenStream) -> TokenStream {
     compact::derive(parse_macro_input!(input as DeriveInput), None)
 }
 
 /// Adds `zstd` compression to derived [`Compact`].
-#[proc_macro_derive(CompactZstd, attributes(maybe_zero, reth_codecs, reth_zstd))]
-pub fn derive_zstd(input: TokenStream) -> TokenStream {
+pub(crate) fn derive_zstd(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let mut compressor = None;
@@ -112,8 +98,7 @@ pub fn derive_zstd(input: TokenStream) -> TokenStream {
 ///   Limited to 10 cases.
 /// * `#[add_arbitrary_tests(compact, rlp)]`. will derive arbitrary and generate rlp and compact
 ///   roundtrip proptests.
-#[proc_macro_attribute]
-pub fn add_arbitrary_tests(args: TokenStream, input: TokenStream) -> TokenStream {
+pub(crate) fn add_arbitrary_tests(args: TokenStream, input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
 
     let tests =
@@ -157,8 +142,7 @@ impl Parse for GenerateTestsInput {
 ///   in a module named `MyTypeTests`.
 /// * `generate_tests!(#[compact, 10] MyType, MyTypeTests)`: will generate compact roundtrip tests
 ///   for `MyType` limited to 10 cases.
-#[proc_macro]
-pub fn generate_tests(input: TokenStream) -> TokenStream {
+pub(crate) fn generate_tests(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as GenerateTestsInput);
 
     arbitrary::maybe_generate_tests(input.args, &input.ty, &input.mod_name).into()
