@@ -62,7 +62,7 @@ macro_rules! delegate_provider_impls {
                 fn witness(&self, input: reth_trie::TrieInput, target: reth_trie::HashedPostState, mode: reth_trie::ExecutionWitnessMode) -> reth_storage_api::ProviderResult<Vec<alloy_primitives::Bytes>>;
             }
             HashedPostStateProvider $(where [$($generics)*])? {
-                fn hashed_post_state(&self, bundle_state: &base_execution_evm_runtime::database::BundleState) -> reth_storage_api::ProviderResult<reth_trie::HashedPostState>;
+                fn hashed_post_state(&self, bundle_state: &reth_storage_api::BundleState) -> reth_storage_api::ProviderResult<reth_trie::HashedPostState>;
             }
         );
         $crate::impl_state_database!([$($($generics)*)?] $target where []);
@@ -78,14 +78,14 @@ pub use delegate_provider_impls;
 #[macro_export]
 macro_rules! impl_state_database {
     ([$($generics:tt)*] $target:ty where [$($bounds:tt)*]) => {
-        impl<$($generics)*> base_execution_evm_runtime::DatabaseRef for $target where $($bounds)* {
+        impl<$($generics)*> $crate::DatabaseRef for $target where $($bounds)* {
             type Error = $crate::ProviderError;
 
-            fn basic_ref(&self, address: alloy_primitives::Address) -> Result<Option<base_execution_evm_runtime::state::AccountInfo>, Self::Error> {
+            fn basic_ref(&self, address: alloy_primitives::Address) -> Result<Option<$crate::AccountInfo>, Self::Error> {
                 Ok($crate::AccountReader::basic_account(self, &address)?.map(Into::into))
             }
 
-            fn code_by_hash_ref(&self, hash: alloy_primitives::B256) -> Result<base_execution_evm_runtime::bytecode::Bytecode, Self::Error> {
+            fn code_by_hash_ref(&self, hash: alloy_primitives::B256) -> Result<$crate::Bytecode, Self::Error> {
                 Ok($crate::BytecodeReader::bytecode_by_hash(self, &hash)?.unwrap_or_default().0)
             }
 
@@ -106,23 +106,23 @@ macro_rules! impl_state_database {
 #[macro_export]
 macro_rules! impl_read_only_database {
     ([$($generics:tt)*] $target:ty where [$($bounds:tt)*]) => {
-        impl<$($generics)*> base_execution_evm_runtime::Database for $target where $($bounds)* {
-            type Error = <Self as base_execution_evm_runtime::DatabaseRef>::Error;
+        impl<$($generics)*> $crate::Database for $target where $($bounds)* {
+            type Error = <Self as $crate::DatabaseRef>::Error;
 
-            fn basic(&mut self, address: alloy_primitives::Address) -> Result<Option<base_execution_evm_runtime::state::AccountInfo>, Self::Error> {
-                base_execution_evm_runtime::DatabaseRef::basic_ref(self, address)
+            fn basic(&mut self, address: alloy_primitives::Address) -> Result<Option<$crate::AccountInfo>, Self::Error> {
+                $crate::DatabaseRef::basic_ref(self, address)
             }
 
-            fn code_by_hash(&mut self, hash: alloy_primitives::B256) -> Result<base_execution_evm_runtime::bytecode::Bytecode, Self::Error> {
-                base_execution_evm_runtime::DatabaseRef::code_by_hash_ref(self, hash)
+            fn code_by_hash(&mut self, hash: alloy_primitives::B256) -> Result<$crate::Bytecode, Self::Error> {
+                $crate::DatabaseRef::code_by_hash_ref(self, hash)
             }
 
             fn storage(&mut self, address: alloy_primitives::Address, key: alloy_primitives::U256) -> Result<alloy_primitives::U256, Self::Error> {
-                base_execution_evm_runtime::DatabaseRef::storage_ref(self, address, key)
+                $crate::DatabaseRef::storage_ref(self, address, key)
             }
 
             fn block_hash(&mut self, number: u64) -> Result<alloy_primitives::B256, Self::Error> {
-                base_execution_evm_runtime::DatabaseRef::block_hash_ref(self, number)
+                $crate::DatabaseRef::block_hash_ref(self, number)
             }
         }
     };
@@ -131,7 +131,7 @@ macro_rules! impl_read_only_database {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
-    use base_execution_evm_runtime::Database;
+    use base_execution_state_memory::Database;
     use base_execution_state_types::{ProviderError, ProviderResult};
     use mockall::predicate::eq;
     use reth_primitives_traits::{Account, Bytecode};
@@ -176,7 +176,7 @@ mod tests {
         assert_eq!(db.basic(address).unwrap(), Some(account.into()));
         assert_eq!(
             db.code_by_hash(hash).unwrap(),
-            base_execution_evm_runtime::bytecode::Bytecode::default()
+            base_execution_state_memory::Bytecode::default()
         );
         assert_eq!(Database::storage(&mut db, address, slot).unwrap(), U256::ZERO);
         assert_eq!(Database::block_hash(&mut db, 10).unwrap(), B256::ZERO);

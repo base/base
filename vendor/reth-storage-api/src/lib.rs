@@ -106,3 +106,5 @@ pub use metadata::{MetadataProvider, StorageSettingsCache};
 pub use reth_db_api::models::StorageSettings;
 
 pub mod macros;
+
+pub use base_execution_state_memory::{AccountInfo, BundleState, Bytecode, Database, DatabaseRef};

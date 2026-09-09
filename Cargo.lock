@@ -15127,7 +15127,7 @@ dependencies = [
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-execution-evm-runtime",
+ "base-execution-state-memory",
  "base-execution-state-types",
  "mockall",
  "reth-db-api",

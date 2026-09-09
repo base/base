@@ -20,14 +20,14 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-common-types-chain = { workspace = true  }
 base-execution-state-types = {workspace = true}
 base-common-types-payload = { workspace = true }
-base-execution-evm-runtime = { workspace = true }
+base-execution-state-memory = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 base-common-runtime-tasks = { workspace = true, optional = true }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 
@@ -46,7 +46,7 @@ std = [
     "base-common-types-payload/std",
     "reth-primitives-traits/std",
     "base-execution-state-types/std",
-    "base-execution-evm-runtime/std",
+    "base-execution-state-memory/std",
     "serde_json?/std",
     "dep:base-common-runtime-tasks",
     "alloy-eip7928/std",
@@ -57,7 +57,7 @@ db-api = ["dep:alloy-hardforks", "dep:reth-db-api", "dep:serde_json"]
 serde = [
     "base-execution-state-types/serde",
     "reth-primitives-traits/serde",
-    "base-execution-evm-runtime/serde",
+    "base-execution-state-memory/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-types-chain/serde",

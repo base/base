@@ -4,7 +4,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, U256};
 use auto_impl::auto_impl;
 use base_common_types_chain::constants::KECCAK_EMPTY;
-use base_execution_evm_runtime::database::BundleState;
+use base_execution_state_memory::BundleState;
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::HashedPostState;
 use base_execution_state_types::ProviderResult;
@@ -53,7 +53,7 @@ pub trait StateReadProvider:
     BlockHashReader
     + AccountReader
     + BytecodeReader
-    + base_execution_evm_runtime::DatabaseRef<Error = base_execution_state_types::ProviderError>
+    + base_execution_state_memory::DatabaseRef<Error = base_execution_state_types::ProviderError>
 {
     /// Get storage of given account.
     fn storage(

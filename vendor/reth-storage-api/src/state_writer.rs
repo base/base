@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::{BaseReceipt, transaction::Either};
-use base_execution_evm_runtime::database::{
+use base_execution_state_memory::{
     BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
 };
 use base_execution_state_types::HashedPostStateSorted;
