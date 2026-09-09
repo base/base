@@ -98,7 +98,7 @@ impl EthStateCache {
         config: EthStateCacheConfig,
     ) -> (Self, EthStateCacheService<Provider, Runtime>)
     where
-        Provider: BlockReader<Block = BaseBlock, Receipt = BaseReceipt> + BalProvider,
+        Provider: BlockReader<Block = BaseBlock> + BalProvider,
     {
         let EthStateCacheConfig {
             max_blocks,
@@ -136,11 +136,7 @@ impl EthStateCache {
         executor: Runtime,
     ) -> Self
     where
-        Provider: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
-            + BalProvider
-            + Clone
-            + Unpin
-            + 'static,
+        Provider: BlockReader<Block = BaseBlock> + BalProvider + Clone + Unpin + 'static,
     {
         let (this, service) = Self::create(provider, executor.clone(), config);
         executor.spawn_critical_task("eth state cache", service);
@@ -335,7 +331,7 @@ pub(crate) struct EthStateCacheService<
 > where
     Provider: BlockReader + BalProvider,
     LimitBlocks: Limiter<B256, Arc<RecoveredBlock>>,
-    LimitReceipts: Limiter<B256, Arc<Vec<Provider::Receipt>>>,
+    LimitReceipts: Limiter<B256, Arc<Vec<BaseReceipt>>>,
     LimitHeaders: Limiter<B256, base_common_types_chain::Header>,
     LimitBals: Limiter<B256, CachedRevmBal>,
 {
@@ -344,7 +340,7 @@ pub(crate) struct EthStateCacheService<
     /// The LRU cache for full blocks grouped by their block hash.
     full_block_cache: BlockLruCache<LimitBlocks>,
     /// The LRU cache for block receipts grouped by the block hash.
-    receipts_cache: ReceiptsLruCache<Provider::Receipt, LimitReceipts>,
+    receipts_cache: ReceiptsLruCache<BaseReceipt, LimitReceipts>,
     /// The LRU cache for headers.
     ///
     /// Headers are cached because they are required to populate the environment for execution
@@ -353,9 +349,9 @@ pub(crate) struct EthStateCacheService<
     /// The LRU cache for revm BALs grouped by the block hash.
     bal_cache: BalLruCache<LimitBals>,
     /// Sender half of the action channel.
-    action_tx: UnboundedSender<CacheAction<Provider::Receipt>>,
+    action_tx: UnboundedSender<CacheAction<BaseReceipt>>,
     /// Receiver half of the action channel.
-    action_rx: UnboundedReceiverStream<CacheAction<Provider::Receipt>>,
+    action_rx: UnboundedReceiverStream<CacheAction<BaseReceipt>>,
     /// The type that's used to spawn tasks that do the actual work
     action_task_spawner: Tasks,
     /// Rate limiter for spawned fetch tasks.
@@ -402,7 +398,7 @@ where
     fn on_new_receipts(
         &mut self,
         block_hash: B256,
-        res: ProviderResult<Option<Arc<Vec<Provider::Receipt>>>>,
+        res: ProviderResult<Option<Arc<Vec<BaseReceipt>>>>,
     ) {
         if let Some(queued) = self.receipts_cache.remove(&block_hash) {
             // send the response to queued senders
@@ -445,7 +441,7 @@ where
     fn on_reorg_receipts(
         &mut self,
         block_hash: B256,
-        res: ProviderResult<Option<Arc<Vec<Provider::Receipt>>>>,
+        res: ProviderResult<Option<Arc<Vec<BaseReceipt>>>>,
     ) {
         if let Some(queued) = self.receipts_cache.remove(&block_hash) {
             // send the response to queued senders
@@ -1403,34 +1399,32 @@ mod tests {
     }
 
     impl ReceiptProvider for TestBalProvider {
-        type Receipt = Receipt;
-
-        fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
+        fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Receipt>> {
             Ok(None)
         }
 
-        fn receipt_by_hash(&self, _hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+        fn receipt_by_hash(&self, _hash: TxHash) -> ProviderResult<Option<Receipt>> {
             Ok(None)
         }
 
         fn receipts_by_block(
             &self,
             _block: BlockHashOrNumber,
-        ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+        ) -> ProviderResult<Option<Vec<Receipt>>> {
             Ok(None)
         }
 
         fn receipts_by_tx_range(
             &self,
             _range: impl RangeBounds<TxNumber>,
-        ) -> ProviderResult<Vec<Self::Receipt>> {
+        ) -> ProviderResult<Vec<Receipt>> {
             Ok(Vec::new())
         }
 
         fn receipts_by_block_range(
             &self,
             _block_range: RangeInclusive<BlockNumber>,
-        ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+        ) -> ProviderResult<Vec<Vec<Receipt>>> {
             Ok(Vec::new())
         }
     }
@@ -1456,7 +1450,7 @@ mod tests {
 
         fn pending_block_and_receipts(
             &self,
-        ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+        ) -> ProviderResult<Option<(RecoveredBlock, Vec<Receipt>)>> {
             Ok(None)
         }
 

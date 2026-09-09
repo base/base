@@ -13,7 +13,7 @@ use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, Header,
+    BaseBlock, Header,
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };
 use base_execution_network_wire::AccountData;
@@ -63,7 +63,7 @@ fn snap_protocols() -> Vec<Protocol> {
 /// A provider usable by the snap/2 testnet helpers: real block, header, state, bal, and range
 /// access.
 trait SnapTestProvider:
-    BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+    BlockReader<Block = BaseBlock>
     + HeaderProvider
     + BalProvider
     + StateProviderFactory
@@ -76,7 +76,7 @@ trait SnapTestProvider:
 }
 
 impl<T> SnapTestProvider for T where
-    T: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+    T: BlockReader<Block = BaseBlock>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory

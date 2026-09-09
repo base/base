@@ -2,7 +2,7 @@
 
 use std::fmt::{Debug, Formatter};
 
-use base_common_types_chain::{BaseReceipt, BaseTransactionInfo, BaseTxEnvelope, DepositInfo};
+use base_common_types_chain::{BaseTransactionInfo, BaseTxEnvelope, DepositInfo};
 use base_common_types_rpc::TransactionInfo;
 use base_execution_state_api::{ProviderError, ReceiptProvider, TransactionsProvider};
 
@@ -38,8 +38,7 @@ impl<Provider> BaseTxInfoMapper<Provider> {
 
 impl<Provider> BaseTxInfoMapper<Provider>
 where
-    Provider:
-        TransactionsProvider<Transaction = BaseTxEnvelope> + ReceiptProvider<Receipt = BaseReceipt>,
+    Provider: TransactionsProvider<Transaction = BaseTxEnvelope> + ReceiptProvider,
 {
     /// Loads deposit receipt fields and the block timestamp for a transaction.
     pub fn try_map(

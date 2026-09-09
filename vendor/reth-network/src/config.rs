@@ -6,7 +6,7 @@ use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_common_types_chain::BaseBlock;
 use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDRESS as DEFAULT_DISCOVERY_ADDRESS;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::Discv4ConfigBuilder;
@@ -162,7 +162,7 @@ where
     C: BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+        + BlockReader<Block = BaseBlock>
         + HeaderProvider
         + Clone
         + Unpin

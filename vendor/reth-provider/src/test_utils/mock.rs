@@ -726,20 +726,18 @@ impl TransactionsProvider for MockEthProvider {
 }
 
 impl ReceiptProvider for MockEthProvider {
-    type Receipt = BaseReceipt;
-
-    fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<BaseReceipt>> {
         Ok(None)
     }
 
-    fn receipt_by_hash(&self, _hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt_by_hash(&self, _hash: TxHash) -> ProviderResult<Option<BaseReceipt>> {
         Ok(None)
     }
 
     fn receipts_by_block(
         &self,
         block: BlockHashOrNumber,
-    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Option<Vec<BaseReceipt>>> {
         let receipts_lock = self.receipts.lock();
 
         match block {
@@ -759,14 +757,14 @@ impl ReceiptProvider for MockEthProvider {
     fn receipts_by_tx_range(
         &self,
         _range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Self::Receipt>> {
+    ) -> ProviderResult<Vec<BaseReceipt>> {
         Ok(vec![])
     }
 
     fn receipts_by_block_range(
         &self,
         block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Vec<Vec<BaseReceipt>>> {
         let receipts_lock = self.receipts.lock();
         let headers_lock = self.headers.lock();
 

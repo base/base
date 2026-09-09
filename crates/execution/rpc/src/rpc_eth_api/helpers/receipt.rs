@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use base_common_types_chain::{TxReceipt, transaction::TransactionMeta};
+use base_common_types_chain::{BaseReceipt, TxReceipt, transaction::TransactionMeta};
 use base_common_types_rpc::BaseTransactionReceipt;
-use base_execution_state_api::{ProviderReceipt, ProviderTx};
+use base_execution_state_api::ProviderTx;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
@@ -27,8 +27,8 @@ impl BaseEthApi {
         &self,
         tx: Recovered<ProviderTx<BlockchainProvider>>,
         meta: TransactionMeta,
-        receipt: ProviderReceipt<BlockchainProvider>,
-        all_receipts: Option<Arc<Vec<ProviderReceipt<BlockchainProvider>>>>,
+        receipt: BaseReceipt,
+        all_receipts: Option<Arc<Vec<BaseReceipt>>>,
         block: Option<Arc<RecoveredBlock>>,
     ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send {
         async move {

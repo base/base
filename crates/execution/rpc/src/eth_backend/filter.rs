@@ -14,13 +14,12 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::TxHash;
 use async_trait::async_trait;
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BaseReceipt, BlockHeader};
 use base_common_types_rpc::{
     Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
 };
 use base_execution_state_api::{
-    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderReceipt,
-    ReceiptProvider,
+    BlockHashReader, BlockIdReader, BlockNumReader, HeaderProvider, ReceiptProvider,
 };
 use base_execution_state_types::ProviderError;
 use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
@@ -798,7 +797,6 @@ where
     TxCompat: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
-            Receipt = base_common_types_chain::BaseReceipt,
         > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
@@ -847,7 +845,6 @@ where
     TxCompat: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
-            Receipt = base_common_types_chain::BaseReceipt,
         > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
@@ -992,12 +989,9 @@ impl From<logs_utils::FilterBlockRangeError> for EthFilterError {
 
 /// Helper type for the common pattern of returning receipts, block and the original header that is
 /// a match for the filter.
-struct ReceiptBlockResult<P>
-where
-    P: ReceiptProvider + BlockReader,
-{
+struct ReceiptBlockResult {
     /// We always need the entire receipts for the matching block.
-    receipts: Arc<Vec<ProviderReceipt<P>>>,
+    receipts: Arc<Vec<BaseReceipt>>,
     /// Block can be optional and we can fetch it lazily when needed.
     recovered_block: Option<Arc<reth_primitives_traits::RecoveredBlock>>,
     /// The header of the block.
@@ -1072,9 +1066,7 @@ impl RangeMode {
     }
 
     /// Gets the next (receipts, `maybe_block`, header, `block_hash`) tuple.
-    async fn next(
-        &mut self,
-    ) -> Result<Option<ReceiptBlockResult<BlockchainProvider>>, EthFilterError> {
+    async fn next(&mut self) -> Result<Option<ReceiptBlockResult>, EthFilterError> {
         match self {
             Self::Cached(cached) => cached.next().await,
             Self::Range(range) => range.next().await,
@@ -1089,9 +1081,7 @@ struct CachedMode {
 }
 
 impl CachedMode {
-    async fn next(
-        &mut self,
-    ) -> Result<Option<ReceiptBlockResult<BlockchainProvider>>, EthFilterError> {
+    async fn next(&mut self) -> Result<Option<ReceiptBlockResult>, EthFilterError> {
         for header in self.headers_iter.by_ref() {
             // Use get_receipts_and_maybe_block which has automatic fallback to provider
             if let Some((receipts, maybe_block)) =
@@ -1110,23 +1100,21 @@ impl CachedMode {
 }
 
 /// Type alias for parallel receipt fetching task futures used in `RangeBlockMode`
-type ReceiptFetchFuture<P> =
-    Pin<Box<dyn Future<Output = Result<Vec<ReceiptBlockResult<P>>, EthFilterError>> + Send>>;
+type ReceiptFetchFuture =
+    Pin<Box<dyn Future<Output = Result<Vec<ReceiptBlockResult>, EthFilterError>> + Send>>;
 
 /// Mode for processing blocks using range queries for older blocks
 struct RangeBlockMode {
     filter_inner: Arc<EthFilterInner>,
     iter: Peekable<std::vec::IntoIter<SealedHeader>>,
-    next: VecDeque<ReceiptBlockResult<BlockchainProvider>>,
+    next: VecDeque<ReceiptBlockResult>,
     max_range: usize,
     // Stream of ongoing receipt fetching tasks
-    pending_tasks: FuturesOrdered<ReceiptFetchFuture<BlockchainProvider>>,
+    pending_tasks: FuturesOrdered<ReceiptFetchFuture>,
 }
 
 impl RangeBlockMode {
-    async fn next(
-        &mut self,
-    ) -> Result<Option<ReceiptBlockResult<BlockchainProvider>>, EthFilterError> {
+    async fn next(&mut self) -> Result<Option<ReceiptBlockResult>, EthFilterError> {
         loop {
             // First, try to return any already processed result from buffer
             if let Some(result) = self.next.pop_front() {
@@ -1191,7 +1179,7 @@ impl RangeBlockMode {
     async fn process_small_range(
         &mut self,
         range_headers: Vec<SealedHeader>,
-    ) -> Result<Option<ReceiptBlockResult<BlockchainProvider>>, EthFilterError> {
+    ) -> Result<Option<ReceiptBlockResult>, EthFilterError> {
         // Process each header individually to avoid queuing for all receipts
         for header in range_headers {
             // First check if already cached to avoid unnecessary provider calls

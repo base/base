@@ -125,7 +125,6 @@ pub mod constants;
 pub use constants::gas_units::{format_gas, format_gas_throughput};
 
 pub mod receipt;
-pub use receipt::Receipt;
 
 pub mod transaction;
 pub use base_common_types_chain::{

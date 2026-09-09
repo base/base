@@ -14,9 +14,7 @@ use base_common_types_chain::EthereumTxEnvelope;
 use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
-use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt,
-};
+use base_common_types_chain::{BaseBlock, BlockHeader, Header, Transaction, TxReceipt};
 use base_common_types_rpc::TxGasAndReward;
 use base_execution_state_api::BlockReaderIdExt;
 use futures::{
@@ -224,8 +222,7 @@ pub async fn fee_history_cache_new_blocks_task<St, Provider>(
     cache: EthStateCache,
 ) where
     St: Stream<Item = CanonStateNotification> + Unpin + 'static,
-    Provider:
-        BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt> + ChainSpecProvider + 'static,
+    Provider: BlockReaderIdExt<Block = BaseBlock> + ChainSpecProvider + 'static,
 {
     // We're listening for new blocks emitted when the node is in live sync.
     // If the node transitions to stage sync, we need to fetch the missing blocks

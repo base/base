@@ -8,13 +8,12 @@ use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use base_common_client_ethereum::{TransactionBuilder, TransactionBuilder4844};
 use base_common_types_chain::{
-    BaseTxEnvelope, BlockHeader, Transaction,
+    BaseReceipt, BaseTxEnvelope, BlockHeader, Transaction,
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_common_types_rpc::{BaseTransactionRequest, TransactionInfo, state::EvmOverrides};
 use base_execution_state_api::{
-    BlockNumReader, BlockReaderIdExt, ProviderReceipt, ProviderTx, ReceiptProvider,
-    TransactionsProvider,
+    BlockNumReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
 };
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
@@ -185,8 +184,8 @@ impl BaseEthApi {
             Option<(
                 Recovered<ProviderTx<BlockchainProvider>>,
                 TransactionMeta,
-                ProviderReceipt<BlockchainProvider>,
-                Option<Arc<Vec<ProviderReceipt<BlockchainProvider>>>>,
+                BaseReceipt,
+                Option<Arc<Vec<BaseReceipt>>>,
                 Option<Arc<RecoveredBlock>>,
             )>,
             BaseEthApiError,

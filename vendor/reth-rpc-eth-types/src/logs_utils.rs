@@ -31,7 +31,6 @@ where
     C: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
-            Receipt = base_common_types_chain::BaseReceipt,
         > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
@@ -89,15 +88,14 @@ pub fn append_matching_block_logs<P, C>(
     provider_or_block: ProviderOrBlock<'_, P>,
     filter: &Filter,
     header: &reth_primitives_traits::SealedHeader,
-    receipts: &[P::Receipt],
+    receipts: &[BaseReceipt],
     removed: bool,
 ) -> Result<(), EthApiError>
 where
-    P: BlockReader<Transaction: SignedTransaction, Receipt = BaseReceipt>,
+    P: BlockReader<Transaction: SignedTransaction>,
     C: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
-            Receipt = base_common_types_chain::BaseReceipt,
         > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send

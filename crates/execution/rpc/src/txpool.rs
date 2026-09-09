@@ -35,7 +35,6 @@ where
     Eth: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
-            Receipt = base_common_types_chain::BaseReceipt,
         > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
@@ -62,7 +61,6 @@ where
             RpcTxB: base_execution_state_api::BlockReader<
                     Block = base_common_types_chain::BaseBlock,
                     Transaction = base_common_types_chain::BaseTxEnvelope,
-                    Receipt = base_common_types_chain::BaseReceipt,
                 > + base_common_chain_config::ChainSpecProvider
                 + Clone
                 + Send
@@ -99,7 +97,6 @@ where
     Eth: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
-            Receipt = base_common_types_chain::BaseReceipt,
         > + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send

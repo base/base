@@ -1,52 +1,7 @@
-//! Receipt abstraction
+//! Receipt gas accounting.
 
 use alloc::vec::Vec;
-use core::fmt;
-
-use alloy_rlp::{Decodable, Encodable};
-use base_common_types_chain::{
-    Eip2718EncodableReceipt, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
-};
-
-use crate::{InMemorySize, MaybeSerde};
-
-/// Abstraction of a receipt.
-pub trait Receipt:
-    Send
-    + Sync
-    + Unpin
-    + Clone
-    + fmt::Debug
-    + TxReceipt<Log = alloy_primitives::Log>
-    + RlpEncodableReceipt
-    + RlpDecodableReceipt
-    + Encodable
-    + Decodable
-    + Eip2718EncodableReceipt
-    + Typed2718
-    + MaybeSerde
-    + InMemorySize
-{
-}
-
-// Blanket implementation for any type that satisfies all the supertrait bounds
-impl<T> Receipt for T where
-    T: Send
-        + Sync
-        + Unpin
-        + Clone
-        + fmt::Debug
-        + TxReceipt<Log = alloy_primitives::Log>
-        + RlpEncodableReceipt
-        + RlpDecodableReceipt
-        + Encodable
-        + Decodable
-        + Eip2718EncodableReceipt
-        + Typed2718
-        + MaybeSerde
-        + InMemorySize
-{
-}
+use base_common_types_chain::TxReceipt;
 
 /// Retrieves gas spent by transactions as a vector of tuples (transaction index, gas used).
 pub fn gas_spent_by_transactions<I, T>(receipts: I) -> Vec<(u64, u64)>

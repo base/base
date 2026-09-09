@@ -269,7 +269,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetReceipts,
-        response: oneshot::Sender<RequestResult<Receipts<C::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts<BaseReceipt>>>,
     ) {
         self.metrics.eth_receipts_requests_received_total.increment(1);
 
@@ -284,7 +284,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetReceipts,
-        response: oneshot::Sender<RequestResult<Receipts69<C::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts69<BaseReceipt>>>,
     ) {
         self.metrics.eth_receipts_requests_received_total.increment(1);
 
@@ -303,7 +303,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetReceipts70,
-        response: oneshot::Sender<RequestResult<Receipts70<C::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts70<BaseReceipt>>>,
     ) {
         self.metrics.eth_receipts_requests_received_total.increment(1);
 
@@ -362,7 +362,7 @@ where
     #[inline]
     fn get_receipts_response<T, F>(&self, request: GetReceipts, transform_fn: F) -> Vec<Vec<T>>
     where
-        F: Fn(Vec<C::Receipt>) -> Vec<T>,
+        F: Fn(Vec<BaseReceipt>) -> Vec<T>,
         T: Encodable,
     {
         let mut receipts = Vec::new();
@@ -663,7 +663,7 @@ where
     C: BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+        + BlockReader<Block = BaseBlock>
         + HeaderProvider
         + Unpin,
 {

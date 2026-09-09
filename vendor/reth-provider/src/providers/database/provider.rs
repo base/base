@@ -1674,7 +1674,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         Ok(None)
     }
 
@@ -1906,25 +1906,23 @@ impl<TX: DbTx + 'static> TransactionsProvider for DatabaseProvider<TX> {
 }
 
 impl<TX: DbTx + 'static> ReceiptProvider for DatabaseProvider<TX> {
-    type Receipt = BaseReceipt;
-
-    fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt(&self, id: TxNumber) -> ProviderResult<Option<BaseReceipt>> {
         self.static_file_provider.get_with_static_file_or_database(
             StaticFileSegment::Receipts,
             id,
             |static_file| static_file.receipt(id),
-            || Ok(self.tx.get::<tables::Receipts<Self::Receipt>>(id)?),
+            || Ok(self.tx.get::<tables::Receipts<BaseReceipt>>(id)?),
         )
     }
 
-    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<BaseReceipt>> {
         if let Some(id) = self.transaction_id(hash)? { self.receipt(id) } else { Ok(None) }
     }
 
     fn receipts_by_block(
         &self,
         block: BlockHashOrNumber,
-    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Option<Vec<BaseReceipt>>> {
         if let Some(number) = self.convert_hash_or_number(block)?
             && let Some(body) = self.block_body_indices(number)?
         {
@@ -1947,12 +1945,12 @@ impl<TX: DbTx + 'static> ReceiptProvider for DatabaseProvider<TX> {
     fn receipts_by_tx_range(
         &self,
         range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Self::Receipt>> {
+    ) -> ProviderResult<Vec<BaseReceipt>> {
         self.static_file_provider.get_range_with_static_file_or_database(
             StaticFileSegment::Receipts,
             to_range(range),
             |static_file, range, _| static_file.receipts_by_tx_range(range),
-            |range, _| self.cursor_read_collect::<tables::Receipts<Self::Receipt>>(range),
+            |range, _| self.cursor_read_collect::<tables::Receipts<BaseReceipt>>(range),
             |_| true,
         )
     }
@@ -1960,7 +1958,7 @@ impl<TX: DbTx + 'static> ReceiptProvider for DatabaseProvider<TX> {
     fn receipts_by_block_range(
         &self,
         block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Vec<Vec<BaseReceipt>>> {
         if block_range.is_empty() {
             return Ok(Vec::new());
         }

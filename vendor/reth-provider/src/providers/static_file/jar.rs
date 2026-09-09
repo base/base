@@ -339,13 +339,11 @@ impl TransactionsProvider for StaticFileJarProvider<'_> {
 }
 
 impl ReceiptProvider for StaticFileJarProvider<'_> {
-    type Receipt = BaseReceipt;
-
-    fn receipt(&self, num: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
-        self.cursor()?.get_one::<ReceiptMask<Self::Receipt>>(num.into())
+    fn receipt(&self, num: TxNumber) -> ProviderResult<Option<BaseReceipt>> {
+        self.cursor()?.get_one::<ReceiptMask<BaseReceipt>>(num.into())
     }
 
-    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<BaseReceipt>> {
         if let Some(tx_static_file) = &self.auxiliary_jar
             && let Some(num) = tx_static_file.transaction_id(hash)?
         {
@@ -357,7 +355,7 @@ impl ReceiptProvider for StaticFileJarProvider<'_> {
     fn receipts_by_block(
         &self,
         _block: BlockHashOrNumber,
-    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Option<Vec<BaseReceipt>>> {
         // Related to indexing tables. StaticFile should get the tx_range and call static file
         // provider with `receipt()` instead for each
         Err(ProviderError::UnsupportedProvider)
@@ -366,12 +364,12 @@ impl ReceiptProvider for StaticFileJarProvider<'_> {
     fn receipts_by_tx_range(
         &self,
         range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Self::Receipt>> {
+    ) -> ProviderResult<Vec<BaseReceipt>> {
         let mut cursor = self.cursor()?;
         let mut receipts = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
         for num in to_range(range) {
-            if let Some(tx) = cursor.get_one::<ReceiptMask<Self::Receipt>>(num.into())? {
+            if let Some(tx) = cursor.get_one::<ReceiptMask<BaseReceipt>>(num.into())? {
                 receipts.push(tx)
             }
         }
@@ -381,7 +379,7 @@ impl ReceiptProvider for StaticFileJarProvider<'_> {
     fn receipts_by_block_range(
         &self,
         _block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Vec<Vec<BaseReceipt>>> {
         // Related to indexing tables. StaticFile should get the tx_range and call static file
         // provider with `receipt()` instead for each
         Err(ProviderError::UnsupportedProvider)

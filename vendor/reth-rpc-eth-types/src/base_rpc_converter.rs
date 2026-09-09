@@ -45,7 +45,7 @@ impl<Provider: Clone> BaseRpcConverter<Provider> {
 
 impl<Provider> BaseRpcConverter<Provider>
 where
-    Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope, Receipt = BaseReceipt>
+    Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope>
         + ChainSpecProvider
         + Clone
         + Send

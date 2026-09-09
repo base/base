@@ -214,7 +214,7 @@ impl BlockReader for NoopProvider {
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         Ok(None)
     }
 
@@ -320,34 +320,32 @@ impl TransactionsProvider for NoopProvider {
 }
 
 impl ReceiptProvider for NoopProvider {
-    type Receipt = BaseReceipt;
-
-    fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<BaseReceipt>> {
         Ok(None)
     }
 
-    fn receipt_by_hash(&self, _hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt_by_hash(&self, _hash: TxHash) -> ProviderResult<Option<BaseReceipt>> {
         Ok(None)
     }
 
     fn receipts_by_block(
         &self,
         _block: BlockHashOrNumber,
-    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Option<Vec<BaseReceipt>>> {
         Ok(None)
     }
 
     fn receipts_by_tx_range(
         &self,
         _range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Self::Receipt>> {
+    ) -> ProviderResult<Vec<BaseReceipt>> {
         Ok(Vec::new())
     }
 
     fn receipts_by_block_range(
         &self,
         _block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Vec<Vec<BaseReceipt>>> {
         Ok(Vec::new())
     }
 }

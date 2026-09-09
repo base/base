@@ -12,7 +12,7 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
 use base_common_runtime_tasks::EventStream;
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_types::PeerId;
 use base_execution_network_wire::DisconnectReason;
@@ -244,7 +244,7 @@ where
 
 impl<C, Pool> Testnet<C, Pool>
 where
-    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+    C: BlockReader<Block = BaseBlock>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory
@@ -310,7 +310,7 @@ impl<C, Pool> fmt::Debug for Testnet<C, Pool> {
 
 impl<C, Pool> Future for Testnet<C, Pool>
 where
-    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+    C: BlockReader<Block = BaseBlock>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory
@@ -565,7 +565,7 @@ where
 
 impl<C, Pool> Future for Peer<C, Pool>
 where
-    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+    C: BlockReader<Block = BaseBlock>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory

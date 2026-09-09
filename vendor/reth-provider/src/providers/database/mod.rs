@@ -747,7 +747,7 @@ impl BlockReader for ProviderFactory {
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         self.provider()?.pending_block_and_receipts()
     }
 
@@ -853,9 +853,7 @@ impl TransactionsProvider for ProviderFactory {
 }
 
 impl ReceiptProvider for ProviderFactory {
-    type Receipt = BaseReceipt;
-
-    fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt(&self, id: TxNumber) -> ProviderResult<Option<BaseReceipt>> {
         self.caught_up_static_file_provider()?.get_with_static_file_or_database(
             StaticFileSegment::Receipts,
             id,
@@ -864,21 +862,21 @@ impl ReceiptProvider for ProviderFactory {
         )
     }
 
-    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<BaseReceipt>> {
         self.provider()?.receipt_by_hash(hash)
     }
 
     fn receipts_by_block(
         &self,
         block: BlockHashOrNumber,
-    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Option<Vec<BaseReceipt>>> {
         self.provider()?.receipts_by_block(block)
     }
 
     fn receipts_by_tx_range(
         &self,
         range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Self::Receipt>> {
+    ) -> ProviderResult<Vec<BaseReceipt>> {
         self.caught_up_static_file_provider()?.get_range_with_static_file_or_database(
             StaticFileSegment::Receipts,
             to_range(range),
@@ -891,7 +889,7 @@ impl ReceiptProvider for ProviderFactory {
     fn receipts_by_block_range(
         &self,
         block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Vec<Vec<BaseReceipt>>> {
         self.provider()?.receipts_by_block_range(block_range)
     }
 }

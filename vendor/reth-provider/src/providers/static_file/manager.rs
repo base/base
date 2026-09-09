@@ -2648,9 +2648,7 @@ impl BlockHashReader for StaticFileProvider {
 }
 
 impl ReceiptProvider for StaticFileProvider {
-    type Receipt = BaseReceipt;
-
-    fn receipt(&self, num: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt(&self, num: TxNumber) -> ProviderResult<Option<BaseReceipt>> {
         self.get_segment_provider_for_transaction(StaticFileSegment::Receipts, num, None)
             .and_then(|provider| provider.receipt(num))
             .or_else(|err| {
@@ -2658,7 +2656,7 @@ impl ReceiptProvider for StaticFileProvider {
             })
     }
 
-    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
+    fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<BaseReceipt>> {
         if let Some(num) = self.transaction_id(hash)? {
             return self.receipt(num);
         }
@@ -2668,18 +2666,18 @@ impl ReceiptProvider for StaticFileProvider {
     fn receipts_by_block(
         &self,
         _block: BlockHashOrNumber,
-    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Option<Vec<BaseReceipt>>> {
         unreachable!()
     }
 
     fn receipts_by_tx_range(
         &self,
         range: impl RangeBounds<TxNumber>,
-    ) -> ProviderResult<Vec<Self::Receipt>> {
+    ) -> ProviderResult<Vec<BaseReceipt>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Receipts,
             to_range(range),
-            |cursor, number| cursor.get_one::<ReceiptMask<Self::Receipt>>(number.into()),
+            |cursor, number| cursor.get_one::<ReceiptMask<BaseReceipt>>(number.into()),
             |_| true,
         )
     }
@@ -2687,7 +2685,7 @@ impl ReceiptProvider for StaticFileProvider {
     fn receipts_by_block_range(
         &self,
         _block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+    ) -> ProviderResult<Vec<Vec<BaseReceipt>>> {
         Err(ProviderError::UnsupportedProvider)
     }
 }
@@ -2899,7 +2897,7 @@ impl BlockReader for StaticFileProvider {
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         // Required data not present in static_files
         Err(ProviderError::UnsupportedProvider)
     }

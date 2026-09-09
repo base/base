@@ -3,6 +3,7 @@ use core::ops::RangeInclusive;
 
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockNumber, TxNumber};
+use base_common_types_chain::BaseReceipt;
 use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::{Block as _, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 
@@ -104,7 +105,7 @@ pub trait BlockReader:
     #[expect(clippy::type_complexity)]
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>>;
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>>;
 
     /// Returns the block with matching hash from the database.
     ///
@@ -190,7 +191,7 @@ impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
     }
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         T::pending_block_and_receipts(self)
     }
     fn block_by_hash(&self, hash: B256) -> ProviderResult<Option<Self::Block>> {
@@ -258,7 +259,7 @@ impl<T: BlockReader + Send + Sync> BlockReader for &T {
     }
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         T::pending_block_and_receipts(self)
     }
     fn block_by_hash(&self, hash: B256) -> ProviderResult<Option<Self::Block>> {
