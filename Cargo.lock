@@ -275,16 +275,16 @@ dependencies = [
 
 [[package]]
 name = "alloy-genesis"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4951473e6ff25cdf82eb87b6a1a5fbb4af9c97528398a4a62fbf516198ec5028"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-serde",
  "alloy-trie",
- "bincode 2.0.1",
  "borsh",
  "serde",
- "serde_json",
  "serde_with",
 ]
 

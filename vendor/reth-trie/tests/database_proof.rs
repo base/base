@@ -43,13 +43,13 @@ static TEST_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
 // These are proof vectors for historical Ethereum allocations, independent of execution rules.
 static MAINNET_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
     BaseChainSpec::from_genesis(
-        serde_json::from_str(include_str!("../../alloy-genesis/dumpgenesis/mainnet.json")).unwrap(),
+        serde_json::from_str(include_str!("../testdata/mainnet-genesis.json")).unwrap(),
     )
     .into()
 });
 static HOLESKY_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
     BaseChainSpec::from_genesis(
-        serde_json::from_str(include_str!("../../alloy-genesis/dumpgenesis/holesky.json")).unwrap(),
+        serde_json::from_str(include_str!("../testdata/holesky-genesis.json")).unwrap(),
     )
     .into()
 });
