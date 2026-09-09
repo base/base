@@ -15,13 +15,13 @@ workspace = true
 libp2p = { workspace = true }
 async-trait = { workspace = true }
 base-consensus-engine = { workspace = true }
-base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
+base-consensus-network-service = { workspace = true }
 getrandom = { workspace = true, features = ["wasm_js"] }
 tokio = { workspace = true, features = ["default", "time"] }
 alloy-eips = { workspace = true, features = ["serde", "std"] }
@@ -39,15 +39,11 @@ tokio = { workspace = true, features = ["default", "macros", "rt", "sync"] }
 
 [features]
 default = []
-reqwest = [ "client" ]
-client = [
-	"jsonrpsee/async-client",
-	"jsonrpsee/client",
-	"jsonrpsee/http-client",
-]
+reqwest = ["client"]
+client = ["jsonrpsee/async-client", "jsonrpsee/client", "jsonrpsee/http-client"]
 metrics = [
-	"base-consensus-engine/metrics",
-	"base-consensus-gossip/metrics",
-	"base-common-chain-activation/metrics",
-	"libp2p/metrics",
+    "base-consensus-engine/metrics",
+    "base-consensus-network-service/metrics",
+    "base-common-chain-activation/metrics",
+    "libp2p/metrics",
 ]

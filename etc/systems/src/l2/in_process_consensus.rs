@@ -175,7 +175,7 @@ impl InProcessConsensus {
         net_config.scoring = PeerScoreLevel::Off;
         net_config.keypair = keypair;
         // Use flood_publish since the mesh may not fully form with only two peers.
-        net_config.gossip_config = base_consensus_gossip::default_config_builder()
+        net_config.gossip_config = base_consensus_network_service::default_config_builder()
             .flood_publish(true)
             .build()
             .expect("valid gossip config");

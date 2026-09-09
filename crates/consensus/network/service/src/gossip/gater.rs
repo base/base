@@ -10,7 +10,7 @@ use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
 use tokio::time::Instant;
 
-use crate::{ConnectionError, ConnectionGate, DEFAULT_PENDING_DIAL_TIMEOUT, Metrics};
+use crate::gossip::{ConnectionError, ConnectionGate, DEFAULT_PENDING_DIAL_TIMEOUT, Metrics};
 
 /// Policy for connection checks when DNS resolution fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

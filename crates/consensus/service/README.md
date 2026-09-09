@@ -9,7 +9,7 @@ An implementation of the Base [RollupNode][rn-spec] service.
 
 ## Overview
 
-This crate wires together every subsystem of the Base consensus node into a single runnable service. It owns no domain logic itself — derivation lives in `base-consensus-derive`, engine state management lives in `base-consensus-engine`, peer-to-peer gossip lives in `base-consensus-gossip`, and so on. What this crate provides is the composition layer: it constructs each subsystem as an independent async actor, opens the typed channels between them, and manages the shared lifetime of all actors through a single `CancellationToken`.
+This crate wires together every subsystem of the Base consensus node into a single runnable service. It owns no domain logic itself — derivation lives in `base-consensus-derive`, engine state management lives in `base-consensus-engine`, peer-to-peer gossip lives in `base-consensus-network-service`, and so on. What this crate provides is the composition layer: it constructs each subsystem as an independent async actor, opens the typed channels between them, and manages the shared lifetime of all actors through a single `CancellationToken`.
 
 The entry point for most callers is `RollupNodeBuilder`, which accepts the required configuration for each subsystem and produces a `RollupNode` whose `start()` method blocks until the process receives SIGINT or SIGTERM or until any actor exits with an error.
 

@@ -9,7 +9,7 @@ use libp2p::{
 };
 use tracing::info;
 
-use crate::{ConnectionLimitsConfig, Event, Handler};
+use crate::gossip::{ConnectionLimitsConfig, Event, Handler};
 
 /// An error that can occur when creating a [`Behaviour`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -128,7 +128,7 @@ mod tests {
     use libp2p::gossipsub::{IdentTopic, TopicHash};
 
     use super::*;
-    use crate::{config, handler::BlockHandler};
+    use crate::gossip::{config, handler::BlockHandler};
 
     fn base_mainnet_topics() -> Vec<TopicHash> {
         vec![

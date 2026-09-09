@@ -5,7 +5,7 @@ use std::{net::IpAddr, time::Duration};
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
 
-use crate::ConnectionError;
+use crate::gossip::ConnectionError;
 
 /// Connection Gate
 ///

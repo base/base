@@ -49,7 +49,6 @@ members = [
   "crates/consensus/cli",
   "crates/consensus/derive",
   "crates/consensus/engine",
-  "crates/consensus/gossip",
   "crates/consensus/network/service",
   "crates/consensus/protocol",
   "crates/consensus/source/providers",
@@ -329,7 +328,6 @@ base-consensus-node = { path = "crates/consensus/service", default-features = fa
 base-consensus-safedb = { path = "crates/consensus/safedb", default-features = false }
 base-consensus-derive = { path = "crates/consensus/derive", default-features = false }
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
-base-consensus-gossip = { path = "crates/consensus/gossip", default-features = false }
 base-consensus-source-providers = { path = "crates/consensus/source/providers", default-features = false }
 
 # Execution

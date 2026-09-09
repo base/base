@@ -4,9 +4,9 @@ use core::fmt::Debug;
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_gossip::Metrics;
 use base_common_chain_activation::{UpgradeSignalApplySummary, UpgradeSignalRefresher};
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
+use base_consensus_network_service::GossipMetrics;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
@@ -116,7 +116,7 @@ where
     ) -> RpcResult<()> {
         // Note: intentionally no sequencer guard here. Posting an unsafe payload is a P2P/gossip
         // operation that is valid on both sequencer and validator nodes.
-        Metrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
+        GossipMetrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
         self.network_sender
             .send(NetworkAdminQuery::PostUnsafePayload { payload: Box::new(payload) })
             .await
@@ -124,7 +124,7 @@ where
     }
 
     async fn admin_clear_pending_p2p_connections(&self) -> RpcResult<usize> {
-        Metrics::rpc_calls("admin_clearPendingP2pConnections").increment(1.0);
+        GossipMetrics::rpc_calls("admin_clearPendingP2pConnections").increment(1.0);
 
         let (tx, rx) = oneshot::channel();
         self.network_sender
@@ -226,7 +226,7 @@ where
     }
 
     async fn admin_refresh_upgrade_signal(&self) -> RpcResult<UpgradeSignalApplySummary> {
-        Metrics::rpc_calls("admin_refreshUpgradeSignal").increment(1.0);
+        GossipMetrics::rpc_calls("admin_refreshUpgradeSignal").increment(1.0);
 
         let Some(ref refresher) = self.upgrade_signal_refresher else {
             return Err(upgrade_signal_unavailable());

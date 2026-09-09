@@ -4,12 +4,15 @@ use core::net::IpAddr;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
+use base_common_chain_activation::{UpgradeReadiness, UpgradeSignalApplySummary};
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
+use base_consensus_network_service::PeerCount;
+use base_consensus_network_service::PeerDump;
+use base_consensus_network_service::PeerInfo;
+use base_consensus_network_service::PeerStats;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::SyncStatus;
-use base_common_chain_activation::{UpgradeReadiness, UpgradeSignalApplySummary};
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
@@ -389,12 +392,15 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use async_trait::async_trait;
+    use base_common_chain_activation::UpgradeSignalApplySummary;
     use base_common_chain_config::RollupConfig;
     use base_common_types_payload::BaseExecutionPayloadEnvelope;
-    use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
+    use base_consensus_network_service::PeerCount;
+    use base_consensus_network_service::PeerDump;
+    use base_consensus_network_service::PeerInfo;
+    use base_consensus_network_service::PeerStats;
     use base_consensus_safedb::SafeHeadResponse;
     use base_protocol::SyncStatus;
-    use base_common_chain_activation::UpgradeSignalApplySummary;
     use ipnet::IpNet;
     use jsonrpsee::{
         PendingSubscriptionSink,

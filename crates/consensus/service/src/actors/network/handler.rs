@@ -5,11 +5,14 @@ use async_trait::async_trait;
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
-use base_consensus_gossip::{
-    BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, Metrics, P2pRpcRequest,
-};
+use base_consensus_network_service::BlockHandler;
+use base_consensus_network_service::ConnectionGate;
+use base_consensus_network_service::ConnectionGater;
 use base_consensus_network_service::Discv5Handler;
+use base_consensus_network_service::GossipDriver;
+use base_consensus_network_service::GossipMetrics;
 use base_consensus_network_service::HandlerRequest;
+use base_consensus_network_service::P2pRpcRequest;
 use base_consensus_source_providers::BlockSignerHandler;
 use discv5::Enr;
 use tokio::{
@@ -59,7 +62,7 @@ impl NetworkHandler {
                     self.gossip.swarm.behaviour().gossipsub.peer_score(peer_id).unwrap_or_default();
 
                 // Record the peer score in the metrics.
-                Metrics::peer_scores().record(score);
+                GossipMetrics::peer_scores().record(score);
 
                 if score < ban_peers.ban_threshold {
                     return Some(*peer_id);
@@ -82,14 +85,14 @@ impl NetworkHandler {
 
                         // Record the duration of the peer connection.
                         if let Some(start_time) = self.gossip.peer_connection_start.remove(&peer_to_remove) {
-                            Metrics::gossip_peer_connection_duration_seconds()
+                            GossipMetrics::gossip_peer_connection_duration_seconds()
                                 .record(start_time.elapsed().as_secs_f64());
                         }
 
                 if let Some(info) = self.gossip.peerstore.pop(&peer_to_remove) {
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let _score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
-                    Metrics::banned_peers().increment(1.0);
+                    GossipMetrics::banned_peers().increment(1.0);
                     return Some(info.listen_addrs);
                 }
 

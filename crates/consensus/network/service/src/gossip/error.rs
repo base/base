@@ -6,7 +6,7 @@ use derive_more::From;
 use libp2p::{Multiaddr, PeerId};
 use thiserror::Error;
 
-use crate::BehaviourError;
+use crate::gossip::BehaviourError;
 
 /// Error encountered when publishing a payload to the gossip network.
 ///
@@ -50,7 +50,7 @@ pub enum HandlerEncodeError {
     UnknownTopic(libp2p::gossipsub::TopicHash),
 }
 
-/// An error type for the [`crate::GossipDriverBuilder`].
+/// An error type for the [`crate::gossip::GossipDriverBuilder`].
 #[derive(Debug, Clone, PartialEq, Eq, From, Error)]
 pub enum GossipDriverBuilderError {
     /// A TCP error.

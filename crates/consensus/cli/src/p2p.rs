@@ -16,10 +16,11 @@ use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_ethereum::Provider;
 use base_common_runtime_tasks::RetryConfig;
 use base_consensus_derive::ChainProvider;
-use base_consensus_gossip::{
-    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
-    DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
-};
+use base_consensus_network_service::ConnectionLimitsConfig;
+use base_consensus_network_service::DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS;
+use base_consensus_network_service::DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS;
+use base_consensus_network_service::DEFAULT_PENDING_DIAL_TIMEOUT;
+use base_consensus_network_service::GaterConfig;
 use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_node::NetworkConfig;
@@ -679,7 +680,7 @@ impl P2PArgs {
 
         let discovery_address =
             LocalNode::new(local_node_key, advertise_ip, advertise_tcp_port, advertise_udp_port);
-        let gossip_config = base_consensus_gossip::default_config_builder()
+        let gossip_config = base_consensus_network_service::default_config_builder()
             .mesh_n(self.gossip_mesh_d)
             .mesh_n_low(self.gossip_mesh_dlo)
             .mesh_n_high(self.gossip_mesh_dhi)

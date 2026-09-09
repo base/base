@@ -7,10 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{EnrValidation, PeerMonitoring, PeerUtils};
 use alloy_primitives::{Address, hex};
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::NetworkPayloadEnvelope;
-use base_consensus_network_service::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;
 use discv5::Enr;
 use futures::{AsyncWriteExt, stream::StreamExt};
@@ -27,7 +27,7 @@ use libp2p_stream::IncomingStreams;
 use lru::LruCache;
 use tokio::sync::Mutex;
 
-use crate::{
+use crate::gossip::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, ConnectionLimitsConfig, Event,
     GossipDriverBuilder, Handler, Metrics, PublishError,
 };

@@ -2,16 +2,16 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
+use crate::{PeerMonitoring, PeerScoreLevel};
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
-use base_consensus_network_service::{PeerMonitoring, PeerScoreLevel};
 use libp2p::{
     Multiaddr, StreamProtocol, SwarmBuilder, gossipsub::Config, identity::Keypair,
     noise::Config as NoiseConfig, tcp::Config as TcpConfig, yamux::Config as YamuxConfig,
 };
 use tokio::sync::watch::{self};
 
-use crate::{
+use crate::gossip::{
     Behaviour, BlockHandler, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
     DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig, GossipDriver, GossipDriverBuilderError,
     GossipDriverConfig, Handler,
@@ -151,7 +151,7 @@ impl GossipDriverBuilder {
     pub fn build(
         mut self,
     ) -> Result<
-        (GossipDriver<crate::ConnectionGater>, watch::Sender<Address>),
+        (GossipDriver<crate::gossip::ConnectionGater>, watch::Sender<Address>),
         GossipDriverBuilderError,
     > {
         // Extract builder arguments
@@ -169,7 +169,7 @@ impl GossipDriverBuilder {
         let handler = BlockHandler::new(rollup_config, signer_rx);
 
         // Construct the gossip behaviour
-        let config = self.config.unwrap_or_else(crate::default_config);
+        let config = self.config.unwrap_or_else(crate::gossip::default_config);
         info!(
             target: "gossip",
             "CONFIG: [Mesh D: {}] [Mesh L: {}] [Mesh H: {}] [Gossip Lazy: {}] [Flood Publish: {}]",
@@ -259,7 +259,7 @@ impl GossipDriverBuilder {
             .build();
 
         let gater_config = self.gater_config.take().unwrap_or_default();
-        let gate = crate::ConnectionGater::new(gater_config);
+        let gate = crate::gossip::ConnectionGater::new(gater_config);
 
         Ok((
             GossipDriver::new(

@@ -12,17 +12,16 @@ dirs = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-transport = { workspace = true }
 base-proof-contracts = { workspace = true }
-base-consensus-gossip = { workspace = true }
 base-proof-submission = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 base-prover-service-client = { workspace = true }
 base-common-l1-transactions = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 base-common-client-contracts = { workspace = true }
+base-consensus-network-service = {workspace = true}
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["default"] }
-base-consensus-network-service = { workspace = true }
 base-execution-evm-precompiles = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }

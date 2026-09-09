@@ -4,7 +4,12 @@ use std::{net::IpAddr, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
-use base_consensus_gossip::{Metrics, P2pRpcRequest, PeerCount, PeerDump, PeerInfo, PeerStats};
+use base_consensus_network_service::GossipMetrics;
+use base_consensus_network_service::P2pRpcRequest;
+use base_consensus_network_service::PeerCount;
+use base_consensus_network_service::PeerDump;
+use base_consensus_network_service::PeerInfo;
+use base_consensus_network_service::PeerStats;
 use ipnet::IpNet;
 use jsonrpsee::{
     core::RpcResult,
@@ -18,7 +23,7 @@ const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 #[async_trait]
 impl BaseP2PApiServer for P2pRpc {
     async fn opp2p_self(&self) -> RpcResult<PeerInfo> {
-        Metrics::rpc_calls("opp2p_self").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_self").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::PeerInfo(tx))
@@ -29,7 +34,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_peer_count(&self) -> RpcResult<PeerCount> {
-        Metrics::rpc_calls("opp2p_peerCount").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_peerCount").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::PeerCount(tx))
@@ -43,7 +48,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_peers(&self, connected: bool) -> RpcResult<PeerDump> {
-        Metrics::rpc_calls("opp2p_peers").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_peers").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::Peers { out: tx, connected })
@@ -68,7 +73,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_discovery_table(&self) -> RpcResult<Vec<String>> {
-        Metrics::rpc_calls("opp2p_discoveryTable").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_discoveryTable").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::DiscoveryTable(tx))
@@ -79,7 +84,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_block_peer(&self, peer_id: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_blockPeer").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_blockPeer").increment(1.0);
         let id = libp2p::PeerId::from_str(&peer_id)
             .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
         self.sender
@@ -89,7 +94,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_unblock_peer(&self, peer_id: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_unblockPeer").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_unblockPeer").increment(1.0);
         let id = libp2p::PeerId::from_str(&peer_id)
             .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
         self.sender
@@ -99,7 +104,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_list_blocked_peers(&self) -> RpcResult<Vec<String>> {
-        Metrics::rpc_calls("opp2p_listBlockedPeers").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_listBlockedPeers").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::ListBlockedPeers(tx))
@@ -112,7 +117,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_block_addr(&self, address: IpAddr) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_blockAddr").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_blockAddr").increment(1.0);
         self.sender
             .send(P2pRpcRequest::BlockAddr { address })
             .await
@@ -120,7 +125,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_unblock_addr(&self, address: IpAddr) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_unblockAddr").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_unblockAddr").increment(1.0);
         self.sender
             .send(P2pRpcRequest::UnblockAddr { address })
             .await
@@ -128,7 +133,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_list_blocked_addrs(&self) -> RpcResult<Vec<IpAddr>> {
-        Metrics::rpc_calls("opp2p_listBlockedAddrs").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_listBlockedAddrs").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::ListBlockedAddrs(tx))
@@ -139,7 +144,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_block_subnet(&self, subnet: IpNet) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_blockSubnet").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_blockSubnet").increment(1.0);
         self.sender
             .send(P2pRpcRequest::BlockSubnet { address: subnet })
             .await
@@ -147,7 +152,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_unblock_subnet(&self, subnet: IpNet) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_unblockSubnet").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_unblockSubnet").increment(1.0);
 
         self.sender
             .send(P2pRpcRequest::UnblockSubnet { address: subnet })
@@ -156,7 +161,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_list_blocked_subnets(&self) -> RpcResult<Vec<IpNet>> {
-        Metrics::rpc_calls("opp2p_listBlockedSubnets").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_listBlockedSubnets").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.sender
             .send(P2pRpcRequest::ListBlockedSubnets(tx))
@@ -167,7 +172,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_protect_peer(&self, id: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_protectPeer").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_protectPeer").increment(1.0);
         let peer_id = libp2p::PeerId::from_str(&id)
             .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
         self.sender
@@ -177,7 +182,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_unprotect_peer(&self, id: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_unprotectPeer").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_unprotectPeer").increment(1.0);
         let peer_id = libp2p::PeerId::from_str(&id)
             .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
         self.sender
@@ -187,7 +192,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_connect_peer(&self, peer: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_connectPeer").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_connectPeer").increment(1.0);
         self.connect_peer_with_backoff(
             peer,
             ExponentialBuilder::default().with_total_delay(Some(PEER_STATE_WAIT_TIMEOUT)),
@@ -196,7 +201,7 @@ impl BaseP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_disconnect_peer(&self, peer_id: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_disconnectPeer").increment(1.0);
+        GossipMetrics::rpc_calls("opp2p_disconnectPeer").increment(1.0);
         self.disconnect_peer_with_backoff(
             peer_id,
             ExponentialBuilder::default().with_total_delay(Some(PEER_STATE_WAIT_TIMEOUT)),
@@ -340,7 +345,9 @@ mod tests {
     };
 
     use backon::ExponentialBuilder;
-    use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
+    use base_consensus_network_service::P2pRpcRequest;
+    use base_consensus_network_service::PeerDump;
+    use base_consensus_network_service::PeerInfo;
     use tokio::sync::mpsc;
 
     use crate::net::P2pRpc;

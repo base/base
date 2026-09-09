@@ -7,11 +7,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use base_consensus_gossip::Metrics;
 use base_common_chain_activation::{
     AlloyUpgradeSignalReader, PackedProtocolVersion, UpgradeReadiness, UpgradeSignalConfig,
     UpgradeSignalDefaults, UpgradeSignalError, UpgradeSignalMetricLayer, UpgradeSignalSchedule,
 };
+use base_consensus_network_service::GossipMetrics;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
@@ -232,7 +232,7 @@ impl BaseApiServer for BaseRpc {
         &self,
         target_version: Option<String>,
     ) -> RpcResult<UpgradeReadiness> {
-        Metrics::rpc_calls("base_upgradeReadiness").increment(1.0);
+        GossipMetrics::rpc_calls("base_upgradeReadiness").increment(1.0);
 
         let target = Self::parse_target_version(target_version)?;
 

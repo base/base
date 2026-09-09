@@ -3,7 +3,7 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope};
-use base_consensus_gossip::P2pRpcRequest;
+use base_consensus_network_service::P2pRpcRequest;
 
 /// Abstracts the gossip and discovery networking backend used by the [`crate::NetworkActor`].
 ///

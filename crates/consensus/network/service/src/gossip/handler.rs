@@ -9,7 +9,7 @@ use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
 use tracing::instrument;
 
-use crate::HandlerEncodeError;
+use crate::gossip::HandlerEncodeError;
 
 /// This trait defines the functionality required to process incoming messages
 /// and determine their acceptance within the network.
@@ -157,7 +157,7 @@ mod tests {
     use base_protocol::BaseTimeUpdateTx;
 
     use super::*;
-    use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
+    use crate::gossip::{v2_valid_block, v3_valid_block, v4_valid_block};
 
     #[test]
     fn cobalt_schedules_are_checked_before_gossip_acceptance() {

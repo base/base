@@ -32,7 +32,6 @@ base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }
 base-consensus-node = { workspace = true }
 base-consensus-engine = { workspace = true }
-base-consensus-gossip = { workspace = true }
 base-prover-service-db = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-batcher-service-driver = { workspace = true }

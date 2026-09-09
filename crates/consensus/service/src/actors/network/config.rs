@@ -4,7 +4,8 @@ use std::num::NonZeroUsize;
 
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
-use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
+use base_consensus_network_service::ConnectionLimitsConfig;
+use base_consensus_network_service::GaterConfig;
 use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_source_providers::BlockSigner;
@@ -98,8 +99,8 @@ impl NetworkConfig {
             gater_config: Default::default(),
             connection_limits_config: Default::default(),
             max_identify_peerstore_peers:
-                base_consensus_gossip::DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
-            gossip_config: base_consensus_gossip::default_config(),
+                base_consensus_network_service::DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
+            gossip_config: base_consensus_network_service::default_config(),
             scoring: Default::default(),
             topic_scoring: Default::default(),
             monitor_peers: Default::default(),

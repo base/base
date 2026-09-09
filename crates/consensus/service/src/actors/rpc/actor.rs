@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base_consensus_gossip::P2pRpcRequest;
+use base_common_chain_activation::UpgradeSignalRefresher;
+use base_common_observability_health::EthHealthCheckLayer;
+use base_consensus_network_service::P2pRpcRequest;
 use base_consensus_rpc::{
     AdminApiServer, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc, DevEngineApiServer,
     DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc, L1WatcherQueries,
@@ -11,8 +13,6 @@ use base_consensus_rpc::{
     WsRPC, WsServer,
 };
 use base_consensus_safedb::SafeDBReader;
-use base_common_observability_health::EthHealthCheckLayer;
-use base_common_chain_activation::UpgradeSignalRefresher;
 use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{

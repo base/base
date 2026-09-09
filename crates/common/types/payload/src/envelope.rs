@@ -16,7 +16,7 @@ use crate::{
 
 /// Maximum allowed decoded size for a snappy-compressed [`NetworkPayloadEnvelope`].
 ///
-/// Mirrors `MAX_GOSSIP_SIZE` in `base-consensus-gossip` and bounds the heap
+/// Mirrors `MAX_GOSSIP_SIZE` in `base-consensus-network-service` and bounds the heap
 /// allocation performed by [`NetworkPayloadEnvelope::decode_v1`] and friends.
 /// Without this cap, a wire-valid 9 `MiB` snappy frame can declare a 200 `MiB`
 /// decoded length and force the decoder to allocate that buffer before any

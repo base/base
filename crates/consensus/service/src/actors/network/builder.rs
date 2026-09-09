@@ -4,8 +4,10 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
-use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig, GossipDriverBuilder};
+use base_consensus_network_service::ConnectionLimitsConfig;
 use base_consensus_network_service::Discv5Builder;
+use base_consensus_network_service::GaterConfig;
+use base_consensus_network_service::GossipDriverBuilder;
 use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_source_providers::BlockSigner;

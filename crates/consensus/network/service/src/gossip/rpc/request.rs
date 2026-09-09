@@ -2,9 +2,9 @@
 
 use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 
+use crate::BaseEnr;
+use crate::Discv5Handler;
 use alloy_primitives::map::{HashMap, HashSet};
-use base_consensus_network_service::BaseEnr;
-use base_consensus_network_service::Discv5Handler;
 use discv5::{
     enr::{NodeId, k256::ecdsa},
     multiaddr::Protocol,
@@ -17,7 +17,7 @@ use super::{
     PeerDump, PeerStats,
     types::{Connectedness, Direction, PeerInfo, PeerScores},
 };
-use crate::{ConnectionGate, GossipDriver, GossipScores, Metrics};
+use crate::gossip::{ConnectionGate, GossipDriver, GossipScores, Metrics};
 
 /// A p2p RPC Request.
 #[derive(Debug)]
@@ -28,7 +28,7 @@ pub enum P2pRpcRequest {
     DiscoveryTable(Sender<Vec<String>>),
     /// Returns the current peer count for both the
     /// - Discovery Service ([`base_consensus_network_service::Discv5Driver`])
-    /// - Gossip Service ([`crate::GossipDriver`])
+    /// - Gossip Service ([`crate::gossip::GossipDriver`])
     PeerCount(Sender<(Option<usize>, usize)>),
     /// Returns a [`PeerDump`] containing detailed information about connected peers.
     /// If `connected` is true, only returns connected peers.
@@ -97,7 +97,7 @@ pub enum P2pRpcRequest {
     ListBlockedSubnets(Sender<Vec<IpNet>>),
     /// Returns the current peer stats for both the
     /// - Discovery Service ([`base_consensus_network_service::Discv5Driver`])
-    /// - Gossip Service ([`crate::GossipDriver`])
+    /// - Gossip Service ([`crate::gossip::GossipDriver`])
     ///
     /// This information can be used to briefly monitor the current state of the p2p network for a
     /// given peer.

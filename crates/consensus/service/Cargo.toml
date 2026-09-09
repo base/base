@@ -28,7 +28,6 @@ alloy-primitives = { workspace = true }
 base-execution-trie = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-consensus-engine = { workspace = true }
-base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -93,7 +92,6 @@ metrics = [
     "base-consensus-derive/metrics",
     "base-consensus-network-service/metrics",
     "base-consensus-engine/metrics",
-    "base-consensus-gossip/metrics",
     "base-consensus-source-providers/metrics",
     "base-consensus-rpc/metrics",
     "base-common-observability-metrics/metrics",

@@ -265,7 +265,7 @@ channel-based design avoids the need for shared mutable state across async bound
 
 ### Gossip: broadcasting blocks with libp2p and gossipsub
 
-The [`base-consensus-gossip`](https://github.com/base/base/tree/main/crates/consensus/gossip) crate
+The [`base-consensus-network-service`](https://github.com/base/base/tree/main/crates/consensus/network/service) crate
 is where the real action happens. This is the layer that actually receives and broadcasts L2 blocks
 across the network.
 
@@ -303,7 +303,7 @@ all connected peers, not just mesh peers), though Base has this disabled by defa
 bandwidth.
 
 The gossipsub configuration in Base is defined in
-[`gossip/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/config.rs).
+[`gossip/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/config.rs).
 The key parameters are:
 
 ```rust
@@ -329,7 +329,7 @@ decompressed content, with a domain prefix (a few extra bytes prepended before h
 distinguish valid from invalid encodings). This is how the network deduplicates messages.
 
 The gossip topics are where Base's L2-specific design becomes apparent. The
-[`BlockHandler`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/handler.rs)
+[`BlockHandler`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/handler.rs)
 manages four versioned topics, each corresponding to a different protocol version:
 
 ```rust
@@ -348,7 +348,7 @@ subscribes to the gossip network, it subscribes to all four topics simultaneousl
 blocks from any protocol version.
 
 The `BlockHandler` implements the
-[`Handler`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/handler.rs) trait,
+[`Handler`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/handler.rs) trait,
 which has two methods: `handle()` for processing incoming messages and `topics()` for declaring
 which topics it cares about. When a gossip message arrives, the handler first checks which topic it
 came from to determine the correct decoding version, then decodes the payload, and then validates
@@ -386,7 +386,7 @@ peer's score takes a hit. `Ignore` is used for already-seen blocks, which don't 
 ### Block validation: how gossip keeps the network honest
 
 The block validation logic in
-[`block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/block_validity.rs)
+[`block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/block_validity.rs)
 is one of the most important pieces of the P2P stack because it determines what the node will accept
 from the network. The validation performs several checks in sequence, and the order matters.
 
@@ -438,7 +438,7 @@ competing blocks.
 
 ### Connection gating: controlling who connects
 
-The [`ConnectionGater`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/gater.rs)
+The [`ConnectionGater`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/gater.rs)
 is a rate-limiting layer that controls which peers can connect. It tracks dial attempts per peer
 address and enforces a configurable dial period (default: 1 hour). By default, redialing is disabled
 entirely — a peer can only be dialed once per period. The CLI overrides this to allow up to 500
@@ -453,7 +453,7 @@ gossip level.
 
 ### The libp2p Behaviour: combining protocols
 
-The [`Behaviour`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/behaviour.rs)
+The [`Behaviour`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/behaviour.rs)
 struct is a libp2p `NetworkBehaviour` that combines several sub-protocols into a single swarm
 (libp2p's term for the combination of a transport layer, a set of protocol behaviors, and connection
 management — essentially the "networking engine"):
@@ -477,7 +477,7 @@ implementation responds with "not found" to all requests, but it is still presen
 peers don't penalize Base nodes for not supporting it.
 
 The `GossipDriver`
-([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/driver.rs))
+([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs))
 wraps the swarm and provides higher-level operations. Its `start()` method binds the swarm to a TCP
 address (default `0.0.0.0:9222`), waits for the `NewListenAddr` event confirming
 the listener is up,
@@ -766,22 +766,22 @@ networks are completely separate and serve different purposes.
 **Consensus layer gossip:**
 
 -
-  [`crates/consensus/gossip/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/config.rs)
+  [`crates/consensus/network/service/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/config.rs)
   — Gossipsub constants and configuration
 -
-  [`crates/consensus/gossip/src/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/handler.rs)
+  [`crates/consensus/network/service/src/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/handler.rs)
   — BlockHandler and topic management
 -
-  [`crates/consensus/gossip/src/block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/block_validity.rs)
+  [`crates/consensus/network/service/src/block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/block_validity.rs)
   — Block validation rules
 -
-  [`crates/consensus/gossip/src/behaviour.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/behaviour.rs)
+  [`crates/consensus/network/service/src/behaviour.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/behaviour.rs)
   — libp2p Behaviour composition
 -
-  [`crates/consensus/gossip/src/gater.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/gater.rs)
+  [`crates/consensus/network/service/src/gater.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/gater.rs)
   — Connection rate limiting
 -
-  [`crates/consensus/gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/driver.rs)
+  [`crates/consensus/network/service/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs)
   — GossipDriver swarm management
 
 **Consensus layer orchestration:**

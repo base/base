@@ -12,7 +12,7 @@ use base_protocol::{BaseTimeScheduleError, BaseTimeUpdateTx};
 use libp2p::gossipsub::MessageAcceptance;
 
 use super::BlockHandler;
-use crate::Metrics;
+use crate::gossip::Metrics;
 
 /// Error that can occur when validating a block.
 #[derive(Debug, thiserror::Error)]

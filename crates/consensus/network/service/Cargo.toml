@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-network-service"
 version.workspace = true
-description = "Network peers library for Base"
+description = "Consensus peer discovery and payload gossip for Base"
 
 edition.workspace = true
 license.workspace = true
@@ -17,37 +17,52 @@ development = ["arbtest"]
 
 [dependencies]
 dirs = { workspace = true }
-metrics = { workspace = true, optional = true }
-serde = { workspace = true, features = ["std"] }
+sha2 = { workspace = true }
+snap = { workspace = true }
+serde_repr = { workspace = true }
+base-protocol = { workspace = true }
+libp2p-stream = { workspace = true }
+metrics = {optional = true, workspace = true}
+serde = {features = ["std"], workspace = true}
 tracing = {features = ["std"], workspace = true}
 alloy-rlp = {features = ["std"], workspace = true}
 discv5 = {features = ["libp2p"], workspace = true}
+lru = { workspace = true, features = ["default"] }
 thiserror = {features = ["std"], workspace = true}
+tokio = {features = ["default"], workspace = true}
 url = { workspace = true, features = ["default"] }
-tokio = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-base-common-observability-metrics = { workspace = true }
+base-common-observability-metrics = {workspace = true}
+futures = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["default"] }
 unsigned-varint = { workspace = true, features = ["std"] }
-libp2p-identity = { workspace = true, features = ["secp256k1"] }
+ipnet = { workspace = true, features = ["default", "serde"] }
+libp2p-identity = {features = ["secp256k1"], workspace = true}
 rand = { workspace = true, features = ["default", "thread_rng"] }
-base-common-chain-config = { workspace = true, features = ["default"] }
+base-common-chain-config = {features = ["default"], workspace = true}
+alloy-primitives = {features = ["getrandom", "k256"], workspace = true}
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
+base-common-types-chain = { workspace = true, features = ["k256", "std"] }
 derive_more = {features = ["debug", "deref", "display"], workspace = true}
+base-common-types-payload = {workspace = true, features = ["std", "serde"]}
 backon = { workspace = true, features = ["default", "std", "tokio", "tokio-sleep"] }
-libp2p = {features = ["gossipsub", "identify", "macros", "noise", "ping", "tcp", "tokio", "yamux"], workspace = true}
+libp2p = {features = ["dns", "gossipsub", "identify", "macros", "noise", "ping", "tcp", "tokio", "yamux"], workspace = true}
 
 [dev-dependencies]
 arbtest = { workspace = true }
+serde_json = {features = ["std"], workspace = true}
+alloy-rlp = { workspace = true, features = ["std"] }
+arbitrary = {features = ["derive"], workspace = true}
 rstest = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["std"] }
-arbitrary = { workspace = true, features = ["derive"] }
-tempfile = { workspace = true, features = ["default"] }
-multihash = { workspace = true, features = ["default"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
+tempfile = {features = ["default"], workspace = true}
+multihash = {features = ["default"], workspace = true}
+alloy-chains = { workspace = true, features = ["std"] }
+alloy-primitives = {features = ["arbitrary"], workspace = true}
+rand = { workspace = true, features = ["default", "thread_rng"] }
 base-common-chain-config = { workspace = true, features = ["default"] }
 base-common-observability-tracing = {workspace = true, features = ["std"]}
+base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
 [features]
 default = []

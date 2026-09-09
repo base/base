@@ -23,7 +23,6 @@ base-cli-utils = { workspace = true }
 alloy-primitives = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-consensus-engine = { workspace = true }
-base-consensus-gossip = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
