@@ -881,24 +881,22 @@ dependencies = [
 
 [[package]]
 name = "alloy-trie"
-version = "0.0.0"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f14b5d9b2c2173980202c6ff470d96e7c5e202c65a9f67884ad565226df7fbb"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "arbitrary",
- "codspeed-criterion-compat 4.7.0",
  "derive_arbitrary",
  "derive_more",
- "hash-db",
  "nybbles",
- "plain_hasher",
  "proptest",
  "proptest-derive 0.7.0",
  "serde",
  "smallvec",
  "thiserror 2.0.19",
  "tracing",
- "triehash",
 ]
 
 [[package]]
