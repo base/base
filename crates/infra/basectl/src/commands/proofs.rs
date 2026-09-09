@@ -165,10 +165,9 @@ pub struct ProofsProposeArgs {
     pub retry_failed: bool,
     /// Intermediate output root interval (checkpoint stride).
     ///
-    /// Only needed when the game type has no registered implementation to
-    /// read `INTERMEDIATE_BLOCK_INTERVAL` from; when it does, the flag must
-    /// match that canonical value because a proof with any other stride
-    /// would not verify on chain.
+    /// Only needed when the game does not expose its interval configuration;
+    /// otherwise the flag must match the canonical value because a proof with
+    /// any other stride would not verify on chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof succeeds or fails.
@@ -306,10 +305,9 @@ pub struct ProofsFinalizeArgs {
     pub retry_failed: bool,
     /// Intermediate output root interval (checkpoint stride).
     ///
-    /// Only needed when the game type has no registered implementation to
-    /// read `INTERMEDIATE_BLOCK_INTERVAL` from; when it does, the flag must
-    /// match that canonical value because a proof with any other stride
-    /// would not verify on chain.
+    /// Only needed when the game does not expose its interval configuration;
+    /// otherwise the flag must match the canonical value because a proof with
+    /// any other stride would not verify on chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
