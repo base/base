@@ -21,7 +21,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
-const DENIM_ACTIVATION_BLOCK: u64 = 10;
+// Leave enough pre-Denim runway for both stacks to start under the system-test concurrency used
+// in CI. A very early activation makes the "pre-cutover" transaction race node startup.
+const DENIM_ACTIVATION_BLOCK: u64 = 25;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
