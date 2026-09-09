@@ -6,7 +6,7 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::{BaseTxEnvelope, Block};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use thiserror::Error;
 use url::Url;
 

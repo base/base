@@ -14,7 +14,7 @@ use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_execution_evm_runtime::BaseTime;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_protocol::BaseTimeUpdateTx;
+use base_consensus_batch_types::BaseTimeUpdateTx;
 use base_testing_support::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};

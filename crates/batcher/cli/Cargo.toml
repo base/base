@@ -13,8 +13,8 @@ workspace = true
 
 [dependencies]
 humantime = { workspace = true }
-base-protocol = { workspace = true }
 base-cli-utils = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 base-common-l1-transactions = { workspace = true }
 tracing = { workspace = true, features = ["std"] }

@@ -8,7 +8,7 @@ use base_common_types_chain::BaseBlock;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_execution_state_api::ProviderError;
 use base_execution_state_types::HashedStorage;
-use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
+use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use reth_provider::{BlockReaderIdExt, StateProviderFactory, providers::BlockchainProvider};
 
 /// Direct access to the execution node's canonical and in-memory L2 state.
@@ -34,7 +34,7 @@ pub enum LocalL2Error {
     BlockNotFound(u64),
     /// The block's L1 information is malformed.
     #[error(transparent)]
-    BlockInfo(#[from] base_protocol::FromBlockError),
+    BlockInfo(#[from] base_consensus_batch_types::FromBlockError),
     /// System configuration cannot be recovered from the block.
     #[error("cannot recover system configuration from L2 block {0}")]
     SystemConfig(u64),
@@ -69,7 +69,7 @@ impl LocalL2Provider {
         self.block(id)
             .await?
             .map(|block| {
-                base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
                     &block,
                     &self.rollup_config.genesis,
                 )

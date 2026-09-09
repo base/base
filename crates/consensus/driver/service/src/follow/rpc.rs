@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
 use base_common_client_rollup::HealthzApiServer;
 use base_common_client_rollup::SyncStatusApiServer;
-use base_protocol::{L2BlockInfo, SyncStatus};
+use base_consensus_batch_types::{L2BlockInfo, SyncStatus};
 use jsonrpsee::{
     RpcModule,
     core::RpcResult,

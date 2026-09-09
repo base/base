@@ -27,7 +27,7 @@ run() { echo "::group::$*"; "$@"; echo "::endgroup::"; }
 
 run cargo bench -p base-proof-mpt --bench trie_node \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-protocol --bench batch_transaction \
+run cargo bench -p base-consensus-batch-types --bench batch_transaction \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-consensus-derive --bench batch_queue --features test-utils \
   -- --save-baseline "$baseline" --noplot
@@ -35,5 +35,5 @@ run cargo bench -p base-execution-evm-precompiles --bench base_precompiles --fea
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-execution-evm-fees --bench flz \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-protocol --bench frame_parse \
+run cargo bench -p base-consensus-batch-types --bench frame_parse \
   -- --save-baseline "$baseline" --noplot

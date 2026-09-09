@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use base_consensus_derive::{
     Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, SignalReceiver, StepResult,
 };
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 
 /// High-level abstraction for the driver's derivation pipeline.
 ///

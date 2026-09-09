@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BasePayloadAttributes;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::Metrics;
 

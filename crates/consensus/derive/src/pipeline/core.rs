@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 
 use crate::{
     ActivationSignal, L2ChainProvider, Metrics, NextAttributes, OriginAdvancer, OriginProvider,
@@ -260,7 +260,7 @@ mod tests {
     use alloy_primitives::{Address, B256, address};
     use base_common_chain_config::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
-    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::*;
     use crate::{

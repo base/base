@@ -24,13 +24,13 @@ thiserror = {workspace = true, features = ["std"]}
 url = { workspace = true, features = ["default"] }
 futures = {workspace = true, features = ["default"]}
 backon = { workspace = true, features = ["default"] }
-base-protocol = {workspace = true, features = ["std"]}
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-common-types-rpc = { workspace = true, features = ["std"]}
 base-common-types-chain = {workspace = true, features = ["std"]}
 alloy-primitives = {features = ["serde", "std"], workspace = true}
+base-consensus-batch-types = {workspace = true, features = ["std"]}
 base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
 derive_more = {workspace = true, features = ["debug", "display", "from_str"]}
 jsonrpsee = {workspace = true, features = ["http-client", "macros", "server"]}
@@ -75,4 +75,4 @@ metrics = [
     "base-common-l1-transactions/metrics",
     "dep:metrics",
 ]
-test-utils = ["base-protocol/test-utils", "base-common-runtime-tasks/test-utils"]
+test-utils = ["base-consensus-batch-types/test-utils", "base-common-runtime-tasks/test-utils"]

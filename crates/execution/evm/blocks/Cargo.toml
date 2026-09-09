@@ -16,12 +16,12 @@ tracing = { workspace = true }
 alloy-eips = {workspace = true}
 alloy-trie = { workspace = true }
 futures-util = { workspace = true }
-base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-primitives-traits = {workspace = true}
 rayon = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-execution-state-memory = {workspace = true}
+base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 reth-trie = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true }
@@ -45,8 +45,8 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = {workspace = true}
-base-protocol = { workspace = true }
 reth-db-common = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = {features = ["std"], workspace = true}
@@ -76,7 +76,7 @@ std = [
     "base-execution-evm-runtime/std",
     "base-common-types-chain/std",
     "base-execution-payload-types/std",
-    "base-protocol/std",
+    "base-consensus-batch-types/std",
     "dep:rayon",
     "derive_more/std",
     "fixed-cache/std",

@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use alloy_eips::BlockNumberOrTag;
 use base_common_chain_config::RollupConfig;
 use base_consensus_engine::{EngineQueries, EngineState};
-use base_protocol::{L2BlockInfo, OutputRoot};
+use base_consensus_batch_types::{L2BlockInfo, OutputRoot};
 use derive_more::Constructor;
 use jsonrpsee::{
     core::RpcResult,

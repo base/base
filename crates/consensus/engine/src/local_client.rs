@@ -13,7 +13,7 @@ use base_common_types_payload::{
 };
 use base_consensus_source_providers::LocalL2Provider;
 use base_execution_payload_builder::{BaseExecutionHandle, BasePayloadBuilderAttributes};
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use reth_network::NetworkHandle;
 use reth_network_api::NetworkInfo;
 

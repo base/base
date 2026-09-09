@@ -105,12 +105,12 @@ rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }
-base-protocol = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
+base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "std", "test-utils"] }
 base-common-types-chain = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }

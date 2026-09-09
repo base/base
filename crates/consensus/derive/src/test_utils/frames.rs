@@ -3,7 +3,7 @@
 use alloc::{vec, vec::Vec};
 
 use alloy_primitives::Bytes;
-use base_protocol::{BlockInfo, DERIVATION_VERSION_0, Frame};
+use base_consensus_batch_types::{BlockInfo, DERIVATION_VERSION_0, Frame};
 
 use crate::{
     FrameQueue, NextFrameProvider, PipelineError, PipelineErrorKind,

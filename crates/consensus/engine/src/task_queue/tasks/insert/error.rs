@@ -3,7 +3,7 @@
 //! [InsertTask]: crate::InsertTask
 
 use base_common_types_payload::{BasePayloadError, PayloadStatusEnum};
-use base_protocol::{BaseTimeScheduleError, FromBlockError};
+use base_consensus_batch_types::{BaseTimeScheduleError, FromBlockError};
 
 use crate::{
     EngineClientError, EngineTaskError, SynchronizeTaskError,

@@ -9,7 +9,7 @@ use base_common_types_chain::{Header, Sealed};
 use base_consensus_derive::ChainProvider;
 use base_proof_driver::{PipelineCursor, TipCursor};
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
-use base_protocol::{BatchValidationProvider, OutputRoot};
+use base_consensus_batch_types::{BatchValidationProvider, OutputRoot};
 use spin::RwLock;
 
 use crate::errors::OracleProviderError;

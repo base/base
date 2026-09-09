@@ -1,7 +1,7 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, b256};
 use base_common_types_payload::BasePayloadAttributes;
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 /// Builder for creating test `AttributesWithParent` instances with sensible defaults
 #[derive(Debug)]

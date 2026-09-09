@@ -5,7 +5,7 @@
 //! to iterate over data for a given (L2) [`BlockInfo`].
 //!
 //! [DataAvailabilityProvider]: crate::traits::DataAvailabilityProvider
-//! [BlockInfo]: base_protocol::BlockInfo
+//! [BlockInfo]: base_consensus_batch_types::BlockInfo
 
 mod blob_data;
 pub use blob_data::{BLOB_ENCODING_ROUNDS, BLOB_ENCODING_VERSION, BLOB_MAX_DATA_SIZE, BlobData};

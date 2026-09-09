@@ -18,21 +18,21 @@ brotli = { workspace = true,  features = ["std"]}
 thiserror = {features = ["std"], workspace = true}
 tracing = { workspace = true, features = ["std"] }
 alloy-eips = {features = ["std"], workspace = true}
-base-protocol = {features = ["std"], workspace = true}
 base-common-observability-metrics = { workspace = true }
 alloy-primitives = {features = ["std"], workspace = true}
 derive_more = {workspace = true, features = ["debug", "std"]}
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
+base-consensus-batch-types = {features = ["std"], workspace = true}
 rand = { workspace = true, features = ["default", "std", "small_rng"] }
 clap = { workspace = true, features = ["default", "derive"], optional = true }
 
 [dev-dependencies]
 rstest = {features = ["default"], workspace = true}
-base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
+base-consensus-batch-types = { workspace = true, features = ["std"] }
 
 [features]
 clap = ["dep:clap"]

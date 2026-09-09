@@ -10,7 +10,7 @@ use alloy_primitives::{
     utils::{Unit, parse_ether},
 };
 use base_consensus_driver_service::{SequencerConfig, ShadowFunding};
-use base_protocol::DEFAULT_SEAL_OFFSET;
+use base_consensus_batch_types::DEFAULT_SEAL_OFFSET;
 use clap::Parser;
 use url::Url;
 

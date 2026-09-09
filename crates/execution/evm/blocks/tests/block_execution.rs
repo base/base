@@ -13,7 +13,7 @@ use base_execution_evm_blocks::{
 };
 use base_execution_evm_runtime::BaseTime;
 use base_execution_state_memory::StoredAccount as Account;
-use base_protocol::BaseTimeUpdateTx;
+use base_consensus_batch_types::BaseTimeUpdateTx;
 use reth_primitives_traits::RecoveredBlock;
 
 const BASE_TIME_READER: Address = address!("0x1000000000000000000000000000000000000000");

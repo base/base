@@ -7,7 +7,7 @@ use crate::L1WatcherQueries;
 use alloy_eips::BlockId;
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use futures::StreamExt;
 use tokio::{
     select,

@@ -3,7 +3,7 @@
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_protocol::FromBlockError;
+use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 
 use super::{ForkchoiceCheckpointLabel, checkpoint::ForkchoiceCheckpointError};
@@ -19,7 +19,7 @@ pub enum SyncStartError {
     RpcError(#[from] RpcError<TransportErrorKind>),
     /// An error occurred while converting a block to [`L2BlockInfo`].
     ///
-    /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
+    /// [`L2BlockInfo`]: base_consensus_batch_types::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
     /// A block could not be found.

@@ -7,7 +7,7 @@ use core::fmt::Display;
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{PipelineErrorKind, PipelineResult};
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_chain_config::RollupConfig;
-use base_protocol::{L2BlockInfo, OutputRoot};
+use base_consensus_batch_types::{L2BlockInfo, OutputRoot};
 use tokio::sync::oneshot::Sender;
 
 use crate::{EngineClient, EngineClientError, EngineState};
@@ -86,7 +86,7 @@ impl EngineQueries {
                 let output_block = output_block.ok_or(EngineQueriesError::NoL2BlockFound(block))?;
                 let block_hash = output_block.hash();
                 let output_block = output_block.into_block();
-                let output_block_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                let output_block_info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
                     &output_block,
                     &rollup_config.genesis,
                 )

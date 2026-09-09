@@ -34,7 +34,6 @@ base-batcher-encoding-channel = { workspace = true }
 base-consensus-network-service = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
-base-protocol = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -42,6 +41,7 @@ base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
+base-consensus-batch-types = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 base-common-client-ethereum = {workspace = true, features = ["default"]}

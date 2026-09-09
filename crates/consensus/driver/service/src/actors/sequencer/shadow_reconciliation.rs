@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 use alloy_primitives::B256;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::ConsolidateInput;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tracing::debug;
 
 use crate::{EngineClientError, SequencerConfig};
@@ -328,7 +328,7 @@ mod tests {
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
     };
     use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
     use crate::EngineClientError;

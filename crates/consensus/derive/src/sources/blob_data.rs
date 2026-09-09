@@ -4,7 +4,7 @@ use alloc::{boxed::Box, vec};
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
-pub use base_protocol::BLOB_MAX_DATA_SIZE;
+pub use base_consensus_batch_types::BLOB_MAX_DATA_SIZE;
 
 use crate::{BlobDecodingError, BlobProviderError};
 

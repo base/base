@@ -5,7 +5,7 @@ use core::iter::Iterator;
 
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 
 use crate::{OriginProvider, PipelineErrorKind, StepResult};
 

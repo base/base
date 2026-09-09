@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use base_common_types_chain::Blob;
 use base_consensus_derive::BlobProvider;
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use spin::Lazy;
 use tracing::info;
 

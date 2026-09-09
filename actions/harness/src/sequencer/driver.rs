@@ -14,7 +14,7 @@ use base_consensus_driver_service::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
 };
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use tokio::{
     sync::{mpsc, oneshot},
     task::{JoinError, JoinHandle},
@@ -280,7 +280,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             shadow_funding: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
-            seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            seal_offset: base_consensus_batch_types::DEFAULT_SEAL_OFFSET,
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,

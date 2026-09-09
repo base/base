@@ -36,10 +36,10 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
-base-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-evm-precompiles = { workspace = true }
 alloy-rpc-client = { workspace = true, features = ["default"] }

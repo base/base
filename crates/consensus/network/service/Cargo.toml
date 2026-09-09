@@ -19,11 +19,11 @@ development = ["arbtest"]
 dirs = { workspace = true }
 sha2 = { workspace = true }
 snap = { workspace = true }
-base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
 metrics = {optional = true, workspace = true}
 serde = {features = ["std"], workspace = true}
 tracing = {features = ["std"], workspace = true}
+base-consensus-batch-types = { workspace = true }
 alloy-rlp = {features = ["std"], workspace = true}
 discv5 = {features = ["libp2p"], workspace = true}
 lru = { workspace = true, features = ["default"] }

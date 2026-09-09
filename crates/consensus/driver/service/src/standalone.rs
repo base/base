@@ -12,7 +12,7 @@ use base_consensus_derive::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
 };
 use base_consensus_engine::{Engine, EngineClient, EngineState};
-use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_consensus_batch_types::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -308,7 +308,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             unsafe_payload_gossip_client: StandaloneUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,
-            seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            seal_offset: base_consensus_batch_types::DEFAULT_SEAL_OFFSET,
         };
 
         crate::service::spawn_and_wait!(
@@ -326,7 +326,7 @@ mod tests {
     use base_common_chain_config::{RollupConfig, SystemConfig};
     use base_common_types_chain::{BaseTxEnvelope, Transaction as _};
     use base_consensus_derive::AttributesBuilder;
-    use base_protocol::{
+    use base_consensus_batch_types::{
         BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L1BlockInfoTx, L2BlockInfo,
     };
 

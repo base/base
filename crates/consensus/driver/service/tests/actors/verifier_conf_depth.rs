@@ -28,7 +28,7 @@ use base_consensus_driver_service::{
     L1WatcherQueryExecutor, NodeActor,
 };
 use base_consensus_source_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use futures::Stream;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;

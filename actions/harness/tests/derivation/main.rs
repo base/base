@@ -18,7 +18,7 @@ use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,
 };
-use base_protocol::{BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
 mod node;
 mod singular_batches;

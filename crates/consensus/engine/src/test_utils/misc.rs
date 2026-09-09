@@ -1,6 +1,6 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
 /// Helper to create a test `L2BlockInfo` at a specific block number
 pub fn test_block_info(number: u64) -> L2BlockInfo {

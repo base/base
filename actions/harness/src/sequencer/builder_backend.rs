@@ -37,7 +37,7 @@ use base_consensus_driver_service::{
 };
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_txpool::BasePooledTransaction;
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 
 use super::ExecutionPayloadConverter;
 use crate::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry};
@@ -236,7 +236,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         // state root against the builder-produced one.
         self.block_registry.insert(block.header.number, new_hash, Some(block.header.state_root));
 
-        let info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        let info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &self.rollup_config.genesis,
         )
@@ -288,7 +288,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use base_common_chain_config::UpgradeConfig;
-    use base_protocol::BlockInfo;
+    use base_consensus_batch_types::BlockInfo;
 
     use super::*;
     use crate::TestRollupConfigBuilder;

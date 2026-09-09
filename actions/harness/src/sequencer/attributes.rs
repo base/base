@@ -9,7 +9,7 @@ use base_common_types_payload::BasePayloadAttributes;
 use base_consensus_derive::{
     AttributesBuilder, PipelineError, PipelineResult, StatefulAttributesBuilder,
 };
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 
 use crate::{ActionL1ChainProvider, ActionL2ChainProvider};
 

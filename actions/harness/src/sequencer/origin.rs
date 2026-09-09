@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base_consensus_driver_service::{L1OriginSelector, OriginSelector};
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
 use crate::SharedL1Chain;
 

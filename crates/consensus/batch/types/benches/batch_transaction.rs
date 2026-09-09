@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use alloy_primitives::Bytes;
-use base_protocol::{BatchTransaction, Frame};
+use base_consensus_batch_types::{BatchTransaction, Frame};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 const FRAME_COUNT: usize = 32;

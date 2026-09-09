@@ -11,7 +11,7 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
-use base_protocol::{L2BlockInfo, to_system_config_from_payload};
+use base_consensus_batch_types::{L2BlockInfo, to_system_config_from_payload};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -784,7 +784,7 @@ mod tests {
     use base_common_chain_config::{RollupConfig, SystemConfig};
     use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock};
+    use base_consensus_batch_types::{BlockInfo, L1BlockInfoBedrock};
 
     use super::*;
     use crate::actors::sequencer::tests::test_actor;

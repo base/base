@@ -8,7 +8,7 @@ pub enum L2SequencerError {
     MissingL1Block(u64),
     /// Failed to build the L1 info deposit transaction.
     #[error("failed to build L1 info deposit: {0}")]
-    L1Info(#[from] base_protocol::BlockInfoError),
+    L1Info(#[from] base_consensus_batch_types::BlockInfoError),
     /// Transaction signing failed.
     #[error("signing failed: {0}")]
     Signing(#[from] alloy_signer::Error),

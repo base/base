@@ -6,7 +6,7 @@ use crate::DerivationStatus;
 use base_common_client_rollup::RollupNodeApiClient;
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_rpc::BlockNumberOrTag;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -118,7 +118,7 @@ mod tests {
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
-    use base_protocol::BlockInfo;
+    use base_consensus_batch_types::BlockInfo;
     use tokio::sync::mpsc;
 
     use super::{DerivationStatusPoller, DerivationStatusProvider};

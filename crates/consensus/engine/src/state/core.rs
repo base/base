@@ -3,7 +3,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base_common_types_payload::ForkchoiceState;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::Metrics;
@@ -159,7 +159,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[cfg(feature = "metrics")]
-    use base_protocol::BlockInfo;
+    use base_consensus_batch_types::BlockInfo;
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
     #[cfg(feature = "metrics")]

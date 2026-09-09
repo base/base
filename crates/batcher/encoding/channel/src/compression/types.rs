@@ -95,7 +95,7 @@ impl fmt::Display for BrotliLevel {
 #[cfg(test)]
 mod tests {
     use base_common_chain_config::RollupConfig;
-    use base_protocol::Brotli;
+    use base_consensus_batch_types::Brotli;
 
     use super::*;
 

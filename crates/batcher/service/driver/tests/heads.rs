@@ -19,7 +19,7 @@ use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tokio::sync::mpsc;
 
 fn safe_head(number: u64) -> BlockInfo {

@@ -5,7 +5,7 @@ use alloc::{boxed::Box, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 // Re-export these types used internally to the test pipeline.
 use crate::{

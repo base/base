@@ -1,4 +1,4 @@
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 use derive_more::PartialEq;
 use thiserror::Error;
 use tracing::info;
@@ -12,7 +12,7 @@ pub enum DerivationState {
     AwaitingELSyncCompletion,
     /// The [`crate::DerivationActor`] is idle awaiting data.
     AwaitingL1Data,
-    /// [`base_protocol::AttributesWithParent`] were sent to the [`crate::EngineActor`], and the
+    /// [`base_consensus_batch_types::AttributesWithParent`] were sent to the [`crate::EngineActor`], and the
     /// [`crate::DerivationActor`] is waiting for confirmation that they were processed into a safe
     /// head.
     AwaitingSafeHeadConfirmation,
@@ -37,9 +37,9 @@ pub enum DerivationStateUpdate {
     L1DataReceived,
     /// Further derivation is not possible without additional L1 data becoming available.
     MoreDataNeeded,
-    /// Derivation has produced new [`base_protocol::AttributesWithParent`].
+    /// Derivation has produced new [`base_consensus_batch_types::AttributesWithParent`].
     NewAttributesDerived(Box<AttributesWithParent>),
-    /// The EL has confirmed the derived [`base_protocol::AttributesWithParent`] as the new safe
+    /// The EL has confirmed the derived [`base_consensus_batch_types::AttributesWithParent`] as the new safe
     /// head.
     NewAttributesConfirmed(Box<L2BlockInfo>),
     /// A [`base_consensus_derive::Signal`] is necessary to update the derivation pipeline in order to
@@ -149,9 +149,9 @@ fn transition(
 /// 2. Derivation may not happen until the Engine L2 safe head is known
 ///
 /// ## Derive -> Message EL -> Receive confirmation
-/// When new [`base_protocol::AttributesWithParent`] are derived, they must be sent to the EL,
+/// When new [`base_consensus_batch_types::AttributesWithParent`] are derived, they must be sent to the EL,
 /// and the EL must confirm them by creating a new L2 safe head from them prior to further
-/// derivation. There will be at most one [`base_protocol::AttributesWithParent`] awaiting
+/// derivation. There will be at most one [`base_consensus_batch_types::AttributesWithParent`] awaiting
 /// confirmation at any given time.
 ///
 /// ## Signal handling
@@ -222,7 +222,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{BlockHash, b256};
     use base_common_types_payload::BasePayloadAttributes;
-    use base_protocol::{AttributesWithParent, BlockInfo};
+    use base_consensus_batch_types::{AttributesWithParent, BlockInfo};
     use rstest::rstest;
 
     use super::{

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 
 use crate::{ResetOrigin, ResetReason, ResetRequestOutcome};
 
@@ -179,7 +179,7 @@ impl Metrics {
 #[cfg(all(test, feature = "metrics"))]
 mod tests {
     use alloy_primitives::B256;
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
     use metrics_util::{
         CompositeKey, MetricKind,
         debugging::{DebugValue, DebuggingRecorder},

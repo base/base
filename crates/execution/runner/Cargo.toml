@@ -16,7 +16,6 @@ reth-provider = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
-base-protocol = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
 base-txpool-rpc = { workspace = true, optional = true }
@@ -27,6 +26,7 @@ base-node-core = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, optional = true}
 base-common-types-chain = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true, optional = true }
+base-consensus-batch-types = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true, optional = true}
 tokio = { workspace = true, features = ["default"], optional = true }
@@ -42,7 +42,7 @@ base-common-types-rpc = { workspace = true, optional = true, features = ["serde"
 
 [dev-dependencies]
 serde_json = { workspace = true }
-base-protocol = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
@@ -60,7 +60,7 @@ test-utils = [
     "dep:base-common-chain-config",
     "dep:base-common-types-chain",
     "dep:base-execution-evm-runtime",
-    "dep:base-protocol",
+    "dep:base-consensus-batch-types",
     "dep:reth-network",
     "dep:tokio",
     "base-node-core/test-utils",

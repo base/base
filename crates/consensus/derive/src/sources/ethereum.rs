@@ -6,7 +6,7 @@ use alloc::{boxed::Box, fmt::Debug};
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{
     BlobProvider, BlobSource, CalldataSource, ChainProvider, DataAvailabilityProvider,
@@ -88,7 +88,7 @@ mod tests {
     use alloy_primitives::{Address, address};
     use base_common_chain_config::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_common_types_chain::TxEnvelope;
-    use base_protocol::BlockInfo;
+    use base_consensus_batch_types::BlockInfo;
 
     use super::*;
     use crate::{

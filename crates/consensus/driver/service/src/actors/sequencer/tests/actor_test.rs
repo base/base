@@ -16,7 +16,7 @@ use base_common_types_payload::{
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
 use base_consensus_engine::SealTaskError;
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
 use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};

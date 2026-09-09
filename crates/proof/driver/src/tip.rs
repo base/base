@@ -5,7 +5,7 @@
 
 use alloy_primitives::B256;
 use base_common_types_chain::{Header, Sealed};
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 
 /// A cursor that encapsulates the L2 safe head state at a specific derivation tip.
 ///

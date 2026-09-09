@@ -7,7 +7,7 @@ use alloc::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
 
 use alloy_primitives::{B256, map::HashMap};
 use base_common_types_chain::{Header, Sealed};
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
 use crate::TipCursor;
 

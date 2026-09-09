@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use base_consensus_engine::{
     ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
 };
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tokio::sync::{mpsc, oneshot};
 
 use super::CheckpointError;

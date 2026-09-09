@@ -32,10 +32,10 @@ base-execution-payload-builder = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 base-consensus-source-providers = { workspace = true }
 base-common-observability-metrics = { workspace = true }
-base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
+base-consensus-batch-types = { workspace = true, features = ["serde", "std"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 base-common-client-ethereum = {workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"]}
 
@@ -49,4 +49,4 @@ base-common-types-rpc = { workspace = true, features = ["default", "arbitrary", 
 
 [features]
 metrics = ["base-consensus-source-providers/metrics", "base-common-observability-metrics/metrics", "dep:metrics"]
-test-utils = ["base-common-chain-config/test-utils", "base-protocol/test-utils"]
+test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils"]

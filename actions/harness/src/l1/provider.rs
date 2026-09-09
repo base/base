@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt};
 use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind};
 use base_consensus_driver_service::{L1OriginSelectorError, L1OriginSelectorProvider, PreparedL1Origin};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{L1Block, block_info_from};
 

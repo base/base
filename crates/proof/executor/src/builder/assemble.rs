@@ -14,7 +14,7 @@ use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::database::BundleState;
 use base_execution_evm_runtime::{BlockExecutionResult, EvmFactory};
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
-use base_protocol::OutputRoot;
+use base_consensus_batch_types::OutputRoot;
 
 use super::StatelessL2Builder;
 use crate::{

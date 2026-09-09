@@ -1,7 +1,7 @@
 //! Custom RPC subscription endpoints for the base node to stream internal state/data.
 
 use base_consensus_engine::EngineState;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, to_json_raw_value},

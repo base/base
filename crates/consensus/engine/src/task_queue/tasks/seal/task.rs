@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId};
-use base_protocol::AttributesWithParent;
+use base_consensus_batch_types::AttributesWithParent;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
@@ -148,7 +148,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             .seal_payload(&self.cfg, &self.engine, self.payload_id, self.attributes.clone())
             .await?;
 
-        let new_block_ref = base_protocol::L2BlockInfoDecoder::from_payload_and_genesis(
+        let new_block_ref = base_consensus_batch_types::L2BlockInfoDecoder::from_payload_and_genesis(
             new_payload.execution_payload.clone(),
             self.attributes.attributes().payload_attributes.parent_beacon_block_root,
             &self.cfg.genesis,

@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use base_common_types_chain::BaseBlock;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{BatchComposeError, BatchSubmission, ChannelError, ChannelLimit, SubmissionId};
 
@@ -20,7 +20,7 @@ pub enum StepResult {
 /// Encoding failed. Fatal: do not continue.
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
-    /// The block could not be converted to a [`base_protocol::SingleBatch`].
+    /// The block could not be converted to a [`base_consensus_batch_types::SingleBatch`].
     #[error("batch composition failed for block at cursor {cursor}: {source}")]
     CompositionFailed {
         /// Index of the block in the encoder's input queue.

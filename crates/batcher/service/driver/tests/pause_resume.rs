@@ -24,7 +24,7 @@ use base_common_runtime_tasks::{
     deterministic::{Config, Runner},
 };
 use base_common_types_chain::BaseBlock;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tokio::sync::mpsc;
 
 /// `AdminCommand::Pause` must immediately reset the pipeline and discard

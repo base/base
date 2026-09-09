@@ -1,7 +1,7 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_protocol::FromBlockError;
+use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -32,7 +32,7 @@ pub enum SealTaskError {
     /// Failed to convert a [`BaseExecutionPayload`] to a [`L2BlockInfo`].
     ///
     /// [`BaseExecutionPayload`]: base_common_types_payload::BaseExecutionPayload
-    /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
+    /// [`L2BlockInfo`]: base_consensus_batch_types::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
     /// Error sending the built payload envelope.
@@ -115,7 +115,7 @@ impl EngineTaskError for SealTaskError {
 mod tests {
     use alloy_transport::RpcError;
     use base_common_types_payload::PayloadStatusEnum;
-    use base_protocol::{BaseTimeScheduleError, FromBlockError};
+    use base_consensus_batch_types::{BaseTimeScheduleError, FromBlockError};
     use rstest::rstest;
 
     use super::*;

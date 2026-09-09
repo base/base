@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::SequencerAdminAPIError;
 use alloy_primitives::B256;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
 use rstest::rstest;
 use tokio::sync::oneshot;

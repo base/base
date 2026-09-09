@@ -7,7 +7,7 @@ use base_consensus_engine::{
     EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
     SynchronizeTask,
 };
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tokio::sync::Mutex;
 
 use crate::follow::error::FollowError;
@@ -105,7 +105,7 @@ mod tests {
         PayloadStatus, PayloadStatusEnum,
     };
     use base_consensus_engine::test_utils::test_engine_client_builder;
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use tokio::time::{self, Instant};
 
     use super::{EngineApiFollowEngine, FollowEngine};

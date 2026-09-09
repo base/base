@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt, TxEnvelope};
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
 use base_consensus_source_providers::{AlloyChainProvider, AlloyChainProviderError};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tokio::sync::watch;
 
 use super::PreparedL1Origin;

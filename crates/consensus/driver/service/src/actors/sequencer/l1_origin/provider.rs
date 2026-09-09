@@ -7,7 +7,7 @@ use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_transport::TransportErrorKind;
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tokio::sync::watch;
 
 use super::{L1OriginSelectorError, PreparedL1Origin};
@@ -211,7 +211,7 @@ mod tests {
     use alloy_rpc_client::RpcClient;
     use base_common_chain_config::RollupConfig;
     use base_common_types_rpc::{Block as RpcBlock, Header as RpcHeader};
-    use base_protocol::L2BlockInfo;
+    use base_consensus_batch_types::L2BlockInfo;
     use httpmock::prelude::*;
     use metrics_util::{
         CompositeKey, MetricKind,

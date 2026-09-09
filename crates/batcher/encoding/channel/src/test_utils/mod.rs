@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use base_common_types_chain::BaseBlock;
-use base_protocol::{BlockInfo, ChannelId, Frame};
+use base_consensus_batch_types::{BlockInfo, ChannelId, Frame};
 
 use crate::{
     BatchPipeline, BatchSubmission, Channel, DerivationReconciliation, ReorgError, StepError,

@@ -9,7 +9,7 @@ use base_common_client_ethereum::{Base, Network};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_client_rollup::SyncStatusApiClient;
 use base_common_types_rpc::BaseTransactionReceipt;
-use base_protocol::SyncStatus;
+use base_consensus_batch_types::SyncStatus;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tokio::time::{sleep, timeout};

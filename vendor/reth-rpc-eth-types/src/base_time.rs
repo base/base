@@ -8,7 +8,7 @@ use std::{
 use alloy_primitives::BlockHash;
 use base_common_types_chain::BaseTransaction;
 use base_execution_state_api::{ProviderError, TransactionsProvider};
-use base_protocol::BaseTimeUpdateTx;
+use base_consensus_batch_types::BaseTimeUpdateTx;
 use lru::LruCache;
 
 /// Cache of validated `BaseTime` timestamps keyed by block hash.
@@ -86,7 +86,7 @@ mod tests {
     use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, Header, Sealable, TxDeposit,
     };
-    use base_protocol::BaseTimeUpdateTx;
+    use base_consensus_batch_types::BaseTimeUpdateTx;
     use reth_provider::test_utils::MockEthProvider;
 
     use super::BaseTimeCache;

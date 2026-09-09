@@ -11,7 +11,7 @@ use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,
 };
-use base_protocol::{FromBlockError, L2BlockInfo};
+use base_consensus_batch_types::{FromBlockError, L2BlockInfo};
 use thiserror::Error;
 
 /// An error that occurred in the [`EngineClient`].

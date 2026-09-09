@@ -33,7 +33,7 @@ use base_execution_state_memory::CachedReads;
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::HashedStorage;
 use base_execution_txpool::NoopTransactionPool;
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 use base_testing_support::build_test_genesis;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
@@ -502,7 +502,7 @@ impl ActionEngineClient {
 
         registry.insert(block_number, block_hash, Some(state_root));
 
-        let l2_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        let l2_info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &rollup_config.genesis,
         )

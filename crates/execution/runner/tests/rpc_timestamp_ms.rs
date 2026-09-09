@@ -7,7 +7,7 @@ use alloy_primitives::Bytes;
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
-use base_protocol::BaseTimeUpdateTx;
+use base_consensus_batch_types::BaseTimeUpdateTx;
 use base_testing_support::{Account, build_test_genesis};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};

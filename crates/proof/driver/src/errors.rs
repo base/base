@@ -3,7 +3,7 @@
 use alloc::boxed::Box;
 
 use base_consensus_derive::PipelineErrorKind;
-use base_protocol::FromBlockError;
+use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 
 /// A [`Result`] type for the [`DriverError`].
@@ -21,7 +21,7 @@ where
     /// An error returned by the executor.
     #[error("Executor error: {0}")]
     Executor(E),
-    /// An error returned by the conversion from a block to an [`base_protocol::L2BlockInfo`].
+    /// An error returned by the conversion from a block to an [`base_consensus_batch_types::L2BlockInfo`].
     #[error("From block error: {0}")]
     FromBlock(#[from] FromBlockError),
     /// Error decoding or encoding RLP.

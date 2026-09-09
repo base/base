@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 
 use async_trait::async_trait;
-use base_protocol::SingleBatch;
+use base_consensus_batch_types::SingleBatch;
 
 use crate::PipelineResult;
 mod batch_validator;

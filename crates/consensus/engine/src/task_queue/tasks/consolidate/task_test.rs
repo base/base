@@ -8,7 +8,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_types_payload::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
 use base_common_types_rpc::{BaseTransaction, Block as RpcBlock, BlockTransactions};
-use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
@@ -90,7 +90,7 @@ fn matching_rpc_block(
 }
 
 fn block_info_from_rpc_block(block: RpcBlock<BaseTransaction>, cfg: &RollupConfig) -> L2BlockInfo {
-    base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+    base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
         &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
         &cfg.genesis,
     )

@@ -8,7 +8,7 @@ use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, ExecutionPayloadV3,
     NetworkPayloadEnvelope, PayloadError,
 };
-use base_protocol::{BaseTimeScheduleError, BaseTimeUpdateTx};
+use base_consensus_batch_types::{BaseTimeScheduleError, BaseTimeUpdateTx};
 use libp2p::gossipsub::MessageAcceptance;
 
 use super::BlockHandler;

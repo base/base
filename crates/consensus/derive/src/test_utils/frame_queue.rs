@@ -6,7 +6,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_chain_config::SystemConfig;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{
     FrameQueueProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, StageReset,

@@ -16,7 +16,7 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::BaseBlock;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
-use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
+use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
 use lru::LruCache;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
@@ -146,7 +146,7 @@ impl AlloyL2ChainProvider {
                     let consensus_block =
                         block.into_consensus().map_transactions(|t| t.inner.inner);
 
-                    let l2_block = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+                    let l2_block = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
                         &consensus_block,
                         &self.rollup_config.genesis,
                     )
@@ -232,7 +232,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
 
     async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo, Self::Error> {
         let block = self.block_by_number(number).await?;
-        base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &self.rollup_config.genesis,
         )

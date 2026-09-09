@@ -6,7 +6,7 @@ use alloy_eips::eip4844::{Blob, Bytes48, env_settings::EnvKzgSettings};
 use alloy_primitives::{B256, FixedBytes};
 use async_trait::async_trait;
 use base_consensus_derive::{BlobProvider, BlobProviderError};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tracing::warn;
 
 use crate::{BeaconClient, Metrics};
@@ -218,7 +218,7 @@ mod tests {
     use alloy_primitives::{B256, FixedBytes};
     use async_trait::async_trait;
     use base_consensus_derive::{BlobProvider, BlobProviderError};
-    use base_protocol::BlockInfo;
+    use base_consensus_batch_types::BlockInfo;
 
     use super::{BlobWithCommitmentAndProof, BoxedBlob, OnlineBlobProvider};
     use crate::{APIConfigResponse, APIGenesisResponse, BeaconClient};

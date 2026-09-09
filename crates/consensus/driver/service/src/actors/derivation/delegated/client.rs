@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use base_common_client_rollup::RollupNodeApiClient;
-use base_protocol::SyncStatus;
+use base_consensus_batch_types::SyncStatus;
 use jsonrpsee::{
     core::ClientError,
     http_client::{HttpClient, HttpClientBuilder},

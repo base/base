@@ -22,7 +22,7 @@ use base_consensus_driver_service::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
     EngineProcessor, NoopCheckpointWriter, ValidatorEngineRequestHandler,
 };
-use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,

@@ -7,7 +7,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_protocol::{BatchReader, BlockInfo, SingleBatch};
+use base_consensus_batch_types::{BatchReader, BlockInfo, SingleBatch};
 use tracing::{debug, warn};
 
 use crate::{

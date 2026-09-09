@@ -10,7 +10,7 @@ use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields,
 };
-use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
+use base_consensus_batch_types::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -244,7 +244,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                 .map_err(InsertTaskError::FromBlockError)?,
         };
 
-        let new_block_ref = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        let new_block_ref = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &self.rollup_config.genesis,
         )
@@ -373,7 +373,7 @@ mod tests {
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ForkchoiceUpdated, PayloadStatus,
         PayloadStatusEnum,
     };
-    use base_protocol::{
+    use base_consensus_batch_types::{
         BaseTimeScheduleError, BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo,
     };
 

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
 use async_trait::async_trait;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///

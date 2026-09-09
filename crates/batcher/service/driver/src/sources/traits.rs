@@ -1,7 +1,7 @@
 //! Core trait for unsafe L2 block sources.
 
 use async_trait::async_trait;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{L2BlockEvent, SourceError};
 

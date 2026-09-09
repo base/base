@@ -1,7 +1,7 @@
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_consensus_engine::{EngineTaskError, EngineTaskErrorSeverity};
-use base_protocol::FromBlockError;
+use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 
 use crate::follow::source::RemoteL2ClientError;

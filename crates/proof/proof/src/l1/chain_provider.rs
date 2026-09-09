@@ -10,7 +10,7 @@ use base_common_types_chain::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use base_consensus_derive::ChainProvider;
 use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{HintType, errors::OracleProviderError};
 

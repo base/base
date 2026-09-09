@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use base_common_types_chain::Header as ConsensusHeader;
 use base_common_types_payload::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_consensus_engine::ConsolidateInput;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
 use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};
 use crate::{EngineActorRequest, NodeMode};

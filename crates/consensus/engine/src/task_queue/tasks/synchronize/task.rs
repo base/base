@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::PayloadStatusEnum;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tokio::time::Instant;
 
 use crate::{

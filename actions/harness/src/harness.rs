@@ -9,7 +9,7 @@ use base_consensus_derive::{
     DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
 };
 use base_consensus_driver_service::GossipTransport;
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,

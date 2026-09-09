@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use base_protocol::{AttributesWithParent, BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo};
 
 /// An internal type alias for L1 block numbers.
 type L1BlockNumber = u64;
@@ -105,7 +105,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use base_common_types_payload::BasePayloadAttributes;
-    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::L2Finalizer;
 

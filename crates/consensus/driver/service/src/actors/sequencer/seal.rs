@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tracing::Instrument;
 
 use crate::{

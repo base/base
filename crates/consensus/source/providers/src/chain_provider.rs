@@ -9,7 +9,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt, TxEnvelope};
 use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind, ResetError};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use lru::LruCache;
 
 use crate::{L1RpcProvider, Metrics};

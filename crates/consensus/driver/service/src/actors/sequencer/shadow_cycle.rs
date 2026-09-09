@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tokio::task::JoinHandle;
 
 use crate::{EngineClientError, EngineClientResult, PayloadSealer, SequencerEngineClient};
@@ -131,7 +131,7 @@ impl ShadowCycle {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
     use super::ShadowCycle;
 

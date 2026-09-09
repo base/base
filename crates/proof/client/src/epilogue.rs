@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 
 use alloy_primitives::B256;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 
 use crate::FaultProofProgramError;
 
@@ -50,7 +50,7 @@ impl Epilogue {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_protocol::L2BlockInfo;
+    use base_consensus_batch_types::L2BlockInfo;
     use rstest::rstest;
 
     use super::Epilogue;

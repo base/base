@@ -14,7 +14,7 @@ use base_execution_payload_types::{
 };
 use base_execution_state_api::{ProviderResult, StateProvider, StateProviderBox};
 use base_execution_state_types::HashedPostState;
-use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_engine_primitives::InsertBlockErrorKind;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 

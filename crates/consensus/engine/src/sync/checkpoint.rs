@@ -3,7 +3,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use thiserror::Error;
 
 /// Forkchoice labels that may be recovered from a checkpoint.

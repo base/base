@@ -2,7 +2,7 @@
 
 use alloy_eips::eip2718::Encodable2718;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
-use base_protocol::{L1BlockInfoTx, SingleBatch};
+use base_consensus_batch_types::{L1BlockInfoTx, SingleBatch};
 
 /// Errors returned by [`BatchComposer::block_to_single_batch`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -69,7 +69,7 @@ mod tests {
     use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, Header, SignableTransaction, TxDeposit, TxLegacy,
     };
-    use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
+    use base_consensus_batch_types::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 
     use super::{BatchComposeError, BatchComposer};

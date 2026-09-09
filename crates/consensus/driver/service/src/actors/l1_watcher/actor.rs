@@ -16,7 +16,7 @@ use base_common_chain_config::{
     RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
 };
 use base_common_types_rpc::{Filter, Log};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use futures::{Stream, StreamExt};
 use tokio::{
     select,

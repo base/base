@@ -93,7 +93,7 @@ where
     /// pairs for all intermediate blocks.
     pub async fn execute_with_intermediates(
         self,
-    ) -> Result<(Epilogue, Vec<(base_protocol::L2BlockInfo, B256)>), FaultProofProgramError> {
+    ) -> Result<(Epilogue, Vec<(base_consensus_batch_types::L2BlockInfo, B256)>), FaultProofProgramError> {
         let mut intermediates = Vec::new();
         let epilogue = self
             .run_pipeline(|l2_info, output_root| intermediates.push((l2_info, output_root)))
@@ -103,7 +103,7 @@ where
 
     async fn run_pipeline(
         self,
-        on_block: impl FnMut(base_protocol::L2BlockInfo, B256),
+        on_block: impl FnMut(base_consensus_batch_types::L2BlockInfo, B256),
     ) -> Result<Epilogue, FaultProofProgramError> {
         let executor = BaseExecutor::new(
             self.rollup_config.as_ref(),

@@ -9,7 +9,7 @@ use base_consensus_derive::{
     Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal, SignalReceiver,
     StepResult,
 };
-use base_protocol::{AttributesWithParent, BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo};
 use thiserror::Error;
 use tokio::{
     select,

@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, TxDeposit};
 use base_common_types_payload::PayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_protocol::L1BlockInfoEcotone;
+use base_consensus_batch_types::L1BlockInfoEcotone;
 use reth_e2e_test_utils::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]

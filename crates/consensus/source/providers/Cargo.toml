@@ -21,7 +21,6 @@ derive_more = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-transport = {workspace = true}
-base-protocol = { workspace = true }
 reth-provider = { workspace = true }
 reth-rpc-layer = { workspace = true }
 base-consensus-derive = { workspace = true }
@@ -31,6 +30,7 @@ base-execution-state-api = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = {workspace = true, features = ["std"]}
 url = {workspace = true, features = ["default"]}
+base-consensus-batch-types = { workspace = true }
 base-execution-state-types = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 thiserror = {workspace = true, features = ["std"]}

@@ -5,16 +5,16 @@
 //! is responsible for decoding the [Channel]s into [SingleBatch]es, forwarding the [SingleBatch]es to the
 //! [`BatchValidator`] stage.
 //!
-//! [Frame]: base_protocol::Frame
-//! [Channel]: base_protocol::Channel
-//! [SingleBatch]: base_protocol::SingleBatch
+//! [Frame]: base_consensus_batch_types::Frame
+//! [Channel]: base_consensus_batch_types::Channel
+//! [SingleBatch]: base_consensus_batch_types::SingleBatch
 //! [FrameQueue]: crate::stages::FrameQueue
 //! [BatchValidator]: crate::stages::BatchValidator
 
 use alloc::boxed::Box;
 
 use async_trait::async_trait;
-use base_protocol::Frame;
+use base_consensus_batch_types::Frame;
 
 use crate::types::PipelineResult;
 

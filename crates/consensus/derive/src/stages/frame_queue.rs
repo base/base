@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, Frame};
+use base_consensus_batch_types::{BlockInfo, Frame};
 
 use crate::{
     Metrics, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult,

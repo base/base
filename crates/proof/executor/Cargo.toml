@@ -19,9 +19,9 @@ alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
-base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
+base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
@@ -50,7 +50,7 @@ std = [
     "alloy-trie/std",
     "base-common-chain-config/std",
     "base-proof-mpt/std",
-    "base-protocol/std",
+    "base-consensus-batch-types/std",
     "getrandom_0_2_17/std",
     "serde?/std",
     "serde_json?/std",
@@ -59,7 +59,7 @@ std = [
 ]
 test-utils = [
     "base-common-chain-config/test-utils",
-    "base-protocol/test-utils",
+    "base-consensus-batch-types/test-utils",
     "dep:base-common-client-ethereum",
     "dep:alloy-rpc-client",
     "dep:alloy-transport",

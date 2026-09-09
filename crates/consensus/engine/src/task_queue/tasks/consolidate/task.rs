@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 
 use crate::{
     ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
@@ -220,7 +220,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             return Ok(false);
         }
 
-        let block_info = match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        let block_info = match base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block.into_block(),
             &self.cfg.genesis,
         ) {
@@ -272,7 +272,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 block_hash = %block_hash,
                 "Consolidating engine state",
             );
-            match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            match base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
                 &block.into_block(),
                 &self.cfg.genesis,
             ) {

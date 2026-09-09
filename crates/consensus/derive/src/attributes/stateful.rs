@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use base_common_chain_config::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_types_chain::{Eip658Value, Predeploys, Receipt};
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
-use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
+use base_consensus_batch_types::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 
 use crate::{
@@ -282,7 +282,7 @@ mod tests {
         UpgradeConfig,
     };
     use base_common_types_chain::{BaseTxEnvelope, Header, SystemAddresses};
-    use base_protocol::{BlockInfo, DepositDecodeError};
+    use base_consensus_batch_types::{BlockInfo, DepositDecodeError};
 
     use super::*;
     use crate::{

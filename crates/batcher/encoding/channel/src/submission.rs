@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-use base_protocol::{DERIVATION_VERSION_0, Frame};
+use base_consensus_batch_types::{DERIVATION_VERSION_0, Frame};
 
 /// Identifies a batch submission for receipt tracking.
 ///

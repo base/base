@@ -129,7 +129,7 @@ where
         &self,
         local: Arc<LocalL2Client>,
         engine: Arc<EngineApiFollowEngine<E>>,
-        latest: base_protocol::L2BlockInfo,
+        latest: base_consensus_batch_types::L2BlockInfo,
         proof_gate: Gate,
         rpc: Option<FollowRpcActor<LocalL2Client>>,
         cancellation: CancellationToken,

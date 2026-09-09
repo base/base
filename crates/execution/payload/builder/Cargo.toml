@@ -19,7 +19,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
-base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-payload-util = { workspace = true }
@@ -30,6 +29,7 @@ base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 moka = { workspace = true, features = ["sync"] }
+base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 derive_more = { workspace = true, features = ["full"]}
 base-common-observability-events = { workspace = true }

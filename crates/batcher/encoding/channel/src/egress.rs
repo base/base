@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use base_protocol::{BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame};
+use base_consensus_batch_types::{BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame};
 
 use crate::{
     BatchSubmission, BlobPayload, Channel, DaType, SubmissionId,
@@ -325,7 +325,7 @@ impl DaEgress {
 mod tests {
     use alloy_primitives::{B256, Bytes};
     use base_common_chain_config::RollupConfig;
-    use base_protocol::SingleBatch;
+    use base_consensus_batch_types::SingleBatch;
 
     use super::*;
     use crate::{ChannelAddOutcome, EncoderConfig};

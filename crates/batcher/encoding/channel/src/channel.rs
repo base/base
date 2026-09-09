@@ -6,7 +6,7 @@ use crate::CompressionStream;
 use alloy_primitives::Bytes;
 use alloy_rlp::Encodable;
 use base_common_chain_config::RollupConfig;
-use base_protocol::{
+use base_consensus_batch_types::{
     BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame, SingleBatch,
 };
 

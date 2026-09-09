@@ -1,4 +1,4 @@
-# `base-protocol`
+# `base-consensus-batch-types`
 
 Protocol types for Base.
 
@@ -18,11 +18,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-protocol = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 ```
 
 ```rust,ignore
-use base_protocol::{BatchType, BlockInfo, L2BlockInfo, OutputRoot};
+use base_consensus_batch_types::{BatchType, BlockInfo, L2BlockInfo, OutputRoot};
 ```
 
 ## License

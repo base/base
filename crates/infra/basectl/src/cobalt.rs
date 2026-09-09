@@ -19,7 +19,7 @@ use base_common_client_rollup::RollupNodeApiClient;
 use base_common_types_chain::Predeploys;
 use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use base_execution_evm_runtime::BaseTime;
-use base_protocol::BaseTimeUpdateTx;
+use base_consensus_batch_types::BaseTimeUpdateTx;
 use futures::{SinkExt, StreamExt};
 use jsonrpsee::http_client::HttpClientBuilder;
 use serde::Serialize;

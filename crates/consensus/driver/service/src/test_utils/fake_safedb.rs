@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug, Default)]

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use base_common_types_chain::{
     Transaction, TxEip4844Variant, TxEnvelope, TxType, transaction::SignerRecoverable,
 };
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{
     BlobData, BlobProvider, ChainProvider, DataAvailabilityProvider, Metrics, PipelineError,

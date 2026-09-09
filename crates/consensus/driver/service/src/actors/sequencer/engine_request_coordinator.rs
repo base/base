@@ -42,7 +42,7 @@ where
     sequencer_state: SequencerEngineState,
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
-    unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
+    unsafe_head_tx: watch::Sender<base_consensus_batch_types::L2BlockInfo>,
 }
 
 impl<EngineClient_, DerivationClient>
@@ -57,7 +57,7 @@ where
         shadow_mode: bool,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
-        unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
+        unsafe_head_tx: watch::Sender<base_consensus_batch_types::L2BlockInfo>,
     ) -> Self {
         let sequencer_state = if shadow_mode {
             SequencerEngineState::CatchingUp {
@@ -684,7 +684,7 @@ mod tests {
         Engine, EngineState,
         test_utils::{MockEngineClient, test_engine_client_builder},
     };
-    use base_protocol::L2BlockInfo;
+    use base_consensus_batch_types::L2BlockInfo;
     use jsonrpsee::core::ClientError;
     use tokio::sync::watch;
 

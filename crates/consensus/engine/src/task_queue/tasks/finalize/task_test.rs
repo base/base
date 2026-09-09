@@ -26,9 +26,9 @@ const BASE_MAINNET_GENESIS_HASH: B256 =
 /// Returns a default all-zero RPC block (number = 0, no transactions) paired with
 /// the canonical hash produced by `hash_slow()` on its consensus form. Use the
 /// returned hash as `genesis.l2.hash` in the test rollup config so that
-/// [`base_protocol::L2BlockInfoDecoder::from_block_and_genesis`] accepts the block via the genesis path.
+/// [`base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis`] accepts the block via the genesis path.
 ///
-/// [`base_protocol::L2BlockInfoDecoder::from_block_and_genesis`]: base_protocol::L2BlockInfoDecoder::from_block_and_genesis
+/// [`base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis`]: base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis
 fn make_genesis_block() -> (RpcBlock<BaseTransaction>, B256) {
     let block = RpcBlock::<BaseTransaction>::default();
     let hash = block.clone().into_consensus().hash_slow();

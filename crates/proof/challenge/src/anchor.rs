@@ -305,7 +305,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use alloy_primitives::B256;
-    use base_protocol::OutputRoot;
+    use base_consensus_batch_types::OutputRoot;
 
     use super::*;
     use crate::test_utils::{

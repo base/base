@@ -1,5 +1,5 @@
 [package]
-name = "base-protocol"
+name = "base-consensus-batch-types"
 description = "Protocol Types"
 version.workspace = true
 edition.workspace = true

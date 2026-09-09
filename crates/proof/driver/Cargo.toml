@@ -15,13 +15,13 @@ tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-base-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-executor = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 
@@ -34,7 +34,7 @@ std = [
     "base-common-chain-config/std",
     "base-common-types-payload/std",
     "base-proof-executor/std",
-    "base-protocol/std",
+    "base-consensus-batch-types/std",
     "spin/std",
     "thiserror/std",
     "tracing/std",

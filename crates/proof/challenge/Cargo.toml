@@ -18,7 +18,6 @@ alloy-rlp = { workspace = true }
 humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-protocol = { workspace = true }
 base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -28,6 +27,7 @@ base-proof-submission = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-l1-transactions = {workspace = true}
+base-consensus-batch-types = { workspace = true }
 base-prover-service-client = { workspace = true }
 serde_json = { workspace = true, optional = true }
 url = { workspace = true, features = ["default"] }
@@ -57,7 +57,7 @@ metrics = ["base-common-observability-metrics/metrics", "base-common-l1-transact
 test-utils = [
     "base-common-types-rpc",
     "async-trait",
-    "base-protocol/test-utils",
+    "base-consensus-batch-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "serde_json",
 ]

@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use base_common_chain_config::SystemConfigUpdateError;
-use base_protocol::DepositDecodeError;
+use base_consensus_batch_types::DepositDecodeError;
 use thiserror::Error;
 
 use crate::BuilderError;

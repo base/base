@@ -5,7 +5,7 @@ use std::fmt::Display;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_common_chain_config::RollupConfig;
-use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, FromBlockError, L2BlockInfo};
 use tracing::{error, warn};
 
 use crate::{
@@ -124,7 +124,7 @@ impl L2ForkchoiceState {
                 .get_l2_block(BlockNumberOrTag::Latest.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-            base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
                 &rpc_block.into_block(),
                 &cfg.genesis,
             )?
@@ -157,7 +157,7 @@ async fn block_info_from_reth_or_checkpoint<
     checkpoint_reader: &CheckpointReader,
 ) -> Result<L2BlockInfo, SyncStartError> {
     let block = rpc_block.into_block();
-    match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(&block, &cfg.genesis) {
+    match base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(&block, &cfg.genesis) {
         Ok(block_info) => Ok(block_info),
         Err(err @ FromBlockError::MissingL1InfoDeposit(_)) => {
             let header = BlockInfo::from(&block);
@@ -230,7 +230,7 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     let latest_number = latest.header().number;
     let latest_consensus = latest.into_block();
 
-    let mut last_known_unpruned = match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+    let mut last_known_unpruned = match base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
         &latest_consensus,
         &cfg.genesis,
     ) {
@@ -282,7 +282,7 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
             .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
         let consensus_block = block.into_block();
 
-        match base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        match base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &consensus_block,
             &cfg.genesis,
         ) {

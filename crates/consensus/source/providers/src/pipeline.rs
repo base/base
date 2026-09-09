@@ -12,7 +12,7 @@ use base_consensus_derive::{
     PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal, Signal,
     SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
     AlloyChainProvider, ConfDepthProvider, L1HeadNumber, LocalL2Provider, OnlineBeaconClient,

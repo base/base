@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
-use base_protocol::BaseTimeUpdateError;
+use base_consensus_batch_types::BaseTimeUpdateError;
 use thiserror::Error;
 
 /// An [`AttributesBuilder`] Error.

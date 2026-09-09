@@ -19,7 +19,7 @@ use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt,
 };
 use base_execution_state_types::BlockExecutionResult;
-use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
 use tracing::debug;
 
@@ -258,7 +258,7 @@ mod tests {
         BaseReceipt, BaseTxEnvelope, DepositReceipt, Header, Receipt, Sealable, TxDeposit,
         TxReceipt,
     };
-    use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+    use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
 
     use super::*;
 

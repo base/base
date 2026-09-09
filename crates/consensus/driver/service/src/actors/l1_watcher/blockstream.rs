@@ -5,7 +5,7 @@ use base_common_client_ethereum::Provider;
 use alloy_rpc_client::PollerBuilder;
 use async_stream::stream;
 use base_common_types_rpc::Block;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use futures::{Stream, StreamExt};
 
 /// A wrapper around a [`PollerBuilder`] that observes [`BlockInfo`] updates on a [`Provider`].

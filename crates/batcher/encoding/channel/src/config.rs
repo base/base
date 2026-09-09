@@ -1,7 +1,7 @@
 //! Encoder configuration and its validation error type.
 
 use base_common_chain_config::RollupConfig;
-use base_protocol::{
+use base_consensus_batch_types::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, Frame,
     MAX_BLOB_FRAME_SIZE as PROTOCOL_MAX_BLOB_FRAME_SIZE,

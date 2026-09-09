@@ -9,7 +9,7 @@ use base_batcher_encoding_channel::{
 use base_common_l1_transactions::TxManager;
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_chain::BaseBlock;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -636,7 +636,7 @@ mod tests {
     };
     use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_common_types_rpc::TransactionReceipt;
-    use base_protocol::{BlockInfo, Frame};
+    use base_consensus_batch_types::{BlockInfo, Frame};
     use tokio::sync::{mpsc, oneshot};
 
     use crate::{

@@ -10,7 +10,7 @@ use base_consensus_engine::{
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, NoopForkchoiceCheckpointReader,
 };
-use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
+use base_consensus_batch_types::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
@@ -703,7 +703,7 @@ mod tests {
             test_engine_client_builder,
         },
     };
-    use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_consensus_batch_types::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use rstest::rstest;
     use tokio::sync::{mpsc, watch};
 
@@ -740,7 +740,7 @@ mod tests {
     /// Returns a default all-zero L2 block and its canonical hash.
     ///
     /// Use the returned hash as `genesis.l2.hash` in the test rollup config so that
-    /// [`base_protocol::L2BlockInfoDecoder::from_block_and_genesis`] accepts the block via the genesis path.
+    /// [`base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis`] accepts the block via the genesis path.
     fn make_genesis_block() -> (RpcBlock<BaseTransaction>, B256) {
         let block = RpcBlock::<BaseTransaction>::default();
         let hash = block.clone().into_consensus().hash_slow();
@@ -1037,7 +1037,7 @@ mod tests {
         };
         let (mut processor, _) =
             unsafe_payload_processor(true, L2BlockInfo::default(), None, config);
-        let (traces, _guard) = base_protocol::capture_traces!();
+        let (traces, _guard) = base_consensus_batch_types::capture_traces!();
 
         for block_number in 5..10 {
             let mut envelope = unsafe_payload(
@@ -1694,7 +1694,7 @@ mod tests {
         let (genesis_block, genesis_hash) = make_genesis_block();
 
         // Build a RollupConfig whose genesis.l2.hash matches the computed hash so that
-        // base_protocol::L2BlockInfoDecoder::from_block_and_genesis accepts the block via the genesis fast path.
+        // base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis accepts the block via the genesis fast path.
         let cfg = Arc::new(RollupConfig {
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 0, hash: genesis_hash },

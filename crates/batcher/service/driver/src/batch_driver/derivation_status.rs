@@ -1,6 +1,6 @@
 //! Derivation progress consumed by the batcher driver.
 
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 /// A coherent snapshot of the derivation progress relevant to the batcher.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -9,7 +9,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, BlockBody, OpTxType};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_proof_executor::BlockBuildingOutcome;
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use spin::RwLock;
 
 use crate::{DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor};
@@ -166,7 +166,7 @@ where
 
             // Get the pipeline origin and update the tip cursor.
             let origin = self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let l2_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+            let l2_info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
                 &block,
                 &self.pipeline.rollup_config().genesis,
             )?;

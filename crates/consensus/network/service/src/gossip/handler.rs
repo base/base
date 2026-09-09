@@ -154,7 +154,7 @@ mod tests {
         BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV2, ExecutionPayloadV3,
         PayloadHash,
     };
-    use base_protocol::BaseTimeUpdateTx;
+    use base_consensus_batch_types::BaseTimeUpdateTx;
 
     use super::*;
     use crate::gossip::{v2_valid_block, v3_valid_block, v4_valid_block};

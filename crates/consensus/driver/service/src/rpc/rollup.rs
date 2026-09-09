@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_consensus_engine::EngineState;
 use base_consensus_network_service::GossipMetrics;
-use base_protocol::SyncStatus;
+use base_consensus_batch_types::SyncStatus;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},

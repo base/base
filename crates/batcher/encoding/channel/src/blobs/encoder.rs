@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
-use base_protocol::{
+use base_consensus_batch_types::{
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, DERIVATION_VERSION_0, Frame,
 };
 

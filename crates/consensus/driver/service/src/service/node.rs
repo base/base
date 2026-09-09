@@ -20,7 +20,7 @@ use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpo
 use base_consensus_source_providers::{
     AlloyChainProvider, LocalL2Provider, OnlineBeaconClient, OnlineBlobProvider, OnlinePipeline,
 };
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 

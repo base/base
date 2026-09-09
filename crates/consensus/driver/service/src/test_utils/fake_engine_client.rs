@@ -22,7 +22,7 @@ use base_common_types_payload::{
 };
 use base_common_types_rpc::BaseBlockResponse;
 use base_consensus_engine::{EngineClient, EngineClientError};
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 
 /// Scripted response for an forkchoice call.
 #[derive(Clone, Debug)]

@@ -192,7 +192,7 @@ bench-proof-mpt:
 
 # Runs consensus protocol batch transaction benchmarks
 bench-protocol:
-    cargo bench -p base-protocol --bench batch_transaction
+    cargo bench -p base-consensus-batch-types --bench batch_transaction
 
 # Runs consensus derive batch queue benchmarks
 bench-consensus-derive:

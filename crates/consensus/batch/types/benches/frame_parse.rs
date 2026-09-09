@@ -7,7 +7,7 @@
 
 use std::hint::black_box;
 
-use base_protocol::{DERIVATION_VERSION_0, Frame};
+use base_consensus_batch_types::{DERIVATION_VERSION_0, Frame};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 /// Encode `frame_count` frames of `data_len` bytes each into the on-chain

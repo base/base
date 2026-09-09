@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use base_common_types_chain::BaseBlock;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_driver_service::{ResetReason, SequencerEngineClient};
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 use tokio::sync::mpsc;
 
 use super::ExecutionPayloadConverter;

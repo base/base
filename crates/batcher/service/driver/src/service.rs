@@ -21,7 +21,7 @@ use base_common_l1_transactions::BalanceMonitorLayer;
 use base_common_l1_transactions::{BaseTxMetrics, SimpleTxManager};
 use base_common_runtime_tasks::TokioRuntime;
 use base_common_runtime_tasks::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use futures::{
     StreamExt,
     future::BoxFuture,

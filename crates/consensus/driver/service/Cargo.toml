@@ -49,12 +49,12 @@ opentelemetry = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-base-protocol = {features = ["serde", "std"], workspace = true}
 tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
 base-common-client-rollup = {workspace = true, features = ["server"]}
 base-common-types-rpc = {features = ["serde", "std"], workspace = true}
 base-common-chain-activation = {workspace = true, features = ["default"]}
+base-consensus-batch-types = {features = ["serde", "std"], workspace = true}
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 jsonrpsee = {workspace = true, features = ["http-client", "macros", "server"]}
 alloy-primitives = {features = ["map", "rlp", "serde", "std"], workspace = true}
@@ -75,13 +75,13 @@ tempfile = {features = ["default"], workspace = true}
 httpmock = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-protocol = { workspace = true, features = ["test-utils"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = {features = ["test-utils"], workspace = true}
+base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
 base-common-types-payload = { workspace = true, features = ["arbitrary", "std"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
 tokio = {features = ["default", "macros", "rt", "sync", "test-util"], workspace = true}

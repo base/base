@@ -33,7 +33,7 @@ mod channel_reader;
 pub use channel_reader::TestChannelReaderProvider;
 
 mod frame_queue;
-pub use base_protocol::test_utils::{CollectingLayer, TraceStorage};
+pub use base_consensus_batch_types::test_utils::{CollectingLayer, TraceStorage};
 pub use frame_queue::TestFrameQueueProvider;
 
 mod sys_config_fetcher;

@@ -7,7 +7,7 @@ use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Transaction as _;
-use base_protocol::{L1BlockInfoTx, L2BlockInfo, to_system_config};
+use base_consensus_batch_types::{L1BlockInfoTx, L2BlockInfo, to_system_config};
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use url::Url;
 
@@ -62,7 +62,7 @@ impl SnapshotBoundary {
             );
         }
 
-        let l2_block_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        let l2_block_info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &rollup_config.genesis,
         )

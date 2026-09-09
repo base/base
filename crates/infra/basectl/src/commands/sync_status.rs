@@ -6,7 +6,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use anyhow::Result;
 use base_common_types_rpc::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use clap::Args;
 use serde::Serialize;
 use url::Url;
@@ -408,7 +408,7 @@ impl TipReferenceJson {
 mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, U256};
-    use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo, SyncStatus};
 
     use super::{SyncStatusJson, format_tip_reference};
     use crate::SyncStatusReport;

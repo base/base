@@ -17,7 +17,7 @@ use base_common_types_payload::{
 use base_common_types_rpc::{
     BaseTransaction, Block, EIP1186AccountProofResponse, Transaction as EthTransaction,
 };
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 use tokio::sync::RwLock;
 
 use crate::{EngineClient, EngineClientError};

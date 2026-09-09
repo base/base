@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use base_protocol::{ChannelId, Frame};
+use base_consensus_batch_types::{ChannelId, Frame};
 
 use crate::{BatchSubmission, BlobPayload, SubmissionId};
 

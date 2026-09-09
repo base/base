@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_protocol::{BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
+use base_consensus_batch_types::{BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
 use crate::{
@@ -353,7 +353,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
     use base_common_chain_config::{BaseUpgradeConfig, RollupConfig, SystemConfig, UpgradeConfig};
-    use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo, SingleBatch};
     use tracing::Level;
 
     use crate::{
@@ -534,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_validator_next_batch_sequence_window_expired() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
+        let (trace_store, _guard) = base_consensus_batch_types::capture_traces!();
 
         let cfg = Arc::new(RollupConfig { seq_window_size: 5, ..Default::default() });
         let mut mock = TestNextBatchProvider::new(vec![]);
@@ -567,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_validator_next_batch_sequence_window_expired_advance_epoch() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
+        let (trace_store, _guard) = base_consensus_batch_types::capture_traces!();
 
         let cfg = Arc::new(RollupConfig { seq_window_size: 5, ..Default::default() });
         let mut mock = TestNextBatchProvider::new(vec![]);

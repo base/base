@@ -45,7 +45,7 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
         shadow_funding: None,
         recovery_mode,
         rollup_config,
-        seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+        seal_offset: base_consensus_batch_types::DEFAULT_SEAL_OFFSET,
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,

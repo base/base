@@ -8,7 +8,7 @@ use base_batcher_encoding_channel::{
     SubmissionId,
 };
 use base_common_types_chain::BaseBlock;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 /// Shared recording state populated by the test pipeline implementations.
 #[derive(Debug, Default)]

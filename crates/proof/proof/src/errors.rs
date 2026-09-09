@@ -9,7 +9,7 @@ use alloc::string::{String, ToString};
 use base_consensus_derive::{PipelineError, PipelineErrorKind};
 use base_proof_mpt::{OrderedListWalkerError, TrieNodeError};
 use base_proof_preimage::errors::PreimageOracleError;
-use base_protocol::{BaseBlockConversionError, FromBlockError};
+use base_consensus_batch_types::{BaseBlockConversionError, FromBlockError};
 use thiserror::Error;
 
 /// Error from an oracle-backed provider.
@@ -61,7 +61,7 @@ pub enum OracleProviderError {
     /// Block information extraction or conversion error.
     ///
     /// This error occurs when converting raw block data into structured
-    /// [`base_protocol::BlockInfo`] objects fails due to missing fields, invalid data
+    /// [`base_consensus_batch_types::BlockInfo`] objects fails due to missing fields, invalid data
     /// formats, or unsupported block versions.
     #[error("From block error: {0}")]
     BlockInfo(FromBlockError),

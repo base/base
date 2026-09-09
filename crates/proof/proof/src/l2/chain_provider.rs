@@ -13,7 +13,7 @@ use base_proof_driver::PipelineCursor;
 use base_proof_executor::TrieDBProvider;
 use base_proof_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
+use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use spin::RwLock;
 
 use crate::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
@@ -107,7 +107,7 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
         let block = self.block_by_number(number).await?;
 
         // Construct the system config from the payload.
-        base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &self.rollup_config.genesis,
         )

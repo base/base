@@ -1,7 +1,7 @@
 //! Loop-scoped shadow sequencing state: the build/reconciliation cycle plus its in-flight
 //! reconciliation task, carried between iterations of the sequencer main loop.
 
-use base_protocol::L2BlockInfo;
+use base_consensus_batch_types::L2BlockInfo;
 
 use crate::{EngineClientError, ShadowCycle, ShadowReconciliationTask};
 
@@ -38,7 +38,7 @@ impl ShadowSequencingState {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
     use super::ShadowSequencingState;
 

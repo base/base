@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 
 use crate::{
     AttributesBuilder, AttributesQueue, BatchValidator, ChainProvider, ChannelAssembler,

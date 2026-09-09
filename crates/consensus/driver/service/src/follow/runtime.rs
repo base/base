@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use tokio::{
     sync::mpsc,
     time::{self, MissedTickBehavior},
@@ -313,7 +313,7 @@ mod tests {
     use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
     };
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
     use mockall::predicate::eq;
     use tokio::{sync::Mutex, time};
     use tokio_util::sync::CancellationToken;
@@ -406,7 +406,7 @@ mod tests {
 
     fn block_info(number: u64) -> L2BlockInfo {
         L2BlockInfo {
-            block_info: base_protocol::BlockInfo {
+            block_info: base_consensus_batch_types::BlockInfo {
                 number,
                 hash: B256::from([number as u8; 32]),
                 ..Default::default()

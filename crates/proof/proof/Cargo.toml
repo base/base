@@ -21,7 +21,6 @@ alloy-trie = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
-base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-driver = { workspace = true }
@@ -32,6 +31,7 @@ c-kzg = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-common-types-payload = { workspace = true }
+base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 spin = { workspace = true, features = ["default"] }
@@ -65,7 +65,7 @@ std = [
     "base-proof-executor/std",
     "base-proof-mpt/std",
     "base-proof-preimage/std",
-    "base-protocol/std",
+    "base-consensus-batch-types/std",
     "c-kzg?/std",
     "dep:c-kzg",
     "dep:tokio",

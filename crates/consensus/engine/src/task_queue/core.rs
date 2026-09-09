@@ -4,7 +4,7 @@ use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId, PayloadStatusEnum};
-use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
+use base_consensus_batch_types::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
 

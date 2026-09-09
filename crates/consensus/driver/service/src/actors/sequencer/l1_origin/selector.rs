@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
 

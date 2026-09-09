@@ -60,7 +60,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 base-testing-support = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
-base-protocol = { workspace = true, features = ["serde", "std"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-prover-service = { workspace = true, features = ["default"] }
@@ -77,6 +76,7 @@ base-common-chain-activation = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
+base-consensus-batch-types = { workspace = true, features = ["serde", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
 base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }

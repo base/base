@@ -1,7 +1,7 @@
 //! A disabled (no-op) safe head database.
 
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
 use crate::safedb::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 

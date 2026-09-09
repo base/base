@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_common_chain_config::RollupConfig;
-use base_protocol::AttributesWithParent;
+use base_consensus_batch_types::AttributesWithParent;
 
 use super::{BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
 use crate::{Engine, EngineClient, EngineState, InsertPayloadSafety};

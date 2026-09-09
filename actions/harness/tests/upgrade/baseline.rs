@@ -6,7 +6,7 @@ use base_action_harness::{
 };
 use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_chain_config::UpgradeConfig;
-use base_protocol::L1BlockInfoTx;
+use base_consensus_batch_types::L1BlockInfoTx;
 
 #[tokio::test]
 async fn retired_fork_timestamps_do_not_change_consensus_attributes() {

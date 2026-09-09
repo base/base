@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_protocol::{BlockInfo, Channel};
+use base_consensus_batch_types::{BlockInfo, Channel};
 
 use super::{ChannelReaderProvider, NextFrameProvider};
 use crate::{
@@ -19,9 +19,9 @@ use crate::{
 /// The [`ChannelAssembler`] stage is responsible for assembling the [`Frame`]s from the
 /// [`FrameQueue`] stage into a raw compressed [`Channel`].
 ///
-/// [`Frame`]: base_protocol::Frame
+/// [`Frame`]: base_consensus_batch_types::Frame
 /// [`FrameQueue`]: crate::stages::FrameQueue
-/// [`Channel`]: base_protocol::Channel
+/// [`Channel`]: base_consensus_batch_types::Channel
 #[derive(Debug)]
 pub struct ChannelAssembler<P>
 where
@@ -226,7 +226,7 @@ mod tests {
     use alloc::{sync::Arc, vec};
 
     use base_common_chain_config::{RollupConfig, UpgradeConfig};
-    use base_protocol::BlockInfo;
+    use base_consensus_batch_types::BlockInfo;
     use tracing::Level;
 
     use super::ChannelAssembler;
@@ -234,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assembler_channel_timeout() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
+        let (trace_store, _guard) = base_consensus_batch_types::capture_traces!();
 
         let frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
@@ -296,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assembler_already_built() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
+        let (trace_store, _guard) = base_consensus_batch_types::capture_traces!();
 
         let frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
@@ -359,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assembler_size_limit_exceeded_fjord() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
+        let (trace_store, _guard) = base_consensus_batch_types::capture_traces!();
 
         let mut frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),

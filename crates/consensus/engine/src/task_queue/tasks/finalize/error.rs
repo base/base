@@ -1,6 +1,6 @@
 //! Contains error types for the [`crate::FinalizeTask`].
 
-use base_protocol::FromBlockError;
+use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 
 use crate::{
@@ -18,7 +18,7 @@ pub enum FinalizeTaskError {
     BlockNotFound(u64),
     /// An error occurred while decoding the native block into [`L2BlockInfo`].
     ///
-    /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
+    /// [`L2BlockInfo`]: base_consensus_batch_types::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
     /// A temporary local read failure.

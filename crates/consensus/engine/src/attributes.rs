@@ -6,7 +6,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, JovianExtraData, decode_2718_canonical,
 };
-use base_protocol::AttributesWithParent;
+use base_consensus_batch_types::AttributesWithParent;
 use reth_primitives_traits::SealedBlock;
 
 /// Result of validating payload attributes against an execution layer block.
@@ -20,7 +20,7 @@ use reth_primitives_traits::SealedBlock;
 /// ```rust,ignore
 /// use base_consensus_engine::AttributesMatch;
 /// use base_common_chain_config::RollupConfig;
-/// use base_protocol::AttributesWithParent;
+/// use base_consensus_batch_types::AttributesWithParent;
 ///
 /// let config = RollupConfig::default();
 /// let match_result = AttributesMatch::check_withdrawals(&config, &attributes, &block);
@@ -360,7 +360,7 @@ mod tests {
     use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_types_payload::BasePayloadAttributes;
     use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactions};
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
     use super::*;
     use crate::AttributesMismatch::EIP1559Parameters;

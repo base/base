@@ -13,7 +13,7 @@ use base_common_client_rollup::BaseApiClient;
 use base_common_client_rollup::BaseP2PApiClient;
 use base_common_client_rollup::RollupNodeApiClient;
 use base_common_types_rpc::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
-use base_protocol::SyncStatus;
+use base_consensus_batch_types::SyncStatus;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;

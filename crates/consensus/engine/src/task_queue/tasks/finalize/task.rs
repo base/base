@@ -57,7 +57,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             .map_err(FinalizeTaskError::Local)?
             .ok_or(FinalizeTaskError::BlockNotFound(self.block_number))?
             .into_block();
-        let block_info = base_protocol::L2BlockInfoDecoder::from_block_and_genesis(
+        let block_info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &self.client.cfg().genesis,
         )

@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use base_protocol::BlockInfo;
+use base_consensus_batch_types::BlockInfo;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 

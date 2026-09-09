@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
 use base_consensus_engine::ForkchoiceCheckpointLabel;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use redb::{Database, TableDefinition};
 use tokio::task;
 
@@ -175,7 +175,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
     use base_consensus_engine::ForkchoiceCheckpointLabel;
-    use base_protocol::{BlockInfo, L2BlockInfo};
+    use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
     use super::CheckpointDB;
 
