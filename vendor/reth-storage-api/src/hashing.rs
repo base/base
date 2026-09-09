@@ -4,7 +4,7 @@ use core::ops::RangeBounds;
 use alloy_primitives::{Address, B256, BlockNumber, map::B256Map};
 use auto_impl::auto_impl;
 use reth_db_api::models::BlockNumberAddress;
-use reth_db_models::AccountBeforeTx;
+use base_execution_state_types::AccountBeforeTx;
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_storage_errors::provider::ProviderResult;
 

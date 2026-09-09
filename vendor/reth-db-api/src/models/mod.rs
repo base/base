@@ -24,7 +24,7 @@ pub use bal::*;
 pub use blocks::*;
 pub use integer_list::IntegerList;
 pub use metadata::*;
-pub use reth_db_models::{
+pub use base_execution_state_types::{
     AccountBeforeTx, ClientVersion, StaticFileBlockWithdrawals, StorageBeforeTx,
     StoredBlockBodyIndices, StoredBlockWithdrawals,
 };

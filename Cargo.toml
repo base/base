@@ -138,7 +138,6 @@ members = [
   "vendor/reth-db",
   "vendor/reth-db-api",
   "vendor/reth-db-common",
-  "vendor/reth-db-models",
   "vendor/reth-discv4",
   "vendor/reth-discv5",
   "vendor/reth-dns-discovery",
@@ -499,7 +498,6 @@ reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 reth-db-common = { path = "vendor/reth-db-common", default-features = false }
 reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
-reth-db-models = { path = "vendor/reth-db-models", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }

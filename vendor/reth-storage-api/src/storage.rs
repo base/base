@@ -65,11 +65,11 @@ pub trait StorageChangeSetReader: Send {
     fn storage_block_changeset(
         &self,
         block_number: BlockNumber,
-    ) -> ProviderResult<Vec<reth_db_models::StorageBeforeTx>> {
+    ) -> ProviderResult<Vec<base_execution_state_types::StorageBeforeTx>> {
         self.storage_changeset(block_number).map(|changesets| {
             changesets
                 .into_iter()
-                .map(|(block_address, entry)| reth_db_models::StorageBeforeTx {
+                .map(|(block_address, entry)| base_execution_state_types::StorageBeforeTx {
                     address: block_address.address(),
                     key: entry.key,
                     value: entry.value,

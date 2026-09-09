@@ -105,3 +105,17 @@ pub use errors::*;
 
 mod block_result;
 pub use block_result::BlockExecutionResult;
+
+mod accounts;
+pub use accounts::AccountBeforeTx;
+
+mod blocks;
+pub use blocks::{
+    NumTransactions, StaticFileBlockWithdrawals, StoredBlockBodyIndices, StoredBlockWithdrawals,
+};
+
+mod storage_changes;
+pub use storage_changes::StorageBeforeTx;
+
+mod client_version;
+pub use client_version::ClientVersion;

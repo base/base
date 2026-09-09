@@ -1017,7 +1017,7 @@ mod tests {
         BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction, Header,
         transaction::TransactionMeta,
     };
-    use reth_db_models::StoredBlockBodyIndices;
+    use base_execution_state_types::StoredBlockBodyIndices;
     use reth_primitives_traits::{RecoveredBlock, SealedHeader};
     use reth_storage_api::{
         BalProvider, BalStore, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,

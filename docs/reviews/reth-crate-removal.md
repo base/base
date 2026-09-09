@@ -61,7 +61,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 | `reth-payload-builder-primitives`, `reth-payload-util` | Fold payload events and transaction iteration helpers into a compatible payload library. Base's payload builder and debug RPC use the iteration helpers. |
 | `reth-rpc-traits` | Fold conversion traits into an appropriate lower-level RPC conversion/types crate if its `no_std` consumers remain supported. |
 | `reth-errors` | Replace the facade's re-exports with direct imports; move its aggregate error/result types to a compatible lower-level error module if still needed. |
-| `reth-db-models` | Consider consolidating storage model types with a lower-level storage/codec package. Preserve persisted encodings and avoid database/provider dependency cycles. |
+| `base-execution-state-types` | Consider consolidating storage model types with a lower-level storage/codec package. Preserve persisted encodings and avoid database/provider dependency cycles. |
 
 `reth-node-builder` and `reth-node-core` also contain substantial network-agnostic construction abstractions worth specializing. Their engine launch, RPC/network setup, configuration, and task lifecycle code remains required; they are not whole-crate deletion candidates in the first pass.
 
@@ -96,7 +96,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-db](../../vendor/reth-db/Cargo.toml) | Retain shared infrastructure |
 | [reth-db-api](../../vendor/reth-db-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-db-common](../../vendor/reth-db-common/Cargo.toml) | Retain shared infrastructure |
-| [reth-db-models](../../vendor/reth-db-models/Cargo.toml) | Consolidate; retain required code |
+| [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Consolidate; retain required code |
 | [reth-discv4](../../vendor/reth-discv4/Cargo.toml) | Retain shared infrastructure |
 | [reth-discv5](../../vendor/reth-discv5/Cargo.toml) | Retain shared infrastructure |
 | [reth-dns-discovery](../../vendor/reth-dns-discovery/Cargo.toml) | Retain shared infrastructure |

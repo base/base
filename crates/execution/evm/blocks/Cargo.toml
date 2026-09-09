@@ -30,12 +30,12 @@ derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 reth-storage-api = {features = ["default"], workspace = true}
-base-execution-state-types = {features = ["default"], workspace = true}
 base-common-types-chain = {features = ["reth"], workspace = true}
 reth-execution-types = {features = ["default"], workspace = true}
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-execution-evm-runtime = {features = ["std"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
+base-execution-state-types = {features = ["default"], workspace = true}
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}

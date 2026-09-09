@@ -17,11 +17,11 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-execution-state-types = {workspace = true}
 reth-prune-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-execution-state-types = {workspace = true}
 base-execution-state-memory = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }

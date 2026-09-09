@@ -3835,6 +3835,7 @@ dependencies = [
  "derive_more",
  "hash-db",
  "itertools 0.14.0",
+ "modular-bitfield",
  "nybbles",
  "plain_hasher",
  "proptest",
@@ -13868,7 +13869,6 @@ dependencies = [
  "proptest",
  "proptest-arbitrary-interop",
  "rand 0.9.5",
- "reth-db-models",
  "reth-primitives-traits",
  "reth-prune-types",
  "reth-stages-types",
@@ -13904,22 +13904,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tracing",
-]
-
-[[package]]
-name = "reth-db-models"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "arbitrary",
- "base-common-types-chain",
- "bytes",
- "modular-bitfield",
- "proptest",
- "proptest-arbitrary-interop",
- "reth-primitives-traits",
- "serde",
 ]
 
 [[package]]
@@ -15039,6 +15023,7 @@ dependencies = [
  "base-execution-evm-inspectors",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
+ "base-execution-state-types",
  "base-execution-txpool",
  "base-protocol",
  "derive_more",
@@ -15051,7 +15036,6 @@ dependencies = [
  "rand 0.9.5",
  "reqwest",
  "reth-chain-state",
- "reth-db-models",
  "reth-execution-types",
  "reth-primitives-traits",
  "reth-provider",
@@ -15261,7 +15245,6 @@ dependencies = [
  "base-execution-state-types",
  "mockall",
  "reth-db-api",
- "reth-db-models",
  "reth-execution-types",
  "reth-primitives-traits",
  "reth-prune-types",

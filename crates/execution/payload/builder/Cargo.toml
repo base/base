@@ -28,17 +28,16 @@ alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
-base-common-observability-events = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 base-execution-evm-machine = { workspace = true }
 base-execution-state-memory = { workspace = true }
 derive_more = { workspace = true, features = ["full"]}
+base-common-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["attributes"]}
 tokio = { workspace = true, features = ["sync", "time"] }
 futures-core = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
-base-execution-state-types = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 base-execution-trie = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
@@ -48,6 +47,7 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 base-execution-payload-types = {features = ["default"], workspace = true}
+base-execution-state-types = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace = true}

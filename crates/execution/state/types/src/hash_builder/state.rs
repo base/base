@@ -9,11 +9,7 @@ use crate::TrieMask;
 /// Check the `reth-trie` crate for more info on hash builder.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-    feature = "arbitrary",
-    derive(arbitrary::Arbitrary),
-    base_common_types_chain::add_arbitrary_tests(compact)
-)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct HashBuilderState {
     /// The current key.
     pub key: Vec<u8>,
@@ -188,8 +184,9 @@ mod tests {
             };
             let mut buf = vec![];
             let len = state.to_compact(&mut buf);
-            let (decoded, _) = HashBuilderState::from_compact(&buf, len);
+            let (decoded, remainder) = HashBuilderState::from_compact(&buf, len);
             assert_eq!(state, decoded);
+            assert!(remainder.is_empty());
         }
     }
 }

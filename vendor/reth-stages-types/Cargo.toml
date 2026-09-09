@@ -16,21 +16,22 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-base-execution-state-types = { workspace = true }
-serde = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+base-execution-state-types = { workspace = true }
 modular-bitfield = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+
 [dev-dependencies]
 bytes = { workspace = true }
 modular-bitfield = { workspace = true }
 base-common-types-chain = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["reth-codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", "rand"] }
 
@@ -50,11 +51,7 @@ reth-codec = [
     "dep:modular-bitfield",
     "base-execution-state-types/reth-codec",
 ]
-test-utils = [
-    "arbitrary",
-    "base-common-types-chain?/test-utils",
-    "base-execution-state-types/test-utils",
-]
+test-utils = ["arbitrary", "base-common-types-chain?/test-utils", "base-execution-state-types/test-utils"]
 arbitrary = [
     "std",
     "dep:arbitrary",

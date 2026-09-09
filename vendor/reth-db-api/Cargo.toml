@@ -16,31 +16,31 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
 bytes = { workspace = true }
+serde = { workspace = true }
 metrics = { workspace = true }
 arrayvec = { workspace = true }
-base-execution-state-types = { workspace = true }
 modular-bitfield = { workspace = true }
 reth-storage-errors = { workspace = true }
 roaring = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 base-common-types-chain = { workspace = true, features = ["serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-proptest = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-reth-db-models = { workspace = true, features = ["serde", "reth-codec"] }
+proptest = { workspace = true, optional = true, features = ["default"] }
 reth-prune-types = { workspace = true, features = ["serde", "reth-codec"] }
 reth-stages-types = { workspace = true, features = ["serde", "reth-codec"] }
 reth-primitives-traits = { workspace = true, features = ["serde", "reth-codec"] }
+base-execution-state-types = {workspace = true, features = ["reth-codec", "serde"]}
+
 [dev-dependencies]
 test-fuzz = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
-reth-db-models = { workspace = true, features = ["arbitrary"] }
+proptest = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["test-utils"] }
+base-execution-state-types = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 
 [features]
@@ -48,20 +48,17 @@ test-utils = [
     "arbitrary",
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
-    "reth-db-models/test-utils",
     "base-execution-state-types/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
 ]
 arbitrary = [
-    "reth-db-models/arbitrary",
+    "base-execution-state-types/arbitrary",
     "dep:arbitrary",
     "dep:proptest",
     "reth-primitives-traits/arbitrary",
-    "base-execution-state-types/arbitrary",
     "alloy-primitives/arbitrary",
     "base-common-types-chain/arbitrary",
     "reth-prune-types/arbitrary",
     "reth-stages-types/arbitrary",
-    "base-common-types-chain/arbitrary",
 ]

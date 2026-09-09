@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
-use reth_db_models::StoredBlockBodyIndices;
+use base_execution_state_types::StoredBlockBodyIndices;
 use reth_storage_errors::provider::ProviderResult;
 
 ///  Client trait for fetching block body indices related data.

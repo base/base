@@ -16,7 +16,7 @@ use base_common_types_chain::{
 };
 #[cfg(feature = "db-api")]
 use reth_db_api::mock::TxMock;
-use reth_db_models::{AccountBeforeTx, StoredBlockBodyIndices};
+use base_execution_state_types::{AccountBeforeTx, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
 #[cfg(feature = "db-api")]

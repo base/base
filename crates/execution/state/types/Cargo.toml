@@ -18,43 +18,44 @@ workspace = true
 [dependencies]
 alloy-eips = {workspace = true}
 thiserror = { workspace = true }
-bytes = { workspace = true, optional = true }
+bytes = {workspace = true, optional = true}
+reth-primitives-traits = {workspace = true}
+serde = {workspace = true, optional = true}
+base-common-types-chain = {workspace = true }
 rayon = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true }
-serde = { workspace = true, optional = true }
-base-common-types-chain = { workspace = true  }
 arrayvec = { workspace = true, optional = true }
 base-execution-state-memory = { workspace = true }
 nybbles = { workspace = true, features = ["rlp"] }
 alloy-serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
+modular-bitfield = { workspace = true, optional = true }
 alloy-trie = { workspace = true, features = ["ethereum"] }
 itertools = { workspace = true, features = ["use_alloc"] }
 base-common-types-rpc = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-primitives = {workspace = true, features = ["map-foldhash"]}
 alloy-rlp = { workspace = true, features = ["core-net", "arrayvec"] }
+arbitrary = {optional = true, workspace = true, features = ["derive"]}
 hash-db = { workspace = true, optional = true, features = ["default"] }
-arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 plain_hasher = { workspace = true, optional = true, features = ["default"] }
 
 [dev-dependencies]
-bytes = { workspace = true }
+bytes = {workspace = true}
 serde = { workspace = true }
 arrayvec = { workspace = true }
 alloy-genesis = { workspace = true }
 bincode_1_3_3 = { workspace = true }
-base-common-types-chain = { workspace = true }
-proptest-arbitrary-interop = { workspace = true }
+base-common-types-chain = {workspace = true}
+proptest-arbitrary-interop = {workspace = true}
+arbitrary = {workspace = true, features = ["derive"]}
+proptest = {workspace = true, features = ["default"]}
 hash-db = { workspace = true, features = ["default"] }
-arbitrary = { workspace = true, features = ["derive"] }
-proptest = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 serde_with = { workspace = true, features = ["macros"] }
 plain_hasher = { workspace = true, features = ["default"] }
-reth-primitives-traits = { workspace = true, features = ["serde"] }
 alloy-trie = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+reth-primitives-traits = {workspace = true, features = ["arbitrary", "reth-codec", "serde"]}
 
 [features]
 default = ["std"]
@@ -92,7 +93,12 @@ serde = [
     "base-execution-state-memory/serde",
     "alloy-eips/serde",
 ]
-reth-codec = ["dep:bytes", "dep:arrayvec"]
+reth-codec = [
+    "dep:bytes",
+    "dep:arrayvec",
+    "dep:modular-bitfield",
+    "reth-primitives-traits/reth-codec",
+]
 serde-bincode-compat = [
     "serde",
     "base-common-types-chain/serde-bincode-compat",

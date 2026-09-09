@@ -28,10 +28,10 @@ base-execution-evm-runtime = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
-base-execution-state-types = { workspace = true, features = ["rayon"] }
 reth-storage-api = { workspace = true, features = ["db-api"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-types = { workspace = true, features = ["rayon"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
@@ -54,9 +54,9 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default", "serde"] }
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
-base-execution-state-types = { workspace = true, features = ["test-utils", "arbitrary"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
+base-execution-state-types = { workspace = true, features = ["test-utils", "arbitrary"] }
 
 [[bench]]
 name = "proof_v2"
