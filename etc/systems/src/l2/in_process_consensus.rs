@@ -21,7 +21,8 @@ use base_common_chain_activation::{
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::{PeerScoreLevel, SecretKeyLoader};
+use base_consensus_network_service::PeerScoreLevel;
+use base_consensus_network_service::SecretKeyLoader;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,

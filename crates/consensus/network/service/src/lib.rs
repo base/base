@@ -51,17 +51,15 @@ pub use discovery::{
 
 mod gossip;
 pub use gossip::{
-    Behaviour, BehaviourError, BlockHandler, BlockInvalidError, Connectedness, ConnectionError,
-    ConnectionGate, ConnectionGater, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
+    Behaviour, BehaviourError, BlockHandler, BlockInvalidError, ConnectionError, ConnectionGate,
+    ConnectionGater, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
     DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
     DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS, DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS,
     DEFAULT_MESH_D, DEFAULT_MESH_DHI, DEFAULT_MESH_DLAZY, DEFAULT_MESH_DLO,
-    DEFAULT_PENDING_DIAL_TIMEOUT, DialInfo, Direction, DnsResolutionFailure, Event,
-    GATER_PRUNE_INTERVAL, GLOBAL_VALIDATE_THROTTLE, GOSSIP_HEARTBEAT, GaterConfig, GossipDriver,
-    GossipDriverBuilder, GossipDriverBuilderError, GossipDriverConfig, GossipScores, Handler,
-    HandlerEncodeError, MAX_GOSSIP_SIZE, MAX_OUTBOUND_QUEUE, MAX_VALIDATE_QUEUE, MIN_GOSSIP_SIZE,
-    Metrics as GossipMetrics, P2pRpcRequest, PEER_SCORE_INSPECT_FREQUENCY,
-    PENDING_DIAL_PRUNE_INTERVAL, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats,
-    PublishError, ReqRespScores, SEEN_MESSAGES_TTL, TopicScores, default_config,
-    default_config_builder,
+    DEFAULT_PENDING_DIAL_TIMEOUT, DialInfo, DnsResolutionFailure, Event, GATER_PRUNE_INTERVAL,
+    GLOBAL_VALIDATE_THROTTLE, GOSSIP_HEARTBEAT, GaterConfig, GossipDriver, GossipDriverBuilder,
+    GossipDriverBuilderError, GossipDriverConfig, Handler, HandlerEncodeError, MAX_GOSSIP_SIZE,
+    MAX_OUTBOUND_QUEUE, MAX_VALIDATE_QUEUE, MIN_GOSSIP_SIZE, Metrics as GossipMetrics,
+    P2pRpcRequest, PEER_SCORE_INSPECT_FREQUENCY, PENDING_DIAL_PRUNE_INTERVAL, PublishError,
+    SEEN_MESSAGES_TTL, default_config, default_config_builder,
 };

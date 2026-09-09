@@ -4,12 +4,12 @@ use std::{net::IpAddr, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
+use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
+use base_common_types_rpc::PeerCount;
+use base_common_types_rpc::PeerDump;
+use base_common_types_rpc::PeerStats;
 use base_consensus_network_service::GossipMetrics;
 use base_consensus_network_service::P2pRpcRequest;
-use base_consensus_network_service::PeerCount;
-use base_consensus_network_service::PeerDump;
-use base_consensus_network_service::PeerInfo;
-use base_consensus_network_service::PeerStats;
 use ipnet::IpNet;
 use jsonrpsee::{
     core::RpcResult,
@@ -345,9 +345,9 @@ mod tests {
     };
 
     use backon::ExponentialBuilder;
+    use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
+    use base_common_types_rpc::PeerDump;
     use base_consensus_network_service::P2pRpcRequest;
-    use base_consensus_network_service::PeerDump;
-    use base_consensus_network_service::PeerInfo;
     use tokio::sync::mpsc;
 
     use crate::net::P2pRpc;

@@ -15,9 +15,11 @@ workspace = true
 
 [dependencies]
 thiserror = {workspace = true}
+serde_repr = {workspace = true}
 alloy-serde = {workspace = true}
 itertools = { workspace = true }
 alloy-sol-types = { workspace = true }
+ipnet = {workspace = true, features = ["serde"]}
 alloy-eips = {workspace = true, features = ["serde"]}
 serde_json = {workspace = true, features = ["alloc"]}
 serde = {workspace = true, features = ["derive", "alloc"]}
@@ -25,25 +27,26 @@ base-common-types-chain = {workspace = true, features = ["serde"]}
 arbitrary = {workspace = true, features = ["derive"], optional = true}
 alloy-primitives = {workspace = true, features = ["map", "rlp", "serde"]}
 serde_with = { workspace = true, features = ["macros"], optional = true }
-derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
 alloy-rlp = { workspace = true, features = [
     "arrayvec",
     "derive",
 ] }
+derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
+
 [dev-dependencies]
 assert_matches_1_5 = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 arbitrary = {workspace = true, features = ["derive"]}
+serde_json = { workspace = true, features = ["alloc"] }
 similar-asserts = {workspace = true, features = ["default"]}
-rand_08 = { workspace = true, features = ["default", "serde"] }
 bincode = { workspace = true, features = ["default", "serde"] }
+rand_08 = { workspace = true, features = ["default", "serde"] }
 base-common-types-chain = {workspace = true, features = ["arbitrary", "std"]}
-alloy-primitives = {workspace = true, features = ["arbitrary", "rand", "rlp", "serde"]}
 alloy-eips = { workspace = true, features = [
     "arbitrary",
     "k256",
 ] }
-serde_json = { workspace = true, features = ["alloc"] }
+alloy-primitives = {workspace = true, features = ["arbitrary", "rand", "rlp", "serde"]}
 
 [features]
 default = ["std", "serde"]
@@ -59,6 +62,7 @@ std = [
     "alloy-sol-types/std",
     "serde_with?/std",
     "thiserror/std",
+    "ipnet/std",
 ]
 arbitrary = [
     "base-common-types-chain/arbitrary",

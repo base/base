@@ -7,20 +7,20 @@
 //! ## API Categories
 //!
 //! ### Peer Information
-//! - [`PeerInfo`]: Comprehensive peer details including connection status and capabilities
-//! - [`PeerStats`]: Connection statistics and performance metrics
-//! - [`PeerCount`]: Current peer count across different connection states
-//! - [`PeerDump`]: Complete dump of all known peers
+//! - [`PeerInfo`](base_common_types_rpc::ConsensusPeerInfo): Comprehensive peer details including connection status and capabilities
+//! - [`PeerStats`](base_common_types_rpc::PeerStats): Connection statistics and performance metrics
+//! - [`PeerCount`](base_common_types_rpc::PeerCount): Current peer count across different connection states
+//! - [`PeerDump`](base_common_types_rpc::PeerDump): Complete dump of all known peers
 //!
 //! ### Scoring and Quality
-//! - [`PeerScores`]: Peer reputation scores used for mesh maintenance
-//! - [`GossipScores`]: GossipSub-specific scoring metrics
-//! - [`TopicScores`]: Per-topic scoring information
-//! - [`ReqRespScores`]: Request-response protocol scoring
+//! - [`PeerScores`](base_common_types_rpc::PeerScores): Peer reputation scores used for mesh maintenance
+//! - [`GossipScores`](base_common_types_rpc::GossipScores): GossipSub-specific scoring metrics
+//! - [`TopicScores`](base_common_types_rpc::TopicScores): Per-topic scoring information
+//! - [`ReqRespScores`](base_common_types_rpc::ReqRespScores): Request-response protocol scoring
 //!
 //! ### Connection Management
-//! - [`Connectedness`]: Peer connection state enumeration
-//! - [`Direction`]: Connection direction (inbound/outbound)
+//! - [`Connectedness`](base_common_types_rpc::Connectedness): Peer connection state enumeration
+//! - [`Direction`](base_common_types_rpc::Direction): Connection direction (inbound/outbound)
 //!
 //! ## RPC Methods
 //!
@@ -45,9 +45,3 @@
 
 mod request;
 pub use request::P2pRpcRequest;
-
-mod types;
-pub use types::{
-    Connectedness, Direction, GossipScores, PeerCount, PeerDump, PeerInfo, PeerScores, PeerStats,
-    ReqRespScores, TopicScores,
-};

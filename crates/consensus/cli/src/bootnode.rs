@@ -9,9 +9,12 @@ use std::{
 use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chain_config::RollupConfig;
+use base_consensus_network_service::BootNode;
+use base_consensus_network_service::BootNodes;
+use base_consensus_network_service::BootStoreFile;
 use base_consensus_network_service::Discv5Builder;
 use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
+use base_consensus_network_service::SecretKeyLoader;
 use clap::Args;
 use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;

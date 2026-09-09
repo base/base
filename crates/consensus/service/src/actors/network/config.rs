@@ -4,10 +4,13 @@ use std::num::NonZeroUsize;
 
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
+use base_consensus_network_service::BootNodes;
+use base_consensus_network_service::BootStoreFile;
 use base_consensus_network_service::ConnectionLimitsConfig;
 use base_consensus_network_service::GaterConfig;
 use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_network_service::PeerMonitoring;
+use base_consensus_network_service::PeerScoreLevel;
 use base_consensus_source_providers::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
 use tokio::time::Duration;

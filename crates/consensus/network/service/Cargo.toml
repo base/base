@@ -19,7 +19,6 @@ development = ["arbtest"]
 dirs = { workspace = true }
 sha2 = { workspace = true }
 snap = { workspace = true }
-serde_repr = { workspace = true }
 base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
 metrics = {optional = true, workspace = true}
@@ -38,6 +37,7 @@ futures = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["default"] }
 unsigned-varint = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default", "serde"] }
+base-common-types-rpc = {workspace = true, features = ["std"]}
 libp2p-identity = {features = ["secp256k1"], workspace = true}
 rand = { workspace = true, features = ["default", "thread_rng"] }
 base-common-chain-config = {features = ["default"], workspace = true}

@@ -4,10 +4,7 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod rpc;
-pub use rpc::{
-    Connectedness, Direction, GossipScores, P2pRpcRequest, PeerCount, PeerDump, PeerInfo,
-    PeerScores, PeerStats, ReqRespScores, TopicScores,
-};
+pub use rpc::P2pRpcRequest;
 
 mod behaviour;
 pub use behaviour::{Behaviour, BehaviourError};

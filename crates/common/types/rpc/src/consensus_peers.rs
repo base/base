@@ -1,5 +1,6 @@
 //! The types used in the p2p RPC API.
 
+use alloc::{string::String, vec::Vec};
 use core::net::IpAddr;
 
 use alloy_primitives::{ChainId, map::HashMap};
@@ -10,7 +11,7 @@ use derive_more::Display;
 /// <https://github.com/ethereum-optimism/optimism/blob/develop/op-node/p2p/rpc_api.go#L15>
 #[derive(Clone, Default, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PeerInfo {
+pub struct ConsensusPeerInfo {
     /// The peer id.
     #[serde(rename = "peerID")]
     pub peer_id: String,
@@ -179,7 +180,7 @@ pub struct PeerDump {
     /// The total number of connected peers
     pub total_connected: u32,
     /// A map from peer id to peer info
-    pub peers: HashMap<String, PeerInfo>,
+    pub peers: HashMap<String, ConsensusPeerInfo>,
     /// A list of banned peers.
     pub banned_peers: Vec<String>,
     /// A list of banned ip addresses.
@@ -374,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_peer_info_connectedness_serialization() {
-        let peer_info = PeerInfo {
+        let peer_info = ConsensusPeerInfo {
             peer_id: String::from("peer123"),
             node_id: String::from("node123"),
             user_agent: String::from("MyUserAgent"),
@@ -410,7 +411,7 @@ mod tests {
 
         let serialized = serde_json::to_string(&peer_info).expect("Serialization failed");
 
-        let deserialized: PeerInfo =
+        let deserialized: ConsensusPeerInfo =
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
         assert_eq!(peer_info.peer_id, deserialized.peer_id);

@@ -11,10 +11,11 @@ use base_common_client_ethereum::{
     Provider, ProviderBuilder,
     ext::{AdminApi, NetApi},
 };
-use base_consensus_network_service::Direction;
-use base_consensus_network_service::PeerInfo;
-use base_consensus_network_service::PeerStats;
-use base_consensus_network_service::{BootNode, NodeRecord};
+use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
+use base_common_types_rpc::Direction;
+use base_common_types_rpc::PeerStats;
+use base_consensus_network_service::BootNode;
+use base_consensus_network_service::NodeRecord;
 use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,
@@ -747,7 +748,7 @@ fn parse_el_node_endpoint(
     })
 }
 
-fn parse_cl_node_endpoint(peer: &base_consensus_network_service::PeerInfo) -> Result<NodeEndpoint> {
+fn parse_cl_node_endpoint(peer: &base_common_types_rpc::ConsensusPeerInfo) -> Result<NodeEndpoint> {
     let enr = peer.enr.as_deref().ok_or_else(|| {
         anyhow!("`opp2p_self` did not return an ENR; cannot determine advertised CL endpoint")
     })?;
@@ -801,12 +802,12 @@ fn parse_enr_fields(raw: &str) -> Result<EnrFields> {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use base_consensus_network_service::Connectedness;
-    use base_consensus_network_service::Direction;
-    use base_consensus_network_service::GossipScores;
-    use base_consensus_network_service::PeerInfo;
-    use base_consensus_network_service::PeerScores;
-    use base_consensus_network_service::ReqRespScores;
+    use base_common_types_rpc::Connectedness;
+    use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
+    use base_common_types_rpc::Direction;
+    use base_common_types_rpc::GossipScores;
+    use base_common_types_rpc::PeerScores;
+    use base_common_types_rpc::ReqRespScores;
 
     use super::{
         ClNodeIdentity, ElNodeIdentity, NodeEndpoint, PeerDirection, parse_cl_node_endpoint,

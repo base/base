@@ -25,6 +25,7 @@ base-consensus-network-service = { workspace = true }
 getrandom = { workspace = true, features = ["wasm_js"] }
 tokio = { workspace = true, features = ["default", "time"] }
 alloy-eips = { workspace = true, features = ["serde", "std"] }
+base-common-types-rpc = {workspace = true, features = ["std"]}
 base-protocol = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }

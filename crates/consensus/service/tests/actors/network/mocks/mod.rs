@@ -4,9 +4,9 @@ use std::{str::FromStr, time::Duration};
 
 use backon::{ExponentialBuilder, Retryable};
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
+use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
+use base_common_types_rpc::PeerDump;
 use base_consensus_network_service::P2pRpcRequest;
-use base_consensus_network_service::PeerDump;
-use base_consensus_network_service::PeerInfo;
 use base_consensus_node::{NetworkActorError, NetworkInboundData};
 use discv5::Enr;
 use tokio::{

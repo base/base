@@ -132,3 +132,9 @@ pub use transaction_builders::{TransactionBuilder4844, TransactionBuilder7702};
 
 mod inclusion;
 pub use inclusion::InclusionInfo;
+
+mod consensus_peers;
+pub use consensus_peers::{
+    Connectedness, ConsensusPeerInfo, Direction, GossipScores, PeerCount, PeerDump, PeerScores,
+    PeerStats, ReqRespScores, TopicScores,
+};
