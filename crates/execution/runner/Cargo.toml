@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 reth-provider = { workspace = true }
-tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
@@ -44,8 +43,6 @@ tracing-subscriber = { workspace = true, optional = true, features = ["default"]
 base-execution-chainspec = { workspace = true, features = ["default"], optional = true }
 base-common-rpc-types = { workspace = true, optional = true, features = ["default", "network"] }
 
-[dependencies.base-node-context]
-workspace = true
 [dev-dependencies]
 serde_json = { workspace = true }
 base-protocol = { workspace = true }

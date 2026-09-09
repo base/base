@@ -4,8 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_cli_utils::CliContext;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::NodeLaunch;
-use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
+use base_node_core::{NodeHandle, NodeLaunch};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
 use reth_db::init_db;
@@ -204,7 +203,7 @@ impl ExecutionNodeRuntimeConfig {
     }
 
     /// Converts the runtime config into a reth node builder.
-    pub fn into_node_builder(mut self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder> {
+    pub fn into_launch(mut self, ctx: CliContext) -> eyre::Result<NodeLaunch> {
         if let Some(http_api) = &self.node_config.rpc.http_api {
             LenientRpcModuleValidator::validate_selection(http_api, "http.api")
                 .map_err(|e| eyre::eyre!("{e}"))?;
@@ -233,11 +232,6 @@ impl ExecutionNodeRuntimeConfig {
         let builder = NodeLaunch::new(self.node_config, database, ctx.task_executor);
 
         Ok(builder)
-    }
-
-    /// Converts the runtime config into a reth node builder with the default RPC validator.
-    pub fn into_default_node_builder(self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder> {
-        self.into_node_builder(ctx)
     }
 }
 
@@ -271,21 +265,16 @@ impl ExecutionNodeLaunchConfig {
     }
 
     /// Launches the execution node and returns its handle.
-    pub async fn launch(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode> {
+    pub async fn launch(self, ctx: CliContext) -> eyre::Result<NodeHandle> {
         let (execution, standard) = self.into_runtime_config();
         let upgrade_signal_startup = execution.upgrade_signal_startup;
-        let builder = execution.into_node_builder(ctx)?;
+        let builder = execution.into_launch(ctx)?;
         crate::StandardBaseRethNode::launch_with_upgrade_signal_startup(
             builder,
             standard,
             upgrade_signal_startup,
         )
         .await
-    }
-
-    /// Launches the execution node with the default RPC module validator.
-    pub async fn launch_default(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode> {
-        self.launch(ctx).await
     }
 }
 

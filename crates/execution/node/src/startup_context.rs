@@ -7,10 +7,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{PoolConfig, TransactionPool};
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
-    transactions::{
-        TransactionPropagationPolicy, TransactionsManagerConfig,
-        config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
-    },
+    transactions::config::StrictEthAnnouncementFilter,
 };
 use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
@@ -23,7 +20,7 @@ use reth_tasks::TaskExecutor;
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 
-use crate::{BlockReaderFor, WithConfigs};
+use crate::WithConfigs;
 
 /// Captures the necessary context for building the components of the node.
 pub struct BuilderContext {
@@ -117,79 +114,18 @@ impl BuilderContext {
         self.config().builder.clone()
     }
 
-    /// Convenience function to start the network tasks.
-    ///
-    /// Spawns the configured network and associated tasks and returns the [`NetworkHandle`]
-    /// connected to that network.
-    pub fn start_network<Pool>(&self, builder: NetworkBuilder<(), ()>, pool: Pool) -> NetworkHandle
-    where
-        Pool: TransactionPool + Unpin + 'static,
-        BlockchainProvider: BlockReaderFor,
-    {
-        self.start_network_with(
-            builder,
-            pool,
-            self.config().network.transactions_manager_config(),
-            self.config().network.tx_propagation_policy,
-        )
-    }
-
-    /// Convenience function to start the network tasks.
-    ///
-    /// Accepts the config for the transaction task and the policy for propagation.
-    /// Uses the default [`StrictEthAnnouncementFilter`] for announcement filtering.
-    ///
-    /// Spawns the configured network and associated tasks and returns the [`NetworkHandle`]
-    /// connected to that network.
-    pub fn start_network_with<Pool, Policy>(
+    /// Starts the Base network tasks using the configured propagation settings.
+    pub fn start_network(
         &self,
         builder: NetworkBuilder<(), ()>,
-        pool: Pool,
-        tx_config: TransactionsManagerConfig,
-        propagation_policy: Policy,
-    ) -> NetworkHandle
-    where
-        Pool: TransactionPool + Unpin + 'static,
-        BlockchainProvider: BlockReaderFor,
-        Policy: TransactionPropagationPolicy,
-    {
-        self.start_network_with_policies(
-            builder,
-            pool,
-            tx_config,
-            propagation_policy,
-            StrictEthAnnouncementFilter::default(),
-        )
-    }
-
-    /// Convenience function to start the network tasks with custom policies.
-    ///
-    /// Accepts the config for the transaction task, the policy for propagation,
-    /// and a custom announcement filter. This is useful for configuring which tx types are accepted
-    /// in announcements.
-    ///
-    /// Spawns the configured network and associated tasks and returns the [`NetworkHandle`]
-    /// connected to that network.
-    pub fn start_network_with_policies<Pool, PropPolicy, AnnPolicy>(
-        &self,
-        builder: NetworkBuilder<(), ()>,
-        pool: Pool,
-        tx_config: TransactionsManagerConfig,
-        propagation_policy: PropPolicy,
-        announcement_policy: AnnPolicy,
-    ) -> NetworkHandle
-    where
-        Pool: TransactionPool + Unpin + 'static,
-        BlockchainProvider: BlockReaderFor,
-        PropPolicy: TransactionPropagationPolicy,
-        AnnPolicy: AnnouncementFilteringPolicy,
-    {
+        pool: base_node_context::BaseNodePool<BlockchainProvider>,
+    ) -> NetworkHandle {
         let (handle, network, txpool, eth) = builder
             .transactions_with_policies(
                 pool.clone(),
-                tx_config,
-                propagation_policy,
-                announcement_policy,
+                self.config().network.transactions_manager_config(),
+                self.config().network.tx_propagation_policy,
+                StrictEthAnnouncementFilter::default(),
             )
             .map_transactions(|transactions| {
                 if let Some(cache) = self.sender_recovery_cache.clone() {

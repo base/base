@@ -2,7 +2,6 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
-use base_builder_core::BlockServiceBuilder;
 use base_cli_utils::CliRunner;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
@@ -14,7 +13,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
-use base_node_runner::BaseNodeRunner;
+use base_node_core::BaseNode;
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
@@ -95,24 +94,20 @@ impl SequencerCommand {
             let execution = execution.into_runtime_config(execution_chain);
 
             let task_executor = ctx.task_executor.clone();
-            let builder = execution.into_default_node_builder(ctx)?;
-            let mut runner = BaseNodeRunner::new(rollup_args.clone())
+            let mut launch = execution.into_launch(ctx)?;
+            launch.base = BaseNode::new(rollup_args.clone())
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
-                .with_manifest_precheck_enabled(manifest_precheck_enabled)
-                .with_service_builder(BlockServiceBuilder::build(builder_config));
-            runner.rpc.metering_store = Some(metering_provider);
-            runner.rpc.builder = Some(builder_api_config);
+                .with_manifest_precheck_enabled(manifest_precheck_enabled);
+            launch.payload = Some(builder_config.into_payload_service_config());
+            launch.rpc.metering_store = Some(metering_provider);
+            launch.rpc.builder = Some(builder_api_config);
             if builder_api_config.accept_experimental_validity_transactions {
-                runner.rpc.validity = Some(builder_api_config.max_validity_predicates);
+                launch.rpc.validity = Some(builder_api_config.max_validity_predicates);
             }
-            StandardBaseRethNode::install_upgrade_signal_runtime_extension(
-                &mut runner,
-                &rollup_args,
-            )?;
+            StandardBaseRethNode::configure_upgrade_signal_runtime(&mut launch, &rollup_args)?;
 
-            let launched = runner.launch(builder).await?;
-            let handle = launched.handle;
+            let handle = launch.launch().await?;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;

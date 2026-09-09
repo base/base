@@ -5,24 +5,20 @@ use base_node_core::BasePayloadServiceConfig;
 
 use crate::BuilderConfig;
 
-/// Converts sequencer settings into the concrete Base payload service.
-#[derive(Debug)]
-pub struct BlockServiceBuilder;
-
-impl BlockServiceBuilder {
+impl BuilderConfig {
     /// Configures full-block payload construction and its deadline.
-    pub fn build(builder_config: BuilderConfig) -> BasePayloadServiceConfig {
+    pub fn into_payload_service_config(self) -> BasePayloadServiceConfig {
         BasePayloadServiceConfig::full_block(
             BaseBuilderConfig {
-                da_config: builder_config.da_config,
-                gas_limit_config: builder_config.gas_limit_config,
-                manifest_precheck_enabled: builder_config.manifest_precheck_enabled,
-                predicate_eval_hard_cutoff: builder_config.predicate_eval_hard_cutoff,
-                max_gas_per_txn: builder_config.max_gas_per_txn,
-                max_uncompressed_block_size: builder_config.max_uncompressed_block_size,
+                da_config: self.da_config,
+                gas_limit_config: self.gas_limit_config,
+                manifest_precheck_enabled: self.manifest_precheck_enabled,
+                predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
+                max_gas_per_txn: self.max_gas_per_txn,
+                max_uncompressed_block_size: self.max_uncompressed_block_size,
                 ..Default::default()
             },
-            builder_config.block_time.saturating_add(builder_config.block_time_leeway),
+            self.block_time.saturating_add(self.block_time_leeway),
         )
     }
 }

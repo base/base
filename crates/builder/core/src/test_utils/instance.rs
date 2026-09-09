@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use base_common_rpc_types::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, TransactionPool};
-use base_node_core::{NodeConfig, RollupArgs};
-use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
+use base_node_core::{BaseNode, NodeConfig, RollupArgs};
+use base_node_runner::test_utils::init_silenced_tracing;
 use futures::FutureExt;
 use nanoid::nanoid;
 use reth_node_core::{
@@ -26,7 +26,7 @@ use reth_node_core::{
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 
 use crate::{
-    BlockServiceBuilder, BuilderConfig, SharedMeteringProvider,
+    BuilderConfig, SharedMeteringProvider,
     test_utils::{EngineApi, TransactionPoolObserver, create_test_db_env, driver::ChainDriver},
 };
 
@@ -198,7 +198,7 @@ impl LocalInstance {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 
-        let service_builder = BlockServiceBuilder::build(builder_config.clone());
+        let service_builder = builder_config.clone().into_payload_service_config();
 
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
 

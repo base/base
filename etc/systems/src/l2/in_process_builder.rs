@@ -7,11 +7,10 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use base_builder_core::{BlockServiceBuilder, BuilderConfig, test_utils::get_available_port};
+use base_builder_core::{BuilderConfig, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
-use base_node_core::{NodeConfig, NodeHandle, RollupArgs};
-use base_node_runner::BaseNode;
+use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -168,7 +167,7 @@ impl InProcessBuilder {
         rpc.validity = accept_validity_transactions.then_some(DEFAULT_MAX_VALIDITY_PREDICATES);
         let mut launch = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         launch.base = base_node;
-        launch.payload = Some(BlockServiceBuilder::build(builder_config));
+        launch.payload = Some(builder_config.into_payload_service_config());
         launch.rpc = rpc;
         launch.services = services;
         let launched = launch.launch().await;

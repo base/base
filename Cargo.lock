@@ -2398,7 +2398,7 @@ dependencies = [
  "base-execution-cli",
  "base-execution-consensus",
  "base-execution-evm",
- "base-node-runner",
+ "base-node-core",
  "base-upgrade-signal",
  "clap",
  "eyre",
@@ -3596,7 +3596,6 @@ dependencies = [
  "base-execution-trie",
  "base-metering",
  "base-node-core",
- "base-node-runner",
  "base-observability-events",
  "base-reth-cli",
  "base-shadow-indexer",
@@ -4374,7 +4373,6 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-payload-types",
  "base-metering",
- "base-node-context",
  "base-node-core",
  "base-node-runner",
  "base-protocol",
@@ -4393,7 +4391,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",
- "tracing",
  "tracing-subscriber",
 ]
 

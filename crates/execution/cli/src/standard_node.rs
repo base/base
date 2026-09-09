@@ -10,8 +10,7 @@ use base_execution_payload_builder::{
     ResourceMeteringConfig, SharedMeteringProvider,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig};
-use base_node_core::RollupArgs;
-use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
+use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -461,9 +460,9 @@ pub struct StandardBaseRethNode;
 impl StandardBaseRethNode {
     /// Applies a configured L1 upgrade signal from rollup args before startup.
     pub async fn apply_initial_upgrade_signal_from_rollup_args(
-        builder: BaseNodeBuilder,
+        builder: NodeLaunch,
         rollup_args: &RollupArgs,
-    ) -> eyre::Result<BaseNodeBuilder> {
+    ) -> eyre::Result<NodeLaunch> {
         Self::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
             builder,
             rollup_args,
@@ -474,10 +473,10 @@ impl StandardBaseRethNode {
 
     /// Applies a configured L1 upgrade signal from rollup args with explicit startup behavior.
     pub async fn apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
-        mut builder: BaseNodeBuilder,
+        mut builder: NodeLaunch,
         rollup_args: &RollupArgs,
         startup_mode: UpgradeSignalStartupMode,
-    ) -> eyre::Result<BaseNodeBuilder> {
+    ) -> eyre::Result<NodeLaunch> {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(builder);
         };
@@ -492,8 +491,8 @@ impl StandardBaseRethNode {
     }
 
     /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
-    pub fn install_upgrade_signal_runtime_extension(
-        runner: &mut BaseNodeRunner,
+    pub fn configure_upgrade_signal_runtime(
+        runner: &mut NodeLaunch,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
@@ -541,11 +540,11 @@ impl StandardBaseRethNode {
     }
 
     /// Builds a runner with the standard Base execution-node extensions installed.
-    pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
+    pub fn configure(runner: &mut NodeLaunch, args: StandardNodeArgs) -> eyre::Result<()> {
         let rollup_args = args.rpc.rollup_args.clone();
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
-        let mut runner = BaseNodeRunner::new(rollup_args.clone());
+        runner.base = BaseNode::new(rollup_args.clone());
         let resource_metering_enabled = args.metering.enable_metering;
         let provider: SharedMeteringProvider = if resource_metering_enabled
             && args.metering.resource_metering.resource_metering_schedule.is_some()
@@ -572,8 +571,8 @@ impl StandardBaseRethNode {
             args.metering.resource_metering.rejection_cache_max_capacity,
             Duration::from_secs(args.metering.resource_metering.rejection_cache_ttl_secs),
         );
-        runner =
-            runner.with_resource_metering(resource_metering).with_rejection_cache(rejection_cache);
+        runner.base.resource_metering = resource_metering;
+        runner.base.rejection_cache = rejection_cache;
 
         let transaction_event_env = TransactionEventEnv::read();
         let transaction_event_writer_config =
@@ -625,53 +624,26 @@ impl StandardBaseRethNode {
             runner.rpc.validity = Some(args.rpc.experimental_validity_max_predicates);
         }
         runner.services.forwarding = Some(tx_forwarding_config);
-        Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
-        Ok(runner)
-    }
-
-    /// Builds a standard runner with process version metrics registered on startup.
-    pub fn runner_with_version_metrics(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
-        let runner = Self::runner(args)?;
+        Self::configure_upgrade_signal_runtime(runner, &rollup_args)?;
         base_cli_utils::register_version_metrics!();
-        Ok(runner)
-    }
-
-    /// Launches the node and waits for it to exit.
-    pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
-        let builder =
-            Self::apply_initial_upgrade_signal_from_rollup_args(builder, &args.rpc.rollup_args)
-                .await?;
-
-        Self::runner_with_version_metrics(args)?.run(builder).await
-    }
-
-    /// Launches the node and returns immediately with a handle.
-    pub async fn launch(
-        builder: BaseNodeBuilder,
-        args: StandardNodeArgs,
-    ) -> eyre::Result<LaunchedBaseNode> {
-        Self::launch_with_upgrade_signal_startup(
-            builder,
-            args,
-            UpgradeSignalStartupMode::ReadAndApply,
-        )
-        .await
+        Ok(())
     }
 
     /// Launches the node with explicit upgrade-signal startup behavior.
     pub async fn launch_with_upgrade_signal_startup(
-        builder: BaseNodeBuilder,
+        builder: NodeLaunch,
         args: StandardNodeArgs,
         startup_mode: UpgradeSignalStartupMode,
-    ) -> eyre::Result<LaunchedBaseNode> {
-        let builder = Self::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
+    ) -> eyre::Result<NodeHandle> {
+        let mut builder = Self::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
             builder,
             &args.rpc.rollup_args,
             startup_mode,
         )
         .await?;
 
-        Self::runner_with_version_metrics(args)?.launch(builder).await
+        Self::configure(&mut builder, args)?;
+        builder.launch().await
     }
 }
 
@@ -917,8 +889,14 @@ mod tests {
         let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
         args.rpc.enable_experimental_validity_transactions = true;
 
-        StandardBaseRethNode::runner(args)
-            .expect("validity transactions should not require forwarding");
+        StandardBaseRethNode::configure(
+            &mut base_node_core::NodeLaunch::testing(
+                base_node_core::NodeConfig::test(),
+                reth_tasks::Runtime::test(),
+            ),
+            args,
+        )
+        .expect("validity transactions should not require forwarding");
     }
 
     #[test]
@@ -1257,7 +1235,13 @@ mod tests {
         ])
         .args;
 
-        StandardBaseRethNode::runner(args)
-            .expect("STATE_ and unknown schedule names must not fail opcode parse");
+        StandardBaseRethNode::configure(
+            &mut base_node_core::NodeLaunch::testing(
+                base_node_core::NodeConfig::test(),
+                reth_tasks::Runtime::test(),
+            ),
+            args,
+        )
+        .expect("STATE_ and unknown schedule names must not fail opcode parse");
     }
 }

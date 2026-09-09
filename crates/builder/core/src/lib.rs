@@ -24,7 +24,6 @@ pub use base_txpool_rpc::{
     BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS,
     ShadowValidityBuilderApi, ShadowValidityConfig, ShadowValidityConfigError,
 };
-pub use service::BlockServiceBuilder;
 
 /// Shared test infrastructure: local node instances, chain drivers, transaction builders, and pool observers.
 #[cfg(any(test, feature = "test-utils"))]

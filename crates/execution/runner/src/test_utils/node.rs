@@ -6,7 +6,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_common_rpc_types::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::{NodeConfig, NodeHandle, RollupArgs};
+use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
@@ -18,10 +18,10 @@ use reth_node_core::{
 };
 use reth_tasks::Runtime;
 
-use crate::{BaseNode, BaseProvider, test_utils::engine::EngineApi};
+use crate::test_utils::engine::EngineApi;
 
 /// Convenience alias for the local blockchain provider type.
-pub type LocalNodeProvider = BaseProvider;
+pub type LocalNodeProvider = reth_provider::providers::BlockchainProvider;
 
 /// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
@@ -170,7 +170,7 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
-    use base_node_core::{NodeConfig, RollupArgs};
+    use base_node_core::{BaseNode, NodeConfig, RollupArgs};
     use base_test_utils::build_test_genesis;
     use reth_node_core::{
         args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
@@ -180,7 +180,7 @@ mod tests {
     use reth_tasks::Runtime;
 
     use super::LocalNode;
-    use crate::{BaseNode, test_utils::engine::EngineApi};
+    use crate::test_utils::engine::EngineApi;
 
     #[tokio::test]
     async fn execution_builds_and_persists_with_all_rpc_disabled() {

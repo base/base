@@ -74,7 +74,6 @@ base-common-chains = { workspace = true, features = ["default"] }
 base-shadow-indexer = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 base-prover-service = { workspace = true, features = ["default"] }
-base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 prometheus-scraper = { version = "0.2.0", default-features = false }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -104,6 +103,7 @@ base-common-rpc-types-engine = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 

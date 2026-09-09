@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
+use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_consensus::BlockHeader;
@@ -33,7 +33,7 @@ use reth_tracing::tracing::{debug, info};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    BasePayloadServiceConfig, BuilderContext, PoolBuilderConfigOverrides,
+    BasePayloadServiceConfig, BuilderContext,
     args::{RollupArgs, TxpoolOrdering},
     spawn_maintenance_tasks,
 };
@@ -193,25 +193,8 @@ impl BaseNode {
         payload: Option<BasePayloadServiceConfig>,
     ) -> eyre::Result<base_node_context::BaseNodeContext> {
         let evm_config = BaseEvmConfig::new(ctx.chain_spec());
-        let ordering = match self.args.txpool_ordering {
-            TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
-            TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
-        };
-        let pool = BasePoolBuilder::default()
-            .with_ordering(ordering)
-            .with_max_inflight_delegated_slots(self.args.max_inflight_delegated_slots)
-            .with_guard_limits(GuardLimits {
-                signature_limit: self.args.mempool_sender_limit,
-                payment_limit: self.args.mempool_payer_limit,
-            })
-            .with_additional_trusted_delegation_targets(
-                self.args.mempool_trusted_delegation_targets.iter().copied(),
-            )
-            .build_pool(ctx, evm_config.clone())
-            .await?;
-        let network = BaseNetworkBuilder::new(!self.args.discovery_v4)
-            .build_network(ctx, pool.clone())
-            .await?;
+        let pool = self.build_pool(ctx, evm_config.clone()).await?;
+        let network = self.build_network(ctx, pool.clone()).await?;
         let payload = payload.unwrap_or_else(|| BasePayloadServiceConfig {
             config: base_execution_payload_builder::config::BaseBuilderConfig {
                 da_config: self.da_config.clone(),
@@ -278,104 +261,22 @@ impl BaseNode {
     }
 }
 
-/// A basic Base transaction pool.
-///
-/// This contains various settings that can be configured and take precedence over the node's
-/// config.
-#[derive(Debug)]
-pub struct BasePoolBuilder {
-    /// Enforced overrides that are applied to the pool config.
-    pub pool_config_overrides: PoolBuilderConfigOverrides,
-    /// The ordering strategy for the transaction pool.
-    pub ordering: BaseOrdering,
-    /// Maximum inflight EIP-7702 delegated account transactions per sender.
-    pub max_inflight_delegated_slots: usize,
-    /// Per-account EIP-8130 admission caps.
-    pub guard_limits: GuardLimits,
-    /// Additional trusted EIP-7702 delegation targets for locked payers.
-    pub additional_trusted_delegation_targets: AddressSet,
-}
-
-impl Default for BasePoolBuilder {
-    fn default() -> Self {
-        Self {
-            pool_config_overrides: Default::default(),
-            ordering: BaseOrdering::default(),
-            max_inflight_delegated_slots: 4,
-            guard_limits: GuardLimits::default(),
-            additional_trusted_delegation_targets: AddressSet::default(),
-        }
-    }
-}
-
-impl Clone for BasePoolBuilder {
-    fn clone(&self) -> Self {
-        Self {
-            pool_config_overrides: self.pool_config_overrides.clone(),
-            ordering: self.ordering.clone(),
-            max_inflight_delegated_slots: self.max_inflight_delegated_slots,
-            guard_limits: self.guard_limits,
-            additional_trusted_delegation_targets: self
-                .additional_trusted_delegation_targets
-                .clone(),
-        }
-    }
-}
-
-impl BasePoolBuilder {
-    /// Sets the [`PoolBuilderConfigOverrides`] on the pool builder.
-    pub fn with_pool_config_overrides(
-        mut self,
-        pool_config_overrides: PoolBuilderConfigOverrides,
-    ) -> Self {
-        self.pool_config_overrides = pool_config_overrides;
-        self
-    }
-
-    /// Sets the ordering strategy for the transaction pool.
-    pub const fn with_ordering(mut self, ordering: BaseOrdering) -> Self {
-        self.ordering = ordering;
-        self
-    }
-
-    /// Sets the maximum inflight EIP-7702 delegated account transactions per sender.
-    pub const fn with_max_inflight_delegated_slots(mut self, limit: usize) -> Self {
-        self.max_inflight_delegated_slots = limit;
-        self
-    }
-
-    /// Sets the per-account EIP-8130 admission caps.
-    pub const fn with_guard_limits(mut self, guard_limits: GuardLimits) -> Self {
-        self.guard_limits = guard_limits;
-        self
-    }
-
-    /// Sets additional trusted delegation targets for balance-bounded locked payers.
-    pub fn with_additional_trusted_delegation_targets(
-        mut self,
-        targets: impl IntoIterator<Item = Address>,
-    ) -> Self {
-        self.additional_trusted_delegation_targets = targets.into_iter().collect();
-        self
-    }
-}
-
-impl BasePoolBuilder {
+impl BaseNode {
     /// Builds the Base pool and starts its maintenance and invalidation tasks.
     pub async fn build_pool(
-        self,
+        &self,
         ctx: &BuilderContext,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<BaseTransactionPool<BlockchainProvider, DiskFileBlobStore>> {
-        let Self {
-            pool_config_overrides,
-            ordering,
-            max_inflight_delegated_slots,
-            guard_limits,
-            additional_trusted_delegation_targets,
-            ..
-        } = self;
-
+        let ordering = match self.args.txpool_ordering {
+            TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
+            TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
+        };
+        let max_inflight_delegated_slots = self.args.max_inflight_delegated_slots;
+        let guard_limits = GuardLimits {
+            signature_limit: self.args.mempool_sender_limit,
+            payment_limit: self.args.mempool_payer_limit,
+        };
         let blob_store = crate::create_blob_store(ctx)?;
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
@@ -384,11 +285,7 @@ impl BasePoolBuilder {
                 .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
                 .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
                 .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
-                .with_additional_tasks(
-                    pool_config_overrides
-                        .additional_validation_tasks
-                        .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
-                )
+                .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .build_with_tasks(ctx.task_executor().clone())
                 .map(|validator| {
                     BaseTransactionValidator::new(validator)
@@ -396,11 +293,11 @@ impl BasePoolBuilder {
                         // the L1 block info
                         .require_l1_data_gas_fee(!ctx.config().dev.dev)
                         .with_additional_trusted_delegation_targets(
-                            additional_trusted_delegation_targets.clone(),
+                            self.args.mempool_trusted_delegation_targets.iter().copied().collect(),
                         )
                 });
 
-        let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
+        let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
         let transaction_pool = base_execution_txpool::Pool::new(
@@ -431,19 +328,7 @@ impl BasePoolBuilder {
     }
 }
 
-/// A basic Base network builder.
-#[derive(Debug, Clone, Default)]
-pub struct BaseNetworkBuilder {
-    /// Disable discovery v4
-    pub disable_discovery_v4: bool,
-}
-
-impl BaseNetworkBuilder {
-    /// Creates a new `BaseNetworkBuilder`.
-    pub const fn new(disable_discovery_v4: bool) -> Self {
-        Self { disable_discovery_v4 }
-    }
-
+impl BaseNode {
     /// Runs a future on the current runtime, or creates one when needed.
     pub fn block_on<T>(f: impl Future<Output = T>) -> T {
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
@@ -586,15 +471,15 @@ impl BaseDiscoveryConfig {
     }
 }
 
-impl BaseNetworkBuilder {
+impl BaseNode {
     /// Returns the [`NetworkConfig`] that contains the settings to launch the p2p network.
     ///
-    /// This applies the configured [`BaseNetworkBuilder`] settings.
+    /// Uses the node’s discovery and networking arguments.
     pub fn network_config(
         &self,
         ctx: &BuilderContext,
     ) -> eyre::Result<NetworkConfig<BlockchainProvider>> {
-        let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
+        let discovery_config = BaseDiscoveryConfig::new(!self.args.discovery_v4);
         let args = &ctx.config().network;
         let network_builder = ctx
             .network_config_builder()?
@@ -625,10 +510,10 @@ impl BaseNetworkBuilder {
     }
 }
 
-impl BaseNetworkBuilder {
+impl BaseNode {
     /// Starts the Base network and its transaction-pool services.
     pub async fn build_network(
-        self,
+        &self,
         ctx: &BuilderContext,
         pool: base_node_context::BaseNodePool<BlockchainProvider>,
     ) -> eyre::Result<NetworkHandle> {

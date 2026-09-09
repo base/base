@@ -26,7 +26,6 @@ base-reth-cli = { workspace = true }
 reth-node-core = { workspace = true }
 base-cli-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
-base-node-runner = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-node-metrics = { workspace = true }

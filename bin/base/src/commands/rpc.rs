@@ -99,8 +99,8 @@ impl RpcCommand {
                 .with_upgrade_signal_startup_already_applied();
 
             let task_executor = ctx.task_executor.clone();
-            let launched = execution.launch_default(ctx).await?;
-            let handle = launched.handle;
+            let launched = execution.launch(ctx).await?;
+            let handle = launched;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
