@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
+use crate::SafeHeadListener;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::{
     Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal, SignalReceiver,
     StepResult,
 };
-use base_consensus_safedb::SafeHeadListener;
 use base_protocol::{AttributesWithParent, BlockInfo};
 use thiserror::Error;
 use tokio::{

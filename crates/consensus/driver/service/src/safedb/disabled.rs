@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
-use crate::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
+use crate::safedb::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 
 /// A disabled safe head database that does nothing.
 ///

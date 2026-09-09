@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
-use crate::{SafeDBError, SafeHeadResponse};
+use crate::safedb::{SafeDBError, SafeHeadResponse};
 
 /// Write interface called by the derivation actor on safe head changes.
 #[async_trait]

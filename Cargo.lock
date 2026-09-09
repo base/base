@@ -2170,7 +2170,6 @@ dependencies = [
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",
- "base-consensus-safedb",
  "base-execution-evm-blocks",
  "base-execution-evm-precompiles",
  "base-execution-payload-builder",
@@ -2992,7 +2991,6 @@ dependencies = [
  "base-consensus-derive",
  "base-consensus-engine",
  "base-consensus-network-service",
- "base-consensus-safedb",
  "base-consensus-source-providers",
  "base-execution-trie",
  "base-node-runner",
@@ -3111,22 +3109,6 @@ dependencies = [
  "tracing",
  "unsigned-varint 0.8.0",
  "url",
-]
-
-[[package]]
-name = "base-consensus-safedb"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "async-trait",
- "base-common-types-rpc",
- "base-protocol",
- "redb",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
 ]
 
 [[package]]

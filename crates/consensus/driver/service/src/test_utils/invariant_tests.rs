@@ -1,10 +1,10 @@
 //! Direct Tier-0 invariant tests for currently-untested strategy.md labels.
 
+use crate::SafeHeadResponse;
 use alloy_primitives::B256;
 use base_common_types_chain::Header as ConsensusHeader;
 use base_common_types_payload::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_consensus_engine::ConsolidateInput;
-use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};

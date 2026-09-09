@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
+use crate::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 use async_trait::async_trait;
-use base_consensus_safedb::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::Mutex;
 

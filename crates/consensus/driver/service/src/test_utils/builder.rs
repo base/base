@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
+use crate::SafeHeadResponse;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use base_common_chain_config::{ChainGenesis, RollupConfig};
 use base_common_types_chain::Header as ConsensusHeader;
 use base_consensus_derive::test_utils::new_test_pipeline;
 use base_consensus_engine::{Engine, EngineState};
-use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::{
     sync::{mpsc, oneshot, watch},

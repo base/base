@@ -11,10 +11,10 @@ use base_consensus_derive::{
     PipelineErrorKind, PolledAttributesQueueStage, ResetSignal, SignalReceiver,
     StatefulAttributesBuilder, StepResult,
 };
-use base_consensus_engine::EngineClient;
-use base_consensus_safedb::{
+use base_consensus_driver_service::{
     SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
+use base_consensus_engine::EngineClient;
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{

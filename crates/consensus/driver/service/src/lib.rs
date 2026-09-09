@@ -75,3 +75,8 @@ pub use rpc::{
     L1WatcherQuerySender, NetworkAdminQuery, P2pRpc, RollupRpc, RpcBuilder,
     SequencerAdminAPIClient, SequencerAdminAPIError, WsRPC,
 };
+
+mod safedb;
+pub use safedb::{
+    DisabledSafeDB, SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
+};

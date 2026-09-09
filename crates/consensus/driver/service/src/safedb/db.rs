@@ -35,7 +35,7 @@ use async_trait::async_trait;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use redb::{Database, ReadableTable, TableDefinition};
 
-use crate::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
+use crate::safedb::{SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 
 /// Table mapping L1 block number to (L1 hash || L2 hash || L2 number).
 const SAFE_HEADS: TableDefinition<'_, u64, &[u8; 72]> = TableDefinition::new("safe_heads");
@@ -260,7 +260,7 @@ mod tests {
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;
-    use crate::DisabledSafeDB;
+    use crate::safedb::DisabledSafeDB;
 
     /// Helper to create a [`BlockInfo`] for testing.
     fn block_info(hash: u8, number: u64) -> BlockInfo {
