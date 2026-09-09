@@ -25,13 +25,13 @@ base-state = { workspace = true }
 reth-prune = { workspace = true }
 reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
-base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-cache = { workspace = true }
 reth-execution-types = { workspace = true }
+base-execution-evm-machine = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-payload-builder = { workspace = true }

@@ -22,7 +22,7 @@ macro_rules! base_precompile {
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
                 let mut provider = ::base_execution_evm_precompiles::EvmPrecompileStorageProvider::new_with_storage_features(
                     input,
-                    ::base_evm_context::GasParams::default(),
+                    ::base_execution_evm_machine::GasParams::default(),
                     $storage_features,
                 );
 
@@ -60,10 +60,12 @@ macro_rules! decode_precompile_call {
             Err(error)
                 if <$call_ty as ::alloy_sol_types::SolInterface>::valid_selector(selector) =>
             {
-                return Err(::base_execution_evm_precompiles::BasePrecompileError::AbiDecodeFailed {
-                    selector,
-                    error: ::alloc::string::ToString::to_string(&error),
-                });
+                return Err(
+                    ::base_execution_evm_precompiles::BasePrecompileError::AbiDecodeFailed {
+                        selector,
+                        error: ::alloc::string::ToString::to_string(&error),
+                    },
+                );
             }
             Err(_) => {
                 return Err(
@@ -83,7 +85,9 @@ pub(crate) use decode_precompile_call;
 macro_rules! reject_frozen_selector {
     () => {
         ::core::result::Result::Err(
-            ::base_execution_evm_precompiles::BasePrecompileError::UnknownFunctionSelector([0u8; 4]),
+            ::base_execution_evm_precompiles::BasePrecompileError::UnknownFunctionSelector(
+                [0u8; 4],
+            ),
         )
     };
 }

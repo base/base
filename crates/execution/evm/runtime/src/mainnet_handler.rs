@@ -1,4 +1,4 @@
-use base_evm_context::{ContextTr, HaltReason};
+use base_execution_evm_machine::{ContextTr, HaltReason};
 
 use super::{EvmTrError, Handler};
 use crate::EvmTr;

@@ -1,9 +1,9 @@
 use auto_impl::auto_impl;
-use base_evm_context::{Database, Journal, JournalEntry, JournalTr};
-use base_execution_evm_runtime::FrameResult;
-use revm_interpreter::{
+use base_execution_evm_machine::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter,
 };
+use base_execution_evm_machine::{Database, Journal, JournalEntry, JournalTr};
+use base_execution_evm_runtime::FrameResult;
 use revm_primitives::{Address, Log, U256};
 use revm_state::EvmState;
 
@@ -237,9 +237,9 @@ impl<DB: Database> JournalExt for Journal<DB> {
 #[cfg(test)]
 mod tests {
     use ::base_execution_evm_runtime::{InspectEvm, MainBuilder, MainContext};
-    use base_evm_context::{CfgEnv, Context, TxEnv};
+    use base_execution_evm_machine::InstructionResult;
+    use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use revm_interpreter::InstructionResult;
     use revm_primitives::TxKind;
     use revm_state::{Bytecode, bytecode::opcode};
 
@@ -247,7 +247,11 @@ mod tests {
 
     struct HaltInspector;
     impl<CTX> Inspector<CTX> for HaltInspector {
-        fn step(&mut self, interp: &mut revm_interpreter::Interpreter, _context: &mut CTX) {
+        fn step(
+            &mut self,
+            interp: &mut base_execution_evm_machine::Interpreter,
+            _context: &mut CTX,
+        ) {
             interp.halt(InstructionResult::Stop);
         }
     }
@@ -262,7 +266,7 @@ mod tests {
     fn run(
         bytecode: &[u8],
         inspector: impl Inspector<Context<TxEnv, CfgEnv, BenchmarkDB, ()>>,
-    ) -> base_evm_context::ExecutionResult {
+    ) -> base_execution_evm_machine::ExecutionResult {
         let bytecode = Bytecode::new_raw(bytecode.to_vec().into());
         let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(inspector);

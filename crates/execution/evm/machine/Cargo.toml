@@ -1,0 +1,97 @@
+[package]
+name = "base-execution-evm-machine"
+description = "Base EVM context, journal, and bytecode interpreter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[dependencies]
+bitvec = { workspace = true }
+cfg-if = { workspace = true }
+either = { workspace = true }
+revm-state = {workspace = true}
+auto_impl = { workspace = true }
+base-state = { workspace = true }
+revm-bytecode = {workspace = true}
+derive-where = { workspace = true }
+alloy-eip2930 = { workspace = true }
+revm-primitives = {workspace = true}
+alloy-eip7702 = { workspace = true, features = ["k256"] }
+serde = {features = ["derive", "rc"], optional = true, workspace = true}
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["alloc"] }
+
+[[test]]
+name = "miri_read_slice_oob"
+path = "tests/miri_read_slice_oob.rs"
+
+[features]
+default = ["std"]
+dev = [
+    "memory_limit",
+    "optional_balance_check",
+    "optional_block_gas_limit",
+    "optional_eip3541",
+    "optional_eip3607",
+    "optional_eip7623",
+    "optional_no_base_fee",
+    "optional_priority_fee_check",
+    "optional_fee_charge",
+]
+map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]
+memory_limit = []
+optional_balance_check = []
+optional_block_gas_limit = []
+optional_eip3541 = []
+optional_eip3607 = []
+optional_eip7623 = []
+optional_fee_charge = []
+optional_no_base_fee = []
+optional_priority_fee_check = []
+serde = [
+    "dep:serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+    "revm-bytecode/serde",
+    "base-state/serde",
+    "derive-where/serde",
+    "bitvec/serde",
+    "alloy-eip7702/serde",
+    "alloy-eip2930/serde",
+    "either/serde",
+]
+std = [
+    "serde?/std",
+    "revm-bytecode/std",
+    "base-state/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "bitvec/std",
+    "alloy-eip7702/std",
+    "alloy-eip2930/std",
+    "either/std",
+    "serde_json/std",
+]
+serde-json = ["serde"]
+arbitrary = ["std", "revm-primitives/arbitrary"]
+hashbrown = ["revm-primitives/hashbrown"]
+

@@ -1,4 +1,4 @@
-use base_evm_context::{Cfg, CfgEnv, Context, Database, FrameStack, Transaction, TxEnv};
+use base_execution_evm_machine::{Cfg, CfgEnv, Context, Database, FrameStack, Transaction, TxEnv};
 use base_execution_evm_runtime::EvmMachine;
 use base_state::EmptyDB;
 
@@ -75,7 +75,7 @@ impl MainContext for Context<TxEnv, CfgEnv, EmptyDB, ()> {
 mod test {
     use alloy_signer::{Either, SignerSync};
     use base_common_network::PrivateKeySigner;
-    use base_evm_context::{Authorization, Context, TxEnv};
+    use base_execution_evm_machine::{Authorization, Context, TxEnv};
     use base_state::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use revm_bytecode::{
         Bytecode,

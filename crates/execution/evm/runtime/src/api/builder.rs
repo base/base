@@ -1,6 +1,6 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
 use alloy_primitives::Address;
-use base_evm_context::FrameStack;
+use base_execution_evm_machine::FrameStack;
 use base_execution_evm_runtime::Database;
 use base_execution_evm_runtime::{EthFrame, EthInstructions, PrecompilesMap};
 
@@ -130,11 +130,11 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use alloy_sol_types::SolCall;
+    use base_execution_evm_machine::{CfgEnv, TxEnv};
     use base_execution_evm_precompiles::{
         ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
         IActivationRegistry, PolicyRegistryStorage,
     };
-    use base_evm_context::{CfgEnv, TxEnv};
     use base_execution_evm_runtime::{
         Context, DatabaseRef, ExecuteEvm,
         bytecode::Bytecode,

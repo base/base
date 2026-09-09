@@ -1,11 +1,11 @@
-use base_evm_context::{ContextSetters, ContextTr, FrameStack};
+use base_execution_evm_machine::InterpreterResult;
+use base_execution_evm_machine::{ContextSetters, ContextTr, FrameStack};
 use base_execution_evm_runtime::EthInstructions;
 use base_execution_evm_runtime::EvmMachine;
 use base_execution_evm_runtime::{
     EthFrame, EvmTr, EvmTrError, Handler, MainnetHandler, PrecompileProvider, SystemCallTx,
 };
 use base_state::DatabaseCommit;
-use revm_interpreter::InterpreterResult;
 use revm_primitives::{Address, Bytes};
 
 use crate::{

@@ -10,7 +10,7 @@ use alloc::{
 use core::cell::RefCell;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_evm_context::DBErrorMarker;
+use base_execution_evm_machine::DBErrorMarker;
 use base_execution_evm_runtime::{
     Database, DatabaseRef,
     bytecode::opcode::{OpCode, PUSH0, PUSH32},

@@ -394,7 +394,7 @@ mod tests {
     use base_common_chain_config::BaseUpgrade;
     use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
-    use base_evm_context::{BlockEnv, CfgEnv};
+    use base_execution_evm_machine::{BlockEnv, CfgEnv};
     use base_execution_evm_runtime::BaseSpecId;
     use base_execution_evm_runtime::NoOpInspector;
     use base_execution_evm_runtime::{

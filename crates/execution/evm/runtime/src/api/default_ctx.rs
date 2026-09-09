@@ -1,6 +1,6 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
 use base_common_chain_config::BaseUpgrade;
-use base_evm_context::CfgEnv;
+use base_execution_evm_machine::CfgEnv;
 use base_execution_evm_runtime::{Context, MainContext, database::EmptyDB};
 
 use crate::{BaseSpecId, BaseTransaction, L1BlockInfo};

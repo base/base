@@ -16,10 +16,10 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet},
 };
 use base_common_types_chain::transaction::Either;
-use base_evm_context::Context;
-use base_evm_context::ContextTr;
-use revm_interpreter::CallInputs;
-use revm_interpreter::InterpreterResult;
+use base_execution_evm_machine::CallInputs;
+use base_execution_evm_machine::Context;
+use base_execution_evm_machine::ContextTr;
+use base_execution_evm_machine::InterpreterResult;
 use revm_precompile::PrecompileFn;
 use revm_precompile::PrecompileId;
 use revm_precompile::PrecompileResult;
@@ -557,8 +557,8 @@ impl core::fmt::Debug for PrecompilesMap {
 impl<TxEnv, CfgEnv, DB, Chain> PrecompileProvider<Context<TxEnv, CfgEnv, DB, Chain>>
     for PrecompilesMap
 where
-    TxEnv: base_evm_context::Transaction,
-    CfgEnv: base_evm_context::Cfg,
+    TxEnv: base_execution_evm_machine::Transaction,
+    CfgEnv: base_execution_evm_machine::Cfg,
     DB: Database,
 {
     type Output = InterpreterResult;
@@ -990,14 +990,14 @@ impl core::error::Error for MovePrecompileError {}
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, address};
-    use base_evm_context::BlockEnv;
+    use base_execution_evm_machine::BlockEnv;
     use base_state::EmptyDB;
     use revm_precompile::PrecompileId;
     use revm_precompile::PrecompileOutput;
     use revm_primitives::hardfork::SpecId;
 
     use super::*;
-    use base_evm_context::EthEvmContext;
+    use base_execution_evm_machine::EthEvmContext;
 
     #[test]
     fn test_map_precompile() {

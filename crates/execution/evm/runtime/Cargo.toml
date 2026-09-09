@@ -22,14 +22,13 @@ base-state = { workspace = true }
 revm-state = { workspace = true }
 revm-bytecode = { workspace = true }
 alloy-primitives = {workspace = true}
-base-evm-context = {workspace = true}
 alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
-revm-interpreter = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-types-rpc = { workspace = true}
+base-execution-evm-machine = {workspace = true}
 metrics = { workspace = true, optional = true }
 base-execution-evm-precompiles = {workspace = true }
 base-metrics = { workspace = true, optional = true }
@@ -73,13 +72,12 @@ std = [
     "base-execution-evm-precompiles/std",
     "base-common-types-chain/std",
     "base-common-types-rpc/std",
-    "base-evm-context/std",
+    "base-execution-evm-machine/std",
     "base-metrics?/std",
     "base-state/std",
     "derive_more/std",
     "either/std",
     "revm-bytecode/std",
-    "revm-interpreter/std",
     "revm-precompile/std",
     "revm-primitives/std",
     "revm-state/std",
@@ -94,12 +92,11 @@ serde = [
     "alloy-primitives/serde",
     "base-common-chain-config/serde",
     "base-common-types-chain/serde",
-    "base-evm-context/serde",
+    "base-execution-evm-machine/serde",
     "base-state/serde",
     "dep:serde",
     "either/serde",
     "revm-bytecode/serde",
-    "revm-interpreter/serde",
     "revm-primitives/serde",
     "revm-state/serde",
 ]
@@ -114,13 +111,13 @@ blst = ["base-execution-evm-precompiles/blst", "revm-precompile/blst"]
 c-kzg = ["base-execution-evm-precompiles/c-kzg", "revm-precompile/c-kzg"]
 portable = ["base-execution-evm-precompiles/portable", "revm-precompile/portable"]
 secp256k1 = ["base-execution-evm-precompiles/secp256k1", "revm-precompile/secp256k1"]
-memory_limit = ["base-execution-evm-precompiles/memory_limit", "base-evm-context/memory_limit", "revm-interpreter/memory_limit"]
-optional_no_base_fee = ["base-execution-evm-precompiles/optional_no_base_fee", "base-evm-context/optional_no_base_fee"]
-optional_eip3541 = ["base-execution-evm-precompiles/optional_eip3541", "base-evm-context/optional_eip3541"]
-optional_eip3607 = ["base-execution-evm-precompiles/optional_eip3607", "base-evm-context/optional_eip3607"]
-optional_fee_charge = ["base-execution-evm-precompiles/optional_fee_charge", "base-evm-context/optional_fee_charge"]
-optional_balance_check = ["base-execution-evm-precompiles/optional_balance_check", "base-evm-context/optional_balance_check"]
-optional_block_gas_limit = ["base-execution-evm-precompiles/optional_block_gas_limit", "base-evm-context/optional_block_gas_limit"]
+memory_limit = ["base-execution-evm-precompiles/memory_limit", "base-execution-evm-machine/memory_limit"]
+optional_no_base_fee = ["base-execution-evm-precompiles/optional_no_base_fee", "base-execution-evm-machine/optional_no_base_fee"]
+optional_eip3541 = ["base-execution-evm-precompiles/optional_eip3541", "base-execution-evm-machine/optional_eip3541"]
+optional_eip3607 = ["base-execution-evm-precompiles/optional_eip3607", "base-execution-evm-machine/optional_eip3607"]
+optional_fee_charge = ["base-execution-evm-precompiles/optional_fee_charge", "base-execution-evm-machine/optional_fee_charge"]
+optional_balance_check = ["base-execution-evm-precompiles/optional_balance_check", "base-execution-evm-machine/optional_balance_check"]
+optional_block_gas_limit = ["base-execution-evm-precompiles/optional_block_gas_limit", "base-execution-evm-machine/optional_block_gas_limit"]
 serde-json = ["serde", "tracer"]
 tracer = [
     "dep:serde",
@@ -144,10 +141,10 @@ dev = [
     "optional_eip7623",
     "optional_no_base_fee",
 ]
-hashbrown = ["revm-interpreter/hashbrown", "revm-precompile/hashbrown"]
+hashbrown = ["base-execution-evm-machine/hashbrown", "revm-precompile/hashbrown"]
 map-foldhash = ["revm-primitives/map-foldhash"]
-optional_eip7623 = ["base-evm-context/optional_eip7623"]
-optional_priority_fee_check = ["base-evm-context/optional_priority_fee_check"]
+optional_eip7623 = ["base-execution-evm-machine/optional_eip7623"]
+optional_priority_fee_check = ["base-execution-evm-machine/optional_priority_fee_check"]
 p256-aws-lc-rs = ["revm-precompile/p256-aws-lc-rs"]
 parse = ["revm-bytecode/parse"]
 sha3-keccak = ["revm-primitives/sha3-keccak"]

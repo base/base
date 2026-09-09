@@ -19,13 +19,13 @@ alloy-eips = { workspace = true }
 reth-provider = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-context = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-execution-evm-precompiles = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
+base-execution-evm-machine = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+base-execution-evm-precompiles = { workspace = true }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
@@ -40,9 +40,9 @@ base-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
 base-testing-support = { workspace = true }
-base-execution-evm-precompiles = { workspace = true }
 base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-evm-precompiles = { workspace = true }
 alloy-provider = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }

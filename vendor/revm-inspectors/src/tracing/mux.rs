@@ -5,7 +5,7 @@ use base_common_types_rpc::{
     CallConfig, FlatCallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
     MuxConfig, MuxFrame, NoopFrame, PreStateConfig, TransactionInfo,
 };
-use base_evm_context::{ContextTr, HaltReasonTr, ResultAndState};
+use base_execution_evm_machine::{ContextTr, HaltReasonTr, ResultAndState};
 use base_execution_evm_runtime::FrameResult;
 use base_execution_evm_runtime::{
     DatabaseRef, Inspector,

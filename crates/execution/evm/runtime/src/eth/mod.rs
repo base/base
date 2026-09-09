@@ -7,7 +7,7 @@ use core::{
 };
 
 use alloy_primitives::{Address, Bytes};
-use base_evm_context::{
+use base_execution_evm_machine::{
     BlockEnv, CfgEnv, DBErrorMarker, EVMError, HaltReason, ResultAndState, TxEnv,
 };
 use base_execution_evm_runtime::{
@@ -23,7 +23,7 @@ use crate::{Database, Evm, EvmEnv, PrecompilesMap, evm_api::EvmFactory};
 mod tx_result;
 pub use tx_result::*;
 
-pub use base_evm_context::EthEvmContext;
+pub use base_execution_evm_machine::EthEvmContext;
 
 /// Helper builder to construct `EthEvm` instances in a unified way.
 #[derive(Debug)]

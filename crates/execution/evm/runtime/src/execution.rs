@@ -1,12 +1,12 @@
 use std::boxed::Box;
 
-use base_evm_context::{
-    Cfg, ContextTr, Database, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccountTr,
-    Transaction,
-};
-use revm_interpreter::{
+use base_execution_evm_machine::{
     CallInput, CallInputs, CallScheme, CallValue, CreateInputs, CreateScheme, FrameInput,
     GasTracker,
+};
+use base_execution_evm_machine::{
+    Cfg, ContextTr, Database, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccountTr,
+    Transaction,
 };
 use revm_primitives::TxKind;
 use revm_state::Bytecode;

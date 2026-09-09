@@ -9,11 +9,11 @@ use alloc::string::ToString;
 
 use crate::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
-use base_evm_context::{GasParams, JournalCheckpoint};
-use revm_interpreter::gas::Gas;
-use revm_interpreter::gas::KECCAK256;
-use revm_interpreter::gas::KECCAK256WORD;
-use revm_interpreter::gas::LOG;
+use base_execution_evm_machine::gas::Gas;
+use base_execution_evm_machine::gas::KECCAK256;
+use base_execution_evm_machine::gas::KECCAK256WORD;
+use base_execution_evm_machine::gas::LOG;
+use base_execution_evm_machine::{GasParams, JournalCheckpoint};
 use revm_primitives::keccak256;
 use revm_state::AccountInfo;
 use revm_state::Bytecode;
@@ -384,8 +384,8 @@ mod tests {
     use crate::EvmInternals;
     use crate::PrecompileInput;
     use alloy_primitives::{Address, Bytes, U256};
-    use base_evm_context::EthEvmContext;
-    use base_evm_context::GasParams;
+    use base_execution_evm_machine::EthEvmContext;
+    use base_execution_evm_machine::GasParams;
     use base_state::EmptyDB;
     use revm_primitives::hardfork::SpecId;
     use revm_state::Bytecode;

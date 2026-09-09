@@ -3207,24 +3207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-evm-context"
-version = "0.0.0"
-dependencies = [
- "alloy-eip2930",
- "alloy-eip7702",
- "auto_impl",
- "base-state",
- "bitvec",
- "cfg-if",
- "derive-where",
- "either",
- "revm-bytecode",
- "revm-primitives",
- "revm-state",
- "serde",
-]
-
-[[package]]
 name = "base-execution-cli"
 version = "0.0.0"
 dependencies = [
@@ -3297,8 +3279,8 @@ dependencies = [
  "base-common-network",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-rpc",
@@ -3332,7 +3314,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-payload-types",
  "base-protocol",
@@ -3356,6 +3338,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-evm-machine"
+version = "0.0.0"
+dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702",
+ "auto_impl",
+ "base-state",
+ "bitvec",
+ "cfg-if",
+ "derive-where",
+ "either",
+ "revm-bytecode",
+ "revm-primitives",
+ "revm-state",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-execution-evm-macros"
 version = "0.0.0"
 dependencies = [
@@ -3374,7 +3375,7 @@ dependencies = [
  "auto_impl",
  "base-common-chain-config",
  "base-common-types-chain",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-macros",
  "base-state",
  "base64 0.22.1",
@@ -3383,7 +3384,6 @@ dependencies = [
  "k256",
  "p256",
  "proptest",
- "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
  "revm-state",
@@ -3409,7 +3409,7 @@ dependencies = [
  "base-common-network",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-metrics",
  "base-state",
@@ -3418,7 +3418,6 @@ dependencies = [
  "k256",
  "metrics",
  "revm-bytecode",
- "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
  "revm-state",
@@ -3466,8 +3465,8 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-payload-types",
@@ -3556,8 +3555,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
  "base-execution-payload-types",
@@ -3682,8 +3681,8 @@ dependencies = [
  "base-common-flz",
  "base-common-network",
  "base-common-types-chain",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-txpool",
@@ -3821,8 +3820,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
@@ -4053,7 +4052,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-consensus-derive",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof-driver",
  "base-proof-executor",
@@ -4081,7 +4080,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-consensus-derive",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof",
  "base-proof-driver",
@@ -4147,7 +4146,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof-mpt",
  "base-protocol",
@@ -14066,8 +14065,8 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
  "base-execution-payload-types",
@@ -14951,8 +14950,8 @@ dependencies = [
  "base-common-network",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-evm-context",
  "base-execution-evm-blocks",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-txpool",
  "base-protocol",
@@ -15444,7 +15443,7 @@ dependencies = [
  "alloy-sol-types",
  "anstyle",
  "base-common-types-rpc",
- "base-evm-context",
+ "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "boa_engine",
  "boa_gc",
@@ -15454,18 +15453,6 @@ dependencies = [
  "serde_json",
  "snapbox",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "revm-interpreter"
-version = "0.0.0"
-dependencies = [
- "base-evm-context",
- "revm-bytecode",
- "revm-primitives",
- "revm-state",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -15481,7 +15468,7 @@ dependencies = [
  "arrayref",
  "aurora-engine-modexp",
  "aws-lc-rs",
- "base-evm-context",
+ "base-execution-evm-machine",
  "blst",
  "c-kzg",
  "cfg-if",

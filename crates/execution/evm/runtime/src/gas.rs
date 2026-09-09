@@ -1,5 +1,5 @@
 //! GasIspector. Helper Inspector to calculate gas for others.
-use revm_interpreter::{CallOutcome, CreateOutcome, Gas};
+use base_execution_evm_machine::{CallOutcome, CreateOutcome, Gas};
 
 /// Helper that keeps track of gas.
 #[derive(Clone, Copy, Debug)]
@@ -101,10 +101,10 @@ impl GasInspector {
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::{CfgEnv, Context, TxEnv};
+    use base_execution_evm_machine::{CallInputs, CreateInputs, Interpreter, InterpreterResult};
+    use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
     use base_execution_evm_runtime::{MainBuilder, MainContext};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use revm_interpreter::{CallInputs, CreateInputs, Interpreter, InterpreterResult};
     use revm_primitives::{Address, Bytes, TxKind, hardfork::SpecId};
     use revm_state::bytecode::{Bytecode, opcode};
 
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_call_override_inspector() {
-        use revm_interpreter::{CallOutcome, CreateOutcome, InstructionResult};
+        use base_execution_evm_machine::{CallOutcome, CreateOutcome, InstructionResult};
 
         let mut inspector = CallOverrideInspector::default();
         inspector.call_override.push(Some(CallOutcome::new(

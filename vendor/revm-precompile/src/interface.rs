@@ -3,7 +3,7 @@
 use core::fmt::{self, Debug};
 use std::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
-use base_evm_context::{AnyError, GasTracker};
+use base_execution_evm_machine::{AnyError, GasTracker};
 use revm_primitives::{Bytes, OnceLock};
 
 use crate::bls12_381::{G1Point, G1PointScalar, G2Point, G2PointScalar};

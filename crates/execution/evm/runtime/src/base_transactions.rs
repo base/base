@@ -1,6 +1,6 @@
 use alloy_eips::Typed2718;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
-use base_evm_context::TxEnv;
+use base_execution_evm_machine::TxEnv;
 
 use crate::{FromRecoveredTx, FromTxWithEncoded};
 

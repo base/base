@@ -1,7 +1,9 @@
 use core::ops::Range;
 
-use base_evm_context::{GasParams, Output};
-use revm_interpreter::{CallOutcome, CreateOutcome, Gas, InstructionResult, InterpreterResult};
+use base_execution_evm_machine::{
+    CallOutcome, CreateOutcome, Gas, InstructionResult, InterpreterResult,
+};
+use base_execution_evm_machine::{GasParams, Output};
 use revm_primitives::Address;
 
 /// Call Frame

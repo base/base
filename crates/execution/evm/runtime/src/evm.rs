@@ -2,7 +2,7 @@ use base_execution_evm_runtime::EvmMachine as RevmEvm;
 use core::ops::{Deref, DerefMut};
 
 use alloy_primitives::{Address, Bytes};
-use base_evm_context::{
+use base_execution_evm_machine::{
     BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, ExecResultAndState,
     ExecutionResult, FrameStack, JournalTr, ResultAndState,
 };
@@ -447,12 +447,12 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, U256};
+    use base_execution_evm_machine::CfgEnv;
     use base_execution_evm_precompiles::{
         JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
         JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
         JOVIAN_PAIRING_MAX_INPUT_SIZE,
     };
-    use base_evm_context::CfgEnv;
     use base_execution_evm_runtime::database::EmptyDB;
     use base_execution_evm_runtime::{EvmFactory, EvmInternals, Precompile, PrecompileInput};
     use rstest::rstest;

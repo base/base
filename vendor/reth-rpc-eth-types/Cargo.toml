@@ -32,7 +32,6 @@ alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 base-common-flz = { workspace = true }
 jsonrpsee-types = { workspace = true }
-base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
@@ -43,6 +42,7 @@ reth-rpc-server-types = { workspace = true }
 base-common-chain-config = {workspace = true}
 base-execution-evm-blocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
+base-execution-evm-machine = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 futures = { workspace = true, features = ["default"] }

@@ -1,19 +1,21 @@
 //! End-to-end precompile execution and gas accounting regressions.
 //! The scripted providers return deliberately invalid gas usage to exercise runtime validation.
 
-use base_evm_context::{Context, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv};
+use base_execution_evm_machine::{
+    Context, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
+};
 use base_execution_evm_runtime::EvmMachine;
 use base_state::InMemoryDB;
 
 use revm_primitives::{TxKind, U256, address, hardfork::SpecId};
 use revm_state::AccountInfo;
 
+use base_execution_evm_machine::{CallInputs, InstructionResult, InterpreterResult};
+use base_execution_evm_machine::{Cfg, ContextTr};
 use base_execution_evm_precompiles::{
     EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
 };
-use base_evm_context::{Cfg, ContextTr};
 use base_execution_evm_runtime::{EthInstructions, ExecuteEvm, MainContext};
-use revm_interpreter::{CallInputs, InstructionResult, InterpreterResult};
 use revm_precompile::{PrecompileOutput, PrecompileStatus};
 use revm_primitives::{Address, AddressSet, Bytes};
 

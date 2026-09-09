@@ -9,7 +9,7 @@ use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
     constants::EMPTY_WITHDRAWALS, proofs,
 };
-use base_evm_context::Block as _;
+use base_execution_evm_machine::Block as _;
 use base_execution_evm_runtime::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
 

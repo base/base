@@ -158,7 +158,7 @@ impl OpCode {
 
     /// Returns true if the opcode modifies memory.
     ///
-    /// <https://docs.rs/revm-interpreter/latest/revm_interpreter/instructions/index.html>
+    /// <https://docs.rs/base-execution-evm-machine/latest/base_execution_evm_machine/instructions/index.html>
     ///
     /// <https://github.com/crytic/evm-opcodes>
     #[inline]

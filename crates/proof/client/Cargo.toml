@@ -16,7 +16,6 @@ thiserror = { workspace = true }
 base-proof = { workspace = true }
 base-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-context = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
@@ -24,6 +23,7 @@ base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
+base-execution-evm-machine = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 
 [dev-dependencies]

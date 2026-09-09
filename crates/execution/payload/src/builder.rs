@@ -14,13 +14,13 @@ use base_common_types_chain::{
     BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
-use base_evm_context::{Block, BlockEnv};
-use base_execution_evm_precompiles::IntrinsicGas;
 use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
     BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,
     Database, ExecutionWitnessRecord,
 };
+use base_execution_evm_machine::{Block, BlockEnv};
+use base_execution_evm_precompiles::IntrinsicGas;
 use base_execution_evm_runtime::L1BlockInfo;
 use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{CommitChanges, Evm as AlloyEvm, TxResult};

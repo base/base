@@ -15,11 +15,11 @@ use base_common_types_rpc::{
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
 };
-use base_evm_context::{Block, Cfg, ResultAndState, Transaction};
 use base_execution_evm_blocks::{
     BlockBuilder, BlockEnvironment, BlockExecutor, CancelOnDrop, Evm, EvmEnvFor, EvmFor,
     HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
 };
+use base_execution_evm_machine::{Block, Cfg, ResultAndState, Transaction};
 use base_execution_evm_runtime::{
     Database, DatabaseCommit,
     database::{EvmDatabaseError, State},

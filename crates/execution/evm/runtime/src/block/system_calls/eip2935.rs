@@ -5,7 +5,7 @@ use alloc::string::ToString;
 use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::B256;
-use base_evm_context::{Block, ResultAndState};
+use base_execution_evm_machine::{Block, ResultAndState};
 
 use crate::{Evm, block::BlockExecutionError, block::BlockValidationError};
 

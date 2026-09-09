@@ -3,7 +3,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use base_common_chain_config::BaseUpgrade;
 use base_common_types_chain::Predeploys;
-use base_evm_context::{
+use base_execution_evm_machine::{
     Block, Cfg, ContextTr, Database, EVMError, ExecutionResult, InitialAndFloorGas,
     InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr, LocalContextTr,
     ResultGas, Transaction, take_error,
@@ -382,7 +382,7 @@ mod tests {
 
     use alloy_primitives::uint;
     use base_common_types_chain::Predeploys;
-    use base_evm_context::{BlockEnv, CfgEnv, Context, TxEnv};
+    use base_execution_evm_machine::{BlockEnv, CfgEnv, Context, TxEnv};
     use base_execution_evm_runtime::{Handler, NoOpInspector};
     use base_execution_evm_runtime::{
         InspectEvm,
@@ -783,7 +783,9 @@ mod tests {
 
     /// Runs CLZ bytecode (`PUSH1 0x80, CLZ, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`)
     /// against the given spec and returns the execution result.
-    fn run_clz_bytecode(spec: BaseSpecId) -> base_evm_context::ExecutionResult<BaseHaltReason> {
+    fn run_clz_bytecode(
+        spec: BaseSpecId,
+    ) -> base_execution_evm_machine::ExecutionResult<BaseHaltReason> {
         let contract = Address::from([0x42; 20]);
         let mut db = InMemoryDB::default();
         db.insert_account_info(

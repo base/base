@@ -1,5 +1,5 @@
 //! Shared transaction execution result.
-use base_evm_context::ResultAndState;
+use base_execution_evm_machine::ResultAndState;
 
 use crate::block::TxResult;
 

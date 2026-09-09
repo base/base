@@ -1,7 +1,7 @@
 //! Contains the [`BaseTxResult`] type.
 
 use alloy_primitives::Address;
-use base_evm_context::ResultAndState;
+use base_execution_evm_machine::ResultAndState;
 use base_execution_evm_runtime::state::AccountInfo;
 use base_execution_evm_runtime::{EthTxResult, TxResult as TxResultTrait};
 

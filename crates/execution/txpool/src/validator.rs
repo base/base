@@ -14,20 +14,20 @@ use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chain_config::DaFootprintGasScalarUpdate;
 use base_common_chain_config::Upgrades;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
-use base_execution_evm_precompiles::NonceManagerStorage;
-use base_execution_evm_precompiles::{
-    BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
-};
 use base_common_types_chain::{
     AccountChange, BaseBlock, BlockHeader, ChangeType, Eip8130Constants, Eip8130Contracts,
     Eip8130Signed, Eip8130TimestampError, InitialActor, SignedChange, Transaction,
     constants::KECCAK_EMPTY,
 };
-use base_evm_context::JournalCheckpoint;
+use base_execution_evm_machine::JournalCheckpoint;
+use base_execution_evm_precompiles::NonceManagerStorage;
 use base_execution_evm_precompiles::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
     TxAuthError,
+};
+use base_execution_evm_precompiles::{
+    BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
 };
 use base_execution_evm_runtime::state::{AccountInfo, Bytecode};
 use base_execution_evm_runtime::{BaseSpecId, L1BlockInfo};
@@ -2172,8 +2172,8 @@ mod tests {
         SignableTransaction, SignedAccountChanges, SignedChange, TxDeposit, TxEip1559, TxEip8130,
         transaction::SignerRecoverable,
     };
-    use base_execution_evm_precompiles::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_evm_precompiles::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_txpool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };

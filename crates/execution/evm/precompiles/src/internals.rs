@@ -4,19 +4,19 @@ use alloc::boxed::Box;
 use core::{error::Error, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256};
-use base_evm_context::{
+use base_execution_evm_machine::SStoreResult;
+use base_execution_evm_machine::StateLoad;
+use base_execution_evm_machine::{
     Cfg, ContextTr, DBErrorMarker, InvalidTransaction, JournalCheckpoint, JournalLoadError,
     JournalTr, JournaledAccountTr, TransferError,
 };
-use revm_interpreter::SStoreResult;
-use revm_interpreter::StateLoad;
 use revm_primitives::StorageKey;
 use revm_primitives::StorageValue;
 use revm_state::Account;
 use revm_state::AccountInfo;
 use revm_state::Bytecode;
 
-use base_evm_context::BlockEnvironment;
+use base_execution_evm_machine::BlockEnvironment;
 use base_state::Database;
 
 /// Erased error type.
@@ -48,9 +48,9 @@ impl EvmInternalsError {
     }
 }
 
-/// Dyn-compatible wrapper around [`base_evm_context::Transaction`].
+/// Dyn-compatible wrapper around [`base_execution_evm_machine::Transaction`].
 ///
-/// [`base_evm_context::Transaction`] is not dyn-compatible because of methods returning
+/// [`base_execution_evm_machine::Transaction`] is not dyn-compatible because of methods returning
 /// associated types (e.g. `access_list`, `authorization_list`). This trait mirrors
 /// the dyn-compatible subset of those methods, allowing transaction data to be
 /// accessed through `&dyn TransactionTr` in [`EvmInternals`].
@@ -167,78 +167,78 @@ pub trait TransactionTr {
 
 impl<T> TransactionTr for T
 where
-    T: base_evm_context::Transaction,
+    T: base_execution_evm_machine::Transaction,
 {
     fn tx_type(&self) -> u8 {
-        base_evm_context::Transaction::tx_type(self)
+        base_execution_evm_machine::Transaction::tx_type(self)
     }
 
     fn caller(&self) -> Address {
-        base_evm_context::Transaction::caller(self)
+        base_execution_evm_machine::Transaction::caller(self)
     }
 
     fn gas_limit(&self) -> u64 {
-        base_evm_context::Transaction::gas_limit(self)
+        base_execution_evm_machine::Transaction::gas_limit(self)
     }
 
     fn value(&self) -> U256 {
-        base_evm_context::Transaction::value(self)
+        base_execution_evm_machine::Transaction::value(self)
     }
 
     fn input(&self) -> &Bytes {
-        base_evm_context::Transaction::input(self)
+        base_execution_evm_machine::Transaction::input(self)
     }
 
     fn nonce(&self) -> u64 {
-        base_evm_context::Transaction::nonce(self)
+        base_execution_evm_machine::Transaction::nonce(self)
     }
 
     fn kind(&self) -> TxKind {
-        base_evm_context::Transaction::kind(self)
+        base_execution_evm_machine::Transaction::kind(self)
     }
 
     fn chain_id(&self) -> Option<u64> {
-        base_evm_context::Transaction::chain_id(self)
+        base_execution_evm_machine::Transaction::chain_id(self)
     }
 
     fn gas_price(&self) -> u128 {
-        base_evm_context::Transaction::gas_price(self)
+        base_execution_evm_machine::Transaction::gas_price(self)
     }
 
     fn blob_versioned_hashes(&self) -> &[B256] {
-        base_evm_context::Transaction::blob_versioned_hashes(self)
+        base_execution_evm_machine::Transaction::blob_versioned_hashes(self)
     }
 
     fn max_fee_per_blob_gas(&self) -> u128 {
-        base_evm_context::Transaction::max_fee_per_blob_gas(self)
+        base_execution_evm_machine::Transaction::max_fee_per_blob_gas(self)
     }
 
     fn total_blob_gas(&self) -> u64 {
-        base_evm_context::Transaction::total_blob_gas(self)
+        base_execution_evm_machine::Transaction::total_blob_gas(self)
     }
 
     fn calc_max_data_fee(&self) -> U256 {
-        base_evm_context::Transaction::calc_max_data_fee(self)
+        base_execution_evm_machine::Transaction::calc_max_data_fee(self)
     }
 
     fn authorization_list_len(&self) -> usize {
-        base_evm_context::Transaction::authorization_list_len(self)
+        base_execution_evm_machine::Transaction::authorization_list_len(self)
     }
 
     fn max_fee_per_gas(&self) -> u128 {
-        base_evm_context::Transaction::max_fee_per_gas(self)
+        base_execution_evm_machine::Transaction::max_fee_per_gas(self)
     }
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        base_evm_context::Transaction::max_priority_fee_per_gas(self)
+        base_execution_evm_machine::Transaction::max_priority_fee_per_gas(self)
     }
 
     fn effective_gas_price(&self, base_fee: u128) -> u128 {
-        base_evm_context::Transaction::effective_gas_price(self, base_fee)
+        base_execution_evm_machine::Transaction::effective_gas_price(self, base_fee)
     }
 
     fn max_balance_spending(&self) -> Result<U256, InvalidTransaction> {
-        base_evm_context::Transaction::max_balance_spending(self)
+        base_execution_evm_machine::Transaction::max_balance_spending(self)
     }
 
     fn effective_balance_spending(
@@ -246,7 +246,9 @@ where
         base_fee: u128,
         blob_price: u128,
     ) -> Result<U256, InvalidTransaction> {
-        base_evm_context::Transaction::effective_balance_spending(self, base_fee, blob_price)
+        base_execution_evm_machine::Transaction::effective_balance_spending(
+            self, base_fee, blob_price,
+        )
     }
 }
 

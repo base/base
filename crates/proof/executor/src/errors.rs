@@ -7,7 +7,7 @@
 use alloc::string::String;
 
 use base_common_types_chain::EIP1559ParamError;
-use base_evm_context::DBErrorMarker;
+use base_execution_evm_machine::DBErrorMarker;
 use base_execution_evm_runtime::BlockExecutionError;
 use base_proof_mpt::TrieNodeError;
 use thiserror::Error;

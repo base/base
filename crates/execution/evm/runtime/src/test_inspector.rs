@@ -4,7 +4,9 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 
-use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
+use base_execution_evm_machine::{
+    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+};
 use revm_primitives::{Address, Log, U256};
 
 use crate::Inspector;
@@ -253,7 +255,7 @@ pub mod default_tests {
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::{CfgEnv, Context, TxEnv};
+    use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
     use base_execution_evm_runtime::{ExecuteEvm, MainBuilder, MainContext};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_primitives::{

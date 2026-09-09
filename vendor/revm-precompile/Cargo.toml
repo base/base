@@ -40,10 +40,11 @@ ark-serialize = { workspace = true }
 revm-primitives = { workspace = true }
 aurora-engine-modexp = { workspace = true }
 ark-ff = { workspace = true, features = ["asm"] }
+base-execution-evm-machine = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 p256 = { workspace = true, features = ["ecdsa"] }
-substrate-bn = { workspace = true, optional = true }
 gmp-mpfr-sys = { workspace = true, optional = true }
+substrate-bn = { workspace = true, optional = true }
 ark-bls12-381 = { workspace = true, features = ["curve"] }
 ark-bn254_0_6_0 = { workspace = true, features = ["curve"] }
 blst = { workspace = true, optional = true, features = ["default"] }
@@ -55,13 +56,14 @@ secp256k1_0_31_1 = { workspace = true, features = [
     "rand",
     "global-context",
 ], optional = true }
-base-evm-context = { workspace = true }
+
 [dev-dependencies]
 ark-std = { workspace = true }
 p256 = { workspace = true, features = ["ecdsa"] }
 rstest = { workspace = true, features = ["default"] }
 rand_0_10_2 = { workspace = true, features = ["default", "std"] }
 codspeed-criterion-compat_5_0 = { workspace = true, features = ["default"] }
+
 [lints]
 workspace = true
 
@@ -70,7 +72,13 @@ asm-keccak = ["revm-primitives/asm-keccak"]
 blst = ["dep:blst"]
 bn = ["dep:substrate-bn"]
 c-kzg = ["dep:c-kzg"]
-default = ["std", "secp256k1", "blst", "c-kzg", "portable"]
+default = [
+    "std",
+    "secp256k1",
+    "blst",
+    "c-kzg",
+    "portable",
+]
 gmp = ["dep:gmp-mpfr-sys"]
 hashbrown = ["revm-primitives/hashbrown"]
 p256-aws-lc-rs = ["dep:aws-lc-rs"]
@@ -78,7 +86,7 @@ portable = ["c-kzg?/portable", "blst?/portable"]
 secp256k1 = ["dep:secp256k1_0_31_1"]
 std = [
     "revm-primitives/std",
-    "base-evm-context/std",
+    "base-execution-evm-machine/std",
     "k256/std",
     "c-kzg?/std",
     "secp256k1_0_31_1?/std",

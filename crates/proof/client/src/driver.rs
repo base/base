@@ -3,7 +3,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::B256;
 use base_consensus_derive::EthereumDataSource;
-use base_evm_context::BlockEnv;
+use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
 use base_proof::{

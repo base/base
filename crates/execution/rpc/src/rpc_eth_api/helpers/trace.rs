@@ -5,11 +5,11 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_common_types_rpc::{BlockId, TransactionInfo};
-use base_evm_context::{Block, ResultAndState};
 use base_execution_evm_blocks::{
     BlockExecutor, Evm, EvmEnvFor, EvmFactoryExt, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv,
     TracingCtx, TxEnvFor,
 };
+use base_execution_evm_machine::{Block, ResultAndState};
 use futures::Future;
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;

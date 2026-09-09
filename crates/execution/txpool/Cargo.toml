@@ -29,12 +29,12 @@ reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
-base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-observability-events = { workspace = true }
+base-execution-evm-machine = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }

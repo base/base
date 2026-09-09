@@ -19,10 +19,10 @@
 //! ```
 //!
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
-use base_evm_context::{ContextSetters, ContextTr, ExecResultAndState, TxEnv};
+use base_execution_evm_machine::InterpreterResult;
+use base_execution_evm_machine::{ContextSetters, ContextTr, ExecResultAndState, TxEnv};
 use base_execution_evm_runtime::EvmMachine;
 use base_state::DatabaseCommit;
-use revm_interpreter::InterpreterResult;
 use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
 
 use crate::{ExecuteCommitEvm, ExecuteEvm, Handler, MainnetHandler, PrecompileProvider};
@@ -263,7 +263,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::{
+    use base_execution_evm_machine::{
         Context, ExecutionResult, Output, ResultGas, SuccessReason, Transaction,
     };
     use base_state::InMemoryDB;

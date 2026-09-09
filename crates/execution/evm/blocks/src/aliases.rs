@@ -10,14 +10,14 @@ pub type EvmFactoryFor = base_execution_evm_runtime::BaseEvmFactory;
 pub type SpecFor = base_execution_evm_runtime::BaseSpecId;
 
 /// Helper to access [`base_execution_evm_runtime::EvmFactory::BlockEnv`] for a given [`crate::BaseEvmConfig`].
-pub type BlockEnvFor = base_evm_context::BlockEnv;
+pub type BlockEnvFor = base_execution_evm_machine::BlockEnv;
 
 /// Helper to access [`base_execution_evm_runtime::EvmFactory::Evm`] for a given [`crate::BaseEvmConfig`].
 pub type EvmFor<DB, I = NoOpInspector> = base_execution_evm_runtime::BaseEvm<DB, I>;
 
 /// Helper to access [`base_execution_evm_runtime::EvmFactory::Error`] for a given [`crate::BaseEvmConfig`].
 pub type EvmErrorFor<DB> =
-    base_evm_context::EVMError<DB, base_execution_evm_runtime::BaseTransactionError>;
+    base_execution_evm_machine::EVMError<DB, base_execution_evm_runtime::BaseTransactionError>;
 
 /// Helper to access [`base_execution_evm_runtime::EvmFactory::Context`] for a given [`crate::BaseEvmConfig`].
 pub type EvmContextFor<DB> = base_execution_evm_runtime::BaseContext<DB>;

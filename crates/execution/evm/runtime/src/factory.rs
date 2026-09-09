@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_evm_context::{BlockEnv, DBErrorMarker, EVMError};
+use base_execution_evm_machine::{BlockEnv, DBErrorMarker, EVMError};
 use base_execution_evm_runtime::{Context, Inspector};
 use base_execution_evm_runtime::{Database, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap};
 
@@ -97,7 +97,7 @@ impl EvmFactory for BaseEvmFactory {
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::{BlockEnv, CfgEnv};
+    use base_execution_evm_machine::{BlockEnv, CfgEnv};
     use base_execution_evm_runtime::database::EmptyDB;
     use base_execution_evm_runtime::{EvmEnv, NoOpInspector};
 

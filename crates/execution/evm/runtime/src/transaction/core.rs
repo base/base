@@ -4,7 +4,7 @@ use alloc::vec;
 
 use alloy_eips::Encodable2718;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
-use base_evm_context::{Transaction, TxEnv};
+use base_execution_evm_machine::{Transaction, TxEnv};
 use base_execution_evm_runtime::primitives::{Address, B256, Bytes, TxKind, U256};
 use base_execution_evm_runtime::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, SystemCallTx};
 
@@ -261,7 +261,7 @@ impl base_execution_evm_runtime::TransactionEnvMut for BaseTransaction {
         self.base.set_nonce(nonce);
     }
 
-    fn set_access_list(&mut self, access_list: base_evm_context::AccessList) {
+    fn set_access_list(&mut self, access_list: base_execution_evm_machine::AccessList) {
         self.base.set_access_list(access_list);
     }
 }
@@ -365,7 +365,7 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction {
 mod tests {
     use alloy_eips::Encodable2718;
     use base_common_types_chain::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
-    use base_evm_context::Transaction;
+    use base_execution_evm_machine::Transaction;
     use base_execution_evm_runtime::primitives::{Address, B256, Bytes};
 
     use super::*;

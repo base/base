@@ -9,10 +9,10 @@ use base_common_types_rpc::{
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
 };
-use base_evm_context::{Block, ExecutionResult};
 use base_execution_evm_blocks::{
     BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor,
 };
+use base_execution_evm_machine::{Block, ExecutionResult};
 use base_execution_evm_runtime::{
     Database,
     primitives::{Address, Bytes, TxKind, U256},

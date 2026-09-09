@@ -39,7 +39,7 @@ mod tests {
     fn test_flz_native_evm_parity(#[case] input: Bytes) {
         // Bytecode for a contract wrapping LibZip/FastLZ for testing.
         // Source: https://github.com/danyalprout/fastlz/blob/main/src/FastLz.sol#L6-L10
-        use base_evm_context::TxEnv;
+        use base_execution_evm_machine::TxEnv;
 
         sol! {
             interface FastLz {

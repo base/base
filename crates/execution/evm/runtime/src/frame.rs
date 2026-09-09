@@ -1,14 +1,14 @@
 use core::cmp::min;
 use std::{borrow::ToOwned, boxed::Box, vec::Vec};
 
-use base_evm_context::{
-    Cfg, ContextError, ContextTr, Database, FrameToken, FromStringError, JournalCheckpoint,
-    JournalTr, JournaledAccountTr, OutFrame, take_error,
-};
-use revm_interpreter::{
+use base_execution_evm_machine::{
     CallInput, CallInputs, CallOutcome, CallValue, CreateInputs, CreateOutcome, CreateScheme,
     FrameInput, Gas, GasTracker, InputsImpl, InstructionResult, Interpreter, InterpreterAction,
     InterpreterResult, SharedMemory, interpreter::ExtBytecode, interpreter_action::FrameInit,
+};
+use base_execution_evm_machine::{
+    Cfg, ContextError, ContextTr, Database, FrameToken, FromStringError, JournalCheckpoint,
+    JournalTr, JournaledAccountTr, OutFrame, take_error,
 };
 use revm_primitives::{
     Address, Bytes, U256,

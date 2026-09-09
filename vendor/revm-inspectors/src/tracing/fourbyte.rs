@@ -24,7 +24,7 @@ use alloc::format;
 
 use alloy_primitives::{Selector, hex, map::HashMap};
 use base_common_types_rpc::FourByteFrame;
-use base_evm_context::{ContextTr, LocalContextTr};
+use base_execution_evm_machine::{ContextTr, LocalContextTr};
 use base_execution_evm_runtime::{
     Inspector,
     interpreter::{CallInput, CallInputs, CallOutcome},

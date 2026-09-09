@@ -8,7 +8,7 @@ sol! {
     /// Precompile cannot be executed via delegatecall or callcode.
     error DelegateCallNotAllowed();
 }
-use base_evm_context::JournalLoadError;
+use base_execution_evm_machine::JournalLoadError;
 
 use crate::neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult};
 
@@ -60,8 +60,8 @@ pub enum BasePrecompileError {
     Fatal(String),
 }
 
-impl From<JournalLoadError<base_evm_context::ErasedError>> for BasePrecompileError {
-    fn from(value: JournalLoadError<base_evm_context::ErasedError>) -> Self {
+impl From<JournalLoadError<base_execution_evm_machine::ErasedError>> for BasePrecompileError {
+    fn from(value: JournalLoadError<base_execution_evm_machine::ErasedError>) -> Self {
         match value {
             JournalLoadError::DBError(e) => Self::Fatal(e.to_string()),
             JournalLoadError::ColdLoadSkipped => Self::OutOfGas,

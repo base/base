@@ -1,5 +1,5 @@
 //! Contains the `[BaseHaltReason]` type.
-use base_evm_context::HaltReason;
+use base_execution_evm_machine::HaltReason;
 
 /// Base halt reason.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -30,7 +30,7 @@ impl TryFrom<BaseHaltReason> for HaltReason {
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
-    use base_evm_context::OutOfGasError;
+    use base_execution_evm_machine::OutOfGasError;
 
     use super::*;
 

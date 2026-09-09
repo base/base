@@ -1,13 +1,13 @@
 use base_execution_evm_runtime::EvmMachine;
 use std::vec::Vec;
 
-use base_evm_context::{
+use base_execution_evm_machine::InterpreterResult;
+use base_execution_evm_machine::{
     Block, ContextSetters, ContextTr, Database, EVMError, ExecResultAndState, ExecutionResult,
     HaltReason, InvalidTransaction, JournalTr, ResultAndState, ResultVecAndState, Transaction,
     TransactionIndexedError,
 };
 use base_state::DatabaseCommit;
-use revm_interpreter::InterpreterResult;
 use revm_state::EvmState;
 
 use crate::{Handler, MainnetHandler, PrecompileProvider};
@@ -186,7 +186,7 @@ where
     type State = EvmState;
     type Error = EVMError<<CTX::Db as Database>::Error, InvalidTransaction>;
     type Tx = <CTX as ContextTr>::Tx;
-    type Block = base_evm_context::BlockEnv;
+    type Block = base_execution_evm_machine::BlockEnv;
 
     #[inline]
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {

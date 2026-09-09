@@ -44,7 +44,7 @@ members = [
   "crates/common/chain/config",
   "crates/common/types/chain",
   "crates/execution/evm/runtime",
-  "crates/common/evm-context",
+  "crates/execution/evm/machine",
   "crates/common/flz",
   "crates/common/l1-fees",
   "crates/common/network",
@@ -206,7 +206,6 @@ members = [
   "vendor/reth-zstd-compressors",
   "vendor/revm-bytecode",
   "vendor/revm-inspectors",
-  "vendor/revm-interpreter",
   "vendor/revm-precompile",
   "vendor/revm-primitives",
   "vendor/revm-state",
@@ -447,12 +446,11 @@ base-balance-monitor = { path = "crates/utilities/balance-monitor", default-feat
 
 # revm
 revm-state = { path = "vendor/revm-state", default-features = false }
-base-evm-context = { path = "crates/common/evm-context", default-features = false }
+base-execution-evm-machine = { path = "crates/execution/evm/machine", default-features = false }
 revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
 revm-precompile = { path = "vendor/revm-precompile", default-features = false }
 revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
 revm-primitives = { path = "vendor/revm-primitives", default-features = false }
-revm-interpreter = { path = "vendor/revm-interpreter", default-features = false }
 base-state = { path = "crates/common/state", default-features = false }
 
 # alloy

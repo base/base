@@ -20,8 +20,8 @@ use base_common_types_chain::{
         KECCAK_EMPTY, LEGACY_TX_TYPE_ID,
     },
 };
-use base_evm_context::Cfg;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_evm_machine::Cfg;
 use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
@@ -1360,7 +1360,7 @@ pub fn ensure_intrinsic_gas(
     // EIP-2780 replaces the flat intrinsic base cost with a decomposed one that depends on
     // `tx.to` and `tx.value`.
     let eip2780 = fork_tracker.is_amsterdam_activated().then(|| {
-        base_evm_context::Eip2780TxInfo {
+        base_execution_evm_machine::Eip2780TxInfo {
             value: transaction.value(),
             // Self-transfer: a `Call` whose recipient is the sender itself.
             is_self_transfer: transaction.kind().to() == Some(&transaction.sender()),

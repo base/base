@@ -10,7 +10,9 @@ use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
-use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
+use base_execution_evm_machine::{
+    EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError,
+};
 use base_execution_evm_runtime::{
     BlockExecutionError, BlockValidationError, CallError, StateOverrideError,
 };

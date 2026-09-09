@@ -6,7 +6,7 @@ use base_common_types_rpc::{
     GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace, MuxConfig, NoopFrame,
     PreStateConfig, TransactionInfo,
 };
-use base_evm_context::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
+use base_execution_evm_machine::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
 use base_execution_evm_runtime::FrameResult;
 use base_execution_evm_runtime::{
     DatabaseRef, Inspector,

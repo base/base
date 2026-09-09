@@ -8,13 +8,13 @@ use alloy_primitives::{
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
 use base_common_chain_config::BaseChainSpec;
-use base_execution_evm_precompiles::{
-    ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
-};
 use base_common_types_chain::{BlockHeader, Transaction as _};
-use base_evm_context::GasParams;
 use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _,
+};
+use base_execution_evm_machine::GasParams;
+use base_execution_evm_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_execution_evm_runtime::TxResult as _;
 use base_execution_evm_runtime::{BaseSpecId, BaseUpgrade, L1BlockInfo};
@@ -445,7 +445,7 @@ fn intrinsic_gas_entries<T: base_common_types_chain::Transaction>(
     let authorization_gas = authorization_count.saturating_mul(per_empty_account_cost);
 
     let eip2780 = spec.into_eth_spec().is_enabled_in(SpecId::AMSTERDAM).then(|| {
-        base_evm_context::Eip2780TxInfo {
+        base_execution_evm_machine::Eip2780TxInfo {
             value: tx.value(),
             // Self-transfer: a `Call` whose recipient is the sender itself.
             is_self_transfer: tx.kind().to() == Some(tx.signer_ref()),
@@ -867,10 +867,10 @@ mod tests {
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
     use base_execution_evm_precompiles::{
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
-    use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
     use base_execution_evm_runtime::state::{
         Account as RevmAccount, EvmStorageSlot, TransactionId,
     };

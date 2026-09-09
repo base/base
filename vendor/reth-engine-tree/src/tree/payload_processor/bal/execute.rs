@@ -23,10 +23,10 @@ use alloy_eip7928::{
 };
 use alloy_primitives::Address;
 use base_common_types_chain::BaseReceipt;
-use base_evm_context::{Block, ResultAndState};
 use base_execution_evm_blocks::{
     BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
 };
+use base_execution_evm_machine::{Block, ResultAndState};
 use base_execution_evm_runtime::{
     BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult,
 };
@@ -1195,7 +1195,7 @@ mod tests {
         // All-state-gas results keep block_regular_gas_used at 0, so a second tx that fits
         // within the block limit but not the remaining cumulative budget proves that
         // non-Amsterdam reads cumulative_tx_gas_used while Amsterdam does not.
-        use base_evm_context::{
+        use base_execution_evm_machine::{
             ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
         use base_execution_evm_runtime::state::EvmState;
@@ -1205,15 +1205,16 @@ mod tests {
         let second_tx_gas_limit = 500_000u64; // fits in total limit but not after cumulative deduction
 
         let gas = ResultGas::new_with_state_gas(first_tx_gas, 0, 0, first_tx_gas);
-        let fake_result: ResultAndState<base_evm_context::HaltReason> = ExecResultAndState::new(
-            ExecutionResult::Success {
-                reason: SuccessReason::Return,
-                gas,
-                logs: vec![],
-                output: Output::Call(Default::default()),
-            },
-            EvmState::default(),
-        );
+        let fake_result: ResultAndState<base_execution_evm_machine::HaltReason> =
+            ExecResultAndState::new(
+                ExecutionResult::Success {
+                    reason: SuccessReason::Return,
+                    gas,
+                    logs: vec![],
+                    output: Output::Call(Default::default()),
+                },
+                EvmState::default(),
+            );
 
         // Non-Amsterdam: block_available_gas = 1_000_000 - 600_000 = 400_000 → reject 500_000.
         let mut non_amsterdam = BlockGasTracker::new(block_gas_limit, false, None);
@@ -1236,7 +1237,7 @@ mod tests {
     fn gas_tracker_caps_oversized_tx_gas_limit_at_tx_gas_limit_cap() {
         // A tx with gas_limit above TX_GAS_LIMIT_CAP (EIP-7825) is admitted when the
         // capped value fits in the remaining block gas and rejected when it does not.
-        use base_evm_context::{
+        use base_execution_evm_machine::{
             ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
         use base_execution_evm_runtime::{primitives::eip7825::TX_GAS_LIMIT_CAP, state::EvmState};
@@ -1256,15 +1257,16 @@ mod tests {
         // tx_min_gas_limit = TX_GAS_LIMIT_CAP (16_777_216) > block_available_gas (10M) → Err.
         let prior_gas = 20_000_000u64;
         let gas = ResultGas::new_with_state_gas(prior_gas, 0, 0, prior_gas);
-        let fake_result: ResultAndState<base_evm_context::HaltReason> = ExecResultAndState::new(
-            ExecutionResult::Success {
-                reason: SuccessReason::Return,
-                gas,
-                logs: vec![],
-                output: Output::Call(Default::default()),
-            },
-            EvmState::default(),
-        );
+        let fake_result: ResultAndState<base_execution_evm_machine::HaltReason> =
+            ExecResultAndState::new(
+                ExecutionResult::Success {
+                    reason: SuccessReason::Return,
+                    gas,
+                    logs: vec![],
+                    output: Output::Call(Default::default()),
+                },
+                EvmState::default(),
+            );
 
         let mut tracker = BlockGasTracker::new(block_gas_limit, false, Some(TX_GAS_LIMIT_CAP));
         tracker.record_result(&fake_result);

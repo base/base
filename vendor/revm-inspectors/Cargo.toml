@@ -33,9 +33,9 @@ harness = false
 thiserror = { workspace = true }
 colorchoice = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-evm-context = { workspace = true }
 base-common-types-rpc = {workspace = true}
 boa_gc = { workspace = true, optional = true }
+base-execution-evm-machine = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-primitives = { workspace = true, features = ["map"] }

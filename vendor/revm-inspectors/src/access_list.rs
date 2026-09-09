@@ -5,7 +5,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_common_types_rpc::{AccessList, AccessListItem};
-use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
+use base_execution_evm_machine::{AuthorizationTr, ContextTr, JournalTr, Transaction};
 use base_execution_evm_runtime::{Inspector, bytecode::opcode, interpreter::Interpreter};
 
 /// An [Inspector] that collects touched accounts and storage slots.

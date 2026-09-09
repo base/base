@@ -18,11 +18,11 @@ alloy-trie = { workspace = true }
 futures-util = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-evm-context = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-primitives-traits = {workspace = true}
 rayon = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
+base-execution-evm-machine = { workspace = true }
 reth-trie = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true }
 reth-metrics = { workspace = true, optional = true }

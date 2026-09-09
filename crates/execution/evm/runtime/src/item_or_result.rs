@@ -1,5 +1,5 @@
 use crate::FrameResult;
-use revm_interpreter::interpreter_action::FrameInit;
+use base_execution_evm_machine::interpreter_action::FrameInit;
 
 /// Represents either an item or a result.
 #[derive(Clone, Debug)]

@@ -7,7 +7,7 @@ use base_common_types_rpc::{
     TraceResults, TraceType, TransactionInfo, TransactionTrace, VmExecutedOperation, VmInstruction,
     VmTrace,
 };
-use base_evm_context::{ExecutionResult, HaltReasonTr, ResultAndState};
+use base_execution_evm_machine::{ExecutionResult, HaltReasonTr, ResultAndState};
 use base_execution_evm_runtime::{
     DatabaseRef,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},

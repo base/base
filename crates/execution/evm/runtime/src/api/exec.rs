@@ -1,5 +1,5 @@
 //! Base execution error type.
-use base_evm_context::{Database, EVMError};
+use base_execution_evm_machine::{Database, EVMError};
 
 use crate::BaseTransactionError;
 

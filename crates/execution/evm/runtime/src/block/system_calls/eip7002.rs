@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS;
 use alloy_primitives::Bytes;
-use base_evm_context::{ExecutionResult, ResultAndState};
+use base_execution_evm_machine::{ExecutionResult, ResultAndState};
 
 use crate::{Evm, block::BlockExecutionError, block::BlockValidationError};
 

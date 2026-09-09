@@ -1,9 +1,9 @@
 use std::io::Write;
 
-use base_evm_context::{Cfg, ContextTr, JournalTr, Transaction};
-use revm_interpreter::{
+use base_execution_evm_machine::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterResult,
 };
+use base_execution_evm_machine::{Cfg, ContextTr, JournalTr, Transaction};
 use revm_primitives::{B256, HashMap, U256, hex};
 use revm_state::bytecode::opcode::OpCode;
 use serde::Serialize;

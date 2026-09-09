@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::{borrow::Borrow, mem};
 
-use base_evm_context::{ContextTr, JournalTr, LocalContextTr};
+use base_execution_evm_machine::{ContextTr, JournalTr, LocalContextTr};
 use base_execution_evm_runtime::JournalExt;
 use base_execution_evm_runtime::{
     Inspector, JournalEntry,

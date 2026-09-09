@@ -2,7 +2,7 @@
 
 use alloc::vec;
 
-use base_evm_context::TxEnvBuilder;
+use base_execution_evm_machine::TxEnvBuilder;
 use base_execution_evm_runtime::primitives::{B256, Bytes};
 
 use super::{

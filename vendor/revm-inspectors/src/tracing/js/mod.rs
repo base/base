@@ -8,7 +8,7 @@ use alloc::{
 use core::borrow::Borrow;
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_evm_context::{
+use base_execution_evm_machine::{
     Block, ContextTr, ExecutionResult, HaltReasonTr, JournalTr, Output, ResultAndState, TransactTo,
     Transaction,
 };
@@ -757,7 +757,7 @@ fn js_error_to_revert(err: JsError) -> InterpreterResult {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, bytes, hex};
-    use base_evm_context::TxEnv;
+    use base_execution_evm_machine::TxEnv;
     use base_execution_evm_runtime::InspectorEvmTr;
     use base_execution_evm_runtime::{
         InspectEvm, MainBuilder, MainContext,

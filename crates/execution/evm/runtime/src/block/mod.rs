@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::{eip2718::WithEncoded, eip7685::Requests};
 use base_common_types_chain::transaction::Recovered;
-use base_evm_context::{ResultAndState, either::Either};
+use base_execution_evm_machine::{ResultAndState, either::Either};
 use base_execution_evm_runtime::Inspector;
 use base_execution_evm_runtime::NoOpInspector;
 
@@ -56,7 +56,7 @@ impl<T> Default for BlockExecutionResult<T> {
 ///
 /// This trait combines the requirements for a transaction to be executable by a block executor:
 /// - Must be convertible to the EVM's transaction environment, such as revm's
-///   [`TxEnv`](base_evm_context::TxEnv)
+///   [`TxEnv`](base_execution_evm_machine::TxEnv)
 /// - Must provide access to the transaction and signer via [`RecoveredTx`]
 ///
 /// The trait ensures that the block executor can both execute the transaction in the EVM
@@ -215,8 +215,8 @@ pub trait BlockExecutor {
     /// 1. `Self::Transaction` (consensus tx) →
     ///    [`Recovered<Self::Transaction>`](base_common_types_chain::transaction::Recovered) (with sender)
     /// 2. [`Recovered<Self::Transaction>`](base_common_types_chain::transaction::Recovered) →
-    ///    [`TxEnv`](base_evm_context::TxEnv) (via [`FromRecoveredTx`])
-    /// 3. [`TxEnv`](base_evm_context::TxEnv) → EVM execution → [`Self::Result`](BlockExecutor::Result)
+    ///    [`TxEnv`](base_execution_evm_machine::TxEnv) (via [`FromRecoveredTx`])
+    /// 3. [`TxEnv`](base_execution_evm_machine::TxEnv) → EVM execution → [`Self::Result`](BlockExecutor::Result)
     /// 4. [`Self::Result`](BlockExecutor::Result) + `Self::Transaction` → `Self::Receipt`
     ///
     /// Common examples:
@@ -377,7 +377,7 @@ pub trait BlockExecutor {
     /// commit the resulting state changes. The output can be inspected and potentially
     /// committed later using [`commit_transaction`](Self::commit_transaction).
     ///
-    /// Returns a [`base_evm_context::ResultAndState`] containing the execution
+    /// Returns a [`base_execution_evm_machine::ResultAndState`] containing the execution
     /// result and state changes.
     ///
     /// # Use Cases

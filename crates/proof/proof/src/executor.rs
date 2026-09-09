@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{Header, Sealed};
 use base_common_types_payload::BasePayloadAttributes;
-use base_evm_context::BlockEnv;
+use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
 use base_proof_driver::Executor;

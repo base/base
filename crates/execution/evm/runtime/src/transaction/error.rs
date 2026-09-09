@@ -2,7 +2,7 @@
 
 use core::fmt::Display;
 
-use base_evm_context::{EVMError, InvalidTransaction, TransactionError, TxEnvBuildError};
+use base_execution_evm_machine::{EVMError, InvalidTransaction, TransactionError, TxEnvBuildError};
 use base_execution_evm_runtime::InvalidTxError;
 
 /// Error type for building [`TxEnv`]

@@ -22,19 +22,18 @@ alloy-sol-types = {workspace = true}
 revm-precompile = {workspace = true}
 revm-primitives = {workspace = true}
 alloy-primitives = {workspace = true}
-base-evm-context = {workspace = true}
-revm-interpreter = {workspace = true}
 sha2 = { workspace = true, optional = true}
 base-common-types-chain = {workspace = true}
 base-execution-evm-macros = {workspace = true}
 base-common-chain-config = { workspace = true }
+base-execution-evm-machine = {workspace = true}
 derive_more = { workspace = true, features = ["from", "try_into"] }
 base64 = { workspace = true, features = ["default"], optional = true}
 k256 = { workspace = true, features = ["default", "ecdsa"], optional = true}
 p256 = { workspace = true, features = ["default", "ecdsa"], optional = true}
 
 [dev-dependencies]
-revm-interpreter = { workspace = true }
+base-execution-evm-machine = { workspace = true }
 rstest = {features = ["default"], workspace = true}
 proptest = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default"] }
@@ -90,9 +89,8 @@ std = [
     "alloy-primitives/std",
     "alloy-sol-types/std",
     "base-common-chain-config/std",
-    "base-evm-context/std",
+    "base-execution-evm-machine/std",
     "base-state/std",
-    "revm-interpreter/std",
     "revm-precompile/std",
     "revm-primitives/std",
     "revm-state/std",
@@ -111,11 +109,11 @@ blst = ["revm-precompile/blst"]
 c-kzg = ["revm-precompile/c-kzg"]
 portable = ["revm-precompile/portable"]
 secp256k1 = ["revm-precompile/secp256k1"]
-memory_limit = ["base-evm-context/memory_limit"]
-optional_no_base_fee = ["base-evm-context/optional_no_base_fee"]
-optional_eip3541 = ["base-evm-context/optional_eip3541"]
-optional_eip3607 = ["base-evm-context/optional_eip3607"]
-optional_fee_charge = ["base-evm-context/optional_fee_charge"]
-optional_balance_check = ["base-evm-context/optional_balance_check"]
-optional_block_gas_limit = ["base-evm-context/optional_block_gas_limit"]
+memory_limit = ["base-execution-evm-machine/memory_limit"]
+optional_no_base_fee = ["base-execution-evm-machine/optional_no_base_fee"]
+optional_eip3541 = ["base-execution-evm-machine/optional_eip3541"]
+optional_eip3607 = ["base-execution-evm-machine/optional_eip3607"]
+optional_fee_charge = ["base-execution-evm-machine/optional_fee_charge"]
+optional_balance_check = ["base-execution-evm-machine/optional_balance_check"]
+optional_block_gas_limit = ["base-execution-evm-machine/optional_block_gas_limit"]
 test-utils = ["base-common-chain-config/test-utils", "std"]

@@ -46,12 +46,10 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_execution_evm_precompiles::{JournalStorageProvider, StorageCtx};
-use base_execution_evm_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_common_types_chain::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
-use base_evm_context::{
+use base_execution_evm_machine::{
     Block, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
     LocalContextTr, Output, ResultGas, SuccessReason, take_error,
 };
@@ -60,6 +58,8 @@ use base_execution_evm_precompiles::{
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
     TransactionAuthorizer,
 };
+use base_execution_evm_precompiles::{JournalStorageProvider, StorageCtx};
+use base_execution_evm_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_evm_runtime::{
     Database as AlloyDatabase, EvmInternals, EvmTr, FrameResult, Handler, InspectorEvmTr,
     InspectorHandler, PrecompileProvider,
@@ -1722,14 +1722,14 @@ impl Eip8130Executor {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
-    use base_execution_evm_precompiles::INonceManager;
-    use base_execution_evm_precompiles::{HashMapStorageProvider, StorageCtx};
     use base_common_types_chain::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
-    use base_evm_context::{BlockEnv, CfgEnv, Context};
+    use base_execution_evm_machine::{BlockEnv, CfgEnv, Context};
+    use base_execution_evm_precompiles::INonceManager;
     use base_execution_evm_precompiles::{AccountChangeApplier, DelegationApplied};
+    use base_execution_evm_precompiles::{HashMapStorageProvider, StorageCtx};
     use base_execution_evm_runtime::{
         Database, bytecode::Bytecode, database::DBErrorMarker, database::InMemoryDB,
         state::AccountInfo,

@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, hint::black_box};
 use alloy_hardforks::{EthereumHardfork, ethereum::mainnet::*};
 use alloy_primitives::{Address, Bytes, U256};
 use base_common_types_rpc::AccountState;
-use base_evm_context::{ContextTr, TransactTo, TxEnv};
+use base_execution_evm_machine::{ContextTr, TransactTo, TxEnv};
 use base_execution_evm_runtime::InspectorEvmTr;
 use base_execution_evm_runtime::{
     InspectEvm, MainBuilder, MainContext,

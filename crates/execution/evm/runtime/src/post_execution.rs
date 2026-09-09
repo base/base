@@ -1,8 +1,8 @@
-use base_evm_context::{
+use base_execution_evm_machine::{
     Block, Cfg, ContextTr, Database, ExecutionResult, GasParams, HaltReason, HaltReasonTr,
     JournalTr, JournaledAccountTr, LocalContextTr, ResultGas, Transaction,
 };
-use revm_interpreter::{Gas, InitialAndFloorGas, SuccessOrHalt};
+use base_execution_evm_machine::{Gas, InitialAndFloorGas, SuccessOrHalt};
 use revm_primitives::{U256, hardfork::SpecId};
 
 use crate::FrameResult;
@@ -144,7 +144,7 @@ pub fn output<CTX: ContextTr, HALTREASON: HaltReasonTr>(
             // Bubble up precompile errors from context when available
             if matches!(
                 instruction_result.result,
-                revm_interpreter::InstructionResult::PrecompileError
+                base_execution_evm_machine::InstructionResult::PrecompileError
             ) {
                 if let Some(message) = context.local_mut().take_precompile_error_context() {
                     return ExecutionResult::Halt {

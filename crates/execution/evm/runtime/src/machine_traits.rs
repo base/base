@@ -1,8 +1,8 @@
 use auto_impl::auto_impl;
-use base_evm_context::{ContextError, ContextTr, FrameStack};
+use base_execution_evm_machine::{ContextError, ContextTr, FrameStack};
+use base_execution_evm_machine::{InterpreterResult, interpreter_action::FrameInit};
 use base_execution_evm_runtime::EthInstructions;
 use base_execution_evm_runtime::EvmMachine;
-use revm_interpreter::{InterpreterResult, interpreter_action::FrameInit};
 
 use crate::{
     ContextTrDbError, EthFrame, FrameResult, ItemOrResult, PrecompileProvider,

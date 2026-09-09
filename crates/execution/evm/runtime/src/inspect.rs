@@ -1,4 +1,4 @@
-use base_evm_context::ExecResultAndState;
+use base_execution_evm_machine::ExecResultAndState;
 use base_execution_evm_runtime::{ExecuteCommitEvm, ExecuteEvm, SYSTEM_ADDRESS, SystemCallEvm};
 use revm_primitives::{Address, Bytes};
 

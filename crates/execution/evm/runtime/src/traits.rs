@@ -1,9 +1,9 @@
-use base_evm_context::{ContextTr, FrameStack, JournalTr};
+use base_execution_evm_machine::{CallOutcome, FrameInput, interpreter_action::FrameInit};
+use base_execution_evm_machine::{ContextTr, FrameStack, JournalTr};
 use base_execution_evm_runtime::EthInstructions;
 use base_execution_evm_runtime::{
     ContextDbError, EthFrame, EvmTr, FrameInitOrResult, FrameInitResult, FrameResult, ItemOrResult,
 };
-use revm_interpreter::{CallOutcome, FrameInput, interpreter_action::FrameInit};
 
 use crate::{
     Inspector, inspect_instructions, inspector_handler::frame_end, inspector_handler::frame_start,

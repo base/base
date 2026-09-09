@@ -1,17 +1,17 @@
+use crate::OtterscanServer;
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use async_trait::async_trait;
-use base_common_types_chain::{BlockHeader, Typed2718};
 use base_common_network::{ReceiptResponse, TransactionResponse};
+use base_common_types_chain::{BlockHeader, Typed2718};
 use base_common_types_rpc::{
     Action, BaseBlockResponse, BaseTransactionReceipt, BlockDetails, BlockTransactions,
     ContractCreator, CreateAction, CreateOutput, Header, InternalOperation, OperationType,
     OtsBlockTransactions, OtsReceipt, OtsTransactionReceipt, TraceEntry, TraceOutput,
     TransactionReceipt, TransactionsWithReceipts,
 };
-use base_evm_context::ExecutionResult;
+use base_execution_evm_machine::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use crate::OtterscanServer;
 use reth_rpc_eth_types::{EthApiError, utils::binary_search};
 use reth_rpc_server_types::result::internal_rpc_err;
 use revm_inspectors::{

@@ -1,6 +1,6 @@
 use std::boxed::Box;
 
-use revm_interpreter::{
+use base_execution_evm_machine::{
     Host, Instruction,
     instructions::{GasTable, InstructionTable, gas_table_spec},
 };
@@ -42,7 +42,7 @@ where
 {
     /// Returns `EthInstructions` with mainnet spec.
     pub fn new_mainnet_with_spec(spec: SpecId) -> Self {
-        Self::new(revm_interpreter::instruction_table(), gas_table_spec(spec), spec)
+        Self::new(base_execution_evm_machine::instruction_table(), gas_table_spec(spec), spec)
     }
 
     /// Returns a new instance of `EthInstructions` with custom instruction and gas tables.

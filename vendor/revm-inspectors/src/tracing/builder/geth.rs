@@ -15,7 +15,7 @@ use base_common_types_rpc::{
     ContractSize, DefaultFrame, DiffMode, Erc7562Config, Erc7562Frame, GethDefaultTracingOptions,
     PreStateConfig, PreStateFrame, PreStateMode, StructLog,
 };
-use base_evm_context::{HaltReasonTr, ResultAndState};
+use base_execution_evm_machine::{HaltReasonTr, ResultAndState};
 use base_execution_evm_runtime::{
     DatabaseRef,
     bytecode::opcode,
@@ -117,7 +117,7 @@ impl<'a> GethTraceBuilder<'a> {
     /// Generate a geth-style trace e.g. for `debug_traceTransaction`
     ///
     /// This expects the gas used and return value for the
-    /// [[base_evm_context::ExecutionResult]] of the executed
+    /// [[base_execution_evm_machine::ExecutionResult]] of the executed
     /// transaction.
     pub fn geth_traces(
         &self,
@@ -152,7 +152,7 @@ impl<'a> GethTraceBuilder<'a> {
     /// This decodes all call frames from the recorded traces.
     ///
     /// This expects the gas used and return value for the
-    /// [base_evm_context::ExecutionResult] of the executed
+    /// [base_execution_evm_machine::ExecutionResult] of the executed
     /// transaction.
     pub fn geth_call_traces(&self, opts: CallConfig, gas_used: u64) -> CallFrame {
         if self.nodes.is_empty() {

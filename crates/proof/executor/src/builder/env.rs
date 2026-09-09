@@ -5,7 +5,7 @@ use alloy_primitives::U256;
 use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BlockHeader, Header};
 use base_common_types_payload::BasePayloadAttributes;
-use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
+use base_execution_evm_machine::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_execution_evm_runtime::{BaseSpecId, BaseUpgrade};
 use base_execution_evm_runtime::{EvmEnv, EvmFactory};
 use base_proof_mpt::TrieHinter;
@@ -165,7 +165,7 @@ mod tests {
     use base_common_chain_config::RollupConfig;
     use base_common_types_chain::Header;
     use base_common_types_payload::BasePayloadAttributes;
-    use base_evm_context::BlobExcessGasAndPrice;
+    use base_execution_evm_machine::BlobExcessGasAndPrice;
     use base_execution_evm_runtime::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
     use base_proof_mpt::NoopTrieHinter;
 

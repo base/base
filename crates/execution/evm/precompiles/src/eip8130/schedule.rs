@@ -189,7 +189,7 @@ impl Eip8130GasSchedule {
 
 #[cfg(test)]
 mod tests {
-    use revm_interpreter::gas;
+    use base_execution_evm_machine::gas;
 
     use super::*;
 

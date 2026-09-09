@@ -291,7 +291,7 @@ impl InternalBlockExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::{DBErrorMarker, EVMError, InvalidTransaction};
+    use base_execution_evm_machine::{DBErrorMarker, EVMError, InvalidTransaction};
 
     use super::*;
 

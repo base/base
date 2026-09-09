@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, map::HashMap};
-use base_evm_context::ContextTr;
+use base_execution_evm_machine::ContextTr;
 use base_execution_evm_runtime::{
     Inspector,
     interpreter::{

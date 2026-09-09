@@ -4,7 +4,7 @@ use base_common_chain_config::Upgrades;
 use base_common_types_chain::Header;
 #[cfg(feature = "std")]
 use base_common_types_payload::ExecutionData;
-use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
+use base_execution_evm_machine::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_execution_evm_runtime::BaseSpecId;
 use base_execution_evm_runtime::EvmEnv;
 use base_execution_evm_runtime::primitives::hardfork::SpecId;

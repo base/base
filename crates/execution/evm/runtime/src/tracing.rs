@@ -2,7 +2,7 @@
 
 use core::{fmt::Debug, iter::Peekable};
 
-use base_evm_context::{ExecutionResult, ResultAndState};
+use base_execution_evm_machine::{ExecutionResult, ResultAndState};
 use base_execution_evm_runtime::{DatabaseCommit, state::EvmState};
 
 use crate::{Evm, IntoTxEnv};

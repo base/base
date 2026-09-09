@@ -9,7 +9,7 @@ use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip658Value, Eip8130Receipt, Header, OpTxType,
     Predeploys, Transaction, TransactionEnvelope, TxReceipt,
 };
-use base_evm_context::{Block, ResultAndState};
+use base_execution_evm_machine::{Block, ResultAndState};
 #[cfg(feature = "std")]
 use base_execution_evm_precompiles::IntrinsicGas;
 use base_execution_evm_runtime::{
@@ -356,7 +356,7 @@ mod tests {
         BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, SignableTransaction,
         TxEip8130, TxLegacy, transaction::Recovered,
     };
-    use base_evm_context::BlockEnv;
+    use base_execution_evm_machine::BlockEnv;
     use base_execution_evm_runtime::{
         BlockExecutorFactory, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap, ToTxEnv,
     };
@@ -738,11 +738,13 @@ mod tests {
             executor.commit_transaction(BaseTxResult {
                 inner: EthTxResult {
                     result: ResultAndState {
-                        result: base_evm_context::ExecutionResult::Success {
-                            reason: base_evm_context::SuccessReason::Return,
-                            gas: base_evm_context::ResultGas::new_with_state_gas(21_000, 0, 0, 0),
+                        result: base_execution_evm_machine::ExecutionResult::Success {
+                            reason: base_execution_evm_machine::SuccessReason::Return,
+                            gas: base_execution_evm_machine::ResultGas::new_with_state_gas(
+                                21_000, 0, 0, 0,
+                            ),
                             logs: vec![alloy_primitives::Log::default()],
-                            output: base_evm_context::Output::Call(Bytes::new()),
+                            output: base_execution_evm_machine::Output::Call(Bytes::new()),
                         },
                         state: Default::default(),
                     },

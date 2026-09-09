@@ -1,12 +1,14 @@
-use base_evm_context::{ContextTr, ExecutionResult, JournalCheckpoint, JournalEntry, JournalTr};
-use base_execution_evm_runtime::{
-    EvmTr, FrameResult, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
+use base_execution_evm_machine::{
+    ContextTr, ExecutionResult, JournalCheckpoint, JournalEntry, JournalTr,
 };
-use revm_interpreter::{
+use base_execution_evm_machine::{
     FrameInput, GasTracker, Host, InitialAndFloorGas, InstructionResult, Interpreter,
     InterpreterAction,
     instructions::{GasTable, InstructionTable},
     interpreter_action::FrameInit,
+};
+use base_execution_evm_runtime::{
+    EvmTr, FrameResult, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
 };
 use revm_primitives::hints_util::cold_path;
 

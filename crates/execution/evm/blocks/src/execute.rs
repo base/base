@@ -186,7 +186,7 @@ pub trait Executor<DB: Database>: Sized {
 pub struct BlockAssemblerInput<'a, 'b> {
     /// Configuration of EVM used when executing the block.
     ///
-    /// Contains context relevant to EVM such as [`base_evm_context::BlockEnv`].
+    /// Contains context relevant to EVM such as [`base_execution_evm_machine::BlockEnv`].
     pub evm_env: EvmEnv<base_execution_evm_runtime::BaseSpecId>,
     /// [`BlockExecutorFactory::ExecutionCtx`] used to execute the block.
     pub execution_ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,

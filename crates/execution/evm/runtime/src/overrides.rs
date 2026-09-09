@@ -10,7 +10,7 @@ use base_common_types_rpc::{
     BlockOverrides,
     state::{AccountOverride, StateOverride},
 };
-use base_evm_context::{BlobExcessGasAndPrice, BlockEnv};
+use base_execution_evm_machine::{BlobExcessGasAndPrice, BlockEnv};
 use base_execution_evm_runtime::{
     Database, DatabaseCommit,
     bytecode::BytecodeDecodeError,
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_create2_state_diff_inspect_bug() {
         use alloy_primitives::{Bytes, TxKind};
-        use base_evm_context::{Context, ContextTr, JournalTr, TxEnv};
+        use base_execution_evm_machine::{Context, ContextTr, JournalTr, TxEnv};
         use base_execution_evm_runtime::Inspector;
         use base_execution_evm_runtime::{
             ExecuteEvm, InspectEvm, MainBuilder,
@@ -382,7 +382,7 @@ mod tests {
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
-        type TestCtx = Context<TxEnv, base_evm_context::CfgEnv, TestDb>;
+        type TestCtx = Context<TxEnv, base_execution_evm_machine::CfgEnv, TestDb>;
 
         // --- Bytecode construction ---
 
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn test_create2_state_diff_eth_evm_factory() {
         use alloy_primitives::{Bytes, TxKind};
-        use base_evm_context::{CfgEnv, ContextTr, JournalTr, TxEnv};
+        use base_execution_evm_machine::{CfgEnv, ContextTr, JournalTr, TxEnv};
         use base_execution_evm_runtime::Inspector;
         use base_execution_evm_runtime::{
             database::EmptyDB,
@@ -729,7 +729,8 @@ mod tests {
         let mut cfg = CfgEnv::default();
         cfg.spec = SpecId::CANCUN;
         cfg.chain_id = 1;
-        let env = EvmEnv { block_env: base_evm_context::BlockEnv::default(), cfg_env: cfg };
+        let env =
+            EvmEnv { block_env: base_execution_evm_machine::BlockEnv::default(), cfg_env: cfg };
 
         let factory = EthEvmFactory;
 
@@ -778,7 +779,7 @@ mod tests {
     #[test]
     fn test_create2_delegatecall_state_diff_inspect() {
         use alloy_primitives::{Bytes, TxKind};
-        use base_evm_context::{Context, ContextTr, JournalTr, TxEnv};
+        use base_execution_evm_machine::{Context, ContextTr, JournalTr, TxEnv};
         use base_execution_evm_runtime::Inspector;
         use base_execution_evm_runtime::{
             ExecuteEvm, InspectEvm, MainBuilder,
@@ -789,7 +790,7 @@ mod tests {
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
-        type TestCtx = Context<TxEnv, base_evm_context::CfgEnv, TestDb>;
+        type TestCtx = Context<TxEnv, base_execution_evm_machine::CfgEnv, TestDb>;
 
         // Implementation contract code: SSTORE(0, 0xBEEF), STOP
         // When DELEGATECALLed, this writes 0xBEEF to slot 0 of the caller's storage.

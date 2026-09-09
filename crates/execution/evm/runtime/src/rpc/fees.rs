@@ -39,7 +39,7 @@ impl CallFees {
     ///
     /// This mirrors geth's behaviour when transaction requests are executed: <https://github.com/ethereum/go-ethereum/blob/380688c636a654becc8f114438c2a5d93d2db032/core/state_transition.go#L306-L306>
     ///
-    /// [`BlockEnv`]: base_evm_context::BlockEnv
+    /// [`BlockEnv`]: base_execution_evm_machine::BlockEnv
     pub fn ensure_fees(
         call_gas_price: Option<U256>,
         call_max_fee: Option<U256>,

@@ -10,7 +10,7 @@ use base_common_types_chain::{
     BaseReceipt, EMPTY_OMMER_ROOT_HASH, Header, Predeploys, Sealed, TxReceipt,
 };
 use base_common_types_payload::BasePayloadAttributes;
-use base_evm_context::BlockEnv;
+use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::database::BundleState;
 use base_execution_evm_runtime::{BlockExecutionResult, EvmFactory};
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};

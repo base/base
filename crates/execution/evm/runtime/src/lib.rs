@@ -74,11 +74,11 @@ pub use rpc_eip8130::{AUTHENTICATOR_SELECTOR_LEN, MAX_AUTH_SIZE, STUB_AUTH_FILL}
 
 mod rpc_transaction;
 
-pub use base_evm_context::{Context, Journal, JournalEntry};
+pub use base_execution_evm_machine as interpreter;
+pub use base_execution_evm_machine::{Context, Journal, JournalEntry};
 pub use base_state as database;
 pub use base_state::{DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
 pub use revm_bytecode as bytecode;
-pub use revm_interpreter as interpreter;
 pub use revm_precompile as precompile;
 pub use revm_precompile::install_crypto;
 pub use revm_primitives as primitives;
@@ -171,7 +171,7 @@ pub use evm_api::*;
 mod eth;
 pub use eth::*;
 
-pub use base_evm_context::{BlockEnvironment, EvmEnv, EvmLimitParams, TransactionEnvMut};
+pub use base_execution_evm_machine::{BlockEnvironment, EvmEnv, EvmLimitParams, TransactionEnvMut};
 
 mod execution_error;
 pub use execution_error::*;

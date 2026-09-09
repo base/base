@@ -2,7 +2,7 @@ use alloc::string::ToString;
 
 use alloy_primitives::map::HashMap;
 use base_common_types_rpc::OpcodeGas;
-use base_evm_context::{ContextTr, JournalTr};
+use base_execution_evm_machine::{ContextTr, JournalTr};
 use base_execution_evm_runtime::{
     Inspector,
     bytecode::{opcode, opcode::OpCode},
