@@ -1,7 +1,7 @@
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     ActivationFeature, ActivationRegistryStorage,
@@ -95,7 +95,7 @@ impl PolicyRegistryStorage<'_> {
         calldata: &[u8],
         version: PolicyVersion,
         observer: &O,
-    ) -> base_precompile_storage::Result<Bytes>
+    ) -> base_common_precompiles::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
@@ -208,7 +208,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{HashMapStorageProvider, PrecompileOutput, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, PrecompileOutput, StorageCtx};
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolError};
-use base_precompile_storage::{
+use base_common_precompiles::{
     BasePrecompileError, PrecompileError, PrecompileOutput, PrecompileResult, Result, StorageCtx,
 };
 
@@ -686,7 +686,7 @@ impl PrecompileAuxiliaryMetrics {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolInterface};
-    use base_precompile_storage::{BasePrecompileError, PrecompileError, PrecompileOutput};
+    use base_common_precompiles::{BasePrecompileError, PrecompileError, PrecompileOutput};
 
     use crate::{
         CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Asset, IB20Factory, IPolicyRegistry,

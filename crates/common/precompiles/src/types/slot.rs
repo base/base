@@ -7,8 +7,8 @@ use alloy_primitives::{Address, U256};
 use crate::{
     error::{BasePrecompileError, Result},
     packing::FieldLocation,
-    provider::{Handler, LayoutCtx, Storable, StorableType, StorageFeatures, StorageOps},
     storage_ctx::StorageCtx,
+    storage_provider::{Handler, LayoutCtx, Storable, StorableType, StorageFeatures, StorageOps},
 };
 
 /// Type-safe wrapper for a single EVM storage slot.
@@ -175,7 +175,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::{hashmap::setup_storage, provider::StorageKey};
+    use crate::{StorageKey, hashmap::setup_storage};
 
     fn arb_u256() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>().prop_map(U256::from_limbs)

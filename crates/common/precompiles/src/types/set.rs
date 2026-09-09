@@ -16,7 +16,9 @@ use alloy_primitives::{Address, U256};
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageKey, StorageOps},
+    storage_provider::{
+        Handler, Layout, LayoutCtx, Storable, StorableType, StorageKey, StorageOps,
+    },
     types::{MappingHandler, Slot, vec::VecHandler},
 };
 

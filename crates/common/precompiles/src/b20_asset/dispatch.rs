@@ -13,7 +13,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
@@ -86,7 +86,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         account: alloy_primitives::Address,
         sender: alloy_primitives::Address,
         upgrade: BaseUpgrade,
-    ) -> base_precompile_storage::Result<()> {
+    ) -> base_common_precompiles::Result<()> {
         // `None` is unreachable in practice — the precompile is only installed from Beryl — but
         // we revert defensively, mirroring `dispatch_with_observer`.
         let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
@@ -104,7 +104,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         version: AssetVersion,
         privileged: bool,
         observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
+    ) -> base_common_precompiles::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
@@ -148,7 +148,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         call: C,
         version: AssetVersion,
         privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
+    ) -> base_common_precompiles::Result<Bytes> {
         let logic = version.implementation();
         let caller = ctx.caller();
         let encoded: Bytes = match call {
@@ -360,7 +360,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         version: AssetVersion,
         privileged: bool,
         observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
+    ) -> base_common_precompiles::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
@@ -470,7 +470,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         privileged: bool,
         observer: &O,
         announce: DecodedAnnounce<'_>,
-    ) -> base_precompile_storage::Result<()>
+    ) -> base_common_precompiles::Result<()>
     where
         O: PrecompileCallObserver,
     {
@@ -619,7 +619,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, Result, StorageCtx};
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
@@ -821,7 +821,7 @@ mod tests {
 
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
 
-        assert_eq!(err, base_precompile_storage::BasePrecompileError::under_overflow());
+        assert_eq!(err, base_common_precompiles::BasePrecompileError::under_overflow());
     }
 
     /// A non-system revert produced by an inner `announce` call must be wrapped as
@@ -845,7 +845,7 @@ mod tests {
 
         assert_eq!(
             err,
-            base_precompile_storage::BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+            base_common_precompiles::BasePrecompileError::revert(IB20Asset::InternalCallFailed {
                 call: inner_call
             })
         );
@@ -925,7 +925,7 @@ mod tests {
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
-            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
+            base_common_precompiles::BasePrecompileError::UnknownFunctionSelector(selector)
         );
     }
 
@@ -945,7 +945,7 @@ mod tests {
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
-            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
+            base_common_precompiles::BasePrecompileError::UnknownFunctionSelector(selector)
         );
     }
 
@@ -1066,7 +1066,7 @@ mod tests {
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
-            base_precompile_storage::BasePrecompileError::revert(
+            base_common_precompiles::BasePrecompileError::revert(
                 IB20Asset::AnnouncementInProgress {}
             )
         );
@@ -1193,7 +1193,7 @@ mod tests {
                         );
                         assert_eq!(
                             err,
-                            base_precompile_storage::BasePrecompileError::AbiDecodeFailed {
+                            base_common_precompiles::BasePrecompileError::AbiDecodeFailed {
                                 selector: IB20Asset::announceCall::SELECTOR,
                                 error: String::from("announce: malformed bytes[] payload"),
                             },
@@ -1209,11 +1209,11 @@ mod tests {
                     // Decode-time rejections target the announce selector. Payloads too short to
                     // carry a selector hit the shared unknown-selector path instead.
                     match err {
-                        base_precompile_storage::BasePrecompileError::AbiDecodeFailed {
+                        base_common_precompiles::BasePrecompileError::AbiDecodeFailed {
                             selector,
                             ..
                         } => assert_eq!(selector, IB20Asset::announceCall::SELECTOR),
-                        base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(
+                        base_common_precompiles::BasePrecompileError::UnknownFunctionSelector(
                             _,
                         ) => {}
                         other => panic!("row `{name}` at {version:?}: unexpected error {other:?}"),
@@ -1277,7 +1277,7 @@ mod tests {
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
-            base_precompile_storage::BasePrecompileError::revert(
+            base_common_precompiles::BasePrecompileError::revert(
                 IB20Asset::InternalCallMalformed { call: Bytes::copy_from_slice(&[0x01, 0x02]) }
             )
         );

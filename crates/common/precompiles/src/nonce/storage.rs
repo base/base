@@ -1,8 +1,8 @@
 //! Storage layout and constants for the EIP-8130 2D nonce manager precompile.
 
 use alloy_primitives::{Address, B256, U256, address};
+use base_common_precompiles::{BasePrecompileError, Handler, Mapping, Result, StorageKey};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageKey};
 
 use crate::INonceManager;
 
@@ -265,7 +265,7 @@ impl NonceManagerStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
-    use base_precompile_storage::{
+    use base_common_precompiles::{
         BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
     };
 

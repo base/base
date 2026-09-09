@@ -8,7 +8,7 @@ use core::{
 use alloy_primitives::{Address, U256};
 
 use crate::{
-    provider::{Layout, LayoutCtx, StorableType, StorageKey},
+    storage_provider::{Layout, LayoutCtx, StorableType, StorageKey},
     types::HandlerCache,
 };
 

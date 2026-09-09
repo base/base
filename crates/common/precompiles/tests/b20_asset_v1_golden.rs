@@ -32,7 +32,7 @@ use base_common_precompiles::{
     IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
     UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{

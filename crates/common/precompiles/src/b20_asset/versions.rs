@@ -18,7 +18,7 @@ use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{
     Asset, AssetAccounting, AssetV1, AssetV2, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
@@ -207,7 +207,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use alloy_sol_types::{SolCall, SolInterface};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::BasePrecompileError;
+    use base_common_precompiles::BasePrecompileError;
 
     use super::{AssetAbiPair, AssetCall};
     use crate::{

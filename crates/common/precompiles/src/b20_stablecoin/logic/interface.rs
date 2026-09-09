@@ -3,7 +3,7 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, U256};
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 use crate::{
     B20StablecoinToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, StablecoinAccounting,

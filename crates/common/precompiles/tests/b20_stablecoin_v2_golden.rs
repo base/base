@@ -37,7 +37,7 @@ use base_common_precompiles::{
     PolicyVersion, Stablecoin, StablecoinV2, StablecoinVersion, StablecoinVersions,
     TokenAccounting, UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{

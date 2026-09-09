@@ -51,7 +51,6 @@ members = [
   "crates/common/network",
   "crates/common/observability-events",
   "crates/common/precompile-macros",
-  "crates/common/precompile-storage",
   "crates/common/precompiles",
   "crates/common/types/rpc",
   "crates/common/types/payload",
@@ -351,7 +350,6 @@ base-common-types-rpc = { path = "crates/common/types/rpc", default-features = f
 base-common-types-chain = { path = "crates/common/types/chain", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-precompile-macros = { path = "crates/common/precompile-macros", default-features = false }
-base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
 base-common-types-payload = { path = "crates/common/types/payload", default-features = false }
 base-observability-events = { path = "crates/common/observability-events", default-features = false }
 

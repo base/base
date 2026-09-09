@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 use crate::TokenAccounting;
 

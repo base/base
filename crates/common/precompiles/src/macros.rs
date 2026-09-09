@@ -11,23 +11,23 @@ macro_rules! base_precompile {
             ::base_evm_handler::precompile::PrecompileId::Custom($id.into()),
             move |input| {
                 if !input.is_direct_call() {
-                    return ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
-                        ::base_precompile_storage::BasePrecompileError::revert(
-                            ::base_precompile_storage::DelegateCallNotAllowed {},
+                    return ::base_common_precompiles::IntoEnginePrecompileResult::into_revm(
+                        ::base_common_precompiles::BasePrecompileError::revert(
+                            ::base_common_precompiles::DelegateCallNotAllowed {},
                         )
                         .into_precompile_result(0, 0),
                     );
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
-                let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_features(
+                let mut provider = ::base_common_precompiles::EvmPrecompileStorageProvider::new_with_storage_features(
                     input,
                     ::base_evm_context::GasParams::default(),
                     $storage_features,
                 );
 
-                ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
-                    ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl),
+                ::base_common_precompiles::IntoEnginePrecompileResult::into_revm(
+                    ::base_common_precompiles::StorageCtx::enter(&mut provider, |$ctx| $impl),
                 )
             },
         )
@@ -48,7 +48,7 @@ macro_rules! decode_precompile_call {
             }
             None => {
                 return Err(
-                    ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(
+                    ::base_common_precompiles::BasePrecompileError::UnknownFunctionSelector(
                         [0u8; 4],
                     ),
                 );
@@ -60,14 +60,14 @@ macro_rules! decode_precompile_call {
             Err(error)
                 if <$call_ty as ::alloy_sol_types::SolInterface>::valid_selector(selector) =>
             {
-                return Err(::base_precompile_storage::BasePrecompileError::AbiDecodeFailed {
+                return Err(::base_common_precompiles::BasePrecompileError::AbiDecodeFailed {
                     selector,
                     error: ::alloc::string::ToString::to_string(&error),
                 });
             }
             Err(_) => {
                 return Err(
-                    ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(
+                    ::base_common_precompiles::BasePrecompileError::UnknownFunctionSelector(
                         selector,
                     ),
                 );
@@ -83,7 +83,7 @@ pub(crate) use decode_precompile_call;
 macro_rules! reject_frozen_selector {
     () => {
         ::core::result::Result::Err(
-            ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector([0u8; 4]),
+            ::base_common_precompiles::BasePrecompileError::UnknownFunctionSelector([0u8; 4]),
         )
     };
 }
@@ -93,7 +93,7 @@ pub(crate) use reject_frozen_selector;
 #[cfg(test)]
 mod tests {
     use alloy_sol_types::SolCall;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_common_precompiles::{BasePrecompileError, Result};
 
     use crate::IPolicyRegistry;
 

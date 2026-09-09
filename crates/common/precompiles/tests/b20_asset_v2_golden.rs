@@ -39,7 +39,7 @@ use base_common_precompiles::{
     ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver,
     PolicyVersion, TokenAccounting, UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{

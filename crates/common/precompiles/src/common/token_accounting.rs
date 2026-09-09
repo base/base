@@ -2,7 +2,7 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, B256, LogData, U256};
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 /// Maximum total supply for a B-20 token.
 pub const B20_MAX_SUPPLY_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);

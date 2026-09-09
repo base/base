@@ -13,19 +13,22 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-alloy-sol-types = { workspace = true }
-alloy-primitives = { workspace = true }
-base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
-base-precompile-macros = { workspace = true }
-base-precompile-storage = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+alloy-sol-types = {workspace = true}
+alloy-primitives = {workspace = true}
+base-evm-context = {workspace = true}
+base-evm-handler = {workspace = true}
+base-precompile-macros = {workspace = true}
 base-common-chain-config = { workspace = true }
+derive_more = { workspace = true, features = ["from", "try_into"] }
 
 [dev-dependencies]
-rstest = { workspace = true, features = ["default"] }
+rstest = {features = ["default"], workspace = true}
+proptest = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["rand"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
-base-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [[bench]]
 name = "base_precompiles"
@@ -56,28 +59,37 @@ required-features = ["test-utils"]
 name = "b20_factory_v1_golden"
 required-features = ["test-utils"]
 
+[[test]]
+name = "contract"
+required-features = ["test-utils"]
+
 [features]
-default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
+default = [
+    "blst",
+    "c-kzg",
+    "portable",
+    "secp256k1",
+    "std",
+]
 std = [
-    "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-sol-types/std",
     "base-common-chain-config/std",
-    "base-precompile-storage/std",
+    "base-evm-handler/std",
+    "derive_more/std",
+    "thiserror/std",
+    "tracing/std",
 ]
-bn = [ "base-evm-handler/bn" ]
-blst = [ "base-evm-handler/blst" ]
-c-kzg = [ "base-evm-handler/c-kzg" ]
-portable = [ "base-evm-handler/portable" ]
-secp256k1 = [ "base-evm-handler/secp256k1" ]
-memory_limit = [ "base-evm-handler/memory_limit" ]
-optional_no_base_fee = [ "base-evm-handler/optional_no_base_fee" ]
-optional_eip3541 = [ "base-evm-handler/optional_eip3541" ]
-optional_eip3607 = [ "base-evm-handler/optional_eip3607" ]
-optional_fee_charge = [ "base-evm-handler/optional_fee_charge" ]
-optional_balance_check = [ "base-evm-handler/optional_balance_check" ]
-optional_block_gas_limit = [ "base-evm-handler/optional_block_gas_limit" ]
-test-utils = [
-    "base-common-chain-config/test-utils",
-    "base-precompile-storage/test-utils",
-]
+bn = ["base-evm-handler/bn"]
+blst = ["base-evm-handler/blst"]
+c-kzg = ["base-evm-handler/c-kzg"]
+portable = ["base-evm-handler/portable"]
+secp256k1 = ["base-evm-handler/secp256k1"]
+memory_limit = ["base-evm-handler/memory_limit"]
+optional_no_base_fee = ["base-evm-handler/optional_no_base_fee"]
+optional_eip3541 = ["base-evm-handler/optional_eip3541"]
+optional_eip3607 = ["base-evm-handler/optional_eip3607"]
+optional_fee_charge = ["base-evm-handler/optional_fee_charge"]
+optional_balance_check = ["base-evm-handler/optional_balance_check"]
+optional_block_gas_limit = ["base-evm-handler/optional_block_gas_limit"]
+test-utils = ["base-common-chain-config/test-utils", "std"]

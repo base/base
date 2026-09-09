@@ -1,7 +1,7 @@
 //! Pause-bit helpers for B-20 tokens.
 
 use alloy_primitives::U256;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::IB20;
 

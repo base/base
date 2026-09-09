@@ -32,7 +32,7 @@ use base_common_precompiles::{
     IPolicyRegistryV1, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
     UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{

@@ -1,7 +1,7 @@
 //! Storage layout and constants for the EIP-8130 transaction context precompile.
 
 use alloy_primitives::{Address, B256, U256, address};
-use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, Result, StorageCtx};
 
 /// Transient-storage-backed view of the in-flight EIP-8130 transaction context.
 ///
@@ -151,7 +151,7 @@ impl<'a> TxContextStorage<'a> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, address, b256};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
     use crate::tx_context::storage::TxContextStorage;
 

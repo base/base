@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{
+use base_common_precompiles::{
     BasePrecompileError, IntoPrecompileResult, PrecompileResult, StorageCtx,
 };
 
@@ -44,7 +44,7 @@ impl NonceManagerStorage<'_> {
         )
     }
 
-    fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+    fn inner(&self, calldata: &[u8]) -> base_common_precompiles::Result<Bytes> {
         match decode_precompile_call!(calldata, INonceManager::INonceManagerCalls) {
             C::getNonce(call) => Ok(INonceManager::getNonceCall::abi_encode_returns(
                 &self.get_nonce(call.account, call.nonceKey)?,
@@ -58,7 +58,7 @@ impl NonceManagerStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
     use crate::{INonceManager, NonceManagerStorage};
 
@@ -67,7 +67,7 @@ mod tests {
     fn dispatch(
         storage: &mut HashMapStorageProvider,
         calldata: &[u8],
-    ) -> base_precompile_storage::PrecompileOutput {
+    ) -> base_common_precompiles::PrecompileOutput {
         StorageCtx::enter(storage, |ctx| NonceManagerStorage::new(ctx).dispatch(ctx, calldata))
             .expect("dispatch should not fail fatally")
     }

@@ -13,7 +13,7 @@ use alloy_primitives::{Address, U256, keccak256};
 use crate::{
     error::{BasePrecompileError, Result},
     packing::{PackedSlot, Word, calc_element_loc, calc_packed_slot_count},
-    provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps},
+    storage_provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps},
     types::{HandlerCache, Slot},
 };
 

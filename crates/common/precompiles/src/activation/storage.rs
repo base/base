@@ -1,8 +1,8 @@
 //! Storage layout and constants for the activation registry.
 
 use alloy_primitives::{Address, B256, Bytes, address, b256};
+use base_common_precompiles::{BasePrecompileError, Handler, Mapping, PrecompileResult, Result};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, PrecompileResult, Result};
 
 use crate::IActivationRegistry;
 
@@ -120,7 +120,7 @@ impl ActivationRegistryStorage<'_> {
     /// Reverts unless the feature is activated.
     ///
     /// Both the activated and deactivated paths return `Ok`; callers must inspect
-    /// [`base_precompile_storage::PrecompileOutput::is_revert`] to distinguish an activated feature from an
+    /// [`base_common_precompiles::PrecompileOutput::is_revert`] to distinguish an activated feature from an
     /// ABI revert.
     pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
         self.storage.result_output(self.ensure_activated(feature), |()| Bytes::new())
@@ -249,7 +249,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{
+    use base_common_precompiles::{
         BasePrecompileError, HashMapStorageProvider, PrecompileOutput, Result, StorageCtx,
         StorageKey,
     };

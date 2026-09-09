@@ -37,17 +37,17 @@ struct TypeConfig {
 
 fn gen_storable_layout_impl(type_path: &TokenStream, byte_count: usize) -> TokenStream {
     quote! {
-        impl ::base_precompile_storage::StorableType for #type_path {
-            const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Bytes(#byte_count);
-            type Handler<'a> = ::base_precompile_storage::Slot<'a, Self>;
+        impl ::base_common_precompiles::StorableType for #type_path {
+            const LAYOUT: ::base_common_precompiles::Layout = ::base_common_precompiles::Layout::Bytes(#byte_count);
+            type Handler<'a> = ::base_common_precompiles::Slot<'a, Self>;
 
             fn handle<'a>(
                 slot: ::alloy_primitives::U256,
-                ctx: ::base_precompile_storage::LayoutCtx,
+                ctx: ::base_common_precompiles::LayoutCtx,
                 address: ::alloy_primitives::Address,
-                storage: ::base_precompile_storage::StorageCtx<'a>,
+                storage: ::base_common_precompiles::StorageCtx<'a>,
             ) -> Self::Handler<'a> {
-                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address, storage)
+                ::base_common_precompiles::Slot::new_with_ctx(slot, ctx, address, storage)
             }
         }
     }
@@ -62,7 +62,7 @@ fn gen_storage_key_impl(type_path: &TokenStream, strategy: &StorageKeyStrategy) 
     };
 
     quote! {
-        impl ::base_precompile_storage::StorageKey for #type_path {
+        impl ::base_common_precompiles::StorageKey for #type_path {
             #[inline]
             fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
                 #conversion
@@ -74,56 +74,56 @@ fn gen_storage_key_impl(type_path: &TokenStream, strategy: &StorageKeyStrategy) 
 fn gen_to_word_impl(type_path: &TokenStream, strategy: &StorableConversionStrategy) -> TokenStream {
     match strategy {
         StorableConversionStrategy::UnsignedRust => quote! {
-            impl ::base_precompile_storage::FromWord for #type_path {
+            impl ::base_common_precompiles::FromWord for #type_path {
                 #[inline]
                 fn to_word(&self) -> ::alloy_primitives::U256 {
                     ::alloy_primitives::U256::from(*self)
                 }
                 #[inline]
-                fn from_word(word: ::alloy_primitives::U256) -> ::base_precompile_storage::Result<Self> {
-                    word.try_into().map_err(|_| ::base_precompile_storage::BasePrecompileError::under_overflow())
+                fn from_word(word: ::alloy_primitives::U256) -> ::base_common_precompiles::Result<Self> {
+                    word.try_into().map_err(|_| ::base_common_precompiles::BasePrecompileError::under_overflow())
                 }
             }
         },
         StorableConversionStrategy::UnsignedAlloy(ty) => quote! {
-            impl ::base_precompile_storage::FromWord for #type_path {
+            impl ::base_common_precompiles::FromWord for #type_path {
                 #[inline]
                 fn to_word(&self) -> ::alloy_primitives::U256 {
                     ::alloy_primitives::U256::from(*self)
                 }
                 #[inline]
-                fn from_word(word: ::alloy_primitives::U256) -> ::base_precompile_storage::Result<Self> {
+                fn from_word(word: ::alloy_primitives::U256) -> ::base_common_precompiles::Result<Self> {
                     if word > ::alloy_primitives::U256::from(::alloy_primitives::aliases::#ty::MAX) {
-                        return Err(::base_precompile_storage::BasePrecompileError::under_overflow());
+                        return Err(::base_common_precompiles::BasePrecompileError::under_overflow());
                     }
                     Ok(word.to::<Self>())
                 }
             }
         },
         StorableConversionStrategy::SignedRust(unsigned_type) => quote! {
-            impl ::base_precompile_storage::FromWord for #type_path {
+            impl ::base_common_precompiles::FromWord for #type_path {
                 #[inline]
                 fn to_word(&self) -> ::alloy_primitives::U256 {
                     ::alloy_primitives::U256::from(*self as #unsigned_type)
                 }
                 #[inline]
-                fn from_word(word: ::alloy_primitives::U256) -> ::base_precompile_storage::Result<Self> {
+                fn from_word(word: ::alloy_primitives::U256) -> ::base_common_precompiles::Result<Self> {
                     let unsigned: #unsigned_type = word.try_into()
-                        .map_err(|_| ::base_precompile_storage::BasePrecompileError::under_overflow())?;
+                        .map_err(|_| ::base_common_precompiles::BasePrecompileError::under_overflow())?;
                     Ok(unsigned as Self)
                 }
             }
         },
         StorableConversionStrategy::SignedAlloy(unsigned_type) => quote! {
-            impl ::base_precompile_storage::FromWord for #type_path {
+            impl ::base_common_precompiles::FromWord for #type_path {
                 #[inline]
                 fn to_word(&self) -> ::alloy_primitives::U256 {
                     ::alloy_primitives::U256::from(self.into_raw())
                 }
                 #[inline]
-                fn from_word(word: ::alloy_primitives::U256) -> ::base_precompile_storage::Result<Self> {
+                fn from_word(word: ::alloy_primitives::U256) -> ::base_common_precompiles::Result<Self> {
                     if word > ::alloy_primitives::U256::from(::alloy_primitives::aliases::#unsigned_type::MAX) {
-                        return Err(::base_precompile_storage::BasePrecompileError::under_overflow());
+                        return Err(::base_common_precompiles::BasePrecompileError::under_overflow());
                     }
                     let unsigned_val = word.to::<::alloy_primitives::aliases::#unsigned_type>();
                     Ok(Self::from_raw(unsigned_val))
@@ -131,7 +131,7 @@ fn gen_to_word_impl(type_path: &TokenStream, strategy: &StorableConversionStrate
             }
         },
         StorableConversionStrategy::FixedBytes(size) => quote! {
-            impl ::base_precompile_storage::FromWord for #type_path {
+            impl ::base_common_precompiles::FromWord for #type_path {
                 #[inline]
                 fn to_word(&self) -> ::alloy_primitives::U256 {
                     let mut bytes = [0u8; 32];
@@ -139,7 +139,7 @@ fn gen_to_word_impl(type_path: &TokenStream, strategy: &StorableConversionStrate
                     ::alloy_primitives::U256::from_be_bytes(bytes)
                 }
                 #[inline]
-                fn from_word(word: ::alloy_primitives::U256) -> ::base_precompile_storage::Result<Self> {
+                fn from_word(word: ::alloy_primitives::U256) -> ::base_common_precompiles::Result<Self> {
                     let bytes = word.to_be_bytes::<32>();
                     let mut fixed_bytes = [0u8; #size];
                     fixed_bytes.copy_from_slice(&bytes[32 - #size..]);
@@ -158,29 +158,29 @@ fn gen_complete_impl_set(config: &TypeConfig) -> TokenStream {
 
     let full_word_storable_impl = if config.byte_count < 32 {
         quote! {
-            impl ::base_precompile_storage::sealed::OnlyPrimitives for #type_path {}
-            impl ::base_precompile_storage::Packable for #type_path {}
+            impl ::base_common_precompiles::sealed::OnlyPrimitives for #type_path {}
+            impl ::base_common_precompiles::Packable for #type_path {}
         }
     } else {
         quote! {
-            impl ::base_precompile_storage::sealed::OnlyPrimitives for #type_path {}
-            impl ::base_precompile_storage::Storable for #type_path {
+            impl ::base_common_precompiles::sealed::OnlyPrimitives for #type_path {}
+            impl ::base_common_precompiles::Storable for #type_path {
                 #[inline]
-                fn load<S: ::base_precompile_storage::StorageOps>(
+                fn load<S: ::base_common_precompiles::StorageOps>(
                     storage: &S,
                     slot: ::alloy_primitives::U256,
-                    _ctx: ::base_precompile_storage::LayoutCtx
-                ) -> ::base_precompile_storage::Result<Self> {
-                    storage.load(slot).and_then(<Self as ::base_precompile_storage::FromWord>::from_word)
+                    _ctx: ::base_common_precompiles::LayoutCtx
+                ) -> ::base_common_precompiles::Result<Self> {
+                    storage.load(slot).and_then(<Self as ::base_common_precompiles::FromWord>::from_word)
                 }
                 #[inline]
-                fn store<S: ::base_precompile_storage::StorageOps>(
+                fn store<S: ::base_common_precompiles::StorageOps>(
                     &self,
                     storage: &mut S,
                     slot: ::alloy_primitives::U256,
-                    _ctx: ::base_precompile_storage::LayoutCtx
-                ) -> ::base_precompile_storage::Result<()> {
-                    storage.store(slot, <Self as ::base_precompile_storage::FromWord>::to_word(self))
+                    _ctx: ::base_common_precompiles::LayoutCtx
+                ) -> ::base_common_precompiles::Result<()> {
+                    storage.store(slot, <Self as ::base_common_precompiles::FromWord>::to_word(self))
                 }
             }
         }
@@ -294,7 +294,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
     let ArrayConfig { elem_type, array_size, elem_byte_count, elem_is_packable } = config;
 
     let slot_count_expr = if *elem_is_packable {
-        quote! { ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count) }
+        quote! { ::base_common_precompiles::calc_packed_slot_count(#array_size, #elem_byte_count) }
     } else {
         quote! { #array_size }
     };
@@ -312,34 +312,34 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
     };
 
     quote! {
-        impl ::base_precompile_storage::StorableType for [#elem_type; #array_size] {
-            const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Slots(#slot_count_expr);
-            type Handler<'a> = ::base_precompile_storage::ArrayHandler<'a, #elem_type, #array_size>;
+        impl ::base_common_precompiles::StorableType for [#elem_type; #array_size] {
+            const LAYOUT: ::base_common_precompiles::Layout = ::base_common_precompiles::Layout::Slots(#slot_count_expr);
+            type Handler<'a> = ::base_common_precompiles::ArrayHandler<'a, #elem_type, #array_size>;
 
             fn handle<'a>(
                 slot: ::alloy_primitives::U256,
-                ctx: ::base_precompile_storage::LayoutCtx,
+                ctx: ::base_common_precompiles::LayoutCtx,
                 address: ::alloy_primitives::Address,
-                storage: ::base_precompile_storage::StorageCtx<'a>,
+                storage: ::base_common_precompiles::StorageCtx<'a>,
             ) -> Self::Handler<'a> {
-                debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays cannot be packed");
+                debug_assert_eq!(ctx, ::base_common_precompiles::LayoutCtx::FULL, "Arrays cannot be packed");
                 Self::Handler::new(slot, address, storage)
             }
         }
 
-        impl ::base_precompile_storage::Storable for [#elem_type; #array_size] {
+        impl ::base_common_precompiles::Storable for [#elem_type; #array_size] {
             #[inline]
-            fn load<S: ::base_precompile_storage::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<Self> {
-                debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be loaded with LayoutCtx::FULL");
-                use ::base_precompile_storage::{Word, calc_element_slot, calc_element_offset};
+            fn load<S: ::base_common_precompiles::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_common_precompiles::LayoutCtx) -> ::base_common_precompiles::Result<Self> {
+                debug_assert_eq!(ctx, ::base_common_precompiles::LayoutCtx::FULL, "Arrays can only be loaded with LayoutCtx::FULL");
+                use ::base_common_precompiles::{Word, calc_element_slot, calc_element_offset};
                 let base_slot = slot;
                 #load_impl
             }
 
             #[inline]
-            fn store<S: ::base_precompile_storage::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<()> {
-                debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be stored with LayoutCtx::FULL");
-                use ::base_precompile_storage::{Word, calc_element_slot, calc_element_offset};
+            fn store<S: ::base_common_precompiles::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_common_precompiles::LayoutCtx) -> ::base_common_precompiles::Result<()> {
+                debug_assert_eq!(ctx, ::base_common_precompiles::LayoutCtx::FULL, "Arrays can only be stored with LayoutCtx::FULL");
+                use ::base_common_precompiles::{Word, calc_element_slot, calc_element_offset};
                 let base_slot = slot;
                 #store_impl
             }
@@ -355,7 +355,7 @@ fn gen_packed_array_load(array_size: &usize, elem_byte_count: &usize) -> TokenSt
             let offset = calc_element_offset(i, #elem_byte_count);
             let slot_addr = base_slot
                 .checked_add(::alloy_primitives::U256::from(slot_idx))
-                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
+                .ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?;
             let slot_value = storage.load(slot_addr)?;
             result[i] = Word::extract_from_word(slot_value, offset, #elem_byte_count)?;
         }
@@ -365,11 +365,11 @@ fn gen_packed_array_load(array_size: &usize, elem_byte_count: &usize) -> TokenSt
 
 fn gen_packed_array_store(array_size: &usize, elem_byte_count: &usize) -> TokenStream {
     quote! {
-        let slot_count = ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count);
+        let slot_count = ::base_common_precompiles::calc_packed_slot_count(#array_size, #elem_byte_count);
         for slot_idx in 0..slot_count {
             let slot_addr = base_slot
                 .checked_add(::alloy_primitives::U256::from(slot_idx))
-                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
+                .ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?;
             let mut slot_value = ::alloy_primitives::U256::ZERO;
             for i in 0..#array_size {
                 let elem_slot = calc_element_slot(i, #elem_byte_count);
@@ -390,8 +390,8 @@ fn gen_unpacked_array_load(array_size: &usize) -> TokenStream {
         for i in 0..#array_size {
             let elem_slot = base_slot
                 .checked_add(::alloy_primitives::U256::from(i))
-                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
-            result[i] = ::base_precompile_storage::Storable::load(storage, elem_slot, ::base_precompile_storage::LayoutCtx::FULL)?;
+                .ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?;
+            result[i] = ::base_common_precompiles::Storable::load(storage, elem_slot, ::base_common_precompiles::LayoutCtx::FULL)?;
         }
         Ok(result)
     }
@@ -402,8 +402,8 @@ fn gen_unpacked_array_store() -> TokenStream {
         for (i, elem) in self.iter().enumerate() {
             let elem_slot = base_slot
                 .checked_add(::alloy_primitives::U256::from(i))
-                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
-            ::base_precompile_storage::Storable::store(elem, storage, elem_slot, ::base_precompile_storage::LayoutCtx::FULL)?;
+                .ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?;
+            ::base_common_precompiles::Storable::store(elem, storage, elem_slot, ::base_common_precompiles::LayoutCtx::FULL)?;
         }
         Ok(())
     }
@@ -517,35 +517,35 @@ fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenS
     quote! {
         mod #mod_ident {
             use super::*;
-            pub const ELEM_SLOTS: usize = <#struct_type as ::base_precompile_storage::StorableType>::SLOTS;
+            pub const ELEM_SLOTS: usize = <#struct_type as ::base_common_precompiles::StorableType>::SLOTS;
             pub const ARRAY_LEN: usize = #array_size;
             pub const SLOT_COUNT: usize = ARRAY_LEN * ELEM_SLOTS;
         }
 
-        impl ::base_precompile_storage::StorableType for [#struct_type; #array_size] {
-            const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Slots(#mod_ident::SLOT_COUNT);
-            type Handler<'a> = ::base_precompile_storage::Slot<'a, Self>;
+        impl ::base_common_precompiles::StorableType for [#struct_type; #array_size] {
+            const LAYOUT: ::base_common_precompiles::Layout = ::base_common_precompiles::Layout::Slots(#mod_ident::SLOT_COUNT);
+            type Handler<'a> = ::base_common_precompiles::Slot<'a, Self>;
             fn handle<'a>(
                 slot: ::alloy_primitives::U256,
-                ctx: ::base_precompile_storage::LayoutCtx,
+                ctx: ::base_common_precompiles::LayoutCtx,
                 address: ::alloy_primitives::Address,
-                storage: ::base_precompile_storage::StorageCtx<'a>,
+                storage: ::base_common_precompiles::StorageCtx<'a>,
             ) -> Self::Handler<'a> {
-                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address, storage)
+                ::base_common_precompiles::Slot::new_with_ctx(slot, ctx, address, storage)
             }
         }
 
-        impl ::base_precompile_storage::Storable for [#struct_type; #array_size] {
+        impl ::base_common_precompiles::Storable for [#struct_type; #array_size] {
             #[inline]
-            fn load<S: ::base_precompile_storage::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<Self> {
-                debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Struct arrays can only be loaded with LayoutCtx::FULL");
+            fn load<S: ::base_common_precompiles::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_common_precompiles::LayoutCtx) -> ::base_common_precompiles::Result<Self> {
+                debug_assert_eq!(ctx, ::base_common_precompiles::LayoutCtx::FULL, "Struct arrays can only be loaded with LayoutCtx::FULL");
                 let base_slot = slot;
                 #load_impl
             }
 
             #[inline]
-            fn store<S: ::base_precompile_storage::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<()> {
-                debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Struct arrays can only be stored with LayoutCtx::FULL");
+            fn store<S: ::base_common_precompiles::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_common_precompiles::LayoutCtx) -> ::base_common_precompiles::Result<()> {
+                debug_assert_eq!(ctx, ::base_common_precompiles::LayoutCtx::FULL, "Struct arrays can only be stored with LayoutCtx::FULL");
                 let base_slot = slot;
                 #store_impl
             }
@@ -559,10 +559,10 @@ fn gen_struct_array_load(struct_type: &TokenStream, array_size: usize) -> TokenS
         for i in 0..#array_size {
             let elem_slot = base_slot.checked_add(
                 ::alloy_primitives::U256::from(i).checked_mul(
-                    ::alloy_primitives::U256::from(<#struct_type as ::base_precompile_storage::StorableType>::SLOTS)
-                ).ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?
-            ).ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
-            result[i] = <#struct_type as ::base_precompile_storage::Storable>::load(storage, elem_slot, ::base_precompile_storage::LayoutCtx::FULL)?;
+                    ::alloy_primitives::U256::from(<#struct_type as ::base_common_precompiles::StorableType>::SLOTS)
+                ).ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?
+            ).ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?;
+            result[i] = <#struct_type as ::base_common_precompiles::Storable>::load(storage, elem_slot, ::base_common_precompiles::LayoutCtx::FULL)?;
         }
         Ok(result)
     }
@@ -573,10 +573,10 @@ fn gen_struct_array_store(struct_type: &TokenStream) -> TokenStream {
         for (i, elem) in self.iter().enumerate() {
             let elem_slot = base_slot.checked_add(
                 ::alloy_primitives::U256::from(i).checked_mul(
-                    ::alloy_primitives::U256::from(<#struct_type as ::base_precompile_storage::StorableType>::SLOTS)
-                ).ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?
-            ).ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
-            <#struct_type as ::base_precompile_storage::Storable>::store(elem, storage, elem_slot, ::base_precompile_storage::LayoutCtx::FULL)?;
+                    ::alloy_primitives::U256::from(<#struct_type as ::base_common_precompiles::StorableType>::SLOTS)
+                ).ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?
+            ).ok_or(::base_common_precompiles::BasePrecompileError::SlotOverflow)?;
+            <#struct_type as ::base_common_precompiles::Storable>::store(elem, storage, elem_slot, ::base_common_precompiles::LayoutCtx::FULL)?;
         }
         Ok(())
     }

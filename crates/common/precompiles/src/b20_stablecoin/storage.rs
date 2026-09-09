@@ -3,8 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
+use base_common_precompiles::{BasePrecompileError, Handler, Result, StorageCtx};
 use base_precompile_macros::{StablecoinAccounting, Storable, TokenAccounting, contract};
-use base_precompile_storage::{BasePrecompileError, Handler, Result, StorageCtx};
 
 use crate::{B20CoreStorage, IB20Factory};
 
@@ -75,7 +75,7 @@ mod tests {
     use alloc::string::String;
 
     use alloy_primitives::{Address, U256, address, uint};
-    use base_precompile_storage::{Handler, StorableType, StorageCtx, setup_storage};
+    use base_common_precompiles::{Handler, StorableType, StorageCtx, setup_storage};
 
     use crate::{
         B20CoreStorage, B20StablecoinExtensionStorage, B20StablecoinStorage,

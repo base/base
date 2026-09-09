@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, LogData, U256, address};
+use base_common_precompiles::{Handler, Mapping, Result};
 use base_precompile_macros::contract;
-use base_precompile_storage::{Handler, Mapping, Result};
 
 use crate::PolicyAccounting;
 
@@ -162,11 +162,11 @@ impl PolicyAccounting for PolicyRegistryStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, U256, address, keccak256, uint};
-    use base_evm_handler::state::Bytecode;
-    use base_precompile_storage::{
+    use base_common_precompiles::{
         BasePrecompileError, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
         StorageKey,
     };
+    use base_evm_handler::state::Bytecode;
 
     use crate::{
         IPolicyRegistry::PolicyType,

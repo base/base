@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{
     IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting,
@@ -428,7 +428,7 @@ mod tests {
 
     use alloy_primitives::{Address, LogData, U256, address};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_common_precompiles::{BasePrecompileError, Result};
 
     use crate::{
         IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting, PolicyRegistryLogic,

@@ -3,8 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
+use base_common_precompiles::{Handler, Mapping, Result, StorageCtx, StorageOps, Word};
 use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
-use base_precompile_storage::{Handler, Mapping, Result, StorageCtx, StorageOps, Word};
 
 use crate::B20CoreStorage;
 
@@ -111,7 +111,7 @@ impl B20AssetStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, uint};
-    use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
+    use base_common_precompiles::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
 
     use super::{
         __packing_b20_asset_extension_storage, B20AssetExtensionStorage, B20AssetInit,

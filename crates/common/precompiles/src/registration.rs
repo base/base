@@ -7,14 +7,14 @@
 use alloy_primitives::Address;
 use base_evm_handler::precompile::PrecompileResult;
 
-use crate::provider::PrecompileStorageProvider;
+use crate::storage_provider::PrecompileStorageProvider;
 
 /// Trait that every native precompile must implement.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use base_precompile_storage::registration::NativePrecompile;
+/// use base_common_precompiles::registration::NativePrecompile;
 /// use base_precompile_macros::contract;
 ///
 /// #[contract(addr = MY_PRECOMPILE_ADDRESS)]

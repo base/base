@@ -9,7 +9,7 @@ use base_evm_handler::{
 
 use crate::{
     error::BasePrecompileError,
-    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
+    storage_provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
 };
 
 /// In-memory [`PrecompileStorageProvider`] for unit tests.
@@ -468,7 +468,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256};
 
     use super::*;
-    use crate::provider::PrecompileStorageProvider;
+    use crate::storage_provider::PrecompileStorageProvider;
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;

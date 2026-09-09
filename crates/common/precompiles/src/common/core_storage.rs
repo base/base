@@ -3,8 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
+use base_common_precompiles::{Mapping, Result, StorageOps, Word};
 use base_precompile_macros::Storable;
-use base_precompile_storage::{Mapping, Result, StorageOps, Word};
 
 use crate::TransferPolicyIds;
 
@@ -130,7 +130,7 @@ impl B20CoreStorageHandler<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, uint};
-    use base_precompile_storage::StorableType;
+    use base_common_precompiles::StorableType;
 
     use super::__packing_b20_core_storage;
     use crate::B20CoreStorage;

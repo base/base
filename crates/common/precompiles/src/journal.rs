@@ -25,7 +25,7 @@ use base_evm_handler::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
+    storage_provider::{PrecompileStorageProvider, validate_loaded_code_presence},
 };
 
 /// Gas-free [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -240,7 +240,7 @@ mod tests {
     use base_evm_handler::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
 
     use super::JournalStorageProvider;
-    use crate::provider::PrecompileStorageProvider;
+    use crate::storage_provider::PrecompileStorageProvider;
 
     const ADDR: Address = Address::repeat_byte(0x42);
 

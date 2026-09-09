@@ -3,7 +3,7 @@
 use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use super::{IB20, IB20V1, IB20V2};
 
@@ -67,7 +67,7 @@ impl B20Abi {
 mod tests {
     use alloy_primitives::Address;
     use alloy_sol_types::{SolCall, SolInterface};
-    use base_precompile_storage::BasePrecompileError;
+    use base_common_precompiles::BasePrecompileError;
 
     use super::{B20Abi, IB20, IB20V1, IB20V2};
 

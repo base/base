@@ -1,7 +1,7 @@
 //! Errors returned by the EIP-8130 actor authorization step.
 
 use alloy_primitives::{Address, B256};
-use base_precompile_storage::BasePrecompileError;
+use base_common_precompiles::BasePrecompileError;
 
 use crate::AuthError;
 

@@ -1,12 +1,12 @@
 use alloy_primitives::Address;
 use base_common_chain_config::BaseUpgrade;
+use base_common_precompiles::StorageFeatures;
 use base_evm_handler::PrecompilesMap;
 use base_evm_handler::{
     precompile,
     precompile::{Precompiles, bn254, modexp, secp256r1},
     primitives::OnceLock,
 };
-use base_precompile_storage::StorageFeatures;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistry, B20Factory, BerylLookup, NonceManager,
@@ -237,11 +237,11 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_common_chain_config::BaseUpgrade;
+    use base_common_precompiles::StorageFeatures;
     use base_evm_handler::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
     };
-    use base_precompile_storage::StorageFeatures;
     use rstest::rstest;
 
     use crate::{

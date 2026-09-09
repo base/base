@@ -28,7 +28,7 @@ use base_common_precompiles::{
     B20Variant, FactoryVersion, FactoryVersions, IActivationRegistry, IB20, IB20Factory,
     IPolicyRegistry, PolicyRegistryStorage, StablecoinAccounting, TokenAccounting,
 };
-use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{

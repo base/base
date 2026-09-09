@@ -2256,7 +2256,6 @@ dependencies = [
  "base-execution-evm-blocks",
  "base-execution-payload-builder",
  "base-execution-txpool",
- "base-precompile-storage",
  "base-protocol",
  "base-runtime",
  "base-state",
@@ -2701,7 +2700,6 @@ dependencies = [
  "base-evm-handler",
  "base-execution-eip8130",
  "base-metrics",
- "base-precompile-storage",
  "k256",
  "metrics",
  "rstest",
@@ -2770,10 +2768,13 @@ dependencies = [
  "base-evm-context",
  "base-evm-handler",
  "base-precompile-macros",
- "base-precompile-storage",
  "criterion",
+ "derive_more",
  "k256",
+ "proptest",
  "rstest",
+ "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]
@@ -3367,7 +3368,6 @@ dependencies = [
  "base-common-types-chain",
  "base-evm-handler",
  "base-precompile-macros",
- "base-precompile-storage",
  "base64 0.22.1",
  "k256",
  "p256",
@@ -3711,7 +3711,6 @@ dependencies = [
  "base-execution-txpool",
  "base-metrics",
  "base-observability-events",
- "base-precompile-storage",
  "base-test-utils",
  "bitflags 2.13.1",
  "codspeed-criterion-compat 4.7.0",
@@ -4070,22 +4069,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "base-precompile-storage"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "base-evm-context",
- "base-evm-handler",
- "base-precompile-macros",
- "derive_more",
- "proptest",
- "rstest",
- "thiserror 2.0.19",
- "tracing",
 ]
 
 [[package]]

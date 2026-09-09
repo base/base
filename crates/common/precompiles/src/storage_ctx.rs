@@ -17,7 +17,7 @@ use base_evm_handler::state::Bytecode;
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
     neutral::{AccountInfo, PrecompileOutput, PrecompileResult},
-    provider::{PrecompileStorageProvider, StorageFeatures},
+    storage_provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;

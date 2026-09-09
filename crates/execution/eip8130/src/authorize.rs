@@ -254,7 +254,7 @@ impl ActorAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address, keccak256};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
     use p256::ecdsa::{
         Signature as P256Sig, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,

@@ -3,7 +3,7 @@
 use alloc::string::String;
 
 use alloy_primitives::U256;
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 use crate::{TokenAccounting, macros::reject_frozen_selector};
 

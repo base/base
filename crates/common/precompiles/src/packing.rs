@@ -3,7 +3,7 @@
 //! This module provides helper functions for bit-level manipulation of storage slots,
 //! enabling efficient packing of multiple small values into single 32-byte slots.
 //!
-//! Storage layout is described by the [`Layout`](crate::provider::Layout) enum:
+//! Storage layout is described by the [`Layout`](crate::storage_provider::Layout) enum:
 //! - `Layout::Bytes(N)` -- primitive types that fit in N bytes (1-32). Types with N < 32
 //!   are packable: multiple values can share a single 32-byte slot.
 //! - `Layout::Slots(N)` -- types that span N full slots and cannot be packed. This includes
@@ -24,7 +24,7 @@ use alloy_primitives::U256;
 
 use crate::{
     error::Result,
-    provider::{FromWord, Layout, StorableType, StorageOps},
+    storage_provider::{FromWord, Layout, StorableType, StorageOps},
 };
 
 /// A helper struct to support packing elements into a single slot. Represents an
@@ -230,8 +230,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        provider::{Handler, LayoutCtx},
         storage_ctx::StorageCtx,
+        storage_provider::{Handler, LayoutCtx},
         types::Slot,
     };
 

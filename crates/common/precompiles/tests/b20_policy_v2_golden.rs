@@ -36,7 +36,7 @@ use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
     PolicyRegistryStorage, PolicyVersion, PolicyVersions, UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
 mod common;
 use common::{

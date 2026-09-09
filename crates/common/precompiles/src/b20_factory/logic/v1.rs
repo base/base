@@ -5,8 +5,8 @@ use alloc::{string::ToString, vec::Vec};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_chain_config::BaseUpgrade;
+use base_common_precompiles::{BasePrecompileError, ContractStorage, Result};
 use base_evm_handler::state::Bytecode;
-use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
 
 use crate::{
     ActivationRegistryStorage, AssetVersions, B20AssetInit, B20AssetStorage, B20AssetToken,
@@ -346,7 +346,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use alloy_sol_types::{SolCall, SolValue};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, Asset,

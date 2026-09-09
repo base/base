@@ -3,8 +3,8 @@
 //! Validates that the macro generates correct storage layout,
 //! typed getter/setter fields work round-trip, and collision detection fires.
 use alloy_primitives::{Address, U256, address, keccak256};
+use base_common_precompiles::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
 use base_precompile_macros::contract;
-use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
 
 const TEST_ADDR: Address = address!("0000000000000000000000000000000000001234");
 
@@ -68,8 +68,8 @@ fn test_contract_macro_basic_roundtrip() {
 
 mod mapping_only_storable_layout {
     use alloy_primitives::{Address, U256};
+    use base_common_precompiles::{Mapping, StorableType};
     use base_precompile_macros::Storable;
-    use base_precompile_storage::{Mapping, StorableType};
 
     #[derive(Debug, Clone, Storable)]
     struct MappingOnlyStorage {
@@ -137,8 +137,8 @@ fn test_contract_multiple_instances_independent() {
 
 mod namespaced_layout {
     use alloy_primitives::{Address, U256, address, uint};
+    use base_common_precompiles::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
     use base_precompile_macros::{Storable, contract};
-    use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
 
     use super::{data_slot, word_from_chunk};
 
@@ -303,10 +303,10 @@ mod namespaced_layout {
 
 mod type_namespaced_layouts {
     use alloy_primitives::{Address, U256, address};
-    use base_precompile_macros::{Storable, contract};
-    use base_precompile_storage::{
+    use base_common_precompiles::{
         Handler, Mapping, StorableType, StorageCtx, StorageKey, setup_storage,
     };
+    use base_precompile_macros::{Storable, contract};
 
     use super::erc7201_root;
 
@@ -456,8 +456,8 @@ mod type_namespaced_layouts {
 
 mod namespaced_fields {
     use alloy_primitives::{Address, U256, address, uint};
+    use base_common_precompiles::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
     use base_precompile_macros::contract;
-    use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
 
     use super::{data_slot, word_from_chunk};
 
@@ -526,8 +526,8 @@ mod struct_level_attribute_passthrough {
 
     mod allow_and_doc {
         use alloy_primitives::{Address, U256, address};
+        use base_common_precompiles::{Handler, StorageCtx, setup_storage};
         use base_precompile_macros::contract;
-        use base_precompile_storage::{Handler, StorageCtx, setup_storage};
 
         const ATTR_ADDR: Address = address!("0000000000000000000000000000000000007777");
 
@@ -556,8 +556,8 @@ mod struct_level_attribute_passthrough {
 
     mod cfg_attr {
         use alloy_primitives::{Address, address};
+        use base_common_precompiles::{Handler, StorageCtx, setup_storage};
         use base_precompile_macros::contract;
-        use base_precompile_storage::{Handler, StorageCtx, setup_storage};
 
         const CFG_ATTR_ADDR: Address = address!("0000000000000000000000000000000000007778");
 
@@ -587,8 +587,8 @@ mod packed_slot_layout {
     //! 1. Every field lands at its declared byte offset.
     //! 2. Writing to one field does not bleed into any adjacent field's bit range.
     use alloy_primitives::{Address, U256, address};
+    use base_common_precompiles::{Handler, StorageCtx, setup_storage};
     use base_precompile_macros::contract;
-    use base_precompile_storage::{Handler, StorageCtx, setup_storage};
 
     const PACKED_ADDR: Address = address!("0000000000000000000000000000000000009999");
 

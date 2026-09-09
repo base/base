@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
     B20FactoryStorage, B20Variant, Factory, FactoryV1, FactoryVersion, FactoryVersions,
@@ -136,7 +136,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,

@@ -18,7 +18,7 @@ use base_evm_handler::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
+    storage_provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
 };
 
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -388,7 +388,7 @@ mod tests {
         BytesLikeHandler, Handler, StorageCtx,
         error::BasePrecompileError,
         hashmap::HashMapStorageProvider,
-        provider::{PrecompileStorageProvider, StorageFeatures},
+        storage_provider::{PrecompileStorageProvider, StorageFeatures},
     };
 
     fn amsterdam_provider() -> HashMapStorageProvider {

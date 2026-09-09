@@ -184,8 +184,10 @@ impl ConfigChangeAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, U256, address};
-    use base_common_types_chain::{AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_common_types_chain::{
+        AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange,
+    };
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;

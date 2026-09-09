@@ -107,3 +107,5 @@ let _active = precompiles.precompiles();
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+
+Native precompile storage, layout handlers, journal access, and their test providers are implemented in this crate. They were consolidated from `base-precompile-storage`; the contract macro and golden integration suites remain available with `test-utils`.

@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, address, hex, keccak256};
 use alloy_sol_types::SolValue;
+use base_common_precompiles::HashMapStorageProvider;
 use base_common_precompiles::{IB20, PermitArgs};
-use base_precompile_storage::HashMapStorageProvider;
 use k256::ecdsa::SigningKey;
 
 // --- shared fixtures --------------------------------------------------------

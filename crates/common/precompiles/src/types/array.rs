@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use crate::{
     error::{BasePrecompileError, Result},
     packing,
-    provider::{Handler, LayoutCtx, Storable, StorableType},
+    storage_provider::{Handler, LayoutCtx, Storable, StorableType},
     types::{HandlerCache, Slot},
 };
 
@@ -148,9 +148,7 @@ mod tests {
     use alloy_primitives::U256;
 
     use super::*;
-    use crate::{
-        hashmap::setup_storage, provider::PrecompileStorageProvider, storage_ctx::StorageCtx,
-    };
+    use crate::{PrecompileStorageProvider, hashmap::setup_storage, storage_ctx::StorageCtx};
 
     const SENTINEL: u64 = 0xDEAD;
 

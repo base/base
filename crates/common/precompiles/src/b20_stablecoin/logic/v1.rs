@@ -8,7 +8,7 @@ use alloc::{
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{
     B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
@@ -679,7 +679,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, LogData, U256, keccak256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use base_common_precompiles::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
 
     use crate::{

@@ -308,7 +308,7 @@ mod tests {
     fn config_accepts_storage_features() {
         let config = parse_config(quote! {
             install,
-            storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+            storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
         })
         .unwrap();
 
@@ -333,7 +333,7 @@ mod tests {
         let tokens = expand_impl(
             quote! {
                 install,
-                storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+                storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;
@@ -368,7 +368,7 @@ mod tests {
         let tokens = expand_impl(
             quote! {
                 install,
-                storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+                storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;
@@ -388,7 +388,7 @@ mod tests {
             quote! {
                 storage = CustomStorage<'_>,
                 install,
-                storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+                storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;

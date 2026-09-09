@@ -1,7 +1,7 @@
 //! Shared authorization and policy guards for B-20 token operations.
 
 use alloy_primitives::{Address, B256, U256};
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{B20PausableFeature, B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting};
 
@@ -129,7 +129,7 @@ impl B20Guards {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use base_precompile_storage::BasePrecompileError;
+    use base_common_precompiles::BasePrecompileError;
 
     use crate::{
         B20Guards, B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,

@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::Address;
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 use crate::{IPolicyRegistry::PolicyType, PolicyAccounting, macros::reject_frozen_selector};
 

@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256};
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 use crate::{B20FactoryStorage, IB20Factory};
 

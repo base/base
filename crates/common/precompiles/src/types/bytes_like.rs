@@ -17,7 +17,7 @@ use alloy_primitives::{Address, Bytes, U256, keccak256};
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{
+    storage_provider::{
         Handler, Layout, LayoutCtx, Storable, StorableType, StorageKey, StorageOps,
         sealed::OnlyPrimitives,
     },
@@ -342,9 +342,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::{
-        StorageFeatures, hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx,
-    };
+    use crate::{Handler, StorageFeatures, hashmap::setup_storage, storage_ctx::StorageCtx};
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()

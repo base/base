@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use alloy_primitives::{Address, B256, LogData, U256, keccak256};
-use base_precompile_storage::Result;
+use base_common_precompiles::Result;
 
 use crate::{
     PackedPolicy, PolicyAccounting, PolicyRegistryStorage,

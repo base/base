@@ -3,7 +3,7 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     ActivationAdminConfig, ActivationRegistryStorage,
@@ -66,7 +66,7 @@ impl ActivationRegistryStorage<'_> {
         &mut self,
         calldata: &[u8],
         admin_config: ActivationAdminConfig,
-    ) -> base_precompile_storage::Result<Bytes> {
+    ) -> base_common_precompiles::Result<Bytes> {
         let set_admin_selector = IActivationRegistry::setAdminCall::SELECTOR;
         if !admin_config.state_enabled && calldata.get(..4) == Some(set_admin_selector.as_slice()) {
             return Err(BasePrecompileError::UnknownFunctionSelector(set_admin_selector));
@@ -106,7 +106,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
     use crate::{ActivationAdminConfig, ActivationRegistryStorage, IActivationRegistry};
 

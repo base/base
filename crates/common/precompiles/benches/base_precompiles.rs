@@ -9,7 +9,7 @@ use base_common_precompiles::{
     Asset, AssetV1, B20AssetStorage, B20AssetToken, B20FactoryStorage, B20TokenRole, B20Variant,
     IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
-use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
 
 struct BaseTokenBenchSetup;

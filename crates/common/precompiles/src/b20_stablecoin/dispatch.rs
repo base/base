@@ -11,7 +11,7 @@ use alloc::string::ToString;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_common_precompiles::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant,
@@ -84,7 +84,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         account: Address,
         sender: Address,
         upgrade: BaseUpgrade,
-    ) -> base_precompile_storage::Result<()> {
+    ) -> base_common_precompiles::Result<()> {
         // `None` is unreachable in practice — the precompile is only installed from Beryl — but
         // we revert defensively, mirroring `dispatch_with_observer`.
         let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
@@ -102,7 +102,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         version: StablecoinVersion,
         privileged: bool,
         observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
+    ) -> base_common_precompiles::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
@@ -348,7 +348,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
         B20StablecoinToken, FakePolicyAccounting, IB20, InMemoryTokenAccounting,

@@ -11,7 +11,7 @@ use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{
     IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, PolicyAccounting, PolicyRegistryLogic,

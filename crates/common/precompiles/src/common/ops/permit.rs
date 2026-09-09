@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{IB20, TokenAccounting};
 
@@ -154,7 +154,7 @@ impl PermitArgs {
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolValue;
-    use base_precompile_storage::BasePrecompileError;
+    use base_common_precompiles::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
     use crate::{IB20, PermitArgs};

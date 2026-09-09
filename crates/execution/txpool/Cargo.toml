@@ -33,11 +33,10 @@ base-common-flz = { workspace = true }
 base-evm-context = { workspace = true }
 base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
+base-common-precompiles = {workspace = true}
 base-execution-eip8130 = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
-base-common-precompiles = { workspace = true }
-base-precompile-storage = { workspace = true }
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}

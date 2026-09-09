@@ -5,7 +5,7 @@
 use alloy_primitives::{Address, U256};
 
 use crate::{
-    provider::{
+    storage_provider::{
         FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey, sealed::OnlyPrimitives,
     },
     types::Slot,
@@ -112,8 +112,8 @@ mod tests {
     use super::*;
     use crate::{
         hashmap::setup_storage,
-        provider::{Handler, LayoutCtx},
         storage_ctx::StorageCtx,
+        storage_provider::{Handler, LayoutCtx},
     };
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {

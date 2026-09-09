@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, Bytes};
 use base_common_chain_config::BaseUpgrade;
+use base_common_precompiles::BasePrecompileError;
 use base_evm_handler::DynPrecompile;
-use base_precompile_storage::BasePrecompileError;
 
 use crate::{
     B20StablecoinStorage, B20StablecoinToken, NoopPrecompileCallObserver, PolicyRegistryStorage,

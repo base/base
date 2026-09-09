@@ -1,6 +1,6 @@
 //! Errors returned by the EIP-8130 nonce validation step.
 
-use base_precompile_storage::BasePrecompileError;
+use base_common_precompiles::BasePrecompileError;
 
 /// Reason a transaction's nonce could not be validated against the live nonce
 /// state. Every variant is a hard rejection for block inclusion; in the mempool

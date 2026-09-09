@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{
+use base_common_precompiles::{
     BasePrecompileError, IntoPrecompileResult, PrecompileResult, StorageCtx,
 };
 
@@ -45,7 +45,7 @@ impl TxContextStorage<'_> {
         result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), 0, |output| output)
     }
 
-    fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+    fn inner(&self, calldata: &[u8]) -> base_common_precompiles::Result<Bytes> {
         match decode_precompile_call!(calldata, ITransactionContext::ITransactionContextCalls) {
             C::getTransactionSender(_) => Ok(
                 ITransactionContext::getTransactionSenderCall::abi_encode_returns(&self.sender()?)
@@ -69,7 +69,7 @@ impl TxContextStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
     use alloy_sol_types::{SolCall, SolError};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
 
     use crate::{ITransactionContext, TxContextStorage};
 

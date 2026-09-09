@@ -46,10 +46,11 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
+use base_common_precompiles::{JournalStorageProvider, StorageCtx};
+use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_common_types_chain::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
-use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_evm_context::{
     Block, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
     LocalContextTr, Output, ResultGas, SuccessReason, take_error,
@@ -72,7 +73,6 @@ use base_execution_eip8130::{
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
     TransactionAuthorizer,
 };
-use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 
 use crate::{
     BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, Eip8130PhaseStatuses,
@@ -1722,11 +1722,12 @@ impl Eip8130Executor {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
+    use base_common_precompiles::INonceManager;
+    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
     use base_common_types_chain::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
-    use base_common_precompiles::INonceManager;
     use base_evm_context::{BlockEnv, CfgEnv, Context};
     use base_evm_handler::{
         Database, bytecode::Bytecode, database::DBErrorMarker, database::InMemoryDB,
@@ -1734,7 +1735,6 @@ mod tests {
     };
     use base_evm_handler::{Evm, FromTxWithEncoded, NoOpInspector, PrecompilesMap};
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;
 
     use super::*;
@@ -2963,7 +2963,7 @@ mod tests {
         signer_addr: Address,
         target: Address,
     ) {
-        use base_precompile_storage::Handler as _;
+        use base_common_precompiles::Handler as _;
         let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
         {
             let ctx = evm.ctx_mut();

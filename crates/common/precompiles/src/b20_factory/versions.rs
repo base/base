@@ -11,7 +11,7 @@ use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
 use base_common_chain_config::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_common_precompiles::{BasePrecompileError, Result};
 
 use crate::{Factory, FactoryV1, IB20Factory, IB20FactoryV1};
 
@@ -119,7 +119,7 @@ mod tests {
     use alloy_primitives::Address;
     use alloy_sol_types::{SolCall, SolInterface};
     use base_common_chain_config::BaseUpgrade;
-    use base_precompile_storage::BasePrecompileError;
+    use base_common_precompiles::BasePrecompileError;
 
     use crate::{FactoryAbi, FactoryVersion, FactoryVersions, IB20Factory, IB20FactoryV1};
 
