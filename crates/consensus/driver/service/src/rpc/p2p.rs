@@ -16,7 +16,7 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObject},
 };
 
-use crate::net::P2pRpc;
+use crate::rpc::net::P2pRpc;
 use base_common_client_rollup::BaseP2PApiServer;
 
 const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -351,7 +351,7 @@ mod tests {
     use base_consensus_network_service::P2pRpcRequest;
     use tokio::sync::mpsc;
 
-    use crate::net::P2pRpc;
+    use crate::rpc::net::P2pRpc;
 
     fn test_backoff() -> ExponentialBuilder {
         ExponentialBuilder::default()

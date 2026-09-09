@@ -37,7 +37,7 @@ struct CachedRead {
     outcome: Result<Option<UpgradeSignalSchedule>, String>,
 }
 
-/// Server implementation of the public [`crate::BaseApiServer`] (`base` namespace).
+/// Server implementation of the public [`crate::rpc::BaseApiServer`] (`base` namespace).
 ///
 /// Holds the node's upgrade-signal configuration and a contract reader so it can answer readiness
 /// queries with a fresh, authoritative L1 read (which also confirms the node can reach the contract).

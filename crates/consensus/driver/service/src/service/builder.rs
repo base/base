@@ -2,12 +2,12 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use crate::RpcBuilder;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_chain_activation::UpgradeSignalConfig;
 use base_common_chain_config::RollupConfig;
-use base_consensus_rpc::RpcBuilder;
 use base_consensus_source_providers::{L1RpcProvider, OnlineBeaconClient};
 use url::Url;
 

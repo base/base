@@ -44,7 +44,6 @@ eyre = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
-base-consensus-driver-service = { workspace = true }
 base-consensus-source-providers = {workspace = true}
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-evm-precompiles = { workspace = true }
@@ -60,7 +59,6 @@ axum = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-testing-support = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-base-consensus-rpc = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
@@ -74,6 +72,7 @@ prometheus-scraper = { version = "0.2.0", default-features = false }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
+base-consensus-driver-service = {workspace = true, features = ["default"]}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}

@@ -68,3 +68,10 @@ pub use actors::{
 #[cfg(test)]
 pub use follow::MockRemoteClient;
 pub use metrics::Metrics;
+
+mod rpc;
+pub use rpc::{
+    AdminRpc, BaseRpc, DevEngineRpc, EngineRpcClient, HealthzRpc, L1State, L1WatcherQueries,
+    L1WatcherQuerySender, NetworkAdminQuery, P2pRpc, RollupRpc, RpcBuilder,
+    SequencerAdminAPIClient, SequencerAdminAPIError, WsRPC,
+};

@@ -9,11 +9,11 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_consensus_derive::StatefulAttributesBuilder;
+use base_consensus_driver_service::SequencerAdminAPIError;
 use base_consensus_driver_service::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
 };
-use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::{
     sync::{mpsc, oneshot},

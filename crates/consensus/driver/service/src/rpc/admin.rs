@@ -14,8 +14,8 @@ use jsonrpsee::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use crate::SequencerAdminAPIClient;
-use crate::SequencerAdminAPIError;
+use crate::rpc::SequencerAdminAPIClient;
+use crate::rpc::SequencerAdminAPIError;
 use base_common_client_rollup::AdminApiServer;
 
 /// The query types to the network actor for the admin api.
@@ -253,7 +253,7 @@ mod tests {
     use jsonrpsee::types::{ErrorCode, ErrorObject};
 
     use super::{sequencer_admin_error, upgrade_signal_refresh_failed, upgrade_signal_unavailable};
-    use crate::SequencerAdminAPIError;
+    use crate::rpc::SequencerAdminAPIError;
 
     #[test]
     fn sequencer_admin_error_redacts_internal_failure_details() {

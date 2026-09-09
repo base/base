@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use crate::HealthzRpc;
+use crate::RpcBuilder;
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
 use base_common_client_rollup::HealthzApiServer;
 use base_common_client_rollup::SyncStatusApiServer;
-use base_consensus_rpc::HealthzRpc;
-use base_consensus_rpc::RpcBuilder;
 use base_protocol::{L2BlockInfo, SyncStatus};
 use jsonrpsee::{
     RpcModule,

@@ -6,11 +6,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use crate::SequencerAdminAPIError;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
-use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{L2BlockInfo, to_system_config_from_payload};
 use tokio::{
     select,

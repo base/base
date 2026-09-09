@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+use crate::BaseRpc;
+use crate::RpcBuilder;
 use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::Address;
@@ -14,8 +16,6 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::RootProvider;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
-use base_consensus_rpc::BaseRpc;
-use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_consensus_source_providers::{
     AlloyChainProvider, LocalL2Provider, OnlineBeaconClient, OnlineBlobProvider, OnlinePipeline,

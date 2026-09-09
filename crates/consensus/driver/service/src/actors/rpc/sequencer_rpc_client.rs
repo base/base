@@ -1,10 +1,10 @@
 //! The RPC server for the sequencer actor.
 //! Mostly handles queries from the admin rpc.
 
+use crate::SequencerAdminAPIClient;
+use crate::SequencerAdminAPIError;
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_consensus_rpc::SequencerAdminAPIClient;
-use base_consensus_rpc::SequencerAdminAPIError;
 use derive_more::Constructor;
 use tokio::sync::{mpsc, oneshot};
 

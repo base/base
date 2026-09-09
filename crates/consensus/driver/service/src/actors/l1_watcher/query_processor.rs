@@ -2,11 +2,11 @@
 
 use std::{sync::Arc, time::Instant};
 
+use crate::L1State;
+use crate::L1WatcherQueries;
 use alloy_eips::BlockId;
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_consensus_rpc::L1State;
-use base_consensus_rpc::L1WatcherQueries;
 use base_protocol::BlockInfo;
 use futures::StreamExt;
 use tokio::{

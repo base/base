@@ -24,10 +24,10 @@ use jsonrpsee::{
 };
 use tracing::Instrument;
 
-use crate::EngineRpcClient;
-use crate::L1State;
-use crate::L1WatcherQueries;
-use crate::l1_watcher::L1WatcherQuerySender;
+use crate::rpc::EngineRpcClient;
+use crate::rpc::L1State;
+use crate::rpc::L1WatcherQueries;
+use crate::rpc::l1_watcher::L1WatcherQuerySender;
 use base_common_client_rollup::RollupNodeApiServer;
 use base_common_types_rpc::OutputResponse;
 
@@ -35,12 +35,12 @@ static RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// `RollupRpc`
 ///
-/// This is a server implementation of [`crate::RollupNodeApiServer`].
+/// This is a server implementation of [`crate::rpc::RollupNodeApiServer`].
 #[derive(Debug)]
 pub struct RollupRpc<EngineRpcClient_> {
     /// The channel to send [`base_consensus_engine::EngineQueries`]s.
     pub engine_client: EngineRpcClient_,
-    /// The channel to send [`crate::L1WatcherQueries`]s.
+    /// The channel to send [`crate::rpc::L1WatcherQueries`]s.
     pub l1_watcher_sender: L1WatcherQuerySender,
     /// Reader for safe head lookups by L1 block number.
     pub safe_db_reader: Arc<dyn SafeDBReader>,

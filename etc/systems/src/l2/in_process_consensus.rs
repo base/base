@@ -23,14 +23,14 @@ use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_rollup::AdminApiClient;
 use base_common_client_rollup::BaseP2PApiClient;
 use base_common_client_rollup::RollupNodeApiClient;
-use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::PeerScoreLevel;
-use base_consensus_network_service::SecretKeyLoader;
+use base_consensus_driver_service::RpcBuilder;
 use base_consensus_driver_service::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,
 };
-use base_consensus_rpc::RpcBuilder;
+use base_consensus_network_service::LocalNode;
+use base_consensus_network_service::PeerScoreLevel;
+use base_consensus_network_service::SecretKeyLoader;
 use base_consensus_source_providers::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use base_action_harness::{ActionL1BlockFetcher, ActionTestHarness, SharedL1Chain};
+use base_consensus_driver_service::L1WatcherQueries;
 use base_consensus_driver_service::L1WatcherQueryExecutor;
-use base_consensus_rpc::L1WatcherQueries;
 use tokio::sync::{oneshot, watch};
 
 #[tokio::test]

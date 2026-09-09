@@ -22,12 +22,12 @@ use base_common_chain_config::RollupConfig;
 use base_common_types_chain::Header;
 use base_common_types_rpc::{Block, Filter, Header as RpcHeader, Log};
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
+use base_consensus_driver_service::L1WatcherQueries;
 use base_consensus_driver_service::{
     DerivationClientResult, L1BlockFetcher, L1WatcherActor, L1WatcherDerivationClient,
     L1WatcherQueryExecutor, NodeActor,
 };
 use base_consensus_source_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
-use base_consensus_rpc::L1WatcherQueries;
 use base_protocol::BlockInfo;
 use futures::Stream;
 use tokio::sync::{oneshot, watch};

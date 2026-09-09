@@ -2170,7 +2170,6 @@ dependencies = [
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",
- "base-consensus-rpc",
  "base-consensus-safedb",
  "base-execution-evm-blocks",
  "base-execution-evm-precompiles",
@@ -2917,7 +2916,6 @@ dependencies = [
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",
- "base-consensus-rpc",
  "base-consensus-source-providers",
  "base-protocol",
  "clap",
@@ -2994,7 +2992,6 @@ dependencies = [
  "base-consensus-derive",
  "base-consensus-engine",
  "base-consensus-network-service",
- "base-consensus-rpc",
  "base-consensus-safedb",
  "base-consensus-source-providers",
  "base-execution-trie",
@@ -3009,6 +3006,7 @@ dependencies = [
  "http-body 1.1.0",
  "http-body-util",
  "httpmock",
+ "ipnet",
  "jsonrpsee",
  "libp2p",
  "libp2p-stream",
@@ -3113,31 +3111,6 @@ dependencies = [
  "tracing",
  "unsigned-varint 0.8.0",
  "url",
-]
-
-[[package]]
-name = "base-consensus-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "async-trait",
- "backon",
- "base-common-chain-activation",
- "base-common-chain-config",
- "base-common-client-rollup",
- "base-common-types-payload",
- "base-common-types-rpc",
- "base-consensus-engine",
- "base-consensus-network-service",
- "base-consensus-safedb",
- "base-protocol",
- "ipnet",
- "jsonrpsee",
- "libp2p",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -5067,7 +5040,6 @@ dependencies = [
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",
- "base-consensus-rpc",
  "base-consensus-source-providers",
  "base-execution-cli",
  "base-execution-evm-precompiles",

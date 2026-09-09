@@ -11,7 +11,7 @@ use jsonrpsee::{
 };
 use tracing::warn;
 
-use crate::EngineRpcClient;
+use crate::rpc::EngineRpcClient;
 use base_common_client_rollup::DevEngineApiServer;
 
 /// Implementation of the development RPC API.

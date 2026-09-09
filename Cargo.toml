@@ -52,7 +52,6 @@ members = [
   "crates/consensus/network/service",
   "crates/consensus/protocol",
   "crates/consensus/source/providers",
-  "crates/consensus/rpc",
   "crates/consensus/safedb",
   "crates/consensus/driver/service",
   "crates/execution/cli",
@@ -321,7 +320,6 @@ base-builder-core = { path = "crates/builder/core", default-features = false }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
-base-consensus-rpc = { path = "crates/consensus/rpc", default-features = false }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-network-service = { path = "crates/consensus/network/service", default-features = false }
 base-consensus-driver-service = { path = "crates/consensus/driver/service", default-features = false }
