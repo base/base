@@ -7,13 +7,13 @@ use std::{
 };
 
 use crate::AdminServer;
-use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
-use backon::Retryable;
-use base_balance_monitor::BalanceMonitorLayer;
-use base_batcher_core::{
+use crate::{
     AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
+use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
+use backon::Retryable;
+use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_encoding_channel::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
 use base_common_network::Base;
@@ -716,7 +716,7 @@ impl BatcherService {
             encoder,
             source,
             tx_manager,
-            base_batcher_core::BatchDriverConfig {
+            crate::BatchDriverConfig {
                 inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout,

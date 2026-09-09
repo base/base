@@ -16,14 +16,13 @@ humantime = { workspace = true }
 base-protocol = { workspace = true }
 base-cli-utils = { workspace = true }
 base-tx-manager = { workspace = true }
-base-batcher-core = { workspace = true }
 base-common-network = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
-base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-batcher-encoding-channel = { workspace = true, features = ["clap"] }
-base-batcher-service-driver = { workspace = true, features = ["metrics"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
+base-batcher-service-driver = {features = ["metrics"], workspace = true}
+base-batcher-encoding-channel = { workspace = true, features = ["clap"] }

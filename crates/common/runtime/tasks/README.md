@@ -49,7 +49,7 @@ can appear as a `select!` arm without modification.
 
 Components in this workspace that accept `R: AsyncRuntime`:
 
-- `BatchDriver` (`base-batcher-core`) — uses `runtime.cancelled()` as a shutdown signal
+- `BatchDriver` (`base-batcher-service-driver`) — uses `runtime.cancelled()` as a shutdown signal
   and `runtime.sleep(drain_timeout)` to bound the drain phase after cancellation.
 - `PollingBlockSource` (`base-batcher-source`) — uses `runtime.sleep(poll_interval)`
   between unsuccessful RPC polls.

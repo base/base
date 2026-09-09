@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_batcher_core::ThrottleConfig;
+use base_batcher_service_driver::ThrottleConfig;
 use base_batcher_service_driver::{BatcherConfig, BatcherService};
 use base_cli_utils::RuntimeManager;
 use base_common_runtime_tasks::TokioRuntime;
@@ -277,11 +277,10 @@ impl BatcherArgs {
             base_batcher_encoding_channel::DaType::Blob => {
                 base_batcher_encoding_channel::EncoderConfig::MAX_BLOB_FRAME_SIZE
             }
-            base_batcher_encoding_channel::DaType::Calldata => self
-                .max_calldata_size_bytes
-                .map_or(base_batcher_encoding_channel::EncoderConfig::MAX_BLOB_FRAME_SIZE, |size| {
-                    size.saturating_sub(1)
-                }),
+            base_batcher_encoding_channel::DaType::Calldata => self.max_calldata_size_bytes.map_or(
+                base_batcher_encoding_channel::EncoderConfig::MAX_BLOB_FRAME_SIZE,
+                |size| size.saturating_sub(1),
+            ),
         };
 
         let brotli_level = base_batcher_encoding_channel::BrotliLevel::from_u8(self.brotli_quality)
@@ -468,7 +467,10 @@ mod tests {
         );
         assert_eq!(config.encoder_config.compressed_size_target, None);
         assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoding_channel::BrotliLevel::Brotli10);
+        assert_eq!(
+            config.encoder_config.brotli_level,
+            base_batcher_encoding_channel::BrotliLevel::Brotli10
+        );
     }
 
     #[test]
@@ -485,7 +487,10 @@ mod tests {
         let cli = parse_cli(&["--brotli-quality", "9"]);
         let config = cli.into_config(false).expect("config should build");
 
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoding_channel::BrotliLevel::Brotli9);
+        assert_eq!(
+            config.encoder_config.brotli_level,
+            base_batcher_encoding_channel::BrotliLevel::Brotli9
+        );
     }
 
     #[test]

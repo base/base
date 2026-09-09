@@ -1,16 +1,16 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use base_batcher_core::{
+use base_batcher_encoding_channel::{BatchEncoder, EncoderConfig};
+use base_batcher_service_driver::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoding_channel::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_chain_config::RollupConfig;
 use base_common_network::PrivateKeySigner;
-use base_common_types_chain::BaseBlock;
 use base_common_runtime_tasks::TokioRuntime;
+use base_common_types_chain::BaseBlock;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
 
@@ -95,7 +95,7 @@ pub enum BatcherError {
 /// The driver task continues running between cycles, waiting for new events.
 ///
 /// [`advance`]: Batcher::advance
-/// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
 /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
 /// [`L1HeadEvent::NewHead`]: base_batcher_source::L1HeadEvent
 /// [`L2BlockEvent::Flush`]: base_batcher_source::L2BlockEvent::Flush
@@ -273,11 +273,11 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`cancellation_count`] to assert the recovery path ran, and
     /// [`wait_until_requeued`] to wait for the frames to return to pending.
     ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
     /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
     /// [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
-    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
     /// [`cancellation_count`]: Batcher::cancellation_count
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn block_next_n_submissions(&self, n: usize) {
@@ -360,7 +360,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Panics if `pending_count()` does not reach `min_frames` within the
     /// polling iteration limit (20 yields).
     ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     /// [`send_async`]: crate::L1MinerTxManager::send_async
     /// [`encode_only`]: Batcher::encode_only
     pub async fn wait_until_pending(&self, min_frames: usize) {
@@ -414,7 +414,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// Panics if the driver task has already exited.
     ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     pub async fn signal_reorg(&self) {
         self.block_tx.send(L2BlockEvent::Reorg).expect("driver task alive");
         tokio::task::yield_now().await;

@@ -1,6 +1,6 @@
 //! Admin JSON-RPC trait and server implementation.
 
-use base_batcher_core::{
+use crate::{
     AdminError, AdminHandle, BatcherStatus, ThrottleConfig, ThrottleInfo, ThrottleStrategy,
 };
 use jsonrpsee::{

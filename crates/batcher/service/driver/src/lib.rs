@@ -39,3 +39,13 @@ pub use service::{BatcherService, ReadyBatcher};
 
 mod admin_rpc;
 pub use admin_rpc::{AdminServer, BatcherAdminApiServer, BatcherAdminApiServerImpl};
+
+mod batch_driver;
+pub use batch_driver::test_utils;
+pub use batch_driver::{
+    ADMIN_CHANNEL_CAPACITY, AdminCommand, AdminError, AdminHandle, AdminResult, BatchDriver,
+    BatchDriverConfig, BatchDriverError, BatchDriverHeads, BatchTxCandidateBuilder,
+    BatchTxCandidateError, BatcherStatus, DaThrottle, DerivationStatus, DriverEvent,
+    NoopThrottleClient, SubmissionQueue, ThrottleClient, ThrottleConfig, ThrottleController,
+    ThrottleInfo, ThrottleParams, ThrottleStrategy, TxOutcome,
+};

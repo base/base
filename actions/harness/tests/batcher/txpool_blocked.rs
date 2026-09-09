@@ -15,8 +15,8 @@
 //! [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
 //! [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
 //! [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
-//! [`BatchDriver`]: base_batcher_core::BatchDriver
-//! [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+//! [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+//! [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -35,7 +35,7 @@ fn calldata_batcher_config() -> BatcherConfig {
 /// requeues the frame, clears the blockage via [`TxManager::cancel_tx`], and the
 /// derivation node successfully derives the L2 block after recovery.
 ///
-/// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
 /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
 #[tokio::test]
 async fn txpool_blocked_recovers_via_cancel_tx_and_derives() {

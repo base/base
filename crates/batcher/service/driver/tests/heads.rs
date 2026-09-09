@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use base_batcher_core::{
+use base_batcher_service_driver::{
     BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverHeads, DaThrottle,
     DerivationStatus, NoopThrottleClient, ThrottleController,
     test_utils::{
@@ -15,11 +15,11 @@ use base_batcher_core::{
     },
 };
 use base_batcher_source::{ChannelL1HeadSource, L1HeadEvent};
-use base_protocol::BlockInfo;
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
+use base_protocol::BlockInfo;
 use tokio::sync::mpsc;
 
 fn safe_head(number: u64) -> BlockInfo {

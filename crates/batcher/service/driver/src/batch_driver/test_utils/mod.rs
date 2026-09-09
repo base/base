@@ -1,4 +1,4 @@
-//! Test utilities for consumers of `base-batcher-core`.
+//! Test utilities for consumers of `base-batcher-service-driver`.
 
 mod throttle;
 pub use throttle::{ThrottleCallLog, TrackingThrottleClient};

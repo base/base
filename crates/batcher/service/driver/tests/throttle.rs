@@ -7,7 +7,11 @@ use std::{
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_batcher_core::{
+use base_batcher_encoding_channel::{
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
+};
+use base_batcher_service_driver::{
     BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
     ThrottleStrategy,
     test_utils::{
@@ -15,17 +19,13 @@ use base_batcher_core::{
         TrackingThrottleClient,
     },
 };
-use base_batcher_encoding_channel::{
-    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
-    SubmissionId,
-};
 use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
-use base_common_types_chain::BaseBlock;
-use base_protocol::BlockInfo;
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
+use base_common_types_chain::BaseBlock;
+use base_protocol::BlockInfo;
 use tokio::sync::mpsc;
 
 /// When the DA backlog exceeds the threshold, the driver must call

@@ -2,7 +2,7 @@
 
 use std::{future::Future, time::Duration};
 
-use base_batcher_core::DerivationStatus;
+use crate::DerivationStatus;
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_rpc::BlockNumberOrTag;
 use base_consensus_rpc::RollupNodeApiClient;
@@ -112,8 +112,8 @@ impl<C: DerivationStatusProvider> DerivationStatusPoller<C> {
 mod tests {
     use std::{collections::VecDeque, sync::Mutex, time::Duration};
 
+    use crate::DerivationStatus;
     use alloy_primitives::B256;
-    use base_batcher_core::DerivationStatus;
     use base_common_runtime_tasks::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},

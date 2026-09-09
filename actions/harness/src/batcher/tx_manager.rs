@@ -6,10 +6,10 @@ use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
 use base_batcher_source::L1HeadEvent;
+use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{
     SignableTransaction, TxEip1559, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
 };
-use base_common_network::PrivateKeySigner;
 use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
@@ -62,8 +62,8 @@ pub struct Inner {
     /// by a stuck transaction. The [`BatchDriver`] classifies this as
     /// [`TxOutcome::TxpoolBlocked`] and must clear it via [`cancel_tx`].
     ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
     /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
     blocked_remaining: usize,
     /// Number of times [`cancel_tx`] has been invoked by the driver's txpool
@@ -92,7 +92,7 @@ pub struct Inner {
 /// [`send_async`]: L1MinerTxManager::send_async
 /// [`mine_block`]: L1MinerTxManager::mine_block
 /// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
-/// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
 /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
@@ -129,7 +129,7 @@ impl L1MinerTxManager {
     /// its pipeline's L1 head accordingly.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
     pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<L1HeadEvent>) -> Self {
         self.l1_head_tx = Some(tx);
@@ -155,7 +155,7 @@ impl L1MinerTxManager {
     /// carry the same or different frames.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     pub fn fail_next_n(&self, n: usize) {
         self.inner.lock().unwrap().fail_remaining += n;
     }
@@ -171,8 +171,8 @@ impl L1MinerTxManager {
     /// `n = 2` blocks the next two separate `send_async` calls.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
     /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
     pub fn block_next_n(&self, n: usize) {
         self.inner.lock().unwrap().blocked_remaining += n;
@@ -222,7 +222,7 @@ impl L1MinerTxManager {
     /// production transaction manager's receipt polling: RPC submission can succeed
     /// before the transaction is included by L1.
     ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     pub fn confirm_block(&self, block: &L1Block) {
         let responses = {
             let mut inner = self.inner.lock().unwrap();
@@ -281,7 +281,7 @@ impl L1MinerTxManager {
     /// yield has let the driver drain `in_flight`) to avoid leaving the
     /// driver in an inconsistent state.
     ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
     /// [`SendHandle`]: base_tx_manager::SendHandle
     /// [`confirm_block`]: L1MinerTxManager::confirm_block
     pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {

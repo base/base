@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, DerivationStatus,
-    SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
+    DriverEvent, SubmissionQueue, ThrottleClient, ThrottleController,
 };
 
 /// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
@@ -643,8 +643,7 @@ mod tests {
 
     use crate::{
         AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverHeads, DaThrottle,
-        DerivationStatus, NoopThrottleClient, ThrottleController,
-        event::DriverEvent,
+        DerivationStatus, DriverEvent, NoopThrottleClient, ThrottleController,
         test_utils::{
             DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
             NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,

@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 
-use base_batcher_core::AdminHandle;
+use crate::AdminHandle;
 use eyre::Context;
 use jsonrpsee::server::{Server, ServerHandle};
 use tracing::info;

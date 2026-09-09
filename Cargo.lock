@@ -2236,8 +2236,8 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "async-trait",
- "base-batcher-core",
  "base-batcher-encoding-channel",
+ "base-batcher-service-driver",
  "base-batcher-source",
  "base-builder-core",
  "base-common-chain-config",
@@ -2294,7 +2294,6 @@ name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-batcher-core",
  "base-batcher-encoding-channel",
  "base-batcher-service-driver",
  "base-cli-utils",
@@ -2308,29 +2307,6 @@ dependencies = [
  "serde",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-batcher-core"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-trait",
- "auto_impl",
- "base-batcher-encoding-channel",
- "base-batcher-source",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-protocol",
- "base-tx-manager",
- "derive_more",
- "futures",
- "rstest",
- "serde",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -2361,9 +2337,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "async-trait",
+ "auto_impl",
  "backon",
  "base-balance-monitor",
- "base-batcher-core",
  "base-batcher-encoding-channel",
  "base-batcher-source",
  "base-common-network",
@@ -2380,6 +2356,9 @@ dependencies = [
  "httpmock",
  "jsonrpsee",
  "metrics",
+ "rstest",
+ "serde",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",

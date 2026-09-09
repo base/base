@@ -6,7 +6,11 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_batcher_core::{
+use base_batcher_encoding_channel::{
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
+};
+use base_batcher_service_driver::{
     AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, DerivationStatus, NoopThrottleClient,
     ThrottleController,
     test_utils::{
@@ -14,17 +18,13 @@ use base_batcher_core::{
         TrackingSource,
     },
 };
-use base_batcher_encoding_channel::{
-    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
-    SubmissionId,
-};
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
-use base_common_types_chain::BaseBlock;
-use base_protocol::BlockInfo;
 use base_common_runtime_tasks::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
+use base_common_types_chain::BaseBlock;
+use base_protocol::BlockInfo;
 use tokio::sync::mpsc;
 
 /// `AdminCommand::Pause` must immediately reset the pipeline and discard

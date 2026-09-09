@@ -103,7 +103,7 @@ async fn batcher_soft_channel_target_derives_exact_blocks() {
 /// 4. The same batcher stages the requeued frames and mines a new L1 block on
 ///    the new fork. The verifier re-derives L2 block 1 from this block.
 ///
-/// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
 #[tokio::test]
 async fn batcher_reorg_during_submission() {
     let batcher_cfg = BatcherConfig {

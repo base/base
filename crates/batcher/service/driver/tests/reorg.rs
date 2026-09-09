@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_batcher_core::{
+use base_batcher_service_driver::{
     BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
     test_utils::{
         ImmediateConfirmTxManager, OneBlockSource, PendingL1HeadSource, Recorded, ReorgPipeline,
