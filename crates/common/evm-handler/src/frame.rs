@@ -5,13 +5,10 @@ use base_evm_context::{
     Cfg, ContextError, ContextTr, Database, FrameToken, FromStringError, JournalCheckpoint,
     JournalTr, JournaledAccountTr, OutFrame, take_error,
 };
-use derive_where::derive_where;
 use revm_interpreter::{
     CallInput, CallInputs, CallOutcome, CallValue, CreateInputs, CreateOutcome, CreateScheme,
     FrameInput, Gas, GasTracker, InputsImpl, InstructionResult, Interpreter, InterpreterAction,
-    InterpreterResult, InterpreterTypes, SharedMemory,
-    interpreter::{EthInterpreter, ExtBytecode},
-    interpreter_action::FrameInit,
+    InterpreterResult, SharedMemory, interpreter::ExtBytecode, interpreter_action::FrameInit,
     interpreter_types::ReturnData,
 };
 use revm_primitives::{
@@ -27,16 +24,8 @@ use crate::{
 };
 
 /// Frame implementation for Ethereum.
-#[derive_where(Clone, Debug; IW,
-    <IW as InterpreterTypes>::Stack,
-    <IW as InterpreterTypes>::Memory,
-    <IW as InterpreterTypes>::Bytecode,
-    <IW as InterpreterTypes>::ReturnData,
-    <IW as InterpreterTypes>::Input,
-    <IW as InterpreterTypes>::RuntimeFlag,
-    <IW as InterpreterTypes>::Extend,
-)]
-pub struct EthFrame<IW: InterpreterTypes = EthInterpreter> {
+#[derive(Debug)]
+pub struct EthFrame {
     /// Frame-specific data (Call, Create, or EOFCreate).
     pub data: FrameData,
     /// Input data for the frame.
@@ -46,30 +35,30 @@ pub struct EthFrame<IW: InterpreterTypes = EthInterpreter> {
     /// Journal checkpoint for state reversion.
     pub checkpoint: JournalCheckpoint,
     /// Interpreter instance for executing bytecode.
-    pub interpreter: Interpreter<IW>,
+    pub interpreter: Interpreter,
     /// Whether the frame has been finished its execution.
     /// Frame is considered finished if it has been called and returned a result.
     pub is_finished: bool,
 }
 
-impl<IT: InterpreterTypes> FrameTr for EthFrame<IT> {
+impl FrameTr for EthFrame {
     type FrameResult = FrameResult;
     type FrameInit = FrameInit;
 }
 
-impl Default for EthFrame<EthInterpreter> {
+impl Default for EthFrame {
     fn default() -> Self {
         Self::do_default(Interpreter::default())
     }
 }
 
-impl EthFrame<EthInterpreter> {
+impl EthFrame {
     /// Creates an new invalid [`EthFrame`].
     pub fn invalid() -> Self {
         Self::do_default(Interpreter::invalid())
     }
 
-    fn do_default(interpreter: Interpreter<EthInterpreter>) -> Self {
+    fn do_default(interpreter: Interpreter) -> Self {
         Self {
             data: FrameData::Call(CallFrame { return_memory_range: 0..0 }),
             input: FrameInput::Empty,
@@ -94,7 +83,7 @@ impl EthFrame<EthInterpreter> {
 /// Type alias for database errors from a context.
 pub type ContextTrDbError<CTX> = <<CTX as ContextTr>::Db as Database>::Error;
 
-impl EthFrame<EthInterpreter> {
+impl EthFrame {
     /// Clear and initialize a frame.
     #[expect(clippy::too_many_arguments)]
     #[inline(always)]
@@ -377,7 +366,7 @@ impl EthFrame<EthInterpreter> {
     }
 }
 
-impl EthFrame<EthInterpreter> {
+impl EthFrame {
     /// Processes the next interpreter action, either creating a new frame or returning a result.
     pub fn process_next_action<
         CTX: ContextTr,

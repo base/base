@@ -3,10 +3,7 @@ use base_evm_handler::{
     ContextDbError, EthFrame, EvmTr, FrameInitOrResult, FrameInitResult, FrameResult, FrameTr,
     InstructionProvider, ItemOrResult,
 };
-use revm_interpreter::{
-    CallOutcome, FrameInput, InterpreterTypes, interpreter::EthInterpreter,
-    interpreter_action::FrameInit,
-};
+use revm_interpreter::{CallOutcome, FrameInput, interpreter_action::FrameInit};
 
 use crate::{
     Inspector, JournalExt, inspect_instructions,
@@ -20,16 +17,13 @@ use crate::{
 /// It is used inside [`crate::InspectorHandler`] to extend evm with support for inspection.
 pub trait InspectorEvmTr:
     EvmTr<
-        Frame: InspectorFrame<IT = EthInterpreter>,
-        Instructions: InstructionProvider<
-            InterpreterTypes = EthInterpreter,
-            Context = Self::Context,
-        >,
+        Frame: InspectorFrame,
+        Instructions: InstructionProvider<Context = Self::Context>,
         Context: ContextTr<Journal: JournalExt>,
     >
 {
     /// The inspector type used for EVM execution inspection.
-    type Inspector: Inspector<Self::Context, EthInterpreter, FrameInput, FrameResult>;
+    type Inspector: Inspector<Self::Context, FrameInput, FrameResult>;
 
     /// Returns a tuple of mutable references to the context, the inspector, the frame and the instructions.
     ///
@@ -175,21 +169,16 @@ pub trait InspectorEvmTr:
 
 /// Trait that extends the [`FrameTr`] trait with additional functionality that is needed for inspection.
 pub trait InspectorFrame: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit> {
-    /// The interpreter types used by this frame.
-    type IT: InterpreterTypes;
-
     /// Returns a mutable reference to the EthFrame.
     ///
     /// If this frame does not have support for tracing (does not contain
     /// the EthFrame) Inspector calls for this frame will be skipped.
-    fn eth_frame(&mut self) -> Option<&mut EthFrame<EthInterpreter>>;
+    fn eth_frame(&mut self) -> Option<&mut EthFrame>;
 }
 
 /// Impl InspectorFrame for EthFrame.
-impl InspectorFrame for EthFrame<EthInterpreter> {
-    type IT = EthInterpreter;
-
-    fn eth_frame(&mut self) -> Option<&mut EthFrame<EthInterpreter>> {
+impl InspectorFrame for EthFrame {
+    fn eth_frame(&mut self) -> Option<&mut EthFrame> {
         Some(self)
     }
 }

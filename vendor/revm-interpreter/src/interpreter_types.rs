@@ -299,23 +299,3 @@ pub trait Interp {
     /// Runs the interpreter with the given instruction table.
     fn run(&mut self, instructions: &[Self::Instruction; 256]) -> Self::Action;
 }
-
-/// Trait defining the component types used by an interpreter implementation.
-pub trait InterpreterTypes {
-    /// Stack implementation type.
-    type Stack: StackTr;
-    /// Memory implementation type.
-    type Memory: MemoryTr;
-    /// Bytecode implementation type.
-    type Bytecode: Jumps + Immediates + LoopControl + LegacyBytecode;
-    /// Return data implementation type.
-    type ReturnData: ReturnData;
-    /// Input data implementation type.
-    type Input: InputsTr;
-    /// Runtime flags implementation type.
-    type RuntimeFlag: RuntimeFlag;
-    /// Extended functionality type.
-    type Extend;
-    /// Output type for execution results.
-    type Output;
-}

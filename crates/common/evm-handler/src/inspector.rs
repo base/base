@@ -3,7 +3,6 @@ use base_evm_context::{Database, Journal, JournalEntry, JournalTr};
 use base_evm_handler::FrameResult;
 use revm_interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter,
-    InterpreterTypes, interpreter::EthInterpreter,
 };
 use revm_primitives::{Address, Log, U256};
 use revm_state::EvmState;
@@ -15,13 +14,12 @@ use revm_state::EvmState;
 /// Object that is implemented this trait is used in `InspectorHandler` to trace the EVM execution.
 /// And API that allow calling the inspector can be found in [`crate::InspectEvm`] and [`crate::InspectCommitEvm`].
 #[auto_impl(&mut, Box)]
-pub trait Inspector<CTX, INTR: InterpreterTypes = EthInterpreter, FI = FrameInput, FR = FrameResult>
-{
+pub trait Inspector<CTX, FI = FrameInput, FR = FrameResult> {
     /// Called before the interpreter is initialized.
     ///
     /// If `interp.bytecode.set_action` is set the execution of the interpreter is skipped.
     #[inline]
-    fn initialize_interp(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let _ = interp;
         let _ = context;
     }
@@ -35,7 +33,7 @@ pub trait Inspector<CTX, INTR: InterpreterTypes = EthInterpreter, FI = FrameInpu
     ///
     /// To get the current opcode, use `interp.bytecode.opcode()`.
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let _ = interp;
         let _ = context;
     }
@@ -44,7 +42,7 @@ pub trait Inspector<CTX, INTR: InterpreterTypes = EthInterpreter, FI = FrameInpu
     ///
     /// Setting `interp.bytecode.set_action` will result in stopping the execution of the interpreter.
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let _ = interp;
         let _ = context;
     }
@@ -61,7 +59,7 @@ pub trait Inspector<CTX, INTR: InterpreterTypes = EthInterpreter, FI = FrameInpu
     ///
     /// This will not happen only if custom precompiles where logs will be
     /// gethered after precompile call.
-    fn log_full(&mut self, interpreter: &mut Interpreter<INTR>, context: &mut CTX, log: Log) {
+    fn log_full(&mut self, interpreter: &mut Interpreter, context: &mut CTX, log: Log) {
         let _ = interpreter;
         self.log(context, log);
     }
@@ -147,22 +145,22 @@ pub trait Inspector<CTX, INTR: InterpreterTypes = EthInterpreter, FI = FrameInpu
     }
 }
 
-impl<CTX, INTR: InterpreterTypes, FI, FR, L, R> Inspector<CTX, INTR, FI, FR> for (L, R)
+impl<CTX, FI, FR, L, R> Inspector<CTX, FI, FR> for (L, R)
 where
-    L: Inspector<CTX, INTR, FI, FR>,
-    R: Inspector<CTX, INTR, FI, FR>,
+    L: Inspector<CTX, FI, FR>,
+    R: Inspector<CTX, FI, FR>,
 {
-    fn initialize_interp(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.0.initialize_interp(interp, context);
         self.1.initialize_interp(interp, context);
     }
 
-    fn step(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.0.step(interp, context);
         self.1.step(interp, context);
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.0.step_end(interp, context);
         self.1.step_end(interp, context);
     }
@@ -172,7 +170,7 @@ where
         self.1.log(context, log);
     }
 
-    fn log_full(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX, log: Log) {
+    fn log_full(&mut self, interp: &mut Interpreter, context: &mut CTX, log: Log) {
         self.0.log_full(interp, context, log.clone());
         self.1.log_full(interp, context, log);
     }
@@ -241,15 +239,15 @@ mod tests {
     use ::base_evm_handler::{InspectEvm, MainBuilder, MainContext};
     use base_evm_context::{BlockEnv, CfgEnv, Context, Journal, TxEnv};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use revm_interpreter::{InstructionResult, InterpreterTypes, interpreter::EthInterpreter};
+    use revm_interpreter::InstructionResult;
     use revm_primitives::TxKind;
     use revm_state::{Bytecode, bytecode::opcode};
 
     use super::*;
 
     struct HaltInspector;
-    impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for HaltInspector {
-        fn step(&mut self, interp: &mut revm_interpreter::Interpreter<INTR>, _context: &mut CTX) {
+    impl<CTX> Inspector<CTX> for HaltInspector {
+        fn step(&mut self, interp: &mut revm_interpreter::Interpreter, _context: &mut CTX) {
             interp.halt(InstructionResult::Stop);
         }
     }
@@ -265,7 +263,6 @@ mod tests {
         bytecode: &[u8],
         inspector: impl Inspector<
             Context<BlockEnv, TxEnv, CfgEnv, BenchmarkDB, Journal<BenchmarkDB>, ()>,
-            EthInterpreter,
         >,
     ) -> base_evm_context::ExecutionResult {
         let bytecode = Bytecode::new_raw(bytecode.to_vec().into());

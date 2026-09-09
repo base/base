@@ -12,8 +12,7 @@ use base_evm_handler::{
 };
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
-    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
-    interpreter::{InterpreterResult, interpreter::EthInterpreter},
+    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm, interpreter::InterpreterResult,
     state::EvmState,
 };
 
@@ -26,13 +25,8 @@ use crate::{
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
-type InnerEvm<DB, I, P> = RevmEvm<
-    BaseContext<DB>,
-    I,
-    EthInstructions<EthInterpreter, BaseContext<DB>>,
-    P,
-    EthFrame<EthInterpreter>,
->;
+type InnerEvm<DB, I, P> =
+    RevmEvm<BaseContext<DB>, I, EthInstructions<BaseContext<DB>>, P, EthFrame>;
 
 /// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
@@ -117,9 +111,9 @@ where
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Context = BaseContext<DB>;
-    type Instructions = EthInstructions<EthInterpreter, BaseContext<DB>>;
+    type Instructions = EthInstructions<BaseContext<DB>>;
     type Precompiles = P;
-    type Frame = EthFrame<EthInterpreter>;
+    type Frame = EthFrame;
 
     #[inline]
     fn all(

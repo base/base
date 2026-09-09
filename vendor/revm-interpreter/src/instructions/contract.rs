@@ -14,17 +14,13 @@ use crate::{
     InstructionExecResult as Result, InstructionResult, InterpreterAction,
     instructions::utility::IntoAddress,
     interpreter_action::FrameInput,
-    interpreter_types::{
-        InputsTr, InterpreterTypes as ITy, LoopControl, MemoryTr, ReturnData, RuntimeFlag, StackTr,
-    },
+    interpreter_types::{InputsTr, LoopControl, ReturnData, RuntimeFlag},
 };
 
 /// Implements the CREATE/CREATE2 instruction.
 ///
 /// Creates a new contract with provided bytecode.
-pub fn create<const IS_CREATE2: bool, IT: ITy, H: Host + ?Sized>(
-    context: Ictx<'_, H, IT>,
-) -> Result {
+pub fn create<const IS_CREATE2: bool, H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     // Static call check is before gas charging (unlike execution-specs where it's
     // inside generic_create). This is safe because CREATE in a static context is
     // always an error regardless of gas accounting.
@@ -121,7 +117,7 @@ pub fn create<const IS_CREATE2: bool, IT: ITy, H: Host + ?Sized>(
 }
 
 /// Implements the CALL, CALLCODE, DELEGATECALL, and STATICCALL instructions.
-pub fn call<const KIND: u8, IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Result {
+pub fn call<const KIND: u8, H: Host + ?Sized>(mut context: Ictx<'_, H>) -> Result {
     use revm_bytecode::opcode::{CALL, CALLCODE, DELEGATECALL, STATICCALL};
 
     if !matches!(KIND, CALL | CALLCODE | DELEGATECALL | STATICCALL) {

@@ -6,16 +6,13 @@ use revm_primitives::{B256, KECCAK_EMPTY, U256};
 use crate::{
     CallInput, InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
     interpreter::{Interpreter, resize_memory},
-    interpreter_types::{
-        InputsTr, InterpreterTypes as ITy, LegacyBytecode, MemoryTr, ReturnData, RuntimeFlag,
-        StackTr,
-    },
+    interpreter_types::{InputsTr, LegacyBytecode, MemoryTr, ReturnData, RuntimeFlag},
 };
 
 /// Implements the KECCAK256 instruction.
 ///
 /// Computes Keccak-256 hash of memory data.
-pub fn keccak256<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn keccak256<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([offset], top, context.interpreter);
     let len = as_usize_or_fail!(context.interpreter, top);
     gas!(context.interpreter, context.host.gas_params().keccak256_cost(len));
@@ -39,7 +36,7 @@ pub fn keccak256<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result 
 /// Implements the ADDRESS instruction.
 ///
 /// Pushes the current contract's address onto the stack.
-pub fn address<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn address<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     push!(context.interpreter, context.interpreter.input.target_address().into_word().into());
     Ok(())
 }
@@ -47,7 +44,7 @@ pub fn address<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CALLER instruction.
 ///
 /// Pushes the caller's address onto the stack.
-pub fn caller<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn caller<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     push!(context.interpreter, context.interpreter.input.caller_address().into_word().into());
     Ok(())
 }
@@ -55,7 +52,7 @@ pub fn caller<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CODESIZE instruction.
 ///
 /// Pushes the size of running contract's bytecode onto the stack.
-pub fn codesize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn codesize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     push!(context.interpreter, U256::from(context.interpreter.bytecode.bytecode_len()));
     Ok(())
 }
@@ -63,7 +60,7 @@ pub fn codesize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CODECOPY instruction.
 ///
 /// Copies running contract's bytecode to memory.
-pub fn codecopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn codecopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn!([memory_offset, code_offset, len], context.interpreter);
     let len = as_usize_or_fail!(context.interpreter, len);
     let Some(memory_offset) = copy_cost_and_memory_resize(
@@ -90,7 +87,7 @@ pub fn codecopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CALLDATALOAD instruction.
 ///
 /// Loads 32 bytes of input data from the specified offset.
-pub fn calldataload<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn calldataload<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], offset_ptr, context.interpreter);
     let mut word = B256::ZERO;
     let offset = as_usize_saturated!(*offset_ptr);
@@ -112,7 +109,7 @@ pub fn calldataload<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CALLDATASIZE instruction.
 ///
 /// Pushes the size of input data onto the stack.
-pub fn calldatasize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn calldatasize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     push!(context.interpreter, U256::from(context.interpreter.input.input().len()));
     Ok(())
 }
@@ -120,7 +117,7 @@ pub fn calldatasize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CALLVALUE instruction.
 ///
 /// Pushes the value sent with the current call onto the stack.
-pub fn callvalue<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn callvalue<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     push!(context.interpreter, context.interpreter.input.call_value());
     Ok(())
 }
@@ -128,7 +125,7 @@ pub fn callvalue<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the CALLDATACOPY instruction.
 ///
 /// Copies input data to memory.
-pub fn calldatacopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn calldatacopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn!([memory_offset, data_offset, len], context.interpreter);
     let len = as_usize_or_fail!(context.interpreter, len);
     let Some(memory_offset) = copy_cost_and_memory_resize(
@@ -159,14 +156,14 @@ pub fn calldatacopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Resu
 }
 
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
-pub fn returndatasize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn returndatasize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, BYZANTIUM);
     push!(context.interpreter, U256::from(context.interpreter.return_data.buffer().len()));
     Ok(())
 }
 
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
-pub fn returndatacopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn returndatacopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, BYZANTIUM);
     popn!([memory_offset, offset, len], context.interpreter);
 
@@ -204,7 +201,7 @@ pub fn returndatacopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Re
 /// Pushes the amount of remaining gas onto the stack.
 /// Returns `gas_left` only (excluding the state gas reservoir) per EIP-8037.
 /// On mainnet (no state gas), this is equivalent to returning `remaining`.
-pub fn gas<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn gas<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     let gas = &context.interpreter.gas;
     push!(context.interpreter, U256::from(gas.remaining()));
     Ok(())
@@ -214,7 +211,7 @@ pub fn gas<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 ///
 /// Handles memory expansion and gas calculation for data copy operations.
 pub fn copy_cost_and_memory_resize(
-    interpreter: &mut Interpreter<impl ITy>,
+    interpreter: &mut Interpreter,
     gas_params: &GasParams,
     memory_offset: U256,
     len: usize,

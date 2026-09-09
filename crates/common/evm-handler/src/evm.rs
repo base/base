@@ -1,8 +1,6 @@
 use auto_impl::auto_impl;
 use base_evm_context::{ContextError, ContextTr, Evm, FrameStack};
-use revm_interpreter::{
-    InterpreterResult, interpreter::EthInterpreter, interpreter_action::FrameInit,
-};
+use revm_interpreter::{InterpreterResult, interpreter_action::FrameInit};
 
 use crate::{
     ContextTrDbError, EthFrame, FrameResult, ItemOrResult, PrecompileProvider,
@@ -119,16 +117,16 @@ pub trait EvmTr {
     ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>>;
 }
 
-impl<CTX, INSP, I, P> EvmTr for Evm<CTX, INSP, I, P, EthFrame<EthInterpreter>>
+impl<CTX, INSP, I, P> EvmTr for Evm<CTX, INSP, I, P, EthFrame>
 where
     CTX: ContextTr,
-    I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    I: InstructionProvider<Context = CTX>,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type Context = CTX;
     type Instructions = I;
     type Precompiles = P;
-    type Frame = EthFrame<EthInterpreter>;
+    type Frame = EthFrame;
 
     #[inline]
     fn all(

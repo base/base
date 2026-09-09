@@ -1,5 +1,5 @@
 //! CountInspector - Inspector that counts all opcodes that were called.
-use revm_interpreter::{InterpreterTypes, interpreter_types::Jumps};
+use revm_interpreter::interpreter_types::Jumps;
 use revm_primitives::Log;
 
 use crate::inspector::Inspector;
@@ -132,22 +132,22 @@ impl CountInspector {
     }
 }
 
-impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for CountInspector {
+impl<CTX> Inspector<CTX> for CountInspector {
     fn initialize_interp(
         &mut self,
-        _interp: &mut revm_interpreter::Interpreter<INTR>,
+        _interp: &mut revm_interpreter::Interpreter,
         _context: &mut CTX,
     ) {
         self.initialize_interp_count += 1;
     }
 
-    fn step(&mut self, interp: &mut revm_interpreter::Interpreter<INTR>, _context: &mut CTX) {
+    fn step(&mut self, interp: &mut revm_interpreter::Interpreter, _context: &mut CTX) {
         self.step_count += 1;
         let opcode = interp.bytecode.opcode();
         self.opcode_counts[opcode as usize] += 1;
     }
 
-    fn step_end(&mut self, _interp: &mut revm_interpreter::Interpreter<INTR>, _context: &mut CTX) {
+    fn step_end(&mut self, _interp: &mut revm_interpreter::Interpreter, _context: &mut CTX) {
         self.step_end_count += 1;
     }
 

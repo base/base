@@ -9,7 +9,7 @@ use revm_primitives::{
 use crate::{
     Gas, Host, InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
     instructions::utility::{IntoAddress, IntoU256},
-    interpreter_types::{InputsTr, InterpreterTypes as ITy, MemoryTr, RuntimeFlag, StackTr},
+    interpreter_types::{InputsTr, RuntimeFlag},
 };
 
 /// Loads an account, handling cold load gas accounting.
@@ -33,7 +33,7 @@ fn load_account<'a, H: Host + ?Sized>(
 /// Implements the BALANCE instruction.
 ///
 /// Gets the balance of the given account.
-pub fn balance<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn balance<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], top, context.interpreter);
     let address = top.into_address();
     let account = load_account(&mut context.interpreter.gas, context.host, address, false)?;
@@ -42,7 +42,7 @@ pub fn balance<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 }
 
 /// EIP-1884: Repricing for trie-size-dependent opcodes
-pub fn selfbalance<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn selfbalance<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, ISTANBUL);
 
     let balance = context
@@ -56,7 +56,7 @@ pub fn selfbalance<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Resul
 /// Implements the EXTCODESIZE instruction.
 ///
 /// Gets the size of an account's code.
-pub fn extcodesize<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn extcodesize<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], top, context.interpreter);
     let address = top.into_address();
     let account = load_account(&mut context.interpreter.gas, context.host, address, true)?;
@@ -66,7 +66,7 @@ pub fn extcodesize<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Resul
 }
 
 /// EIP-1052: EXTCODEHASH opcode
-pub fn extcodehash<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn extcodehash<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, PETERSBURG);
     popn_top!([], top, context.interpreter);
     let address = top.into_address();
@@ -80,7 +80,7 @@ pub fn extcodehash<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Resul
 /// Implements the EXTCODECOPY instruction.
 ///
 /// Copies a portion of an account's code to memory.
-pub fn extcodecopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn extcodecopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn!([address, memory_offset, code_offset, len_u256], context.interpreter);
     let address = address.into_address();
 
@@ -110,7 +110,7 @@ pub fn extcodecopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Resul
 /// Implements the BLOCKHASH instruction.
 ///
 /// Gets the hash of one of the 256 most recent complete blocks.
-pub fn blockhash<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn blockhash<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], number, context.interpreter);
 
     let requested_number = *number;
@@ -144,7 +144,7 @@ pub fn blockhash<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result 
 /// Implements the SLOAD instruction.
 ///
 /// Loads a word from storage.
-pub fn sload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn sload<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], index, context.interpreter);
     let spec_id = context.interpreter.runtime_flag.spec_id();
     let target = context.interpreter.input.target_address();
@@ -168,7 +168,7 @@ pub fn sload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the SSTORE instruction.
 ///
 /// Stores a word to storage.
-pub fn sstore<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn sstore<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     sstore_with_gas_accounting(context, sstore_default_gas_accounting)
 }
 
@@ -178,15 +178,11 @@ pub fn sstore<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// stack pops, stipend/static-gas charging, and the journaled storage write.
 /// Custom instruction sets can override the SSTORE opcode and call this helper
 /// with their own gas accounting closure.
-pub fn sstore_with_gas_accounting<'a, IT, H, F>(
-    mut context: Ictx<'a, H, IT>,
-    gas_accounting: F,
-) -> Result
+pub fn sstore_with_gas_accounting<'a, H, F>(mut context: Ictx<'a, H>, gas_accounting: F) -> Result
 where
-    IT: ITy,
     H: Host + ?Sized,
     F: for<'ctx, 'load> FnOnce(
-        &'ctx mut Ictx<'a, H, IT>,
+        &'ctx mut Ictx<'a, H>,
         Address,
         &'load StateLoad<SStoreResult>,
     ) -> Result,
@@ -219,13 +215,12 @@ where
 }
 
 /// Default dynamic gas and refund accounting for SSTORE.
-pub fn sstore_default_gas_accounting<IT, H>(
-    context: &mut Ictx<'_, H, IT>,
+pub fn sstore_default_gas_accounting<H>(
+    context: &mut Ictx<'_, H>,
     _target: Address,
     state_load: &StateLoad<SStoreResult>,
 ) -> Result
 where
-    IT: ITy,
     H: Host + ?Sized,
 {
     let spec_id = context.interpreter.runtime_flag.spec_id();
@@ -268,7 +263,7 @@ where
 
 /// EIP-1153: Transient storage opcodes
 /// Store value to transient storage
-pub fn tstore<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn tstore<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, CANCUN);
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
@@ -279,7 +274,7 @@ pub fn tstore<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 
 /// EIP-1153: Transient storage opcodes
 /// Load value from transient storage
-pub fn tload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn tload<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, CANCUN);
     popn_top!([], index, context.interpreter);
 
@@ -290,7 +285,7 @@ pub fn tload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the LOG0-LOG4 instructions.
 ///
 /// Appends log record with N topics.
-pub fn log<const N: usize, H: Host + ?Sized>(context: Ictx<'_, H, impl ITy>) -> Result {
+pub fn log<const N: usize, H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     require_non_staticcall!(context.interpreter);
 
     popn!([offset, len], context.interpreter);
@@ -321,7 +316,7 @@ pub fn log<const N: usize, H: Host + ?Sized>(context: Ictx<'_, H, impl ITy>) -> 
 /// Implements the SELFDESTRUCT instruction.
 ///
 /// Halt execution and register account for later deletion.
-pub fn selfdestruct<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn selfdestruct<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     require_non_staticcall!(context.interpreter);
     popn!([target], context.interpreter);
     let target = target.into_address();

@@ -3,8 +3,7 @@ use std::io::Write;
 use base_evm_context::{Cfg, ContextTr, JournalTr, Transaction};
 use revm_interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterResult,
-    InterpreterTypes, Stack,
-    interpreter_types::{Jumps, LoopControl, MemoryTr, StackTr},
+    interpreter_types::{Jumps, LoopControl, MemoryTr},
 };
 use revm_primitives::{B256, HashMap, U256, hex};
 use revm_state::bytecode::opcode::OpCode;
@@ -223,29 +222,18 @@ impl TracerEip3155 {
     }
 }
 
-pub trait CloneStack {
-    fn clone_into(&self, stack: &mut Vec<U256>);
-}
-
-impl CloneStack for Stack {
-    fn clone_into(&self, stack: &mut Vec<U256>) {
-        stack.extend_from_slice(self.data());
-    }
-}
-
-impl<CTX, INTR> Inspector<CTX, INTR> for TracerEip3155
+impl<CTX> Inspector<CTX> for TracerEip3155
 where
     CTX: ContextTr,
-    INTR: InterpreterTypes<Stack: StackTr + CloneStack>,
 {
-    fn initialize_interp(&mut self, interp: &mut Interpreter<INTR>, _: &mut CTX) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, _: &mut CTX) {
         self.gas_inspector.initialize_interp(&interp.gas);
     }
 
-    fn step(&mut self, interp: &mut Interpreter<INTR>, _: &mut CTX) {
+    fn step(&mut self, interp: &mut Interpreter, _: &mut CTX) {
         self.gas_inspector.step(&interp.gas);
         self.stack.clear();
-        interp.stack.clone_into(&mut self.stack);
+        self.stack.extend_from_slice(interp.stack.data());
         self.memory = if self.include_memory {
             Some(hex::encode_prefixed(&*interp.memory.slice(0..interp.memory.size())))
         } else {
@@ -263,7 +251,7 @@ where
         self.refunded = interp.gas.refunded();
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.gas_inspector.step_end(&interp.gas);
         let value = Output {
             pc: self.pc,

@@ -2,34 +2,31 @@ use base_evm_context::Host;
 use revm_primitives::U256;
 
 use super::i256::{i256_div, i256_mod};
-use crate::{
-    InstructionContext as Ictx, InstructionExecResult as Result,
-    interpreter_types::{InterpreterTypes as ITy, StackTr},
-};
+use crate::{InstructionContext as Ictx, InstructionExecResult as Result};
 
 /// Implements the ADD instruction - adds two values from stack.
-pub fn add<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn add<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = op1.wrapping_add(*op2);
     Ok(())
 }
 
 /// Implements the MUL instruction - multiplies two values from stack.
-pub fn mul<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn mul<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = op1.wrapping_mul(*op2);
     Ok(())
 }
 
 /// Implements the SUB instruction - subtracts two values from stack.
-pub fn sub<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn sub<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = op1.wrapping_sub(*op2);
     Ok(())
 }
 
 /// Implements the DIV instruction - divides two values from stack.
-pub fn div<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn div<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     if !op2.is_zero() {
         *op2 = op1.wrapping_div(*op2);
@@ -40,7 +37,7 @@ pub fn div<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the SDIV instruction.
 ///
 /// Performs signed division of two values from stack.
-pub fn sdiv<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn sdiv<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = i256_div(op1, *op2);
     Ok(())
@@ -49,7 +46,7 @@ pub fn sdiv<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the MOD instruction.
 ///
 /// Pops two values from stack and pushes the remainder of their division.
-pub fn rem<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn rem<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     if !op2.is_zero() {
         *op2 = op1.wrapping_rem(*op2);
@@ -60,7 +57,7 @@ pub fn rem<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the SMOD instruction.
 ///
 /// Performs signed modulo of two values from stack.
-pub fn smod<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn smod<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = i256_mod(op1, *op2);
     Ok(())
@@ -69,7 +66,7 @@ pub fn smod<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the ADDMOD instruction.
 ///
 /// Pops three values from stack and pushes (a + b) % n.
-pub fn addmod<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn addmod<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1, op2], op3, context.interpreter);
     *op3 = op1.add_mod(op2, *op3);
     Ok(())
@@ -78,14 +75,14 @@ pub fn addmod<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the MULMOD instruction.
 ///
 /// Pops three values from stack and pushes (a * b) % n.
-pub fn mulmod<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn mulmod<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1, op2], op3, context.interpreter);
     *op3 = op1.mul_mod(op2, *op3);
     Ok(())
 }
 
 /// Implements the EXP instruction - exponentiates two values from stack.
-pub fn exp<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn exp<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     gas!(context.interpreter, context.host.gas_params().exp_cost(*op2));
     *op2 = op1.pow(*op2);
@@ -121,7 +118,7 @@ pub fn exp<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 ///
 /// Similarly, if `b == 0` then the yellow paper says the output should start with all zeros,
 /// then end with bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
-pub fn signextend<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn signextend<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([ext], x, context.interpreter);
     // For 31 we also don't need to do anything.
     if ext < U256::from(31) {

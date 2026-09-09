@@ -40,7 +40,7 @@ pub use interpreter_action::{
     CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
     FrameInput, InterpreterAction,
 };
-pub use interpreter_types::InterpreterTypes;
+
 pub use revm_bytecode as bytecode;
 pub use revm_primitives as primitives;
 pub use revm_state as state;

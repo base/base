@@ -18,7 +18,7 @@ use revm_interpreter::{
     Interpreter,
     host::DummyHost,
     instructions::instruction_table,
-    interpreter::{EthInterpreter, ExtBytecode, InputsImpl, SharedMemory},
+    interpreter::{ExtBytecode, InputsImpl, SharedMemory},
 };
 use revm_primitives::{Bytes, hardfork::SpecId};
 
@@ -48,7 +48,7 @@ fn read_slice_oob_via_new_analyzed() {
     // SAFETY: intentionally violating the padding invariant to demonstrate UB.
     let bytecode = unsafe { Bytecode::new_analyzed(raw, original_len, jump_table) };
 
-    let mut interpreter = Interpreter::<EthInterpreter>::new(
+    let mut interpreter = Interpreter::new(
         SharedMemory::new(),
         ExtBytecode::new(bytecode),
         InputsImpl::default(),
@@ -57,7 +57,7 @@ fn read_slice_oob_via_new_analyzed() {
         u64::MAX,
     );
 
-    let table = instruction_table::<EthInterpreter, DummyHost>();
+    let table = instruction_table::<DummyHost>();
     let mut host = DummyHost::new(SpecId::PRAGUE);
 
     // This triggers read_slice(32) on a 2-byte buffer → UB (OOB read).

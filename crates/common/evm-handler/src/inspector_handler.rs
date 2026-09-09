@@ -4,7 +4,7 @@ use base_evm_handler::{
 };
 use revm_interpreter::{
     FrameInput, GasTracker, Host, InitialAndFloorGas, InstructionResult, Interpreter,
-    InterpreterAction, InterpreterTypes,
+    InterpreterAction,
     instructions::{GasTable, InstructionTable},
     interpreter_types::LoopControl,
 };
@@ -32,12 +32,8 @@ use crate::{Inspector, InspectorEvmTr, JournalExt};
 /// * [`Handler::run_system_call`] replaced with [`InspectorHandler::inspect_run_system_call`]
 pub trait InspectorHandler: Handler
 where
-    Self::Evm:
-        InspectorEvmTr<Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, Self::IT>>,
+    Self::Evm: InspectorEvmTr<Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context>>,
 {
-    /// The interpreter types used by this handler.
-    type IT: InterpreterTypes;
-
     /// Entry point for inspection.
     ///
     /// This method is acts as [`Handler::run`] method for inspection.
@@ -187,9 +183,9 @@ where
 }
 
 /// Handles the start of a frame by calling the appropriate inspector method.
-pub fn frame_start<CTX, INTR: InterpreterTypes>(
+pub fn frame_start<CTX>(
     context: &mut CTX,
-    inspector: &mut impl Inspector<CTX, INTR, FrameInput, FrameResult>,
+    inspector: &mut impl Inspector<CTX, FrameInput, FrameResult>,
     frame_input: &mut FrameInput,
 ) -> Option<FrameResult> {
     // Generic hook before variant dispatch
@@ -214,9 +210,9 @@ pub fn frame_start<CTX, INTR: InterpreterTypes>(
 }
 
 /// Handles the end of a frame by calling the appropriate inspector method.
-pub fn frame_end<CTX, INTR: InterpreterTypes>(
+pub fn frame_end<CTX>(
     context: &mut CTX,
-    inspector: &mut impl Inspector<CTX, INTR, FrameInput, FrameResult>,
+    inspector: &mut impl Inspector<CTX, FrameInput, FrameResult>,
     frame_input: &FrameInput,
     frame_output: &mut FrameResult,
 ) {
@@ -244,16 +240,15 @@ pub fn frame_end<CTX, INTR: InterpreterTypes>(
 /// This function is used to inspect the Interpreter loop.
 /// It will call [`Inspector::step`] and [`Inspector::step_end`] after each instruction.
 /// And [`Inspector::log`],[`Inspector::selfdestruct`] for each log and selfdestruct instruction.
-pub fn inspect_instructions<CTX, IT>(
+pub fn inspect_instructions<CTX>(
     context: &mut CTX,
-    interpreter: &mut Interpreter<IT>,
-    mut inspector: impl Inspector<CTX, IT>,
-    instructions: &InstructionTable<IT, CTX>,
+    interpreter: &mut Interpreter,
+    mut inspector: impl Inspector<CTX>,
+    instructions: &InstructionTable<CTX>,
     gas_table: &GasTable,
 ) -> InterpreterAction
 where
     CTX: ContextTr<Journal: JournalExt> + Host,
-    IT: InterpreterTypes,
 {
     let mut instruction_journal_i = None;
     loop {
@@ -310,14 +305,13 @@ where
 /// instructions journal no log at all.
 #[inline(never)]
 #[cold]
-pub fn inspect_logs<CTX, IT>(
-    interpreter: Option<&mut Interpreter<IT>>,
+pub fn inspect_logs<CTX>(
+    interpreter: Option<&mut Interpreter>,
     context: &mut CTX,
-    inspector: &mut impl Inspector<CTX, IT>,
+    inspector: &mut impl Inspector<CTX>,
     logs_i: usize,
 ) where
     CTX: ContextTr<Journal: JournalExt>,
-    IT: InterpreterTypes,
 {
     let logs = context.journal_mut().logs()[logs_i..].to_vec();
     match interpreter {
@@ -336,13 +330,12 @@ pub fn inspect_logs<CTX, IT>(
 
 #[inline(never)]
 #[cold]
-fn inspect_selfdestruct<CTX, IT>(
+fn inspect_selfdestruct<CTX>(
     context: &mut CTX,
-    inspector: &mut impl Inspector<CTX, IT>,
+    inspector: &mut impl Inspector<CTX>,
     journal_i: usize,
 ) where
     CTX: ContextTr<Journal: JournalExt> + Host,
-    IT: InterpreterTypes,
 {
     let entry = context.journal_mut().journal().get(journal_i..).and_then(|entries| entries.last());
 

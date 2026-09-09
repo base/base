@@ -5,8 +5,8 @@ extern crate alloc;
 use alloc::{format, string::String, vec::Vec};
 
 use revm_interpreter::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterTypes,
-    interpreter_types::{Jumps, MemoryTr, StackTr},
+    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+    interpreter_types::{Jumps, MemoryTr},
 };
 use revm_primitives::{Address, Log, U256};
 
@@ -83,14 +83,7 @@ impl TestInspector {
         Self::default()
     }
 
-    fn capture_interpreter_state<INTR: InterpreterTypes>(
-        interp: &Interpreter<INTR>,
-    ) -> InterpreterState
-    where
-        INTR::Bytecode: Jumps,
-        INTR::Stack: StackTr,
-        INTR::Memory: MemoryTr,
-    {
+    fn capture_interpreter_state(interp: &Interpreter) -> InterpreterState {
         InterpreterState {
             pc: interp.bytecode.pc(),
             stack_len: interp.stack.len(),
@@ -109,14 +102,8 @@ impl TestInspector {
     }
 }
 
-impl<CTX, INTR> Inspector<CTX, INTR> for TestInspector
-where
-    INTR: InterpreterTypes,
-    INTR::Bytecode: Jumps,
-    INTR::Stack: StackTr,
-    INTR::Memory: MemoryTr,
-{
-    fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+impl<CTX> Inspector<CTX> for TestInspector {
+    fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         self.step_count += 1;
 
         let state = Self::capture_interpreter_state(interp);
@@ -134,7 +121,7 @@ where
         }));
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         let state = Self::capture_interpreter_state(interp);
 
         if let Some(InspectorEvent::Step(record)) = self.events.last_mut() {

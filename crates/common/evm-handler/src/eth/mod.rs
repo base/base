@@ -14,7 +14,7 @@ use base_evm_handler::{
 };
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
-    interpreter::{InterpreterResult, interpreter::EthInterpreter},
+    interpreter::InterpreterResult,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
@@ -120,13 +120,7 @@ impl<DB: Database, I> EthEvmBuilder<DB, I> {
 /// [`RevmEvm`] type.
 #[expect(missing_debug_implementations)]
 pub struct EthEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
-    inner: RevmEvm<
-        EthEvmContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
-        PRECOMPILE,
-        EthFrame,
-    >,
+    inner: RevmEvm<EthEvmContext<DB>, I, EthInstructions<EthEvmContext<DB>>, PRECOMPILE, EthFrame>,
     inspect: bool,
 }
 
@@ -139,7 +133,7 @@ impl<DB: Database, I, PRECOMPILE> EthEvm<DB, I, PRECOMPILE> {
         evm: RevmEvm<
             EthEvmContext<DB>,
             I,
-            EthInstructions<EthInterpreter, EthEvmContext<DB>>,
+            EthInstructions<EthEvmContext<DB>>,
             PRECOMPILE,
             EthFrame,
         >,
@@ -151,13 +145,8 @@ impl<DB: Database, I, PRECOMPILE> EthEvm<DB, I, PRECOMPILE> {
     /// Consumes self and return the inner EVM instance.
     pub fn into_inner(
         self,
-    ) -> RevmEvm<
-        EthEvmContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
-        PRECOMPILE,
-        EthFrame,
-    > {
+    ) -> RevmEvm<EthEvmContext<DB>, I, EthInstructions<EthEvmContext<DB>>, PRECOMPILE, EthFrame>
+    {
         self.inner
     }
 

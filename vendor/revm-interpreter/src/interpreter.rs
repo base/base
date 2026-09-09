@@ -25,29 +25,27 @@ use crate::{
     InterpreterAction, instruction_context::InstructionContext, interpreter_types::*,
 };
 
-/// Main interpreter structure that contains all components defined in [`InterpreterTypes`].
-#[derive(Debug, Clone)]
+/// EVM interpreter with its stack, memory, bytecode, and execution state.
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Interpreter<WIRE: InterpreterTypes = EthInterpreter> {
+pub struct Interpreter {
     /// Bytecode being executed.
-    pub bytecode: WIRE::Bytecode,
+    pub bytecode: ExtBytecode,
     /// Gas tracking for execution costs.
     pub gas: Gas,
     /// EVM stack for computation.
-    pub stack: WIRE::Stack,
+    pub stack: Stack,
     /// Buffer for return data from calls.
-    pub return_data: WIRE::ReturnData,
+    pub return_data: ReturnDataImpl,
     /// EVM memory for data storage.
-    pub memory: WIRE::Memory,
+    pub memory: SharedMemory,
     /// Input data for current execution context.
-    pub input: WIRE::Input,
+    pub input: InputsImpl,
     /// Runtime flags controlling execution behavior.
-    pub runtime_flag: WIRE::RuntimeFlag,
-    /// Extended functionality and customizations.
-    pub extend: WIRE::Extend,
+    pub runtime_flag: RuntimeFlags,
 }
 
-impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
+impl Interpreter {
     /// Create new interpreter
     pub fn new(
         memory: SharedMemory,
@@ -58,11 +56,6 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
         gas_limit: u64,
     ) -> Self {
         Self::new_inner(Stack::new(), memory, bytecode, input, is_static, spec_id, gas_limit)
-    }
-
-    /// Create a new interpreter with default extended functionality.
-    pub fn default_ext() -> Self {
-        Self::do_default(Stack::new(), SharedMemory::new())
     }
 
     /// Create a new invalid interpreter.
@@ -99,7 +92,6 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
             memory,
             input,
             runtime_flag: RuntimeFlags { is_static, spec_id },
-            extend: Default::default(),
         }
     }
 
@@ -116,28 +108,17 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
         gas_limit: u64,
         reservoir_remaining_gas: u64,
     ) {
-        let Self {
-            bytecode: bytecode_ref,
-            gas,
-            stack,
-            return_data,
-            memory: memory_ref,
-            input: input_ref,
-            runtime_flag,
-            extend,
-        } = self;
-        *bytecode_ref = bytecode;
-        *gas = Gas::new_with_regular_gas_and_reservoir(gas_limit, reservoir_remaining_gas);
-        if stack.data().capacity() == 0 {
-            *stack = Stack::new();
+        self.bytecode = bytecode;
+        self.gas = Gas::new_with_regular_gas_and_reservoir(gas_limit, reservoir_remaining_gas);
+        if self.stack.data().capacity() == 0 {
+            self.stack = Stack::new();
         } else {
-            stack.clear();
+            self.stack.clear();
         }
-        return_data.0.clear();
-        *memory_ref = memory;
-        *input_ref = input;
-        *runtime_flag = RuntimeFlags { spec_id, is_static };
-        *extend = EXT::default();
+        self.return_data.0.clear();
+        self.memory = memory;
+        self.input = input;
+        self.runtime_flag = RuntimeFlags { spec_id, is_static };
     }
 
     /// Sets the bytecode that is going to be executed
@@ -147,30 +128,13 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
     }
 }
 
-impl Default for Interpreter<EthInterpreter> {
+impl Default for Interpreter {
     fn default() -> Self {
-        Self::default_ext()
+        Self::do_default(Stack::new(), SharedMemory::new())
     }
 }
 
-/// Default types for Ethereum interpreter.
-#[derive(Debug)]
-pub struct EthInterpreter<EXT = (), MG = SharedMemory> {
-    _phantom: core::marker::PhantomData<fn() -> (EXT, MG)>,
-}
-
-impl<EXT> InterpreterTypes for EthInterpreter<EXT> {
-    type Stack = Stack;
-    type Memory = SharedMemory;
-    type Bytecode = ExtBytecode;
-    type ReturnData = ReturnDataImpl;
-    type Input = InputsImpl;
-    type RuntimeFlag = RuntimeFlags;
-    type Extend = EXT;
-    type Output = InterpreterAction;
-}
-
-impl<IW: InterpreterTypes> Interpreter<IW> {
+impl Interpreter {
     /// Performs EVM memory resize.
     #[inline]
     pub fn resize_memory(
@@ -285,7 +249,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     #[inline]
     pub fn step<H: Host + ?Sized>(
         &mut self,
-        instruction_table: &InstructionTable<IW, H>,
+        instruction_table: &InstructionTable<H>,
         gas_table: &GasTable,
         host: &mut H,
     ) -> InstructionExecResult {
@@ -312,7 +276,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     #[inline]
     pub fn run_plain<H: Host + ?Sized>(
         &mut self,
-        instruction_table: &InstructionTable<IW, H>,
+        instruction_table: &InstructionTable<H>,
         gas_table: &GasTable,
         host: &mut H,
     ) -> InterpreterAction {
@@ -334,7 +298,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 pub fn asm_run(
-    interpreter: &mut Interpreter<EthInterpreter>,
+    interpreter: &mut Interpreter,
     host: &mut base_evm_context::DummyHost,
 ) {
     let table = crate::instruction_table();
@@ -396,29 +360,6 @@ impl InterpreterResult {
     }
 }
 
-// Special implementation for types where Output can be created from InterpreterAction
-impl<IW: InterpreterTypes> Interpreter<IW>
-where
-    IW::Output: From<InterpreterAction>,
-{
-    /// Takes the next action from the control and returns it as the specific Output type.
-    #[inline]
-    pub fn take_next_action_as_output(&mut self) -> IW::Output {
-        From::from(self.take_next_action())
-    }
-
-    /// Executes the interpreter until it returns or stops, returning the specific Output type.
-    #[inline]
-    pub fn run_plain_as_output<H: Host + ?Sized>(
-        &mut self,
-        instruction_table: &InstructionTable<IW, H>,
-        gas_table: &GasTable,
-        host: &mut H,
-    ) -> IW::Output {
-        From::from(self.run_plain(instruction_table, gas_table, host))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -430,7 +371,7 @@ mod tests {
         use super::*;
 
         let bytecode = Bytecode::new_raw(Bytes::from(&[0x60, 0x00, 0x60, 0x00, 0x01][..]));
-        let interpreter = Interpreter::<EthInterpreter>::new(
+        let interpreter = Interpreter::new(
             SharedMemory::new(),
             ExtBytecode::new(bytecode),
             InputsImpl::default(),
@@ -440,7 +381,7 @@ mod tests {
         );
 
         let serialized = serde_json::to_string_pretty(&interpreter).unwrap();
-        let deserialized: Interpreter<EthInterpreter> = serde_json::from_str(&serialized).unwrap();
+        let deserialized: Interpreter = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(
             interpreter.bytecode.pc(),
@@ -471,7 +412,7 @@ fn test_mstore_big_offset_memory_oog() {
     );
     let bytecode = Bytecode::new_raw(code);
 
-    let mut interpreter = Interpreter::<EthInterpreter>::new(
+    let mut interpreter = Interpreter::new(
         SharedMemory::new(),
         ExtBytecode::new(bytecode),
         InputsImpl::default(),
@@ -480,7 +421,7 @@ fn test_mstore_big_offset_memory_oog() {
         1000,
     );
 
-    let table = instruction_table::<EthInterpreter, DummyHost>();
+    let table = instruction_table::<DummyHost>();
     let gas = gas_table();
     let mut host = DummyHost::default();
     let action = interpreter.run_plain(&table, &gas, &mut host);
@@ -511,7 +452,7 @@ fn test_mstore_big_offset_memory_limit_oog() {
     );
     let bytecode = Bytecode::new_raw(code);
 
-    let mut interpreter = Interpreter::<EthInterpreter>::new(
+    let mut interpreter = Interpreter::new(
         SharedMemory::new_with_memory_limit(1000),
         ExtBytecode::new(bytecode),
         InputsImpl::default(),
@@ -520,7 +461,7 @@ fn test_mstore_big_offset_memory_limit_oog() {
         100000,
     );
 
-    let table = instruction_table::<EthInterpreter, DummyHost>();
+    let table = instruction_table::<DummyHost>();
     let gas = gas_table();
     let mut host = DummyHost::default();
     let action = interpreter.run_plain(&table, &gas, &mut host);

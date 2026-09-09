@@ -164,7 +164,7 @@ mod tests {
         Context, Evm, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
     };
     use base_state::InMemoryDB;
-    use revm_interpreter::interpreter::EthInterpreter;
+
     use revm_primitives::{TxKind, U256, address, hardfork::SpecId};
     use revm_state::AccountInfo;
 
@@ -293,7 +293,7 @@ mod tests {
         let mut evm = Evm {
             ctx,
             inspector: (),
-            instruction: EthInstructions::<EthInterpreter, _>::new_mainnet_with_spec(spec),
+            instruction: EthInstructions::<_>::new_mainnet_with_spec(spec),
             precompiles: OverspendingPrecompiles::new(spec),
             frame_stack: FrameStack::new_prealloc(8),
         };

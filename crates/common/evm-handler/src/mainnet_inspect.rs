@@ -4,7 +4,7 @@ use base_evm_handler::{
     SystemCallTx,
 };
 use base_state::DatabaseCommit;
-use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
+use revm_interpreter::InterpreterResult;
 use revm_primitives::{Address, Bytes};
 use revm_state::EvmState;
 
@@ -14,25 +14,23 @@ use crate::{
 };
 
 // Implementing InspectorHandler for MainnetHandler.
-impl<EVM, ERROR> InspectorHandler for MainnetHandler<EVM, ERROR, EthFrame<EthInterpreter>>
+impl<EVM, ERROR> InspectorHandler for MainnetHandler<EVM, ERROR, EthFrame>
 where
     EVM: InspectorEvmTr<
             Context: ContextTr<Journal: JournalTr<State = EvmState>>,
-            Frame = EthFrame<EthInterpreter>,
-            Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
+            Frame = EthFrame,
+            Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context>,
         >,
     ERROR: EvmTrError<EVM>,
 {
-    type IT = EthInterpreter;
 }
 
 // Implementing InspectEvm for Evm
-impl<CTX, INSP, INST, PRECOMPILES> InspectEvm
-    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame<EthInterpreter>>
+impl<CTX, INSP, INST, PRECOMPILES> InspectEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
 where
     CTX: ContextSetters + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt>,
-    INSP: Inspector<CTX, EthInterpreter>,
-    INST: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    INSP: Inspector<CTX>,
+    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type Inspector = INSP;
@@ -48,25 +46,24 @@ where
 }
 
 // Implementing InspectCommitEvm for Evm
-impl<CTX, INSP, INST, PRECOMPILES> InspectCommitEvm
-    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame<EthInterpreter>>
+impl<CTX, INSP, INST, PRECOMPILES> InspectCommitEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
 where
     CTX: ContextSetters
         + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt, Db: DatabaseCommit>,
-    INSP: Inspector<CTX, EthInterpreter>,
-    INST: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    INSP: Inspector<CTX>,
+    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
 }
 
 // Implementing InspectSystemCallEvm for Evm
 impl<CTX, INSP, INST, PRECOMPILES> InspectSystemCallEvm
-    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame<EthInterpreter>>
+    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
 where
     CTX: ContextSetters
         + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt, Tx: SystemCallTx>,
-    INSP: Inspector<CTX, EthInterpreter>,
-    INST: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    INSP: Inspector<CTX>,
+    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     fn inspect_one_system_call_with_caller(
@@ -83,12 +80,12 @@ where
 }
 
 // Implementing InspectorEvmTr for Evm
-impl<CTX, INSP, I, P> InspectorEvmTr for Evm<CTX, INSP, I, P, EthFrame<EthInterpreter>>
+impl<CTX, INSP, I, P> InspectorEvmTr for Evm<CTX, INSP, I, P, EthFrame>
 where
     CTX: ContextTr<Journal: JournalExt> + ContextSetters,
-    I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    I: InstructionProvider<Context = CTX>,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
-    INSP: Inspector<CTX, I::InterpreterTypes>,
+    INSP: Inspector<CTX>,
 {
     type Inspector = INSP;
 

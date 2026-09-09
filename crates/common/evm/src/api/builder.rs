@@ -2,7 +2,7 @@
 use alloy_primitives::Address;
 use base_evm_context::FrameStack;
 use base_evm_handler::{EthFrame, EthInstructions, PrecompilesMap};
-use revm::{Database, interpreter::interpreter::EthInterpreter};
+use revm::Database;
 
 use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
 
@@ -99,7 +99,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
                 inspector: (),
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
                 precompiles,
-                frame_stack: FrameStack::<EthFrame<EthInterpreter>>::new_prealloc(8),
+                frame_stack: FrameStack::<EthFrame>::new_prealloc(8),
             },
             false,
         )
@@ -117,7 +117,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
                 inspector,
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
                 precompiles,
-                frame_stack: FrameStack::<EthFrame<EthInterpreter>>::new_prealloc(8),
+                frame_stack: FrameStack::<EthFrame>::new_prealloc(8),
             },
             true,
         )

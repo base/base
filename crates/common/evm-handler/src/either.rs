@@ -1,18 +1,16 @@
 use either::Either;
-use revm_interpreter::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterTypes,
-};
+use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 use revm_primitives::{Address, Log, U256};
 
 use crate::inspector::Inspector;
 
-impl<CTX, INTR: InterpreterTypes, L, R> Inspector<CTX, INTR> for Either<L, R>
+impl<CTX, L, R> Inspector<CTX> for Either<L, R>
 where
-    L: Inspector<CTX, INTR>,
-    R: Inspector<CTX, INTR>,
+    L: Inspector<CTX>,
+    R: Inspector<CTX>,
 {
     #[inline]
-    fn initialize_interp(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         match self {
             Either::Left(inspector) => inspector.initialize_interp(interp, context),
             Either::Right(inspector) => inspector.initialize_interp(interp, context),
@@ -20,7 +18,7 @@ where
     }
 
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         match self {
             Either::Left(inspector) => inspector.step(interp, context),
             Either::Right(inspector) => inspector.step(interp, context),
@@ -28,7 +26,7 @@ where
     }
 
     #[inline]
-    fn step_end(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX) {
+    fn step_end(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         match self {
             Either::Left(inspector) => inspector.step_end(interp, context),
             Either::Right(inspector) => inspector.step_end(interp, context),
@@ -44,7 +42,7 @@ where
     }
 
     #[inline]
-    fn log_full(&mut self, interp: &mut Interpreter<INTR>, context: &mut CTX, log: Log) {
+    fn log_full(&mut self, interp: &mut Interpreter, context: &mut CTX, log: Log) {
         match self {
             Either::Left(inspector) => inspector.log_full(interp, context, log),
             Either::Right(inspector) => inspector.log_full(interp, context, log),
@@ -99,7 +97,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use revm_interpreter::interpreter::EthInterpreter;
 
     use super::*;
     use crate::noop::NoOpInspector;
@@ -107,13 +104,13 @@ mod tests {
     #[derive(Default)]
     struct DummyInsp;
 
-    impl<CTX> Inspector<CTX, EthInterpreter> for DummyInsp {}
+    impl<CTX> Inspector<CTX> for DummyInsp {}
 
     #[test]
     fn test_either_inspector_type_check() {
         // This test verifies that Either<NoOpInspector, NoOpInspector>
         // implements the Inspector trait as required by the issue
-        fn _requires_inspector<T: Inspector<(), EthInterpreter>>(inspector: T) -> T {
+        fn _requires_inspector<T: Inspector<()>>(inspector: T) -> T {
             inspector
         }
 

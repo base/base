@@ -6,13 +6,13 @@ use revm_primitives::U256;
 use crate::{
     InstructionContext as Ictx, InstructionExecResult as Result,
     interpreter::resize_memory,
-    interpreter_types::{InterpreterTypes as ITy, MemoryTr, RuntimeFlag, StackTr},
+    interpreter_types::{MemoryTr, RuntimeFlag},
 };
 
 /// Implements the MLOAD instruction.
 ///
 /// Loads a 32-byte word from memory.
-pub fn mload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn mload<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], top, context.interpreter);
     let offset = as_usize_or_fail!(context.interpreter, top);
     resize_memory(
@@ -30,7 +30,7 @@ pub fn mload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the MSTORE instruction.
 ///
 /// Stores a 32-byte word to memory.
-pub fn mstore<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn mstore<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn!([offset, value], context.interpreter);
     let offset = as_usize_or_fail!(context.interpreter, offset);
     context.interpreter.resize_memory(context.host.gas_params(), offset, 32)?;
@@ -41,7 +41,7 @@ pub fn mstore<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the MSTORE8 instruction.
 ///
 /// Stores a single byte to memory.
-pub fn mstore8<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn mstore8<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn!([offset, value], context.interpreter);
     let offset = as_usize_or_fail!(context.interpreter, offset);
     context.interpreter.resize_memory(context.host.gas_params(), offset, 1)?;
@@ -52,7 +52,7 @@ pub fn mstore8<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the MSIZE instruction.
 ///
 /// Gets the size of active memory in bytes.
-pub fn msize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn msize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     push!(context.interpreter, U256::from(context.interpreter.memory.size()));
     Ok(())
 }
@@ -60,7 +60,7 @@ pub fn msize<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the MCOPY instruction.
 ///
 /// EIP-5656: Memory copying instruction that copies memory from one location to another.
-pub fn mcopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn mcopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, CANCUN);
     popn!([dst, src, len], context.interpreter);
 

@@ -105,7 +105,7 @@ mod tests {
     use base_evm_handler::{MainBuilder, MainContext};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_interpreter::{
-        CallInputs, CreateInputs, Interpreter, InterpreterResult, InterpreterTypes,
+        CallInputs, CreateInputs, Interpreter, InterpreterResult,
         interpreter_types::{Jumps, ReturnData},
     };
     use revm_primitives::{Address, Bytes, TxKind, hardfork::SpecId};
@@ -122,18 +122,18 @@ mod tests {
         gas_remaining_steps: Vec<(usize, u64)>,
     }
 
-    impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for StackInspector {
-        fn initialize_interp(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+    impl<CTX> Inspector<CTX> for StackInspector {
+        fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
             self.gas_inspector.initialize_interp(&interp.gas);
         }
 
-        fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+        fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
             self.pc = interp.bytecode.pc();
             self.opcode = interp.bytecode.opcode();
             self.gas_inspector.step(&interp.gas);
         }
 
-        fn step_end(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+        fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
             self.gas_inspector.step_end(&interp.gas);
             self.gas_remaining_steps.push((self.pc, self.gas_inspector.gas_remaining()));
         }
@@ -207,12 +207,12 @@ mod tests {
         return_buffer: Vec<Bytes>,
     }
 
-    impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for CallOverrideInspector {
+    impl<CTX> Inspector<CTX> for CallOverrideInspector {
         fn call(&mut self, _context: &mut CTX, _inputs: &mut CallInputs) -> Option<CallOutcome> {
             self.call_override.pop().unwrap_or_default()
         }
 
-        fn step(&mut self, interpreter: &mut Interpreter<INTR>, _context: &mut CTX) {
+        fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
             let this_buffer = interpreter.return_data.buffer();
             let Some(buffer) = self.return_buffer.last() else {
                 self.return_buffer.push(this_buffer.clone());

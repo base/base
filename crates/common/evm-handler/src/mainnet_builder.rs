@@ -3,14 +3,14 @@ use base_evm_context::{
     Transaction, TxEnv,
 };
 use base_state::EmptyDB;
-use revm_interpreter::interpreter::EthInterpreter;
+
 use revm_primitives::hardfork::SpecId;
 
 use crate::{EthPrecompiles, frame::EthFrame, instructions::EthInstructions};
 
 /// Type alias for a mainnet EVM instance with standard Ethereum components.
 pub type MainnetEvm<CTX, INSP = ()> =
-    Evm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, EthPrecompiles, EthFrame<EthInterpreter>>;
+    Evm<CTX, INSP, EthInstructions<CTX>, EthPrecompiles, EthFrame>;
 
 /// Type alias for a mainnet context with standard Ethereum environment types.
 pub type MainnetContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB>, ()>;
@@ -81,11 +81,11 @@ mod test {
     use alloy_signer::{Either, SignerSync};
     use base_common_network::PrivateKeySigner;
     use base_evm_context::{Authorization, Context, TxEnv};
+    use base_state::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use revm_bytecode::{
         Bytecode,
         opcode::{PUSH1, SSTORE},
     };
-    use base_state::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use revm_primitives::{StorageKey, StorageValue, TxKind, U256, hardfork::SpecId};
 
     use crate::{ExecuteEvm, MainBuilder, MainContext};

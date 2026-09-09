@@ -6,7 +6,7 @@ use base_evm_context::{
     TransactionIndexedError,
 };
 use base_state::DatabaseCommit;
-use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
+use revm_interpreter::InterpreterResult;
 use revm_state::EvmState;
 
 use crate::{
@@ -178,11 +178,10 @@ pub trait ExecuteCommitEvm: ExecuteEvm {
     }
 }
 
-impl<CTX, INSP, INST, PRECOMPILES> ExecuteEvm
-    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame<EthInterpreter>>
+impl<CTX, INSP, INST, PRECOMPILES> ExecuteEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
 where
     CTX: ContextTr<Journal: JournalTr<State = EvmState>> + ContextSetters,
-    INST: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type ExecutionResult = ExecutionResult<HaltReason>;
@@ -223,11 +222,10 @@ where
     }
 }
 
-impl<CTX, INSP, INST, PRECOMPILES> ExecuteCommitEvm
-    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame<EthInterpreter>>
+impl<CTX, INSP, INST, PRECOMPILES> ExecuteCommitEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
 where
     CTX: ContextTr<Journal: JournalTr<State = EvmState>, Db: DatabaseCommit> + ContextSetters,
-    INST: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
+    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     #[inline]

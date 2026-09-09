@@ -4,26 +4,25 @@ use revm_primitives::U256;
 
 use super::i256::i256_cmp;
 use crate::{
-    InstructionContext as Ictx, InstructionExecResult as Result,
-    interpreter_types::{InterpreterTypes as ITy, RuntimeFlag, StackTr},
+    InstructionContext as Ictx, InstructionExecResult as Result, interpreter_types::RuntimeFlag,
 };
 
 /// Implements the LT instruction - less than comparison.
-pub fn lt<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn lt<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = U256::from(op1 < *op2);
     Ok(())
 }
 
 /// Implements the GT instruction - greater than comparison.
-pub fn gt<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn gt<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = U256::from(op1 > *op2);
     Ok(())
 }
 
 /// Implements the CLZ instruction - count leading zeros.
-pub fn clz<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn clz<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, OSAKA);
     popn_top!([], op1, context.interpreter);
     let leading_zeros = op1.leading_zeros();
@@ -34,7 +33,7 @@ pub fn clz<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the SLT instruction.
 ///
 /// Signed less than comparison of two values from stack.
-pub fn slt<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn slt<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = U256::from(i256_cmp(&op1, op2) == Ordering::Less);
     Ok(())
@@ -43,7 +42,7 @@ pub fn slt<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the SGT instruction.
 ///
 /// Signed greater than comparison of two values from stack.
-pub fn sgt<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn sgt<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = U256::from(i256_cmp(&op1, op2) == Ordering::Greater);
     Ok(())
@@ -52,7 +51,7 @@ pub fn sgt<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the EQ instruction.
 ///
 /// Equality comparison of two values from stack.
-pub fn eq<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn eq<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = U256::from(op1 == *op2);
     Ok(())
@@ -61,7 +60,7 @@ pub fn eq<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the ISZERO instruction.
 ///
 /// Checks if the top stack value is zero.
-pub fn iszero<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn iszero<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], op1, context.interpreter);
     *op1 = U256::from(op1.is_zero());
     Ok(())
@@ -70,7 +69,7 @@ pub fn iszero<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the AND instruction.
 ///
 /// Bitwise AND of two values from stack.
-pub fn bitand<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn bitand<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = op1 & *op2;
     Ok(())
@@ -79,7 +78,7 @@ pub fn bitand<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the OR instruction.
 ///
 /// Bitwise OR of two values from stack.
-pub fn bitor<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn bitor<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = op1 | *op2;
     Ok(())
@@ -88,7 +87,7 @@ pub fn bitor<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the XOR instruction.
 ///
 /// Bitwise XOR of two values from stack.
-pub fn bitxor<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn bitxor<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     *op2 = op1 ^ *op2;
     Ok(())
@@ -97,7 +96,7 @@ pub fn bitxor<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the NOT instruction.
 ///
 /// Bitwise NOT (negation) of the top stack value.
-pub fn not<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn not<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], op1, context.interpreter);
     *op1 = !*op1;
     Ok(())
@@ -106,7 +105,7 @@ pub fn not<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 /// Implements the BYTE instruction.
 ///
 /// Extracts a single byte from a word at a given index.
-pub fn byte<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn byte<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([op1], op2, context.interpreter);
     let o1 = as_usize_saturated!(op1);
     *op2 = if o1 < 32 {
@@ -119,7 +118,7 @@ pub fn byte<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
-pub fn shl<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn shl<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, PETERSBURG);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
@@ -128,7 +127,7 @@ pub fn shl<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
-pub fn shr<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn shr<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, PETERSBURG);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
@@ -137,7 +136,7 @@ pub fn shr<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
-pub fn sar<IT: ITy, H: ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+pub fn sar<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, PETERSBURG);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
