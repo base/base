@@ -21,7 +21,6 @@ use crate::config::ResolvedChainConfig;
 /// Arguments for `base rpc`.
 #[derive(Args, Clone, Debug)]
 #[command(
-    mut_arg("builder_disallow", |arg| arg.hide(true).long("__builder-disallow-disabled")),
     mut_arg("sequencer", |arg| arg
         .hide(true)
         .long("__rollup-sequencer-disabled")
