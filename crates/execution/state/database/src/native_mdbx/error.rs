@@ -1,3 +1,4 @@
+use crate::native_mdbx::ffi;
 use std::{ffi::c_int, result};
 
 /// An MDBX result.
@@ -111,13 +112,13 @@ pub enum Error {
     /// An invalid parameter was specified, or the environment has an active write transaction.
     #[error("invalid parameter specified or active write transaction")]
     DecodeErrorLenDiff,
-    /// If the [Environment](crate::Environment) was opened with
-    /// [`EnvironmentKind::WriteMap`](crate::EnvironmentKind::WriteMap) flag, nested transactions
+    /// If the [Environment](crate::native_mdbx::Environment) was opened with
+    /// [`EnvironmentKind::WriteMap`](crate::native_mdbx::EnvironmentKind::WriteMap) flag, nested transactions
     /// are not supported.
     #[error("nested transactions are not supported with WriteMap")]
     NestedTransactionsUnsupportedWithWriteMap,
-    /// If the [Environment](crate::Environment) was opened with in read-only mode
-    /// [`Mode::ReadOnly`](crate::flags::Mode::ReadOnly), write transactions can't be opened.
+    /// If the [Environment](crate::native_mdbx::Environment) was opened with in read-only mode
+    /// [`Mode::ReadOnly`](crate::native_mdbx::flags::Mode::ReadOnly), write transactions can't be opened.
     #[error("write transactions are not supported in read-only mode")]
     WriteTransactionUnsupportedInReadOnlyMode,
     /// Read transaction has been timed out.

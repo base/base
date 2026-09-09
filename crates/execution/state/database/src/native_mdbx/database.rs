@@ -1,8 +1,9 @@
+use crate::native_mdbx::ffi;
 use std::{ffi::CStr, ptr};
 
-use ffi::MDBX_db_flags_t;
+use crate::native_mdbx::ffi::MDBX_db_flags_t;
 
-use crate::{
+use crate::native_mdbx::{
     Environment, Transaction,
     error::{Result, mdbx_result},
     transaction::TransactionKind,

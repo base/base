@@ -11,10 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::mdbx::{CommitLatency, RW, Transaction, TransactionKind, WriteFlags, ffi::MDBX_dbi};
 use crate::{Compress, DbTx, DbTxMut, DupSort, Encode, IntoVec, Table, TableImporter};
 use base_common_observability_tracing::tracing::{debug, instrument, trace, warn};
 use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
-use reth_libmdbx::{CommitLatency, RW, Transaction, TransactionKind, WriteFlags, ffi::MDBX_dbi};
 
 use super::{cursor::Cursor, utils::*};
 use crate::{
@@ -49,7 +49,7 @@ impl<K: TransactionKind> Tx<K> {
         inner: Transaction<K>,
         dbis: Arc<HashMap<&'static str, MDBX_dbi>>,
         env_metrics: Option<Arc<DatabaseEnvMetrics>>,
-    ) -> reth_libmdbx::Result<Self> {
+    ) -> crate::mdbx::Result<Self> {
         let metrics_handler = env_metrics
             .map(|env_metrics| {
                 let handler = MetricsHandler::<K>::new(inner.id()?, env_metrics);
@@ -67,7 +67,7 @@ impl<K: TransactionKind> Tx<K> {
     }
 
     /// Gets this transaction ID.
-    pub fn id(&self) -> reth_libmdbx::Result<u64> {
+    pub fn id(&self) -> crate::mdbx::Result<u64> {
         self.metrics_handler.as_ref().map_or_else(|| self.inner.id(), |handler| Ok(handler.txn_id))
     }
 
@@ -440,9 +440,9 @@ impl DbTxMut for Tx<RW> {
 mod tests {
     use std::{sync::atomic::Ordering, thread::sleep, time::Duration};
 
+    use crate::mdbx::MaxReadTransactionDuration;
     use crate::{Database, DbTx, models::ClientVersion};
     use base_execution_state_types::DatabaseError;
-    use reth_libmdbx::MaxReadTransactionDuration;
     use tempfile::tempdir;
 
     use crate::{DatabaseEnv, DatabaseEnvKind, mdbx::DatabaseArguments, tables};
@@ -467,7 +467,7 @@ mod tests {
         // Transaction has not timed out.
         assert!(matches!(
             tx.get::<tables::Transactions>(0).unwrap_err(),
-            DatabaseError::Open(err) if err == reth_libmdbx::Error::NotFound.into()));
+            DatabaseError::Open(err) if err == crate::mdbx::Error::NotFound.into()));
         // Backtrace is not recorded.
         assert!(!tx.metrics_handler.unwrap().backtrace_recorded.load(Ordering::Relaxed));
     }
@@ -491,7 +491,7 @@ mod tests {
         // Transaction has timed out.
         assert!(matches!(
             tx.get::<tables::Transactions>(0).unwrap_err(),
-            DatabaseError::Open(err) if err == reth_libmdbx::Error::ReadTransactionTimeout.into()));
+            DatabaseError::Open(err) if err == crate::mdbx::Error::ReadTransactionTimeout.into()));
         // Backtrace is recorded.
         assert!(tx.metrics_handler.unwrap().backtrace_recorded.load(Ordering::Relaxed));
     }

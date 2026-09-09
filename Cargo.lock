@@ -3837,9 +3837,14 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-types-chain",
+ "base-execution-state-mdbx-sys",
  "base-execution-state-memory",
  "base-execution-state-types",
+ "bitflags 2.13.1",
+ "byteorder",
  "bytes",
+ "crossbeam-queue",
+ "dashmap",
  "derive_more",
  "eyre",
  "libc",
@@ -3851,13 +3856,13 @@ dependencies = [
  "proptest-arbitrary-interop",
  "quanta",
  "rand 0.9.5",
- "reth-libmdbx",
  "reth-nippy-jar",
  "reth-primitives-traits",
  "roaring",
  "rustc-hash",
  "serde",
  "serde_json",
+ "smallvec",
  "strum 0.27.2",
  "sysinfo",
  "tempfile",
@@ -14121,23 +14126,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-libmdbx"
-version = "0.0.0"
-dependencies = [
- "base-execution-state-mdbx-sys",
- "bitflags 2.13.1",
- "byteorder",
- "crossbeam-queue",
- "dashmap",
- "derive_more",
- "parking_lot",
- "smallvec",
- "tempfile",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
 name = "reth-network"
 version = "0.0.0"
 dependencies = [
@@ -14671,7 +14659,6 @@ dependencies = [
  "reth-downloaders",
  "reth-etl",
  "reth-exex",
- "reth-libmdbx",
  "reth-network-p2p",
  "reth-primitives-traits",
  "reth-provider",

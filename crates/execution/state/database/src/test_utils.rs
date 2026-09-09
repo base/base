@@ -206,9 +206,9 @@ pub fn create_test_ro_db() -> Arc<TempDatabase<DatabaseEnv>> {
 /// Use only in tests.
 pub fn enable_legacy_multiopen() {
     unsafe {
-        reth_libmdbx::ffi::mdbx_setup_debug(
-            reth_libmdbx::ffi::MDBX_LOG_DONTCHANGE,
-            reth_libmdbx::ffi::MDBX_DBG_LEGACY_MULTIOPEN as reth_libmdbx::ffi::MDBX_debug_flags,
+        crate::mdbx::ffi::mdbx_setup_debug(
+            crate::mdbx::ffi::MDBX_LOG_DONTCHANGE,
+            crate::mdbx::ffi::MDBX_DBG_LEGACY_MULTIOPEN as crate::mdbx::ffi::MDBX_debug_flags,
             None,
         );
     }

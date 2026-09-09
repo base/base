@@ -1,6 +1,6 @@
-#![allow(missing_docs)]
+//! MDBX environment integration tests.
+use base_execution_state_database::mdbx::*;
 use byteorder::{ByteOrder, LittleEndian};
-use reth_libmdbx::*;
 use tempfile::tempdir;
 
 #[test]

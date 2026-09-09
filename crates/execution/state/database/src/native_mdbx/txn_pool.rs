@@ -1,6 +1,7 @@
+use crate::native_mdbx::ffi;
 use crossbeam_queue::ArrayQueue;
 
-use crate::error::mdbx_result;
+use crate::native_mdbx::error::mdbx_result;
 
 /// Lock-free pool of reset read-only MDBX transaction handles.
 ///
@@ -87,7 +88,7 @@ impl Drop for ReadTxnPool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Environment, WriteFlags};
+    use crate::native_mdbx::{Environment, WriteFlags};
 
     /// Opens a fresh test environment.
     fn test_env() -> (tempfile::TempDir, Environment) {

@@ -15,6 +15,7 @@ use base_common_types_chain::{
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
+use base_execution_state_database::mdbx::{Environment, EnvironmentFlags, Mode};
 use base_execution_state_database::tables;
 use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
 use base_execution_state_types::PruneModes;
@@ -24,7 +25,6 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_libmdbx::{Environment, EnvironmentFlags, Mode};
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},

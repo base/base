@@ -1,3 +1,4 @@
+use crate::native_mdbx::ffi;
 use std::{
     ffi::CString,
     fmt::{self, Debug},
@@ -14,7 +15,7 @@ use byteorder::{ByteOrder, NativeEndian};
 use mem::size_of;
 use tracing::warn;
 
-use crate::{
+use crate::native_mdbx::{
     Mode, SyncMode, Transaction, TransactionKind,
     database::Database,
     error::{Error, Result, mdbx_result},
@@ -73,13 +74,13 @@ impl Environment {
         self.inner.env_kind
     }
 
-    /// Returns true if the environment was opened in [`crate::Mode::ReadWrite`] mode.
+    /// Returns true if the environment was opened in [`crate::native_mdbx::Mode::ReadWrite`] mode.
     #[inline]
     pub fn is_read_write(&self) -> Result<bool> {
         Ok(!self.is_read_only()?)
     }
 
-    /// Returns true if the environment was opened in [`crate::Mode::ReadOnly`] mode.
+    /// Returns true if the environment was opened in [`crate::native_mdbx::Mode::ReadOnly`] mode.
     #[inline]
     pub fn is_read_only(&self) -> Result<bool> {
         Ok(matches!(self.info()?.mode(), Mode::ReadOnly))
@@ -203,7 +204,7 @@ impl Environment {
     /// of used pages as well as free pages in this environment.
     ///
     /// ```
-    /// # use reth_libmdbx::Environment;
+    /// # use base_execution_state_database::mdbx::Environment;
     /// let dir = tempfile::tempdir().unwrap();
     /// let env = Environment::builder().open(dir.path()).unwrap();
     /// let info = env.info().unwrap();
@@ -285,9 +286,9 @@ pub enum EnvironmentKind {
     Default,
     /// Open the environment as mdbx-WRITEMAP.
     /// Use a writable memory map unless the environment is opened as `MDBX_RDONLY`
-    /// ([`crate::Mode::ReadOnly`]).
+    /// ([`crate::native_mdbx::Mode::ReadOnly`]).
     ///
-    /// All data will be mapped into memory in the read-write mode [`crate::Mode::ReadWrite`]. This
+    /// All data will be mapped into memory in the read-write mode [`crate::native_mdbx::Mode::ReadWrite`]. This
     /// offers a significant performance benefit, since the data will be modified directly in
     /// mapped memory and then flushed to disk by single system call, without any memory
     /// management nor copying.
@@ -764,7 +765,7 @@ impl EnvironmentBuilder {
 
         #[cfg(feature = "read-tx-timeouts")]
         let txn_manager = {
-            if let crate::MaxReadTransactionDuration::Set(duration) = self
+            if let crate::native_mdbx::MaxReadTransactionDuration::Set(duration) = self
                 .max_read_transaction_duration
                 .unwrap_or(read_transactions::MaxReadTransactionDuration::Set(
                     DEFAULT_MAX_READ_TRANSACTION_DURATION,
@@ -910,7 +911,7 @@ impl EnvironmentBuilder {
 pub(crate) mod read_transactions {
     use std::time::Duration;
 
-    use crate::EnvironmentBuilder;
+    use crate::native_mdbx::EnvironmentBuilder;
 
     /// The maximum duration of a read transaction.
     #[derive(Debug, Clone, Copy)]
@@ -951,12 +952,15 @@ fn convert_hsr_fn(callback: Option<HandleSlowReadersCallback>) -> ffi::MDBX_hsr_
 
 #[cfg(test)]
 mod tests {
+    use crate::native_mdbx::ffi;
     use std::{
         ops::RangeInclusive,
         sync::atomic::{AtomicBool, Ordering},
     };
 
-    use crate::{Environment, Error, Geometry, HandleSlowReadersReturnCode, PageSize, WriteFlags};
+    use crate::native_mdbx::{
+        Environment, Error, Geometry, HandleSlowReadersReturnCode, PageSize, WriteFlags,
+    };
 
     #[test]
     fn test_handle_slow_readers_callback() {

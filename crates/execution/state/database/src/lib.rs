@@ -14,6 +14,8 @@ pub mod version;
 
 #[cfg(feature = "mdbx")]
 pub mod mdbx;
+#[cfg(feature = "mdbx")]
+mod native_mdbx;
 
 pub use base_execution_state_types::{DatabaseError, DatabaseWriteOperation};
 #[cfg(feature = "mdbx")]
@@ -45,5 +47,5 @@ pub use unwind::DbTxUnwindExt;
 pub use utils::is_database_empty;
 
 /// Temporary databases and database fixtures.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(feature = "mdbx", any(test, feature = "test-utils")))]
 pub mod test_utils;

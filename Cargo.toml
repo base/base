@@ -138,7 +138,6 @@ members = [
   "vendor/reth-exex-types",
   "crates/common/io/files",
   "vendor/reth-invalid-block-hooks",
-  "vendor/reth-libmdbx",
   "crates/execution/state/mdbx-sys",
   "crates/execution/network/discovery",
   "vendor/reth-network",
@@ -446,7 +445,6 @@ reth-config = { path = "vendor/reth-config", default-features = false }
 base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 reth-network = { path = "vendor/reth-network", default-features = false }
-reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }
 base-common-io-files = { path = "crates/common/io/files", default-features = false }
 reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
 reth-provider = { path = "vendor/reth-provider", default-features = false }

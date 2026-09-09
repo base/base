@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
+pub use crate::native_mdbx::*;
 use base_common_observability_tracing::tracing::{info, warn};
 use eyre::Context;
-pub use reth_libmdbx::*;
 
 pub use crate::implementation::mdbx::*;
 use crate::{TableSet, Tables, is_database_empty};
@@ -164,9 +164,9 @@ pub fn open_db(path: impl AsRef<Path>, args: DatabaseArguments) -> eyre::Result<
 mod tests {
     use std::time::Duration;
 
+    use crate::mdbx::MaxReadTransactionDuration;
     use crate::{Database, DbCursorRO, DbTx, models::ClientVersion};
     use assert_matches::assert_matches;
-    use reth_libmdbx::MaxReadTransactionDuration;
     use tempfile::tempdir;
 
     use crate::{

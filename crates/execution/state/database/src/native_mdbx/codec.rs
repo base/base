@@ -1,8 +1,9 @@
+use crate::native_mdbx::ffi;
 use std::{borrow::Cow, slice};
 
 use derive_more::{Debug, Deref, DerefMut};
 
-use crate::{Error, TransactionKind};
+use crate::native_mdbx::{Error, TransactionKind};
 
 /// Implement this to be able to decode data values
 pub trait TableObject: Sized {
@@ -44,7 +45,7 @@ impl TableObject for Cow<'_, [u8]> {
         #[cfg(not(feature = "return-borrowed"))]
         {
             let is_dirty = (!K::IS_READ_ONLY)
-                && crate::error::mdbx_result(unsafe {
+                && crate::native_mdbx::error::mdbx_result(unsafe {
                     ffi::mdbx_is_dirty(_txn, data_val.iov_base)
                 })?;
 

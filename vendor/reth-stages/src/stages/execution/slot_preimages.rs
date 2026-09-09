@@ -2,13 +2,13 @@ use std::path::Path;
 
 use alloy_primitives::{B256, keccak256, map::HashSet};
 use base_execution_evm_runtime::database::RevertToSlot;
+use base_execution_state_database::mdbx::{
+    DatabaseFlags, Environment, EnvironmentFlags, Geometry, Mode, RO, SyncMode, WriteFlags,
+};
 use base_execution_state_database::tables;
 use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
 use eyre::Context;
 use rayon::slice::ParallelSliceMut;
-use reth_libmdbx::{
-    DatabaseFlags, Environment, EnvironmentFlags, Geometry, Mode, RO, SyncMode, WriteFlags,
-};
 use reth_provider::{DBProvider, ExecutionOutcome};
 use reth_stages_api::StageError;
 use tracing::trace;
@@ -44,7 +44,7 @@ impl SlotPreimages {
             size: Some(0..(8 * TERABYTE)),
             growth_step: Some(4 * GIGABYTE as isize),
             shrink_threshold: Some(0),
-            page_size: Some(reth_libmdbx::PageSize::Set(os_page_size)),
+            page_size: Some(base_execution_state_database::mdbx::PageSize::Set(os_page_size)),
         });
         builder.write_map();
         builder.set_flags(EnvironmentFlags {
@@ -109,8 +109,8 @@ impl SlotPreimages {
 /// Read-only handle for batch slot-preimage lookups within a single MDBX transaction.
 #[derive(Debug)]
 pub struct SlotPreimagesReader {
-    tx: reth_libmdbx::Transaction<RO>,
-    dbi: reth_libmdbx::ffi::MDBX_dbi,
+    tx: base_execution_state_database::mdbx::Transaction<RO>,
+    dbi: base_execution_state_database::mdbx::ffi::MDBX_dbi,
 }
 
 impl SlotPreimagesReader {

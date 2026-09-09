@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! MDBX transaction integration tests.
 use std::{
     borrow::Cow,
     io::Write,
@@ -6,7 +6,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use reth_libmdbx::*;
+use base_execution_state_database::mdbx::*;
 use tempfile::tempdir;
 
 #[test]

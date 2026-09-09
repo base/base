@@ -2,13 +2,13 @@
 
 use std::{borrow::Cow, collections::Bound, marker::PhantomData, ops::RangeBounds};
 
+use crate::mdbx::{Error as MDBXError, RO, RW, TransactionKind, WriteFlags};
 use crate::{
     Compress, DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, Decode, Decompress, DupSort,
     DupWalker, Encode, IntoVec, PairResult, RangeWalker, ReverseWalker, Table, ValueOnlyResult,
     Walker,
 };
 use base_execution_state_types::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation};
-use reth_libmdbx::{Error as MDBXError, RO, RW, TransactionKind, WriteFlags};
 
 use super::utils::*;
 use crate::{
@@ -25,7 +25,7 @@ pub type CursorRW<T> = Cursor<RW, T>;
 #[derive(Debug)]
 pub struct Cursor<K: TransactionKind, T: Table> {
     /// Inner `libmdbx` cursor.
-    pub(crate) inner: reth_libmdbx::Cursor<K>,
+    pub(crate) inner: crate::mdbx::Cursor<K>,
     /// Cache buffer that receives compressed values.
     buf: Vec<u8>,
     /// Per-table operation metrics. If `None`, metrics are not recorded.
@@ -36,7 +36,7 @@ pub struct Cursor<K: TransactionKind, T: Table> {
 
 impl<K: TransactionKind, T: Table> Cursor<K, T> {
     pub(crate) const fn new_with_metrics(
-        inner: reth_libmdbx::Cursor<K>,
+        inner: crate::mdbx::Cursor<K>,
         metrics: Option<TableOperationMetrics>,
     ) -> Self {
         Self { inner, buf: Vec::new(), metrics, _dbi: PhantomData }

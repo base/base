@@ -137,7 +137,7 @@ impl DatabaseEnvMetrics {
         outcome: TransactionOutcome,
         open_duration: Duration,
         close_duration: Option<Duration>,
-        commit_latency: Option<reth_libmdbx::CommitLatency>,
+        commit_latency: Option<crate::mdbx::CommitLatency>,
     ) {
         self.transactions
             .get(&mode)
@@ -355,7 +355,7 @@ impl TransactionOutcomeMetrics {
         &self,
         open_duration: Duration,
         close_duration: Option<Duration>,
-        commit_latency: Option<reth_libmdbx::CommitLatency>,
+        commit_latency: Option<crate::mdbx::CommitLatency>,
     ) {
         self.open_duration_seconds.record(open_duration);
 

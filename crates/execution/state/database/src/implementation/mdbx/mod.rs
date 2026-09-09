@@ -8,6 +8,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::mdbx::{
+    DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
+    MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
+};
 use crate::{
     Database, DatabaseMetrics, DbCursorRO, DbCursorRW, DbTx, DbTxMut, models::ClientVersion,
 };
@@ -15,10 +19,6 @@ use base_common_observability_tracing::tracing::error;
 use base_execution_state_types::LogLevel;
 use eyre::Context;
 use metrics::{Label, gauge};
-use reth_libmdbx::{
-    DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
-    MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
-};
 use tx::Tx;
 
 use crate::{
@@ -47,7 +47,7 @@ pub const TERABYTE: usize = GIGABYTE * 1024;
 const DEFAULT_MAX_READERS: u64 = 32_000;
 
 /// Space that a read-only transaction can occupy until the warning is emitted.
-/// See [`reth_libmdbx::EnvironmentBuilder::set_handle_slow_readers`] for more information.
+/// See [`base_execution_state_database::mdbx::EnvironmentBuilder::set_handle_slow_readers`] for more information.
 const MAX_SAFE_READER_SPACE: usize = 10 * GIGABYTE;
 
 /// Environment used when opening a MDBX environment. RO/RW.
@@ -173,7 +173,7 @@ impl DatabaseArguments {
     /// Sets the database page size value.
     pub const fn with_geometry_page_size(mut self, page_size: Option<usize>) -> Self {
         if let Some(size) = page_size {
-            self.geometry.page_size = Some(reth_libmdbx::PageSize::Set(size));
+            self.geometry.page_size = Some(crate::mdbx::PageSize::Set(size));
         }
 
         self
@@ -478,7 +478,7 @@ impl DatabaseEnv {
                 )
             }
 
-            reth_libmdbx::HandleSlowReadersReturnCode::ProceedWithoutKillingReader
+            crate::mdbx::HandleSlowReadersReturnCode::ProceedWithoutKillingReader
         }
         inner_env.set_handle_slow_readers(handle_slow_readers);
 
@@ -655,7 +655,7 @@ impl DatabaseEnv {
                 tx.commit().map_err(|e| DatabaseError::Commit(e.into()))?;
                 Ok(true)
             }
-            Err(reth_libmdbx::Error::NotFound) => Ok(false),
+            Err(crate::mdbx::Error::NotFound) => Ok(false),
             Err(e) => Err(DatabaseError::Open(e.into())),
         }
     }
@@ -696,6 +696,7 @@ mod tests {
     #[cfg(feature = "test-utils")]
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use crate::mdbx::Error;
     use crate::{
         DbDupCursorRO, DbDupCursorRW, Encode, ReverseWalker, Table, Walker,
         models::AccountBeforeTx, models::IntegerList, models::ShardedKey,
@@ -705,7 +706,6 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
-    use reth_libmdbx::Error;
     use tempfile::TempDir;
 
     use super::*;
@@ -1229,7 +1229,7 @@ mod tests {
         assert!(cursor.seek_exact(key2).unwrap().is_none());
         assert!(matches!(
             cursor.delete_current().unwrap_err(),
-            DatabaseError::Delete(err) if err == reth_libmdbx::Error::NoData.into()));
+            DatabaseError::Delete(err) if err == crate::mdbx::Error::NoData.into()));
         // Assert that key1 is still there
         assert_eq!(cursor.seek_exact(key1).unwrap(), Some((key1, Account::default())));
         // Assert that key3 is still there

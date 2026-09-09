@@ -1,19 +1,10 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![allow(missing_docs, clippy::needless_pass_by_ref_mut)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![expect(clippy::borrow_as_ptr)]
+//! Safe MDBX environments, transactions, and cursors.
 
 pub extern crate base_execution_state_mdbx_sys as ffi;
 
 #[cfg(feature = "read-tx-timeouts")]
-pub use crate::environment::read_transactions::MaxReadTransactionDuration;
-pub use crate::{
+pub use crate::native_mdbx::environment::read_transactions::MaxReadTransactionDuration;
+pub use crate::native_mdbx::{
     codec::*,
     cursor::{Cursor, Iter, IterDup},
     database::Database,
@@ -40,7 +31,7 @@ mod txn_manager;
 mod txn_pool;
 
 #[cfg(test)]
-mod test_utils {
+mod tests {
     use byteorder::{ByteOrder, LittleEndian};
     use tempfile::tempdir;
 

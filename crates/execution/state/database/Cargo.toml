@@ -20,31 +20,36 @@ bytes = { workspace = true }
 serde = { workspace = true }
 metrics = {workspace = true }
 arrayvec = { workspace = true }
-thiserror = { workspace = true }
+thiserror = {workspace = true }
 modular-bitfield = { workspace = true }
 base-common-io-files = { workspace = true }
+bitflags = { workspace = true, optional = true}
+smallvec = { workspace = true, optional = true}
 page_size = { workspace = true, optional = true }
-derive_more = {workspace = true, features = ["full"]}
 sysinfo = { workspace = true, features = ["system"] }
+derive_more = {workspace = true,  features = ["full"]}
 roaring = { workspace = true, features = ["default"] }
-tracing = { workspace = true, features = ["attributes"] }
+tracing = {workspace = true,  features = ["attributes"]}
 reth-nippy-jar = { workspace = true, features = ["default"] }
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["serde"]}
+base-execution-state-mdbx-sys = { workspace = true, optional = true}
 eyre = { workspace = true, optional = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"], optional = true }
+dashmap = { workspace = true, features = ["inline"], optional = true }
 quanta = { workspace = true, optional = true, features = ["default"] }
 rustc-hash = { workspace = true, features = ["std"], optional = true }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+byteorder = { workspace = true, features = ["default"], optional = true}
 proptest = { workspace = true, optional = true, features = ["default"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
-parking_lot = { workspace = true, optional = true, features = ["default"] }
+parking_lot = {workspace = true, optional = true, features = ["default"]}
+crossbeam-queue = { workspace = true, features = ["default"], optional = true}
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["serde", "reth-codec"] }
 base-execution-state-types = {workspace = true, features = ["reth-codec", "serde"]}
 base-execution-state-memory = {workspace = true, features = ["reth-codec", "serde"]}
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
-reth-libmdbx = { workspace = true, features = ["default", "return-borrowed", "read-tx-timeouts"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
@@ -56,8 +61,8 @@ proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 arbitrary = {workspace = true, features = ["derive"]}
 proptest = {workspace = true, features = ["default"]}
+tempfile = {workspace = true, features = ["default"]}
 serde_json = { workspace = true, features = ["alloc"] }
-tempfile = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 base-common-types-chain = {workspace = true, features = ["test-utils"]}
 reth-primitives-traits = { workspace = true, features = ["reth-codec"] }
@@ -65,22 +70,44 @@ base-execution-state-memory = {workspace = true, features = ["reth-codec"]}
 alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash", "rand"]}
 base-execution-state-types = {workspace = true, features = ["arbitrary", "reth-codec"]}
 
+[[test]]
+name = "mdbx_cursor"
+path = "tests/mdbx_cursor.rs"
+required-features = ["mdbx"]
+
+[[test]]
+name = "mdbx_environment"
+path = "tests/mdbx_environment.rs"
+required-features = ["mdbx"]
+
+[[test]]
+name = "mdbx_transaction"
+path = "tests/mdbx_transaction.rs"
+required-features = ["mdbx"]
+
 [features]
 default = ["mdbx"]
 mdbx = [
-    "dep:reth-libmdbx",
     "dep:eyre",
     "dep:page_size",
     "dep:quanta",
     "base-common-observability-metrics",
     "dep:strum",
     "dep:rustc-hash",
+    "return-borrowed",
+    "read-tx-timeouts",
+    "dep:bitflags",
+    "dep:smallvec",
+    "dep:base-execution-state-mdbx-sys",
+    "dep:byteorder",
+    "dep:parking_lot",
+    "dep:crossbeam-queue",
 ]
 test-utils = [
     "dep:tempfile",
     "mdbx",
     "arbitrary",
-    "parking_lot",
+    "dep:parking_lot",
     "reth-nippy-jar/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-state-types/test-utils",
@@ -97,3 +124,5 @@ arbitrary = [
     "dep:proptest",
 ]
 disable-lock = []
+return-borrowed = []
+read-tx-timeouts = ["dep:dashmap"]

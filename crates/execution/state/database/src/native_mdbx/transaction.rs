@@ -1,3 +1,4 @@
+use crate::native_mdbx::ffi;
 use std::{
     ffi::{c_uint, c_void},
     fmt::{self, Debug},
@@ -8,11 +9,11 @@ use std::{
 };
 
 #[cfg(feature = "read-tx-timeouts")]
-use ffi::mdbx_txn_renew;
-use ffi::{MDBX_TXN_RDONLY, MDBX_TXN_READWRITE, MDBX_txn_flags_t};
+use crate::native_mdbx::ffi::mdbx_txn_renew;
+use crate::native_mdbx::ffi::{MDBX_TXN_RDONLY, MDBX_TXN_READWRITE, MDBX_txn_flags_t};
 use parking_lot::{Mutex, MutexGuard};
 
-use crate::{
+use crate::native_mdbx::{
     Cursor, Error, Stat, TableObject,
     database::Database,
     environment::Environment,
@@ -211,7 +212,7 @@ where
     ///
     /// If `name` is not [None], then the returned handle will be for a named database. In this
     /// case the environment must be configured to allow named databases through
-    /// [`EnvironmentBuilder::set_max_dbs()`](crate::EnvironmentBuilder::set_max_dbs).
+    /// [`EnvironmentBuilder::set_max_dbs()`](crate::native_mdbx::EnvironmentBuilder::set_max_dbs).
     ///
     /// The returned database handle may be shared among any transaction in the environment.
     ///
@@ -383,7 +384,7 @@ impl Transaction<RW> {
     ///
     /// If `name` is not [None], then the returned handle will be for a named database. In this
     /// case the environment must be configured to allow named databases through
-    /// [`EnvironmentBuilder::set_max_dbs()`](crate::EnvironmentBuilder::set_max_dbs).
+    /// [`EnvironmentBuilder::set_max_dbs()`](crate::native_mdbx::EnvironmentBuilder::set_max_dbs).
     ///
     /// This function will fail with [`Error::BadRslot`] if called by a thread with an open
     /// transaction.
