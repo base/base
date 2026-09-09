@@ -47,6 +47,7 @@ reth-rpc-server-types = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
+base-execution-eip8130-rpc = { workspace = true }
 reth-consensus-debug-client = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }

@@ -44,7 +44,6 @@ eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-base-execution-eip8130-rpc-node = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 secp256k1 = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }

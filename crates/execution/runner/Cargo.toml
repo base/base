@@ -18,11 +18,15 @@ tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
+base-protocol = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
+base-common-evm = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
+base-common-chains = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, optional = true}
@@ -54,6 +58,10 @@ harness = false
 
 [features]
 test-utils = [
+    "dep:base-common-chains",
+    "dep:base-common-consensus",
+    "dep:base-common-evm",
+    "dep:base-protocol",
     "dep:base-execution-chainspec",
     "dep:reth-network",
     "dep:tokio",

@@ -3,6 +3,7 @@
 use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 
 use base_execution_chainspec::ChainSpecProvider;
+use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::{AdminApi, BaseEthApi, BaseEthApiBuilder, DevSigner, EthApiCtx};
 use base_node_context::{AddOnsContext, BaseNodePool};
@@ -363,6 +364,7 @@ impl RpcAddOns {
             engine_events,
         );
         let mut modules = registry.create_transport_rpc_modules(module_config);
+        modules.replace_configured(Eip8130EthApiExt::new(registry.eth_api().clone()).into_rpc())?;
 
         // in dev mode we generate 20 random dev-signer accounts
         if config.dev.dev {

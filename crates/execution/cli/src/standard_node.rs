@@ -6,7 +6,6 @@ use base_builder_metering::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
     MeteringStoreExtension,
 };
-use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
@@ -641,7 +640,6 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
-        runner.install_ext::<Eip8130RpcExtension>(());
         Ok(runner)
     }
 

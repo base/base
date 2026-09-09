@@ -12,7 +12,6 @@ use alloy_signer::SignerSync;
 use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_common_network::ReceiptResponse;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_zenith};
@@ -21,8 +20,8 @@ use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_zenith};
 const EIP8130_TX_TYPE: u8 = 0x79;
 
 fn base_time_deposit() -> Bytes {
-    BaseTimeUpdateTx::new(0)
-        .expect("zero millisecond component must be valid")
+    BaseTimeUpdateTx::new(200)
+        .expect("first 200ms block timestamp must be valid")
         .into_deposit_tx(1)
         .encoded_2718()
         .into()
@@ -33,11 +32,7 @@ fn base_time_deposit() -> Bytes {
 #[tokio::test]
 async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_zenith()));
-    let harness = TestHarness::builder()
-        .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(())
-        .build()
-        .await?;
+    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
     let provider = harness.provider();
 
     // Minimal EOA self-pay transaction: no account changes, no calls, protocol
@@ -109,11 +104,7 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
 #[tokio::test]
 async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_zenith()));
-    let harness = TestHarness::builder()
-        .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(())
-        .build()
-        .await?;
+    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
     let provider = harness.provider();
 
     // Self-pay transaction with one phase containing a single value-less call to
@@ -174,11 +165,7 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
 #[tokio::test]
 async fn eip8130_sponsored_receipt_reports_declared_payer() -> eyre::Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_zenith()));
-    let harness = TestHarness::builder()
-        .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(())
-        .build()
-        .await?;
+    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
     let provider = harness.provider();
 
     // Alice sends; Bob sponsors the gas. Bob authenticates over the payer digest
@@ -253,11 +240,7 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
         GenesisAccount { code: Some(bytes!("60006000fd")), ..Default::default() },
     );
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
-    let harness = TestHarness::builder()
-        .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(())
-        .build()
-        .await?;
+    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
     let provider = harness.provider();
 
     // Transaction 1 (Alice, self-pay): one phase with a single successful call to

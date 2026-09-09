@@ -383,7 +383,6 @@ impl InProcessClient {
             )));
         }
 
-        extensions.push(Box::new(base_execution_eip8130_rpc_node::Eip8130RpcExtension));
         Ok(extensions)
     }
 }

@@ -208,7 +208,6 @@ base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-featur
 base-execution-payload-builder = { path = "crates/execution/payload", default-features = false }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc", default-features = false }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db", default-features = false }
-base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node", default-features = false }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl", default-features = false }

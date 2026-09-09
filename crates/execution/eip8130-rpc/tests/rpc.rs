@@ -15,7 +15,6 @@ use alloy_rpc_client::RpcClient;
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_zenith};
 use serde_json::json;
@@ -24,11 +23,7 @@ use serde_json::json;
 /// supplied genesis.
 async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
-    let harness = TestHarness::builder()
-        .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(())
-        .build()
-        .await?;
+    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }

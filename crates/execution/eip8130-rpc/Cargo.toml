@@ -34,3 +34,21 @@ reth-storage-api = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["default", "reth"] }
+
+[dev-dependencies]
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+alloy-signer = { workspace = true }
+base-protocol = { workspace = true }
+alloy-genesis = { workspace = true }
+base-test-utils = { workspace = true }
+alloy-primitives = { workspace = true }
+base-common-network = { workspace = true }
+base-common-consensus = { workspace = true }
+base-common-precompiles = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

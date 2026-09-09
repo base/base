@@ -8,14 +8,20 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_common_chains::Upgrades;
+use base_common_consensus::Predeploys;
+use base_common_evm::BaseTime;
 use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
+use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider};
+use reth_provider::{
+    BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider, StateProviderFactory,
+};
 use tokio::time::sleep;
 
 use crate::{
@@ -166,10 +172,25 @@ impl TestHarness {
         let new_block_number = latest_block.header.number + 1;
         let parent_beacon_block_root =
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
-        let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
+        let chain_spec = self.node.blockchain_provider().chain_spec();
+        let next_timestamp = if chain_spec
+            .is_cobalt_active_at_timestamp(latest_block.header.timestamp)
+        {
+            let state = self.node.blockchain_provider().latest()?;
+            let millis = BaseTime::decode_timestamp_millis_part(
+                state
+                    .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
+                    .unwrap_or_default(),
+            );
+            (latest_block.header.timestamp * 1_000
+                + u64::from(millis)
+                + u64::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS))
+                / 1_000
+        } else {
+            latest_block.header.timestamp + BLOCK_TIME_SECONDS
+        };
 
         let min_base_fee = latest_block.header.base_fee_per_gas.unwrap_or_default();
-        let chain_spec = self.node.blockchain_provider().chain_spec();
         let base_fee_params = chain_spec.base_fee_params_at_timestamp(next_timestamp);
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
