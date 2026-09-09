@@ -62,7 +62,7 @@ tempfile = { workspace = true, features = ["default"] }
 serde_with = { workspace = true, features = ["macros"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 plain_hasher = { workspace = true, features = ["default"] }
-reth-nippy-jar = { workspace = true, features = ["default"] }
+base-execution-state-database = { workspace = true, features = [] }
 alloy-trie = { workspace = true, features = ["arbitrary", "serde"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
 base-common-types-chain = {features = ["arbitrary", "serde"], workspace = true}

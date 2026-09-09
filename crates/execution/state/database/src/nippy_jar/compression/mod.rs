@@ -1,6 +1,8 @@
+//! Column compression algorithms and dictionary state.
+
 use serde::{Deserialize, Serialize};
 
-use crate::NippyJarError;
+use crate::nippy_jar::NippyJarError;
 
 mod zstd;
 pub use self::zstd::{DecoderDictionary, Decompressor, Zstd, ZstdState};

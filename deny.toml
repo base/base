@@ -1,7 +1,7 @@
 [advisories]
 # Ignore unmaintained/vulnerable crates that come from upstream dependencies we cannot control
 ignore = [
-    # bincode is unmaintained but comes from reth-nippy-jar (upstream reth dependency)
+    # bincode is unmaintained but comes from base-execution-state-database (upstream reth dependency)
     # No safe upgrade available
     "RUSTSEC-2025-0141",
 

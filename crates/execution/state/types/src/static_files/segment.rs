@@ -692,7 +692,7 @@ mod tests {
     use std::env::temp_dir;
 
     use alloy_primitives::Bytes;
-    use reth_nippy_jar::NippyJar;
+    use base_execution_state_database::NippyJar;
 
     use super::*;
 

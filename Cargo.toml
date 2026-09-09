@@ -144,7 +144,6 @@ members = [
   "vendor/reth-network-api",
   "vendor/reth-network-p2p",
   "crates/execution/network/types",
-  "vendor/reth-nippy-jar",
   "vendor/reth-node-core",
   "vendor/reth-node-ethstats",
   "vendor/reth-node-events",
@@ -452,7 +451,6 @@ base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", defa
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 reth-db-common = { path = "vendor/reth-db-common", default-features = false }
-reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }

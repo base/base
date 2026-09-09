@@ -10,7 +10,7 @@ use tracing::*;
 use zstd::bulk::Compressor;
 pub use zstd::{bulk::Decompressor, dict::DecoderDictionary};
 
-use crate::{NippyJarError, compression::Compression};
+use crate::nippy_jar::{NippyJarError, compression::Compression};
 
 type RawDictionary = Vec<u8>;
 

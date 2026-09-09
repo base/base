@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use crate::{NippyJar, NippyJarError, NippyJarHeader, writer::OFFSET_SIZE_BYTES};
+use crate::nippy_jar::{NippyJar, NippyJarError, NippyJarHeader, writer::OFFSET_SIZE_BYTES};
 
 /// Performs consistency checks or heals on the [`NippyJar`] file
 /// * Is the offsets file size expected?

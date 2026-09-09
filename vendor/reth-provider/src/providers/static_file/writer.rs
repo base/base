@@ -10,13 +10,13 @@ use crate::{ChangesetOffsetReader, ChangesetOffsetWriter};
 use alloy_primitives::{BlockHash, BlockNumber, TxNumber, U256};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader, Compact};
 use base_execution_state_database::models::CompactU256;
+use base_execution_state_database::{NippyJar, NippyJarError, NippyJarWriter};
 use base_execution_state_database::{models::AccountBeforeTx, models::StorageBeforeTx};
 use base_execution_state_types::{
     ChangesetOffset, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
 };
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
-use reth_nippy_jar::{NippyJar, NippyJarError, NippyJarWriter};
 use reth_primitives_traits::FastInstant as Instant;
 use tracing::{debug, instrument};
 
@@ -346,7 +346,7 @@ impl StaticFileProviderRW {
     /// However, for transaction based segments, the block end range has to be found and healed
     /// externally.
     ///
-    /// Check [`reth_nippy_jar::NippyJarChecker`] &
+    /// Check [`base_execution_state_database::NippyJarChecker`] &
     /// [`NippyJarWriter`] for more on healing.
     fn ensure_end_range_consistency(&mut self) -> ProviderResult<()> {
         // If we have lost rows (in this run or previous), we need to update the [SegmentHeader].

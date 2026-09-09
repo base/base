@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use crate::{
+use crate::nippy_jar::{
     ColumnResult, NippyJar, NippyJarChecker, NippyJarError, NippyJarHeader,
     compression::Compression,
 };

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::Decompress;
+use crate::{DataReader, NippyJar, NippyJarCursor};
 use alloy_primitives::B256;
 use base_execution_state_types::SegmentHeader;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use derive_more::{Deref, DerefMut};
-use reth_nippy_jar::{DataReader, NippyJar, NippyJarCursor};
 
 use super::mask::{ColumnSelectorOne, ColumnSelectorThree, ColumnSelectorTwo};
 

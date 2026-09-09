@@ -22,6 +22,7 @@ use base_execution_state_database::{
     DbCursorRO, DbTx, Table, models::AccountBeforeTx, models::BlockNumberAddress,
     models::StorageBeforeTx, models::StoredBlockBodyIndices, tables,
 };
+use base_execution_state_database::{NippyJar, NippyJarChecker};
 use base_execution_state_database::{
     lockfile::StorageLock, static_file::BlockHashMask, static_file::HeaderMask,
     static_file::HeaderWithHashMask, static_file::ReceiptMask, static_file::StaticFileCursor,
@@ -38,7 +39,6 @@ use base_execution_state_types::{
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
-use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
     AlloyBlockHeader as _, RecoveredBlock, SealedHeader, dashmap::DashMap,
 };

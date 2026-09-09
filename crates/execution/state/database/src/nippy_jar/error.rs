@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Errors associated with [`crate::NippyJar`].
+/// Errors associated with [`crate::nippy_jar::NippyJar`].
 #[derive(Error, Debug)]
 pub enum NippyJarError {
     /// An internal error occurred, wrapping any type of error.

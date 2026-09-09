@@ -11,4 +11,8 @@ interfaces or table definitions can leave it disabled. The safe MDBX wrapper is 
 module; its native bindings remain a separate compilation unit. See [MDBX provenance](MDBX.md). The `test-utils` feature provides temporary
 databases and fixtures. Static-file readers share the same table definitions.
 
+The immutable columnar file store, its compression dictionaries, readers, consistency checker,
+and writer also live here. These files retain the existing format and are intended for trusted
+internal storage, not arbitrary untrusted input.
+
 The local implementation originates from Reth and retains the repository's license terms.

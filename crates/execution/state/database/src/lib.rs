@@ -49,3 +49,13 @@ pub use utils::is_database_empty;
 /// Temporary databases and database fixtures.
 #[cfg(all(feature = "mdbx", any(test, feature = "test-utils")))]
 pub mod test_utils;
+
+mod nippy_jar;
+pub use nippy_jar::{
+    CHANGESET_OFFSETS_FILE_EXTENSION, CONFIG_FILE_EXTENSION, ColumnResult,
+    Compression as NippyCompression, Compressors as NippyCompressors, DataReader,
+    DecoderDictionary as NippyDecoderDictionary, Decompressor as NippyDecompressor,
+    Functions as NippyJarFunctions, InclusionFilters as NippyJarInclusionFilters, Lz4 as NippyLz4,
+    NippyJar, NippyJarChecker, NippyJarCursor, NippyJarError, NippyJarHeader, NippyJarWriter,
+    Zstd as NippyZstd, ZstdState as NippyZstdState,
+};

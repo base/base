@@ -19,9 +19,9 @@ mod writer_tests;
 use std::{io, ops::Deref, sync::Arc};
 
 use crate::ChangesetOffsetReader;
+use base_execution_state_database::NippyJar;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use base_execution_state_types::{SegmentHeader, StaticFileSegment};
-use reth_nippy_jar::NippyJar;
 
 /// Alias type for each specific `NippyJar`.
 type LoadedJarRef<'a> =
@@ -31,7 +31,7 @@ type LoadedJarRef<'a> =
 #[derive(Debug)]
 pub struct LoadedJar {
     jar: NippyJar<SegmentHeader>,
-    mmap_handle: Arc<reth_nippy_jar::DataReader>,
+    mmap_handle: Arc<base_execution_state_database::DataReader>,
     csoff_reader: Option<ChangesetOffsetReader>,
 }
 
@@ -60,7 +60,7 @@ impl LoadedJar {
     }
 
     /// Returns a clone of the mmap handle that can be used to instantiate a cursor.
-    fn mmap_handle(&self) -> Arc<reth_nippy_jar::DataReader> {
+    fn mmap_handle(&self) -> Arc<base_execution_state_database::DataReader> {
         self.mmap_handle.clone()
     }
 

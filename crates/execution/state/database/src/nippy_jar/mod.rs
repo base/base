@@ -1,16 +1,4 @@
-//! Immutable data store format.
-//!
-//! *Warning*: The `NippyJar` encoding format and its implementations are
-//! designed for storing and retrieving data internally. They are not hardened
-//! to safely read potentially malicious data.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+//! Immutable columnar storage and compressed file readers.
 
 use std::{
     error::Error as StdError,
@@ -25,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use tracing::*;
 
 /// Compression algorithms supported by `NippyJar`.
-pub mod compression;
-#[cfg(test)]
-use compression::Compression;
-use compression::Compressors;
+mod compression;
+pub use compression::{
+    Compression, Compressors, DecoderDictionary, Decompressor, Lz4, Zstd, ZstdState,
+};
 
 /// empty enum for backwards compatibility
 #[derive(Debug, Serialize, Deserialize)]

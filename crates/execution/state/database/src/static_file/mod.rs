@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
+use crate::{NippyJar, NippyJarError};
 use base_execution_state_types::{
     SegmentHeader, SegmentRangeInclusive, StaticFileMap, StaticFileSegment,
 };
-use reth_nippy_jar::{NippyJar, NippyJarError};
 
 mod cursor;
 pub use cursor::{KeyOrNumber, StaticFileCursor};

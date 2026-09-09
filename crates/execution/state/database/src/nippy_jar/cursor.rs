@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use zstd::bulk::Decompressor;
 
-use crate::{
+use crate::nippy_jar::{
     DataReader, NippyJar, NippyJarError, NippyJarHeader, RefRow,
     compression::{Compression, Compressors, Zstd},
 };
