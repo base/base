@@ -1,5 +1,11 @@
 //! Pools using real Base transaction representations and the shared mock validator.
 
+use alloy_eip2124::Head;
+use base_common_chain_config::BaseChainSpec;
+use reth_eth_wire::UnifiedStatus;
+
+use crate::NetworkConfigBuilder;
+
 use base_execution_txpool::{
     BaseOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
     test_utils::BaseTestTransaction,
@@ -13,6 +19,19 @@ pub type TestPool = Pool<MockTransactionValidator, InMemoryBlobStore>;
 pub struct NetworkTestData;
 
 impl NetworkTestData {
+    /// Creates a status announcing the Base mainnet genesis.
+    pub fn status() -> UnifiedStatus {
+        let spec = BaseChainSpec::mainnet();
+        NetworkConfigBuilder::status(
+            &spec,
+            &Head {
+                hash: spec.genesis_hash(),
+                timestamp: spec.genesis.timestamp,
+                ..Default::default()
+            },
+        )
+    }
+
     /// Creates a pool using the shared mock validator.
     pub fn pool() -> TestPool {
         Pool::new(

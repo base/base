@@ -16,6 +16,8 @@ use std::{
 
 use alloy_eips::merge::EPOCH_SLOTS;
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
+use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
+use base_execution_network_types::PeerId;
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
 use reth_eth_wire::{
@@ -29,8 +31,6 @@ use reth_eth_wire_types::{
 };
 use reth_network_api::{PeerRequest, RequestMessage};
 use reth_network_p2p::{error::RequestError, snap::client::SnapResponse};
-use base_execution_network_types::PeerId;
-use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
 use reth_primitives_traits::Block;
 use rustc_hash::FxHashMap;
 use tokio::{
@@ -1307,12 +1307,14 @@ impl Drop for QueuedOutgoingMessages {
 mod tests {
     use alloy_eips::eip2124::ForkFilter;
     use alloy_primitives::B256;
+    use base_execution_network_types::PROTOCOL_BREACH_REQUEST_TIMEOUT;
+    use base_execution_network_types::pk2id;
     use futures::task::noop_waker;
     use reth_ecies::stream::ECIESStream;
     use reth_eth_wire::{
         EthStream, GetBlockAccessLists, GetBlockBodies, HelloMessageWithProtocols, P2PStream,
-        StatusBuilder, UnauthedEthStream, UnauthedP2PStream, UnifiedStatus,
-        handshake::EthHandshake, protocol::Protocol,
+        UnauthedEthStream, UnauthedP2PStream, UnifiedStatus, handshake::EthHandshake,
+        protocol::Protocol,
     };
     use reth_eth_wire_types::{
         BlockAccessLists, EthMessageID, NewPooledTransactionHashes72,
@@ -1323,8 +1325,6 @@ mod tests {
         },
     };
     use reth_network_p2p::error::RequestResult;
-    use base_execution_network_types::pk2id;
-    use base_execution_network_types::PROTOCOL_BREACH_REQUEST_TIMEOUT;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::{
         net::{TcpListener, TcpStream},
@@ -1493,7 +1493,7 @@ mod tests {
                 hello: eth_hello(&secret_key),
                 secret_key,
                 local_peer_id,
-                status: StatusBuilder::default().build(),
+                status: crate::test_utils::NetworkTestData::status(),
                 fork_filter:
                     std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet())
                         .fork_filter(Default::default()),

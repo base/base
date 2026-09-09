@@ -1,10 +1,9 @@
 use core::fmt::{Debug, Display};
 
 use alloy_chains::Chain;
-use alloy_hardforks::{ForkId, Head};
+use alloy_hardforks::ForkId;
 use alloy_primitives::{B256, U256, hex};
 use alloy_rlp::{BufMut, Encodable, RlpDecodable, RlpEncodable};
-use base_common_chain_config::BaseChainSpec;
 use base_common_codec_macros::add_arbitrary_tests;
 
 use crate::{BlockRangeUpdate, EthVersion};
@@ -33,40 +32,21 @@ pub struct UnifiedStatus {
     pub latest_block: Option<u64>,
 }
 
-impl Default for UnifiedStatus {
-    fn default() -> Self {
-        let spec = BaseChainSpec::mainnet();
-        let genesis = spec.genesis_hash();
-        Self {
-            version: EthVersion::Eth68,
-            chain: spec.chain(),
-            genesis,
-            forkid: spec.fork_id(&Head { timestamp: spec.genesis.timestamp, ..Default::default() }),
-            blockhash: genesis,
-            total_difficulty: Some(U256::ZERO),
-            earliest_block: Some(0),
-            latest_block: Some(0),
-        }
-    }
-}
-
 impl UnifiedStatus {
-    /// Helper for creating the `UnifiedStatus` builder
-    pub fn builder() -> StatusBuilder {
-        Default::default()
-    }
-
-    /// Build from chain‑spec + head.  Earliest/latest default to full history.
-    pub fn spec_builder(spec: &BaseChainSpec, head: &Head) -> Self {
-        Self::builder()
-            .chain(spec.chain())
-            .genesis(spec.genesis_hash())
-            .forkid(spec.fork_id(head))
-            .blockhash(head.hash)
-            .total_difficulty(Some(head.total_difficulty))
-            .earliest_block(Some(0))
-            .latest_block(Some(head.number))
-            .build()
+    /// Constructs a status builder with an explicit chain identity and fork ID.
+    pub const fn builder(chain: Chain, genesis: B256, forkid: ForkId) -> StatusBuilder {
+        StatusBuilder {
+            status: Self {
+                version: EthVersion::Eth68,
+                chain,
+                genesis,
+                forkid,
+                blockhash: genesis,
+                total_difficulty: Some(U256::ZERO),
+                earliest_block: Some(0),
+                latest_block: Some(0),
+            },
+        }
     }
 
     /// Override the `(earliest, latest)` history range we’ll advertise to
@@ -157,7 +137,7 @@ impl UnifiedStatus {
 }
 
 /// Builder type for constructing a [`UnifiedStatus`] message.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StatusBuilder {
     status: UnifiedStatus,
 }
@@ -250,13 +230,6 @@ pub struct Status {
     /// [EIP-2124](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2124.md).
     /// This was added in [`eth/64`](https://eips.ethereum.org/EIPS/eip-2364)
     pub forkid: ForkId,
-}
-
-// Base mainnet genesis status.
-impl Default for Status {
-    fn default() -> Self {
-        UnifiedStatus::default().into_legacy()
-    }
 }
 
 impl Display for Status {
@@ -473,12 +446,10 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_chains::{Chain, NamedChain};
-    use alloy_genesis::Genesis;
-    use alloy_hardforks::{ForkCondition, ForkHash, ForkId, Head};
+    use alloy_hardforks::{ForkHash, ForkId};
     use alloy_primitives::{B256, U256, b256, hex};
     use alloy_rlp::{Decodable, Encodable};
     use base_common_types_chain::constants::MAINNET_GENESIS_HASH;
-    use rand::Rng;
 
     use crate::{BlockRangeUpdate, EthVersion, Status, StatusEth69, StatusMessage, UnifiedStatus};
 
@@ -526,16 +497,20 @@ mod tests {
 
     #[test]
     fn roundtrip_eth69() {
-        let unified_status = UnifiedStatus::builder()
-            .version(EthVersion::Eth69)
-            .chain(Chain::mainnet())
-            .genesis(MAINNET_GENESIS_HASH)
-            .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
-            .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
-            .earliest_block(Some(1))
-            .latest_block(Some(2))
-            .total_difficulty(None)
-            .build();
+        let unified_status = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth69)
+        .chain(Chain::mainnet())
+        .genesis(MAINNET_GENESIS_HASH)
+        .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
+        .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
+        .earliest_block(Some(1))
+        .latest_block(Some(2))
+        .total_difficulty(None)
+        .build();
 
         let status_message = unified_status.into_message();
         let roundtripped_unified_status = UnifiedStatus::from_message(status_message);
@@ -545,16 +520,20 @@ mod tests {
 
     #[test]
     fn roundtrip_legacy() {
-        let unified_status = UnifiedStatus::builder()
-            .version(EthVersion::Eth68)
-            .chain(Chain::sepolia())
-            .genesis(MAINNET_GENESIS_HASH)
-            .forkid(ForkId { hash: ForkHash([0xaa, 0xbb, 0xcc, 0xdd]), next: 0 })
-            .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
-            .total_difficulty(Some(U256::from(42u64)))
-            .earliest_block(None)
-            .latest_block(None)
-            .build();
+        let unified_status = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth68)
+        .chain(Chain::sepolia())
+        .genesis(MAINNET_GENESIS_HASH)
+        .forkid(ForkId { hash: ForkHash([0xaa, 0xbb, 0xcc, 0xdd]), next: 0 })
+        .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
+        .total_difficulty(Some(U256::from(42u64)))
+        .earliest_block(None)
+        .latest_block(None)
+        .build();
 
         let status_message = unified_status.into_message();
         let roundtripped_unified_status = UnifiedStatus::from_message(status_message);
@@ -563,16 +542,20 @@ mod tests {
 
     #[test]
     fn roundtrip_eth70() {
-        let unified_status = UnifiedStatus::builder()
-            .version(EthVersion::Eth70)
-            .chain(Chain::mainnet())
-            .genesis(MAINNET_GENESIS_HASH)
-            .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
-            .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
-            .total_difficulty(None)
-            .earliest_block(Some(1))
-            .latest_block(Some(2))
-            .build();
+        let unified_status = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth70)
+        .chain(Chain::mainnet())
+        .genesis(MAINNET_GENESIS_HASH)
+        .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
+        .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
+        .total_difficulty(None)
+        .earliest_block(Some(1))
+        .latest_block(Some(2))
+        .build();
 
         let status_message = unified_status.into_message();
         let roundtripped_unified_status = UnifiedStatus::from_message(status_message);
@@ -583,12 +566,16 @@ mod tests {
     fn block_range_update_for_eth69_status() {
         let latest_hash =
             b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d");
-        let status = UnifiedStatus::builder()
-            .version(EthVersion::Eth69)
-            .earliest_block(Some(10))
-            .latest_block(Some(20))
-            .blockhash(latest_hash)
-            .build();
+        let status = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth69)
+        .earliest_block(Some(10))
+        .latest_block(Some(20))
+        .blockhash(latest_hash)
+        .build();
 
         assert_eq!(
             status.block_range_update(),
@@ -598,7 +585,13 @@ mod tests {
 
     #[test]
     fn block_range_update_is_none_for_legacy_status() {
-        let status = UnifiedStatus::builder().version(EthVersion::Eth68).build();
+        let status = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth68)
+        .build();
 
         assert!(status.block_range_update().is_none());
     }
@@ -626,16 +619,20 @@ mod tests {
         status.encode(&mut rlp_status);
         assert_eq!(rlp_status, expected);
 
-        let status = UnifiedStatus::builder()
-            .version(EthVersion::Eth69)
-            .chain(Chain::from_named(NamedChain::Mainnet))
-            .genesis(MAINNET_GENESIS_HASH)
-            .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
-            .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
-            .earliest_block(Some(15_537_394))
-            .latest_block(Some(18_000_000))
-            .build()
-            .into_message();
+        let status = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth69)
+        .chain(Chain::from_named(NamedChain::Mainnet))
+        .genesis(MAINNET_GENESIS_HASH)
+        .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
+        .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
+        .earliest_block(Some(15_537_394))
+        .latest_block(Some(18_000_000))
+        .build()
+        .into_message();
 
         let mut rlp_status = vec![];
         status.encode(&mut rlp_status);
@@ -662,16 +659,20 @@ mod tests {
         let status = StatusEth69::decode(&mut &data[..]).unwrap();
         assert_eq!(status, expected);
 
-        let expected_message = UnifiedStatus::builder()
-            .version(EthVersion::Eth69)
-            .chain(Chain::from_named(NamedChain::Mainnet))
-            .genesis(MAINNET_GENESIS_HASH)
-            .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
-            .earliest_block(Some(15_537_394))
-            .latest_block(Some(18_000_000))
-            .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
-            .build()
-            .into_message();
+        let expected_message = UnifiedStatus::builder(
+            Chain::mainnet(),
+            MAINNET_GENESIS_HASH,
+            ForkId { hash: ForkHash::from(MAINNET_GENESIS_HASH), next: 0 },
+        )
+        .version(EthVersion::Eth69)
+        .chain(Chain::from_named(NamedChain::Mainnet))
+        .genesis(MAINNET_GENESIS_HASH)
+        .forkid(ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 })
+        .earliest_block(Some(15_537_394))
+        .latest_block(Some(18_000_000))
+        .blockhash(b256!("0xfeb27336ca7923f8fab3bd617fcb6e75841538f71c1bcfc267d7838489d9e13d"))
+        .build()
+        .into_message();
 
         let expected_status = if let StatusMessage::Eth69(status69) = expected_message {
             status69
@@ -754,64 +755,5 @@ mod tests {
         };
         let status = Status::decode(&mut &data[..]).unwrap();
         assert_eq!(status, expected);
-    }
-
-    #[test]
-    fn init_custom_status_fields() {
-        let mut rng = rand::rng();
-        let head_hash = rng.random();
-        let total_difficulty = U256::from(rng.random::<u64>());
-
-        // create a genesis that has a random part, so we can check that the hash is preserved
-        let genesis = Genesis { nonce: rng.random(), ..Default::default() };
-
-        // build head
-        let head = Head {
-            number: u64::MAX,
-            hash: head_hash,
-            difficulty: U256::from(13337),
-            total_difficulty,
-            timestamp: u64::MAX,
-        };
-
-        // Exercise both block-based and timestamp-based Base activations.
-        let hardforks = vec![
-            (base_common_chain_config::BaseUpgrade::Bedrock, ForkCondition::Block(1)),
-            (base_common_chain_config::BaseUpgrade::Regolith, ForkCondition::Timestamp(2)),
-            (base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Timestamp(3)),
-            (base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(5)),
-            (base_common_chain_config::BaseUpgrade::Fjord, ForkCondition::Timestamp(8)),
-            (base_common_chain_config::BaseUpgrade::Granite, ForkCondition::Timestamp(13)),
-        ];
-
-        let mut chainspec = base_common_chain_config::BaseChainSpecBuilder::default()
-            .genesis(genesis)
-            .chain(Chain::from_id(1337));
-
-        for (fork, condition) in &hardforks {
-            chainspec = chainspec.with_fork(*fork, *condition);
-        }
-
-        let spec = chainspec.build();
-
-        // calculate proper forkid to check against
-        let genesis_hash = spec.genesis_hash();
-        let mut forkhash = ForkHash::from(genesis_hash);
-        for (_, condition) in hardforks {
-            forkhash += match condition {
-                ForkCondition::Block(n) | ForkCondition::Timestamp(n) => n,
-                _ => unreachable!("only block and timestamp forks are used in this test"),
-            }
-        }
-
-        let forkid = ForkId { hash: forkhash, next: 0 };
-
-        let status = UnifiedStatus::spec_builder(&spec, &head);
-
-        assert_eq!(status.chain, Chain::from_id(1337));
-        assert_eq!(status.forkid, forkid);
-        assert_eq!(status.total_difficulty.unwrap(), total_difficulty);
-        assert_eq!(status.blockhash, head_hash);
-        assert_eq!(status.genesis, genesis_hash);
     }
 }

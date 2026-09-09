@@ -739,7 +739,7 @@ mod tests {
         state.on_session_activated(SessionActivation {
             peer: peer_id,
             capabilities: capabilities(),
-            status: Arc::default(),
+            status: Arc::new(crate::test_utils::NetworkTestData::status()),
             request_tx: peer_tx,
             timeout: Arc::new(AtomicU64::new(1)),
             range_info: None,

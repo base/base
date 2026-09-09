@@ -3244,7 +3244,7 @@ mod tests {
             remote_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             client_version: Arc::from(""),
             capabilities: Arc::new(vec![].into()),
-            status: Arc::new(Default::default()),
+            status: Arc::new(crate::test_utils::NetworkTestData::status()),
             version: EthVersion::Eth68,
             peer_kind: PeerKind::Basic,
         };

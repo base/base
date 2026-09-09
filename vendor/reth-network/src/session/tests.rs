@@ -1,11 +1,9 @@
 //! Tests for the session handshake.
 
-use futures::StreamExt;
-use reth_eth_wire::{
-    Capability, StatusBuilder, UnauthedEthStream, handshake::EthHandshake, protocol::Protocol,
-};
-use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
 use base_execution_network_types::pk2id;
+use futures::StreamExt;
+use reth_eth_wire::{Capability, UnauthedEthStream, handshake::EthHandshake, protocol::Protocol};
+use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
 use secp256k1::SECP256K1;
 use tokio::net::TcpListener;
 
@@ -18,7 +16,7 @@ fn new_peer() -> (SecretKey, PeerId) {
 }
 
 fn status() -> UnifiedStatus {
-    StatusBuilder::default().build()
+    crate::test_utils::NetworkTestData::status()
 }
 
 fn fork_filter() -> ForkFilter {

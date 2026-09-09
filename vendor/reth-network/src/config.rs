@@ -7,6 +7,9 @@ use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_execution_network_types::PeersConfig;
+use base_execution_network_types::SessionsConfig;
+use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
 use base_execution_state_api::{
     BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
@@ -19,9 +22,6 @@ use reth_eth_wire::{
     handshake::{EthHandshake, EthRlpxHandshake},
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
-use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
-use base_execution_network_types::PeersConfig;
-use base_execution_network_types::SessionsConfig;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
@@ -232,6 +232,16 @@ pub struct NetworkConfigBuilder {
 
 #[expect(missing_docs)]
 impl NetworkConfigBuilder {
+    /// Builds the wire status from the configured chain and its current head.
+    pub fn status(spec: &BaseChainSpec, head: &Head) -> UnifiedStatus {
+        UnifiedStatus::builder(spec.chain(), spec.genesis_hash(), spec.fork_id(head))
+            .blockhash(head.hash)
+            .total_difficulty(Some(head.total_difficulty))
+            .earliest_block(Some(0))
+            .latest_block(Some(head.number))
+            .build()
+    }
+
     /// Create a new builder instance with a random secret key.
     pub fn with_rng_secret_key(executor: Runtime) -> Self {
         Self::new(rng_secret_key(), executor)
@@ -657,7 +667,7 @@ impl NetworkConfigBuilder {
         hello_message = hello_message.with_snap(snap_enabled);
 
         // set the status
-        let mut status = UnifiedStatus::spec_builder(&chain_spec, &head);
+        let mut status = Self::status(&chain_spec, &head);
 
         if let Some(id) = network_id {
             status.chain = id.into();
@@ -742,6 +752,7 @@ mod tests {
     use alloy_primitives::U256;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_execution_state_api::NoopProvider;
+    use rand::Rng;
     use reth_discv5::build_local_enr;
 
     use super::*;
@@ -915,5 +926,63 @@ mod tests {
             .expect("should be non-empty");
 
         assert_eq!(advertised_fork_id, fork_id);
+    }
+    #[test]
+    fn init_custom_status_fields() {
+        let mut rng = rand::rng();
+        let head_hash = rng.random();
+        let total_difficulty = U256::from(rng.random::<u64>());
+
+        // create a genesis that has a random part, so we can check that the hash is preserved
+        let genesis = Genesis { nonce: rng.random(), ..Default::default() };
+
+        // build head
+        let head = Head {
+            number: u64::MAX,
+            hash: head_hash,
+            difficulty: U256::from(13337),
+            total_difficulty,
+            timestamp: u64::MAX,
+        };
+
+        // Exercise both block-based and timestamp-based Base activations.
+        let hardforks = vec![
+            (base_common_chain_config::BaseUpgrade::Bedrock, ForkCondition::Block(1)),
+            (base_common_chain_config::BaseUpgrade::Regolith, ForkCondition::Timestamp(2)),
+            (base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Timestamp(3)),
+            (base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(5)),
+            (base_common_chain_config::BaseUpgrade::Fjord, ForkCondition::Timestamp(8)),
+            (base_common_chain_config::BaseUpgrade::Granite, ForkCondition::Timestamp(13)),
+        ];
+
+        let mut chainspec = base_common_chain_config::BaseChainSpecBuilder::default()
+            .genesis(genesis)
+            .chain(Chain::from_id(1337));
+
+        for (fork, condition) in &hardforks {
+            chainspec = chainspec.with_fork(*fork, *condition);
+        }
+
+        let spec = chainspec.build();
+
+        // calculate proper forkid to check against
+        let genesis_hash = spec.genesis_hash();
+        let mut forkhash = ForkHash::from(genesis_hash);
+        for (_, condition) in hardforks {
+            forkhash += match condition {
+                ForkCondition::Block(n) | ForkCondition::Timestamp(n) => n,
+                _ => unreachable!("only block and timestamp forks are used in this test"),
+            }
+        }
+
+        let forkid = ForkId { hash: forkhash, next: 0 };
+
+        let status = NetworkConfigBuilder::status(&spec, &head);
+
+        assert_eq!(status.chain, Chain::from_id(1337));
+        assert_eq!(status.forkid, forkid);
+        assert_eq!(status.total_difficulty.unwrap(), total_difficulty);
+        assert_eq!(status.blockhash, head_hash);
+        assert_eq!(status.genesis, genesis_hash);
     }
 }

@@ -23,7 +23,6 @@ alloy-trie = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-base-common-chain-config = { workspace = true }
 base-common-codec-macros = { workspace = true }
 alloy-chains = { workspace = true, features = ["rlp"] }
 derive_more = { workspace = true, features = ["full"] }
@@ -33,12 +32,10 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
-base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 test-case = { workspace = true }
-alloy-genesis = { workspace = true }
-base-common-chain-config = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
@@ -56,7 +53,6 @@ std = [
     "alloy-chains/std",
     "alloy-eip7928?/std",
     "alloy-eips/std",
-    "alloy-genesis/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
     "bytes/std",
