@@ -512,24 +512,21 @@ dependencies = [
 
 [[package]]
 name = "alloy-rpc-client"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3dfd3ebc1756426a6a9e17979d4467632aff01f359136c50e5320ac6e32d6b8d"
 dependencies = [
  "alloy-json-rpc",
- "alloy-node-bindings",
  "alloy-primitives",
  "alloy-pubsub",
  "alloy-transport",
  "alloy-transport-http",
  "alloy-transport-ws",
- "ci_info",
  "futures",
- "futures-util",
  "pin-project",
  "reqwest",
  "serde",
  "serde_json",
- "similar-asserts",
- "tempfile",
  "tokio",
  "tokio-stream",
  "tower",
