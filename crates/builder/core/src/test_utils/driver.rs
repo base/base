@@ -230,7 +230,6 @@ impl ChainDriver {
             self.provider.get_block_by_number(BlockNumberOrTag::Latest).full().await?.ok_or_else(
                 || eyre::eyre!("Failed to get latest block after building new block"),
             )?;
-        let block = block.map_header(|header| header.into_inner());
 
         assert_eq!(
             block.header.hash, new_block_hash,
@@ -275,8 +274,7 @@ impl ChainDriver {
             .provider
             .get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)
             .await?
-            .ok_or_else(|| eyre::eyre!("Failed to get latest block"))?
-            .map_header(|header| header.into_inner()))
+            .ok_or_else(|| eyre::eyre!("Failed to get latest block"))?)
     }
 
     /// Retrieves the latest built block and returns a list of full transaction
@@ -287,8 +285,7 @@ impl ChainDriver {
             .get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)
             .full()
             .await?
-            .ok_or_else(|| eyre::eyre!("Failed to get latest full block"))?
-            .map_header(|header| header.into_inner()))
+            .ok_or_else(|| eyre::eyre!("Failed to get latest full block"))?)
     }
 
     /// retrieves a specific block by its number or tag and returns a list of transaction
@@ -297,11 +294,7 @@ impl ChainDriver {
         &self,
         number: BlockNumberOrTag,
     ) -> eyre::Result<Option<Block<Transaction>>> {
-        Ok(self
-            .provider
-            .get_block_by_number(number)
-            .await?
-            .map(|block| block.map_header(|header| header.into_inner())))
+        Ok(self.provider.get_block_by_number(number).await?)
     }
 
     /// retrieves a specific block by its number or tag and returns a list of full transaction
@@ -310,12 +303,7 @@ impl ChainDriver {
         &self,
         number: BlockNumberOrTag,
     ) -> eyre::Result<Option<Block<Transaction>>> {
-        Ok(self
-            .provider
-            .get_block_by_number(number)
-            .full()
-            .await?
-            .map(|block| block.map_header(|header| header.into_inner())))
+        Ok(self.provider.get_block_by_number(number).full().await?)
     }
 
     /// Returns a transaction builder that can be used to create and send transactions.

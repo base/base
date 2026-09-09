@@ -8,7 +8,7 @@ use alloy_primitives::TxHash;
 use base_common_consensus::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
-use base_common_rpc_types::{BaseLogResponse, Filter, Log};
+use base_common_rpc_types::{Filter, Log};
 use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use reth_storage_api::BlockReader;
@@ -25,7 +25,7 @@ pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
     header: &reth_primitives_traits::SealedHeader,
     tx_hashes_and_receipts: I,
     removed: bool,
-) -> Result<Vec<BaseLogResponse>, crate::BaseEthApiError>
+) -> Result<Vec<Log>, crate::BaseEthApiError>
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
     C: reth_storage_api::BlockReader<
@@ -53,6 +53,7 @@ where
         for log in receipt.logs() {
             if filter.matches(log) {
                 let log = Log {
+                    block_timestamp_ms: None,
                     inner: log.clone(),
                     block_hash: Some(block_num_hash.hash),
                     block_number: Some(block_num_hash.number),
@@ -83,7 +84,7 @@ pub enum ProviderOrBlock<'a, P: BlockReader> {
 /// Appends all matching and converted logs of a block's receipts.
 /// If the log matches, look up the corresponding transaction hash.
 pub fn append_matching_block_logs<P, C>(
-    all_logs: &mut Vec<BaseLogResponse>,
+    all_logs: &mut Vec<Log>,
     converter: &crate::BaseRpcConverter<C>,
     provider_or_block: ProviderOrBlock<'_, P>,
     filter: &Filter,
@@ -158,6 +159,7 @@ where
                 }
 
                 let log = Log {
+                    block_timestamp_ms: None,
                     inner: log.clone(),
                     block_hash: Some(block_num_hash.hash),
                     block_number: Some(block_num_hash.number),

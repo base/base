@@ -6,8 +6,7 @@ use base_common_consensus::{
     transaction::Recovered,
 };
 use base_common_rpc_types::{
-    BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest, Log,
-    TransactionInfo,
+    BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
 };
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmEnvFor, TxEnvFor};
@@ -105,7 +104,7 @@ where
         log: Log,
         receipt: &BaseReceipt,
         header: &reth_primitives_traits::SealedHeader,
-    ) -> Result<BaseLogResponse, BaseEthApiError> {
+    ) -> Result<Log, BaseEthApiError> {
         self.receipt_converter.convert_log(log, receipt, header)
     }
 
@@ -131,11 +130,11 @@ where
         &self,
         header: reth_primitives_traits::SealedHeader,
         block_size: usize,
-    ) -> Result<BaseHeaderResponse, BaseEthApiError> {
-        Ok(BaseHeaderResponse::new(base_common_rpc_types::Header::from_consensus(
+    ) -> Result<Header, BaseEthApiError> {
+        Ok(base_common_rpc_types::Header::from_consensus(
             header.into(),
             None,
             Some(U256::from(block_size)),
-        )))
+        ))
     }
 }

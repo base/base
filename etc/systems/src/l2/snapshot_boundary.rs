@@ -48,7 +48,6 @@ impl SnapshotBoundary {
             .await
             .wrap_err("failed to read snapshot head")?
             .ok_or_eyre("snapshot execution node has no latest block")?
-            .map_header(|header| header.into_inner())
             .into_consensus()
             .map_transactions(|transaction| transaction.inner.inner.into_inner());
         let head = DevnetSnapshotHead {

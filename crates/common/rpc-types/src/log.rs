@@ -21,6 +21,9 @@ pub struct Log<T = LogData> {
     /// <https://github.com/ethereum/execution-apis/issues/295>
     #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt", default)]
     pub block_timestamp: Option<u64>,
+    /// Full Unix block timestamp in milliseconds when sub-second timing is available.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub block_timestamp_ms: Option<u64>,
     /// Transaction Hash
     #[doc(alias = "tx_hash")]
     pub transaction_hash: Option<TxHash>,
@@ -82,6 +85,7 @@ impl Log<LogData> {
             block_hash: self.block_hash,
             block_number: self.block_number,
             block_timestamp: self.block_timestamp,
+            block_timestamp_ms: self.block_timestamp_ms,
             transaction_hash: self.transaction_hash,
             transaction_index: self.transaction_index,
             log_index: self.log_index,
@@ -99,6 +103,7 @@ impl Log<LogData> {
             block_hash: self.block_hash,
             block_number: self.block_number,
             block_timestamp: self.block_timestamp,
+            block_timestamp_ms: self.block_timestamp_ms,
             transaction_hash: self.transaction_hash,
             transaction_index: self.transaction_index,
             log_index: self.log_index,
@@ -134,6 +139,7 @@ impl Log<LogData> {
         logs.into_iter()
             .enumerate()
             .map(|(tx_log_idx, log)| Log {
+                block_timestamp_ms: None,
                 inner: log,
                 block_hash: Some(meta.block_hash),
                 block_number: Some(meta.block_number),
@@ -178,6 +184,7 @@ where
             block_hash: self.block_hash,
             block_number: self.block_number,
             block_timestamp: self.block_timestamp,
+            block_timestamp_ms: self.block_timestamp_ms,
             transaction_hash: self.transaction_hash,
             transaction_index: self.transaction_index,
             log_index: self.log_index,
@@ -245,6 +252,7 @@ mod tests {
 
     fn serde_log() {
         let mut log = Log {
+            block_timestamp_ms: None,
             inner: alloy_primitives::Log {
                 address: Address::with_last_byte(0x69),
                 data: alloy_primitives::LogData::new_unchecked(
@@ -278,5 +286,38 @@ mod tests {
 
         let deserialized: Log = serde_json::from_str(&serialized).unwrap();
         assert_eq!(log, deserialized);
+    }
+}
+
+#[cfg(test)]
+mod base_timestamp_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn block_timestamp_ms_is_optional_quantity() {
+        let log: Log = Log { block_timestamp_ms: Some(1_700_000_000_200), ..Default::default() };
+
+        let value = serde_json::to_value(&log).unwrap();
+        assert_eq!(value["blockTimestampMs"], "0x18bcfe568c8");
+
+        let round_trip: Log = serde_json::from_value(value).unwrap();
+        assert_eq!(round_trip.block_timestamp_ms, Some(1_700_000_000_200));
+
+        assert_eq!(
+            serde_json::to_value(Log::<alloy_primitives::LogData>::default()).unwrap(),
+            json!({
+                "address": "0x0000000000000000000000000000000000000000",
+                "topics": [],
+                "data": "0x",
+                "blockHash": null,
+                "blockNumber": null,
+                "transactionHash": null,
+                "transactionIndex": null,
+                "logIndex": null,
+                "removed": false
+            })
+        );
     }
 }

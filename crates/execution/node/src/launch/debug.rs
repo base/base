@@ -24,7 +24,6 @@ impl BaseDebugServices {
             let block_provider =
                 RpcBlockProvider::<Base, _>::new(url.as_str(), move |block_response, extras| {
                     let primitive_block = block_response
-                        .map_header(|header| header.into_inner())
                         .map_transactions(|tx| tx.inner.inner.into_inner())
                         .into_consensus();
                     BaseBuiltPayload::block_to_payload(

@@ -369,6 +369,7 @@ impl EthSimBundle {
                             .into_iter()
                             .map(|inner| {
                                 let full_log = Log {
+                                    block_timestamp_ms: None,
                                     inner,
                                     block_hash: Some(current_block.hash()),
                                     block_number: Some(current_block.number()),

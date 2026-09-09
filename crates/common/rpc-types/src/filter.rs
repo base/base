@@ -862,6 +862,7 @@ impl Filter {
             for log in receipt.logs() {
                 if self.matches(log) {
                     let log = crate::Log {
+                        block_timestamp_ms: None,
                         inner: log.clone(),
                         block_hash: Some(block_num_hash.hash),
                         block_number: Some(block_num_hash.number),

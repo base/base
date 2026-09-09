@@ -1,6 +1,6 @@
 //! Base `eth_subscribe` stream customization.
 
-use base_common_rpc_types::BaseHeaderResponse;
+use base_common_rpc_types::Header;
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use tracing::error;
@@ -8,7 +8,7 @@ use tracing::error;
 use crate::BaseEthApi;
 
 impl BaseEthApi {
-    pub fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
+    pub fn header_stream(&self) -> impl futures::Stream<Item = Header> + Send + Unpin {
         let converter = self.inner.converter();
         let base_time = self.base_time_cache().clone();
         self.provider().canonical_state_stream().flat_map(move |new_chain| {

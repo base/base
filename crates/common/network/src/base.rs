@@ -27,7 +27,7 @@ impl Network for Base {
 
     type ReceiptResponse = base_common_rpc_types::BaseTransactionReceipt;
 
-    type HeaderResponse = base_common_rpc_types::BaseHeaderResponse;
+    type HeaderResponse = base_common_rpc_types::Header;
 
-    type BlockResponse = base_common_rpc_types::BaseBlockResponse<Self::TransactionResponse>;
+    type BlockResponse = base_common_rpc_types::BaseBlockResponse;
 }

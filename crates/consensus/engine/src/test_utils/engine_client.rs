@@ -231,10 +231,7 @@ impl MockEngineClient {
     pub fn native_block(block: L2RpcBlock) -> reth_primitives_traits::SealedBlock {
         let hash = block.header.hash;
         reth_primitives_traits::SealedBlock::new_unchecked(
-            block
-                .map_header(|header| header.into_inner())
-                .into_consensus()
-                .map_transactions(|tx| tx.inner.inner.into_inner()),
+            block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
             hash,
         )
     }

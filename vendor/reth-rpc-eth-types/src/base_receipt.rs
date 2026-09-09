@@ -11,8 +11,7 @@ use base_common_consensus::{
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
-    BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt,
-    TransactionReceiptFields,
+    BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt, TransactionReceiptFields,
 };
 use base_execution_chainspec::ChainSpecProvider;
 use reth_primitives_traits::SealedBlock;
@@ -52,7 +51,7 @@ where
         log: Log,
         _receipt: &BaseReceipt,
         header: &reth_primitives_traits::SealedHeader,
-    ) -> Result<BaseLogResponse, BaseEthApiError> {
+    ) -> Result<Log, BaseEthApiError> {
         let block_timestamp_ms = self.base_time.get::<BaseTxEnvelope, _>(
             &self.provider,
             header.hash(),
@@ -60,7 +59,7 @@ where
             header.timestamp(),
         )?;
 
-        Ok(BaseLogResponse { inner: log, block_timestamp_ms })
+        Ok(Log { block_timestamp_ms, ..log })
     }
 
     /// Loads receipt blocks and calculates Base receipt fields.
@@ -293,7 +292,7 @@ impl ReceiptFieldsBuilder {
 #[derive(Debug)]
 pub struct BaseReceiptBuilder {
     /// Core receipt with all fields from an L1 receipt and used as the basis for the Base receipt.
-    pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
+    pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
     /// Additional Base receipt fields.
     pub receipt_fields: TransactionReceiptFields,
     /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
@@ -341,13 +340,10 @@ impl BaseReceiptBuilder {
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
             let map_logs = move |receipt: base_common_consensus::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
-                let logs = Log::collect_for_receipt(next_log_index, meta, logs)
-                    .into_iter()
-                    .map(BaseLogResponse::from)
-                    .collect();
+                let logs = Log::collect_for_receipt(next_log_index, meta, logs);
                 Receipt { status, cumulative_gas_used, logs }
             };
-            let mapped_receipt: BaseReceipt<BaseLogResponse> = match receipt {
+            let mapped_receipt: BaseReceipt<Log> = match receipt {
                 BaseReceipt::Legacy(receipt) => BaseReceipt::Legacy(map_logs(receipt)),
                 BaseReceipt::Eip2930(receipt) => BaseReceipt::Eip2930(map_logs(receipt)),
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),

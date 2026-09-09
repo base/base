@@ -31,7 +31,7 @@ impl BaseRevm {
         request: &BaseTransactionRequest,
         chain_id: u64,
         gas_limit_cap: u64,
-    ) -> Option<BaseRevm> {
+    ) -> Option<Self> {
         let aa = request.as_eip8130()?;
         let req = request.as_ref();
 
@@ -96,7 +96,7 @@ impl BaseRevm {
         };
 
         let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth));
-        let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
+        let mut simulation = Self::from_recovered_tx(&envelope, account);
         if let Some(parts) = simulation.eip8130.as_mut() {
             parts.mode = Eip8130ExecutionMode::Simulate;
             parts.simulation_sender_actor_id = aa.sender_actor_id;

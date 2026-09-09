@@ -1,14 +1,17 @@
 # `base-common-rpc-types`
 
-Base chain RPC types.
+Shared RPC schemas for Base execution and Ethereum L1 access.
 
 ## Overview
 
-Defines the JSON-RPC request and response types specific to Base chains, including genesis and
-chain info types (`GenesisInfo`, `ChainInfo`, `FeeInfo`), transaction types
-(`BaseTransactionFields`, `BaseTransactionRequest`, `Transaction`), receipt types
-(`BaseTransactionReceipt`, `TransactionReceiptFields`), and `L1BlockInfo` for fee data. These
-types are used to serialize and deserialize Base-specific RPC payloads.
+This crate owns block, transaction, receipt, log, filter, proof, txpool, debug/trace, and bundle
+simulation schemas. `BaseTransaction`, `BaseTransactionRequest`, and `BaseTransactionReceipt`
+retain Base deposit and EIP-8130 behavior; the generic Ethereum types remain available for L1
+providers. Shared `Header` and `Log` responses carry optional millisecond timestamps.
+
+The Base network marker and transaction builders live in `base-common-network`. RPC-to-EVM
+conversion lives in `base-common-evm`, keeping these schemas independent of providers and execution.
+Engine payload and fork-choice types live in `base-common-rpc-types-engine`.
 
 ## Usage
 

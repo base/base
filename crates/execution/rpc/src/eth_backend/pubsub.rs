@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::TxHash;
 use base_common_rpc_types::{
-    BaseHeaderResponse, BaseLogResponse, Filter,
+    Filter, Header, Log,
     pubsub::{
         Params, PubSubSyncStatus, SubscriptionKind, SyncStatusMetadata, TransactionReceiptsParams,
     },
@@ -64,12 +64,12 @@ impl EthPubSub {
     }
 
     /// Returns a stream that yields new block headers.
-    pub fn new_headers_stream(&self) -> impl Stream<Item = BaseHeaderResponse> {
+    pub fn new_headers_stream(&self) -> impl Stream<Item = Header> {
         self.inner.eth_api.header_stream()
     }
 
     /// Returns a stream that yields matching logs.
-    pub fn log_stream(&self, filter: Filter) -> impl Stream<Item = BaseLogResponse> {
+    pub fn log_stream(&self, filter: Filter) -> impl Stream<Item = Log> {
         self.inner.eth_api.log_stream(filter)
     }
 

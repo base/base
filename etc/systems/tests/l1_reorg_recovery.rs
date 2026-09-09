@@ -247,7 +247,6 @@ async fn l2_block_info(
         .full()
         .await?
         .ok_or_eyre("L2 block is missing at the requested height")?
-        .map_header(|header| header.into_inner())
         .into_consensus()
         .map_transactions(|transaction| transaction.inner.inner);
     L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)

@@ -16,7 +16,7 @@ use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{BaseBlockResponse, BaseTransaction};
+use base_common_rpc_types::BaseBlockResponse;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,
@@ -57,7 +57,7 @@ pub enum EngineClientCall {
 pub struct FakeEngineClientState {
     calls: Vec<EngineClientCall>,
     l2_block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
-    l2_blocks_by_label: HashMap<BlockNumberOrTag, BaseBlockResponse<BaseTransaction>>,
+    l2_blocks_by_label: HashMap<BlockNumberOrTag, BaseBlockResponse>,
     scripted_forkchoice: VecDeque<ScriptedForkchoiceResponse>,
     scripted_payload: VecDeque<PayloadStatus>,
     single_payload: Option<PayloadStatus>,
@@ -122,11 +122,7 @@ impl FakeEngineClientHandle {
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
-    pub fn set_l2_block_by_label(
-        &self,
-        tag: BlockNumberOrTag,
-        block: BaseBlockResponse<BaseTransaction>,
-    ) {
+    pub fn set_l2_block_by_label(&self, tag: BlockNumberOrTag, block: BaseBlockResponse) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
@@ -180,11 +176,7 @@ impl FakeEngineClient {
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
-    pub fn set_l2_block_by_label(
-        &self,
-        tag: BlockNumberOrTag,
-        block: BaseBlockResponse<BaseTransaction>,
-    ) {
+    pub fn set_l2_block_by_label(&self, tag: BlockNumberOrTag, block: BaseBlockResponse) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")

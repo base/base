@@ -1,7 +1,7 @@
 //! Loads and formats Base block RPC response.
 
 use alloy_eips::BlockId;
-use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
+use base_common_rpc_types::{BaseBlockResponse, Header};
 use reth_primitives_traits::AlloyBlockHeader;
 
 use crate::{BaseEthApi, BaseEthApiError};
@@ -10,7 +10,7 @@ impl BaseEthApi {
     pub async fn rpc_block_header(
         &self,
         block_id: BlockId,
-    ) -> Result<Option<BaseHeaderResponse>, BaseEthApiError> {
+    ) -> Result<Option<Header>, BaseEthApiError> {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
         let timestamp_ms = self.base_time_cache().insert_from_transactions(
             block.hash(),

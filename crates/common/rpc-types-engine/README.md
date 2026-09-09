@@ -1,14 +1,13 @@
 # `base-common-rpc-types-engine`
 
-Base chain RPC types for the `engine` namespace.
+Shared execution payload and fork-choice types.
 
 ## Overview
 
-Defines execution engine payload types for the consensus-to-execution Engine API. Includes
-`BasePayloadAttributes` for block building requests, versioned payload envelopes
-(`BaseExecutionPayloadEnvelope`, `NetworkPayloadEnvelope`), `BaseExecutionPayloadV4`, and
-versioned sidecars (`BaseExecutionPayloadSidecar`). These types are exchanged between the
-consensus client and the execution node via the Engine API.
+Defines the payloads, attributes, statuses, fork-choice state, sidecars, and gossip envelopes used
+by Base consensus and the execution driver. `ExecutionData` combines Base payloads with their
+sidecars. These types support direct driver calls; this crate does not provide an Engine RPC
+client or server. JWT helpers remain available for authenticated RPC consumers.
 
 ## Usage
 

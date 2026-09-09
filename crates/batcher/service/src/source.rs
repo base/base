@@ -33,7 +33,6 @@ impl PollingSource for RpcPollingSource {
             .await
             .map_err(|e| SourceError::Provider(e.to_string()))?
             .ok_or(SourceError::BlockUnavailable(number))?
-            .map_header(|header| header.into_inner())
             .into_consensus()
             .map_transactions(|t| t.inner.into_inner());
         Ok(block)

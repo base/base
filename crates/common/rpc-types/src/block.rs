@@ -17,6 +17,9 @@ use base_common_consensus::{BlockBody, BlockHeader, Sealed, TxEnvelope, error::V
 
 use crate::Transaction;
 
+/// Base block RPC response.
+pub type BaseBlockResponse = Block<crate::BaseTransaction>;
+
 /// Block representation for RPC.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -392,6 +395,9 @@ pub struct Header<H = base_common_consensus::Header> {
     /// Inner consensus header.
     #[serde(flatten)]
     pub inner: H,
+    /// Full Unix timestamp in milliseconds when sub-second timing is available.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub timestamp_ms: Option<u64>,
     /// Total difficulty
     ///
     /// Note: This field is now effectively deprecated: <https://github.com/ethereum/execution-apis/pull/570>
@@ -418,7 +424,7 @@ impl<H> Header<H> {
     /// Note: This does not set the total difficulty or size of the block.
     pub fn from_sealed(header: Sealed<H>) -> Self {
         let (inner, hash) = header.into_parts();
-        Self { hash, inner, total_difficulty: None, size: None }
+        Self { hash, inner, total_difficulty: None, size: None, timestamp_ms: None }
     }
 
     /// Consumes the type and returns the [`Sealed`] header.
@@ -440,7 +446,13 @@ impl<H> Header<H> {
         size: Option<U256>,
     ) -> Self {
         let (inner, hash) = header.into_parts();
-        Self { hash, inner, total_difficulty, size }
+        Self { hash, inner, total_difficulty, size, timestamp_ms: None }
+    }
+
+    /// Sets the full Unix block timestamp in milliseconds.
+    pub const fn with_timestamp_ms(mut self, timestamp_ms: Option<u64>) -> Self {
+        self.timestamp_ms = timestamp_ms;
+        self
     }
 
     /// Set the total difficulty of the block.
@@ -460,9 +472,9 @@ impl<H> Header<H> {
     /// The stored hash is preserved without checking that the mapped header has the same hash.
     #[expect(clippy::use_self)]
     pub fn map<H1>(self, f: impl FnOnce(H) -> H1) -> Header<H1> {
-        let Header { hash, inner, total_difficulty, size } = self;
+        let Header { hash, inner, total_difficulty, size, timestamp_ms } = self;
 
-        Header { hash, inner: f(inner), total_difficulty, size }
+        Header { hash, inner: f(inner), total_difficulty, size, timestamp_ms }
     }
 
     /// Applies the given fallible closure to the inner header.
@@ -470,9 +482,9 @@ impl<H> Header<H> {
     /// The stored hash is preserved without checking that the mapped header has the same hash.
     #[expect(clippy::use_self)]
     pub fn try_map<H1, E>(self, f: impl FnOnce(H) -> Result<H1, E>) -> Result<Header<H1>, E> {
-        let Header { hash, inner, total_difficulty, size } = self;
+        let Header { hash, inner, total_difficulty, size, timestamp_ms } = self;
 
-        Ok(Header { hash, inner: f(inner)?, total_difficulty, size })
+        Ok(Header { hash, inner: f(inner)?, total_difficulty, size, timestamp_ms })
     }
 }
 
@@ -879,6 +891,7 @@ mod tests {
 
         let block = Block {
             header: Header {
+                timestamp_ms: None,
                 hash: B256::with_last_byte(1),
                 inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
@@ -928,6 +941,7 @@ mod tests {
 
         let block = Block {
             header: Header {
+                timestamp_ms: None,
                 hash: B256::with_last_byte(1),
                 inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
@@ -975,6 +989,7 @@ mod tests {
     fn serde_block_with_withdrawals_set_as_none() {
         let block = Block {
             header: Header {
+                timestamp_ms: None,
                 hash: B256::with_last_byte(1),
                 inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
@@ -1284,6 +1299,7 @@ mod tests {
     fn header_roundtrip_conversion() {
         // Setup a RPC header
         let rpc_header = Header {
+            timestamp_ms: None,
             hash: B256::with_last_byte(1),
             inner: base_common_consensus::Header {
                 parent_hash: B256::with_last_byte(2),
@@ -1332,6 +1348,7 @@ mod tests {
     fn test_consensus_header_to_rpc_block() {
         // Setup a RPC header
         let header = Header {
+            timestamp_ms: None,
             hash: B256::with_last_byte(1),
             inner: base_common_consensus::Header {
                 parent_hash: B256::with_last_byte(2),
@@ -1392,6 +1409,7 @@ mod tests {
 
         let block = Block {
             header: Header {
+                timestamp_ms: None,
                 hash: B256::with_last_byte(1),
                 inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
@@ -1446,5 +1464,66 @@ mod tests {
     fn deserde_tenderly_block() {
         let s = include_str!("../testdata/tenderly.sepolia.json");
         let _block: Block = serde_json::from_str(s).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod base_timestamp_tests {
+    use base_common_consensus::Header as ConsensusHeader;
+    use serde_json::json;
+
+    use crate::Header;
+
+    #[test]
+    fn base_header_response_serializes_timestamp_ms() {
+        let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
+        let response = inner.with_timestamp_ms(Some(42_200));
+        let value = serde_json::to_value(response).unwrap();
+
+        assert_eq!(value["timestamp"], json!("0x2a"));
+        assert_eq!(value["timestampMs"], json!("0xa4d8"));
+    }
+
+    #[test]
+    fn base_header_response_omits_timestamp_ms_when_absent() {
+        let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
+        let value = serde_json::to_value(inner.clone()).unwrap();
+
+        assert!(value.get("timestampMs").is_none());
+
+        let decoded: Header = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded, inner);
+        assert_eq!(decoded.timestamp_ms, None);
+    }
+
+    #[test]
+    fn base_header_response_preserves_header_field_access() {
+        let inner = Header::new(ConsensusHeader { timestamp: 42, number: 7, ..Default::default() });
+        let response = inner.with_timestamp_ms(Some(42_200));
+
+        assert_eq!(response.timestamp, 42);
+        assert_eq!(response.number, 7);
+    }
+
+    #[test]
+    fn header_mapping_preserves_rpc_metadata() {
+        let header = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() })
+            .with_timestamp_ms(Some(42_200));
+        let mapped = header.clone().map(|inner| inner.timestamp);
+        assert_eq!(mapped.inner, 42);
+        assert_eq!(mapped.hash, header.hash);
+        assert_eq!(mapped.timestamp_ms, Some(42_200));
+        let mapped = header.try_map(|inner| Ok::<_, ()>(inner.timestamp)).unwrap();
+        assert_eq!(mapped.timestamp_ms, Some(42_200));
+    }
+
+    #[test]
+    fn base_header_response_round_trips_through_json() {
+        let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
+        let original = inner.with_timestamp_ms(Some(42_200));
+        let json = serde_json::to_value(&original).unwrap();
+        let decoded: Header = serde_json::from_value(json).unwrap();
+
+        assert_eq!(original, decoded);
     }
 }

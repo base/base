@@ -15,8 +15,7 @@ use alloy_primitives::TxHash;
 use async_trait::async_trait;
 use base_common_consensus::BlockHeader;
 use base_common_rpc_types::{
-    BaseLogResponse, Filter, FilterBlockOption, FilterChanges, FilterId,
-    PendingTransactionFilterKind,
+    Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
 };
 use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
 use base_node_context::BaseNodePool;
@@ -180,10 +179,7 @@ impl EthFilter {
     pub async fn filter_changes(
         &self,
         id: FilterId,
-    ) -> Result<
-        FilterChanges<base_common_rpc_types::BaseTransaction, BaseLogResponse>,
-        EthFilterError,
-    > {
+    ) -> Result<FilterChanges<base_common_rpc_types::BaseTransaction, Log>, EthFilterError> {
         let info = self.provider().chain_info()?;
         let best_number = info.best_number;
 
@@ -271,7 +267,7 @@ impl EthFilter {
     /// Returns an error if no matching log filter exists.
     ///
     /// Handler for `eth_getFilterLogs`
-    pub async fn filter_logs(&self, id: FilterId) -> Result<Vec<BaseLogResponse>, EthFilterError> {
+    pub async fn filter_logs(&self, id: FilterId) -> Result<Vec<Log>, EthFilterError> {
         let filter = {
             let mut filters = self.inner.active_filters.inner.lock().await;
             let filter =
@@ -293,13 +289,13 @@ impl EthFilter {
         &self,
         filter: Filter,
         limits: QueryLimits,
-    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
+    ) -> Result<Vec<Log>, EthFilterError> {
         self.inner.clone().logs_for_filter(filter, limits).await
     }
 }
 
 #[async_trait]
-impl EthFilterApiServer<base_common_rpc_types::BaseTransaction, BaseLogResponse> for EthFilter {
+impl EthFilterApiServer<base_common_rpc_types::BaseTransaction, Log> for EthFilter {
     /// Handler for `eth_newFilter`
     async fn new_filter(&self, filter: Filter) -> RpcResult<FilterId> {
         trace!(target: "rpc::eth", "Serving eth_newFilter");
@@ -349,7 +345,7 @@ impl EthFilterApiServer<base_common_rpc_types::BaseTransaction, BaseLogResponse>
     async fn filter_changes(
         &self,
         id: FilterId,
-    ) -> RpcResult<FilterChanges<base_common_rpc_types::BaseTransaction, BaseLogResponse>> {
+    ) -> RpcResult<FilterChanges<base_common_rpc_types::BaseTransaction, Log>> {
         trace!(target: "rpc::eth", "Serving eth_getFilterChanges");
         Ok(Self::filter_changes(self, id).await?)
     }
@@ -359,7 +355,7 @@ impl EthFilterApiServer<base_common_rpc_types::BaseTransaction, BaseLogResponse>
     /// Returns an error if no matching log filter exists.
     ///
     /// Handler for `eth_getFilterLogs`
-    async fn filter_logs(&self, id: FilterId) -> RpcResult<Vec<BaseLogResponse>> {
+    async fn filter_logs(&self, id: FilterId) -> RpcResult<Vec<Log>> {
         trace!(target: "rpc::eth", "Serving eth_getFilterLogs");
         Ok(Self::filter_logs(self, id).await?)
     }
@@ -379,7 +375,7 @@ impl EthFilterApiServer<base_common_rpc_types::BaseTransaction, BaseLogResponse>
     /// Returns logs matching given filter object.
     ///
     /// Handler for `eth_getLogs`
-    async fn logs(&self, filter: Filter) -> RpcResult<Vec<BaseLogResponse>> {
+    async fn logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
         trace!(target: "rpc::eth", "Serving eth_getLogs");
         Ok(self.logs_for_filter(filter, self.inner.query_limits).await?)
     }
@@ -426,7 +422,7 @@ impl EthFilterInner {
         self: Arc<Self>,
         filter: Filter,
         limits: QueryLimits,
-    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
+    ) -> Result<Vec<Log>, EthFilterError> {
         match filter.block_option {
             FilterBlockOption::AtBlockHash(block_hash) => {
                 // First try to get cached block and receipts, as it's likely they're already cached
@@ -588,7 +584,7 @@ impl EthFilterInner {
         from_block: u64,
         to_block: u64,
         limits: QueryLimits,
-    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
+    ) -> Result<Vec<Log>, EthFilterError> {
         trace!(target: "rpc::eth::filter", from=from_block, to=to_block, ?filter, "finding logs in range");
 
         // perform boundary checks first
@@ -627,7 +623,7 @@ impl EthFilterInner {
         from_block: u64,
         to_block: u64,
         limits: QueryLimits,
-    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
+    ) -> Result<Vec<Log>, EthFilterError> {
         let mut all_logs = Vec::new();
         let mut matching_headers = Vec::new();
 

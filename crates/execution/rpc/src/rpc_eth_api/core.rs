@@ -9,9 +9,9 @@ use alloy_primitives::{Address, B64, B256, Bytes, U64, U256};
 use alloy_serde::JsonStorageKey;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::{
-    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
-    BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Index,
-    StateContext, SyncStatus, Work,
+    BaseBlockResponse, BaseTransactionReceipt, BaseTransactionRequest, BlockOverrides, Bundle,
+    EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext,
+    SyncStatus, Work,
     simulate::{SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
 };
@@ -431,7 +431,7 @@ impl
         base_common_rpc_types::BaseTransaction,
         BaseBlockResponse,
         BaseTransactionReceipt,
-        BaseHeaderResponse,
+        Header,
         BaseTxEnvelope,
     > for BaseEthApi
 {
@@ -690,16 +690,13 @@ impl
     }
 
     /// Handler for: `eth_getHeaderByNumber`
-    async fn header_by_number(
-        &self,
-        block_number: BlockNumberOrTag,
-    ) -> RpcResult<Option<BaseHeaderResponse>> {
+    async fn header_by_number(&self, block_number: BlockNumberOrTag) -> RpcResult<Option<Header>> {
         trace!(target: "rpc::eth", ?block_number, "Serving eth_getHeaderByNumber");
         Ok(BaseEthApi::rpc_block_header(self, block_number.into()).await?)
     }
 
     /// Handler for: `eth_getHeaderByHash`
-    async fn header_by_hash(&self, hash: B256) -> RpcResult<Option<BaseHeaderResponse>> {
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<Option<Header>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getHeaderByHash");
         Ok(BaseEthApi::rpc_block_header(self, hash.into()).await?)
     }

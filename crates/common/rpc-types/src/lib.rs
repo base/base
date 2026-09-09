@@ -11,14 +11,8 @@
 #[macro_use]
 extern crate alloc;
 
-mod base_block;
-pub use base_block::{BaseBlockResponse, BaseHeaderResponse};
-
 mod genesis;
 pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, UpgradeInfo};
-
-mod base_log;
-pub use base_log::BaseLogResponse;
 
 mod base_receipt;
 pub use base_receipt::{

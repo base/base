@@ -205,7 +205,6 @@ impl Params {
     }
 
     /// Creates a new [`Params`] from a [`serde_json::Value`].
-
     pub fn from_json_value(v: serde_json::Value) -> Result<Self, serde_json::Error> {
         if v.is_null() {
             return Ok(Self::None);

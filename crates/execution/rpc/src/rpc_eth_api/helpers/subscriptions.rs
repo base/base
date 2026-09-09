@@ -2,7 +2,7 @@
 
 use base_common_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{
-    BaseLogResponse, BaseTransactionReceipt, Filter, pubsub::TransactionReceiptsParams,
+    BaseTransactionReceipt, Filter, Log, pubsub::TransactionReceiptsParams,
 };
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
@@ -18,10 +18,7 @@ use crate::BaseEthApi;
 /// Override the default methods to inject additional data sources (e.g. flashblocks).
 impl BaseEthApi {
     /// Returns a stream that yields matching logs from canonical chain updates.
-    pub fn log_stream(
-        &self,
-        filter: Filter,
-    ) -> impl futures::Stream<Item = BaseLogResponse> + Send + Unpin {
+    pub fn log_stream(&self, filter: Filter) -> impl futures::Stream<Item = Log> + Send + Unpin {
         let converter = self.converter();
         self.provider().canonical_state_stream().flat_map(move |canon_state| {
             let reverted_chains = canon_state.reverted();

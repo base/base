@@ -10,7 +10,7 @@ use base_common_consensus::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::BaseLogResponse;
+use crate::Log;
 
 /// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ use crate::BaseLogResponse;
 pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
-    pub inner: crate::TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
+    pub inner: crate::TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
@@ -292,10 +292,10 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
         /// consensus types.
         #[inline(always)]
         fn convert_standard_receipt(
-            receipt: Receipt<BaseLogResponse>,
+            receipt: Receipt<Log>,
             logs_bloom: alloy_primitives::Bloom,
         ) -> ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
-            let consensus_logs = receipt.logs.into_iter().map(|log| log.inner.inner).collect();
+            let consensus_logs = receipt.logs.into_iter().map(|log| log.inner).collect();
             ReceiptWithBloom {
                 receipt: Receipt {
                     status: receipt.status,
@@ -325,8 +325,7 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
-                let consensus_logs =
-                    receipt.inner.logs.into_iter().map(|log| log.inner.inner).collect();
+                let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();
                 let consensus_receipt = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
                         inner: Receipt {
