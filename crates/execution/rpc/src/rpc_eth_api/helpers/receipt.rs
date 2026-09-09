@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use base_common_types_chain::{TxReceipt, transaction::TransactionMeta};
 use base_common_types_rpc::BaseTransactionReceipt;
+use base_execution_state_api::{ProviderReceipt, ProviderTx};
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
@@ -12,7 +13,6 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, utils::calculate_gas_used_and_next_log_index,
 };
-use reth_storage_api::{ProviderReceipt, ProviderTx};
 
 use crate::BaseEthApi;
 

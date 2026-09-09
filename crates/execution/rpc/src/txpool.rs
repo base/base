@@ -32,7 +32,7 @@ impl<Pool, Eth> TxPoolApi<Pool, Eth> {
 impl<Pool, Eth> TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
-    Eth: reth_storage_api::BlockReader<
+    Eth: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
@@ -59,7 +59,7 @@ where
             resp_builder: &reth_rpc_eth_types::BaseRpcConverter<RpcTxB>,
         ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
         where
-            RpcTxB: reth_storage_api::BlockReader<
+            RpcTxB: base_execution_state_api::BlockReader<
                     Block = base_common_types_chain::BaseBlock,
                     Transaction = base_common_types_chain::BaseTxEnvelope,
                     Receipt = base_common_types_chain::BaseReceipt,
@@ -96,7 +96,7 @@ where
 impl<Pool, Eth> TxPoolApiServer for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
-    Eth: reth_storage_api::BlockReader<
+    Eth: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,

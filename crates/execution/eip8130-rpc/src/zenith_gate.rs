@@ -6,11 +6,11 @@ use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::EIP8130_PRE_ZENITH_RPC_ERROR;
 use base_execution_rpc::BaseEthApi;
+use base_execution_state_api::BlockReaderIdExt;
 use jsonrpsee_types::{
     ErrorObjectOwned,
     error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
 };
-use reth_storage_api::BlockReaderIdExt;
 use tracing::warn;
 
 /// Rejects EIP-8130 RPC reads issued before the Zenith hard fork has

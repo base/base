@@ -3,13 +3,14 @@
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
+use base_common_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
+use base_execution_state_api::BlockReaderIdExt;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,
     ValidityPredicate,
-};
-use base_common_observability_events::{
-    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
@@ -19,7 +20,6 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_rpc_eth_types::error::RpcPoolError;
-use reth_storage_api::BlockReaderIdExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -301,6 +301,10 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_network::PrivateKeySigner;
+    use base_common_observability_events::{
+        TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
+        TransactionEventType,
+    };
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, SignableTransaction,
         TxEip1559, TxEip8130,
@@ -308,10 +312,6 @@ mod tests {
     use base_execution_txpool::{
         NoopTransactionPool, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},
-    };
-    use base_common_observability_events::{
-        TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
-        TransactionEventType,
     };
     use base_testing_support::build_test_genesis_zenith;
     use httpmock::prelude::*;

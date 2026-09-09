@@ -6,9 +6,9 @@
 use std::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
+use base_execution_state_api::{BlockNumReader, ChangeSetReader, StorageChangeSetReader};
 use base_execution_state_types::ProviderError;
 use base_execution_state_types::updates::TrieUpdatesSorted;
-use reth_storage_api::{BlockNumReader, ChangeSetReader, StorageChangeSetReader};
 use tracing::debug;
 
 use crate::{

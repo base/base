@@ -8,13 +8,13 @@ use base_common_types_chain::{TxReceipt, transaction::TxHashRef};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionReceipt, Block, BlockTransactions, Index,
 };
+use base_execution_state_api::{BlockIdReader, BlockReader, ProviderHeader};
 use futures::Future;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,
 };
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::BaseEthApiError;
-use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader};
 
 use crate::BaseEthApi;
 
@@ -179,10 +179,10 @@ impl BaseEthApi {
                 .into_iter()
                 .nth(index.into())
                 .map(|header| {
-                    let block =
-                        base_common_types_chain::Block::<base_common_types_chain::TxEnvelope, _>::uncle(
-                            header,
-                        );
+                    let block = base_common_types_chain::Block::<
+                        base_common_types_chain::TxEnvelope,
+                        _,
+                    >::uncle(header);
                     let size = block.length();
                     let header = self
                         .converter()

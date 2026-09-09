@@ -1,5 +1,6 @@
 //! Session tests
 
+use base_execution_state_api::NoopProvider;
 use futures::StreamExt;
 use reth_eth_wire::EthVersion;
 use reth_network::{
@@ -10,7 +11,6 @@ use reth_network_api::{
     NetworkInfo, Peers,
     events::{PeerEvent, SessionInfo},
 };
-use reth_storage_api::noop::NoopProvider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_session_established_with_highest_version() {

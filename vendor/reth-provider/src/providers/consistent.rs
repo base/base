@@ -1,4 +1,4 @@
-use reth_storage_api::DatabaseProviderROFactory;
+use base_execution_state_api::DatabaseProviderROFactory;
 use std::{
     ops::{Add, Bound, RangeBounds, RangeInclusive, Sub},
     sync::Arc,
@@ -11,6 +11,10 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_execution_evm_runtime::database::PlainStorageRevert;
+use base_execution_state_api::{
+    BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
+    TryIntoHistoricalStateProvider,
+};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
@@ -20,10 +24,6 @@ use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_primitives_traits::{
     BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
-};
-use reth_storage_api::{
-    BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
-    TryIntoHistoricalStateProvider,
 };
 
 use super::{DatabaseProviderRO, ProviderFactory};
@@ -46,7 +46,8 @@ use crate::{
 #[doc(hidden)] // triggers ICE for `cargo docs`
 pub struct ConsistentProvider {
     /// Storage provider.
-    storage_provider: <ProviderFactory as reth_storage_api::DatabaseProviderROFactory>::Provider,
+    storage_provider:
+        <ProviderFactory as base_execution_state_api::DatabaseProviderROFactory>::Provider,
     /// Head block at time of [`Self`] creation
     head_block: Option<Arc<BlockState>>,
     /// In-memory canonical state. This is not a snapshot, and can change! Use with caution.
@@ -1472,6 +1473,7 @@ mod tests {
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
     use base_execution_evm_runtime::database::BundleState;
+    use base_execution_state_api::{BlockReader, BlockSource, ChangeSetReader};
     use base_execution_state_types::{
         BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome,
     };
@@ -1480,7 +1482,6 @@ mod tests {
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
     use reth_db_api::models::AccountBeforeTx;
     use reth_primitives_traits::{RecoveredBlock, SealedBlock};
-    use reth_storage_api::{BlockReader, BlockSource, ChangeSetReader};
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };

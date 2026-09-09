@@ -61,7 +61,6 @@ tokio = { workspace = true, features = ["default", "sync"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
@@ -72,6 +71,7 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
+base-execution-state-api = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}

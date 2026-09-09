@@ -14,6 +14,10 @@ use base_common_runtime_tasks::EventStream;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_api::{
+    BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, NoopProvider, StateProviderFactory,
+    StateRangeProviderFactory,
+};
 use base_execution_txpool::{
     EthTransactionPool, InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
 };
@@ -26,10 +30,6 @@ use reth_network_api::{
     test_utils::{PeersHandle, PeersHandleProvider},
 };
 use reth_network_peers::PeerId;
-use reth_storage_api::{
-    BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, StateProviderFactory,
-    StateRangeProviderFactory, noop::NoopProvider,
-};
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},

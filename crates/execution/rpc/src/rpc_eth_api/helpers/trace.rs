@@ -11,11 +11,11 @@ use base_execution_evm_blocks::{
 };
 use base_execution_evm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use base_execution_evm_machine::{Block, ResultAndState};
+use base_execution_state_api::ProviderTx;
 use futures::Future;
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
-use reth_storage_api::ProviderTx;
 
 use crate::BaseEthApi;
 

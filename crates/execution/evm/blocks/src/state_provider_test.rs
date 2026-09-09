@@ -4,12 +4,12 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, U256, keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
-use base_execution_state_types::ProviderResult;
-use reth_primitives_traits::{Account, Bytecode};
-use reth_storage_api::{
+use base_execution_state_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateRootProvider, StorageRootProvider,
 };
+use base_execution_state_types::ProviderResult;
+use reth_primitives_traits::{Account, Bytecode};
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
@@ -160,9 +160,9 @@ impl HashedPostStateProvider for StateProviderTest {
     }
 }
 
-reth_storage_api::impl_state_database!([] StateProviderTest where []);
+base_execution_state_api::impl_state_database!([] StateProviderTest where []);
 
-impl reth_storage_api::StateReadProvider for StateProviderTest {
+impl base_execution_state_api::StateReadProvider for StateProviderTest {
     fn storage(
         &self,
         account: Address,

@@ -20,12 +20,12 @@ alloy-primitives = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-common-observability-events = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
+base-common-observability-events = { workspace = true }
 base-common-observability-metrics = { workspace = true }
-reth-storage-api = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
+base-execution-state-api = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 alloy-eips = { workspace = true }

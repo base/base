@@ -21,6 +21,7 @@ use base_execution_evm_inspectors::{
     tracing::{TracingInspector, TracingInspectorConfig, parity::populate_state_diff},
 };
 use base_execution_evm_runtime::DatabaseCommit;
+use base_execution_state_api::{BlockNumReader, BlockReader};
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
@@ -28,7 +29,6 @@ use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
 };
-use reth_storage_api::{BlockNumReader, BlockReader};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 

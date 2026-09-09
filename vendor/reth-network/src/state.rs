@@ -45,11 +45,11 @@ use crate::{
 const PEER_BLOCK_CACHE_LIMIT: u32 = 512;
 
 /// Wrapper type for the [`BlockNumReader`] trait.
-pub(crate) struct BlockNumReader(Box<dyn reth_storage_api::BlockNumReader>);
+pub(crate) struct BlockNumReader(Box<dyn base_execution_state_api::BlockNumReader>);
 
 impl BlockNumReader {
     /// Create a new instance with the given reader.
-    pub fn new(reader: impl reth_storage_api::BlockNumReader + 'static) -> Self {
+    pub fn new(reader: impl base_execution_state_api::BlockNumReader + 'static) -> Self {
         Self(Box::new(reader))
     }
 }
@@ -61,7 +61,7 @@ impl fmt::Debug for BlockNumReader {
 }
 
 impl Deref for BlockNumReader {
-    type Target = Box<dyn reth_storage_api::BlockNumReader>;
+    type Target = Box<dyn base_execution_state_api::BlockNumReader>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -690,11 +690,11 @@ mod tests {
 
     use alloy_primitives::B256;
     use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
+    use base_execution_state_api::NoopProvider;
     use reth_eth_wire::{BlockBodies, Capabilities, Capability, EthVersion};
     use reth_network_api::PeerRequestSender;
     use reth_network_p2p::{bodies::client::BodiesClient, error::RequestError};
     use reth_network_peers::PeerId;
-    use reth_storage_api::noop::NoopProvider;
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 

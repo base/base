@@ -1,4 +1,5 @@
 use alloy_primitives::TxNumber;
+use base_execution_state_api::StorageSettingsCache;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
@@ -9,7 +10,6 @@ use reth_provider::{
     BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
     StaticFileProviderFactory, TransactionsProviderExt,
 };
-use reth_storage_api::StorageSettingsCache;
 use tracing::{debug, instrument, trace};
 
 use crate::{
@@ -215,9 +215,9 @@ mod tests {
 
     #[test]
     fn prune_rocksdb() {
+        use base_execution_state_api::StorageSettingsCache;
         use reth_db_api::models::StorageSettings;
         use reth_provider::RocksDBProviderFactory;
-        use reth_storage_api::StorageSettingsCache;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();
@@ -315,9 +315,9 @@ mod tests {
     /// 3. The checkpoint should NOT advance to the next start position
     #[test]
     fn prune_rocksdb_zero_deleted_checkpoint() {
+        use base_execution_state_api::StorageSettingsCache;
         use reth_db_api::models::StorageSettings;
         use reth_provider::RocksDBProviderFactory;
-        use reth_storage_api::StorageSettingsCache;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

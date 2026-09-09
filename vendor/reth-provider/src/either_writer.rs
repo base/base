@@ -9,6 +9,7 @@ use std::{
 
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_api::{ChangeSetReader, DBProvider, DbTxProvider};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use rayon::slice::ParallelSliceMut;
@@ -26,7 +27,6 @@ use reth_db_api::{
     tables::BlockNumberList,
 };
 use reth_primitives_traits::StorageEntry;
-use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider};
 use strum::{Display, EnumIs};
 
 use crate::{
@@ -835,10 +835,12 @@ impl EitherWriterDestination {}
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use base_execution_state_api::DatabaseProviderROFactory;
+    use base_execution_state_api::{
+        DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
+    };
     use base_execution_state_types::StaticFileSegment;
     use reth_db::models::AccountBeforeTx;
-    use reth_storage_api::DatabaseProviderROFactory;
-    use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
 
     use super::*;
     use crate::{StaticFileWriter, test_utils::create_test_provider_factory};
@@ -936,16 +938,18 @@ mod tests {
 
 #[cfg(test)]
 mod rocksdb_tests {
-    use reth_storage_api::DatabaseProviderROFactory;
+    use base_execution_state_api::DatabaseProviderROFactory;
     use std::marker::PhantomData;
 
     use alloy_primitives::{Address, B256};
+    use base_execution_state_api::{
+        DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
+    };
     use reth_db_api::{
         models::{IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
         tables,
         transaction::DbTxMut,
     };
-    use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
     use tempfile::TempDir;
 
     use super::*;

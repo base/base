@@ -89,7 +89,7 @@ impl TransactionSource<BaseTxEnvelope> {
         resp_builder: &crate::BaseRpcConverter<Builder>,
     ) -> Result<base_common_types_rpc::BaseTransaction, crate::BaseEthApiError>
     where
-        Builder: reth_storage_api::BlockReader<
+        Builder: base_execution_state_api::BlockReader<
                 Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
                 Receipt = base_common_types_chain::BaseReceipt,

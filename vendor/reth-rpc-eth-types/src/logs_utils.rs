@@ -9,10 +9,10 @@ use base_common_types_chain::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
 use base_common_types_rpc::{Filter, Log};
+use base_execution_state_api::BlockReader;
 use base_execution_state_types::ProviderError;
 use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
-use reth_storage_api::BlockReader;
 use thiserror::Error;
 
 use crate::EthApiError;
@@ -28,7 +28,7 @@ pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
 ) -> Result<Vec<Log>, crate::BaseEthApiError>
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
-    C: reth_storage_api::BlockReader<
+    C: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
@@ -94,7 +94,7 @@ pub fn append_matching_block_logs<P, C>(
 ) -> Result<(), EthApiError>
 where
     P: BlockReader<Transaction: SignedTransaction, Receipt = BaseReceipt>,
-    C: reth_storage_api::BlockReader<
+    C: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,

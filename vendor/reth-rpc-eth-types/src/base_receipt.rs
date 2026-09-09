@@ -6,7 +6,6 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
-use base_execution_evm_fees::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
     ReceiptWithBloom, TxReceipt,
@@ -14,9 +13,10 @@ use base_common_types_chain::{
 use base_common_types_rpc::{
     BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt, TransactionReceiptFields,
 };
+use base_execution_evm_fees::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_execution_state_api::BlockReader;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_storage_api::BlockReader;
 
 use crate::{BaseEthApiError, BaseTimeCache, EthApiError, receipt::build_receipt};
 

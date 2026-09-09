@@ -11,6 +11,11 @@ use base_execution_evm_runtime::{
     database::BundleState,
     primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
+use base_execution_state_types::{
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
+    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    updates::TrieUpdates,
+};
 use derive_more::Constructor;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
@@ -24,11 +29,6 @@ use reth_trie::{
     proof,
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
-};
-use base_execution_state_types::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
 };
 
 use crate::{
@@ -289,9 +289,9 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
     }
 }
 
-reth_storage_api::impl_state_database!(['__state, S: BaseProofsBatchSession] BaseProofsBatchStateProviderRef<'__state, S> where []);
+base_execution_state_api::impl_state_database!(['__state, S: BaseProofsBatchSession] BaseProofsBatchStateProviderRef<'__state, S> where []);
 
-impl<S: BaseProofsBatchSession> reth_storage_api::StateReadProvider
+impl<S: BaseProofsBatchSession> base_execution_state_api::StateReadProvider
     for BaseProofsBatchStateProviderRef<'_, S>
 {
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {

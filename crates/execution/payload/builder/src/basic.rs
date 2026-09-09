@@ -15,6 +15,7 @@ use base_execution_evm_blocks::CancelOnDrop;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
+use base_execution_state_api::{BlockReaderIdExt, StateProviderFactory};
 use base_execution_state_memory::CachedReads;
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::TransactionPool;
@@ -23,7 +24,6 @@ use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
 use reth_primitives_traits::SealedHeader;
-use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use tokio::{
     sync::{Semaphore, oneshot},
     time::{Interval, Sleep},

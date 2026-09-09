@@ -168,9 +168,9 @@ impl<S: AccountReader> AccountReader for InstrumentedStateProvider<S> {
     }
 }
 
-reth_storage_api::impl_state_database!([S: reth_storage_api::StateReadProvider] InstrumentedStateProvider<S> where []);
+base_execution_state_api::impl_state_database!([S: base_execution_state_api::StateReadProvider] InstrumentedStateProvider<S> where []);
 
-impl<S: reth_storage_api::StateReadProvider> reth_storage_api::StateReadProvider
+impl<S: base_execution_state_api::StateReadProvider> base_execution_state_api::StateReadProvider
     for InstrumentedStateProvider<S>
 {
     fn storage(

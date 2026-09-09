@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 use base_execution_state_types::PruneModes;
 use reth_config::PruneConfig;
 use reth_db_api::transaction::DbTxMut;
@@ -9,7 +10,6 @@ use reth_provider::{
     PruneCheckpointWriter, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileProvider,
 };
-use reth_storage_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 use tokio::sync::watch;
 
 use crate::{Pruner, segments::SegmentSet};

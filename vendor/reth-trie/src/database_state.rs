@@ -4,12 +4,14 @@ use std::{
 };
 
 use alloy_primitives::{B256, BlockNumber, keccak256, map::B256Map};
+use base_execution_state_api::{
+    ChangeSetReader, DBProvider, StorageChangeSetReader, StorageSettingsCache,
+};
 use base_execution_state_types::{ProviderError, StateRootError};
 use reth_db_api::{
     models::{AccountBeforeTx, BlockNumberAddress},
     transaction::DbTx,
 };
-use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader, StorageSettingsCache};
 use tracing::{debug, instrument};
 
 use crate::{
@@ -354,6 +356,7 @@ impl DatabaseHashedPostState for HashedPostStateSorted {
 mod tests {
     use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+    use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_types::StateRootError;
     use reth_db_api::{
         models::{AccountBeforeTx, BlockNumberAddress},
@@ -362,7 +365,6 @@ mod tests {
     };
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
-    use reth_storage_api::StorageSettingsCache;
 
     use super::*;
     use crate::{HashedPostState, HashedPostStateSorted, HashedStorage, StateRoot};

@@ -18,10 +18,10 @@ use base_execution_evm_runtime::{
     primitives::{Address, Bytes, TxKind, U256},
 };
 use base_execution_evm_runtime::{PrecompilesMap, TxResult};
+use base_execution_state_api::{NoopProvider, StateProvider};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
-use reth_storage_api::{StateProvider, noop::NoopProvider};
 
 use crate::{EthApiError, error::ToRpcError};
 
@@ -306,7 +306,7 @@ pub fn execute_transactions<S, T>(
 >
 where
     S: BlockBuilder<Executor: BlockExecutor<Evm: Evm<DB: Database<Error: Into<EthApiError>>>>>,
-    T: reth_storage_api::BlockReader<
+    T: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
@@ -422,7 +422,7 @@ pub fn resolve_transaction<DB: Database, T>(
 ) -> Result<Recovered<BaseTxEnvelope>, EthApiError>
 where
     DB::Error: Into<EthApiError>,
-    T: reth_storage_api::BlockReader<
+    T: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
@@ -503,7 +503,7 @@ pub fn build_simulated_block<T>(
     converter: &crate::BaseRpcConverter<T>,
 ) -> Result<SimulatedBlock<BaseBlockResponse>, crate::BaseEthApiError>
 where
-    T: reth_storage_api::BlockReader<
+    T: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,

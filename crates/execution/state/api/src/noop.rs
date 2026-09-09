@@ -29,7 +29,6 @@ use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_db_api::mock::TxMock;
 use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
 
-pub use crate::bal::NoopBalStore;
 use crate::{
     AccountReader, BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,
     BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource, BytecodeReader,

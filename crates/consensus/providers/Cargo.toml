@@ -23,13 +23,13 @@ base-protocol = { workspace = true }
 reth-provider = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-transport = { workspace = true }
-reth-storage-api = { workspace = true }
-base-execution-state-types = { workspace = true }
 base-common-network = {workspace = true}
 base-consensus-derive = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-api = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
+base-execution-state-types = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }

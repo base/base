@@ -7,6 +7,10 @@ use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_execution_state_api::{
+    BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
+    StateRangeProviderFactory,
+};
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
 use reth_dns_discovery::DnsDiscoveryConfig;
@@ -17,10 +21,6 @@ use reth_eth_wire::{
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
 use reth_network_peers::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
 use reth_network_types::{PeersConfig, SessionsConfig};
-use reth_storage_api::{
-    BalProvider, BlockNumReader, BlockReader, HeaderProvider, StateProviderFactory,
-    StateRangeProviderFactory, noop::NoopProvider,
-};
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
@@ -740,8 +740,8 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::U256;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_execution_state_api::NoopProvider;
     use reth_discv5::build_local_enr;
-    use reth_storage_api::noop::NoopProvider;
 
     use super::*;
 

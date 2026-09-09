@@ -15,6 +15,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, TxReceipt};
 use base_execution_evm_blocks::Executor;
 use base_execution_evm_runtime::database::{AccountInfoRevert, BundleState, RevertToSlot};
+use base_execution_state_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use clap::Parser;
 use eyre::WrapErr;
 use reth_cli_util::cancellation::CancellationToken;
@@ -24,7 +25,6 @@ use reth_provider::{
     StaticFileProviderFactory, TransactionVariant,
 };
 use reth_stages::stages::calculate_gas_used_from_headers;
-use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
 

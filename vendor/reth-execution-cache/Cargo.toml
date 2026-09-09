@@ -19,7 +19,7 @@ workspace = true
 metrics = { workspace = true }
 reth-trie = { workspace = true }
 reth-provider = { workspace = true }
-reth-storage-api = { workspace = true }
+base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-memory = { workspace = true }

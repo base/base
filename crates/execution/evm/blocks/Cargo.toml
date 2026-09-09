@@ -28,10 +28,10 @@ alloy-eip7928 = {features = ["rlp"], workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
-reth-storage-api = {features = ["default"], workspace = true}
 base-common-types-chain = {features = ["reth"], workspace = true}
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-execution-evm-runtime = {features = ["std"], workspace = true}
+base-execution-state-api = {features = ["default"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
@@ -82,7 +82,7 @@ std = [
     "futures-util/std",
     "base-execution-state-types/std",
     "reth-primitives-traits/std",
-    "reth-storage-api/std",
+    "base-execution-state-api/std",
     "thiserror/std",
     "tracing/std",
 ]
@@ -101,7 +101,7 @@ serde = [
     "base-common-types-chain/serde",
     "reth-trie?/serde",
     "reth-primitives-traits/serde",
-    "reth-storage-api/serde",
+    "base-execution-state-api/serde",
 ]
 gmp = ["base-execution-evm-runtime/gmp"]
 optional-balance-check = ["base-execution-evm-runtime/optional_balance_check"]

@@ -8,15 +8,15 @@ use std::collections::HashSet;
 
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
+use base_execution_state_api::{
+    BlockBodyIndicesProvider, ChangeSetReader, DBProvider, StageCheckpointReader,
+    StorageChangeSetReader, StorageSettingsCache, TransactionsProviderExt,
+};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StageId;
 use base_execution_state_types::StaticFileSegment;
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
 use reth_db_api::tables;
-use reth_storage_api::{
-    BlockBodyIndicesProvider, ChangeSetReader, DBProvider, StageCheckpointReader,
-    StorageChangeSetReader, StorageSettingsCache, TransactionsProviderExt,
-};
 
 use super::RocksDBProvider;
 use crate::StaticFileProviderFactory;
@@ -463,7 +463,7 @@ impl RocksDBProvider {
 
 #[cfg(test)]
 mod tests {
-    use reth_storage_api::DatabaseProviderROFactory;
+    use base_execution_state_api::DatabaseProviderROFactory;
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};

@@ -7,6 +7,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_common_types_chain::{BlockHeader, Transaction, TxReceipt, constants::GWEI_TO_WEI};
 use base_common_types_rpc::BlockId;
+use base_execution_state_api::BlockReaderIdExt;
 use derive_more::{Deref, DerefMut, From, Into};
 use itertools::Itertools;
 use reth_rpc_server_types::{
@@ -16,7 +17,6 @@ use reth_rpc_server_types::{
         DEFAULT_MAX_GAS_PRICE, MAX_HEADER_HISTORY, MAX_REWARD_PERCENTILE_COUNT, SAMPLE_NUMBER,
     },
 };
-use reth_storage_api::BlockReaderIdExt;
 use schnellru::{ByLength, LruMap};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;

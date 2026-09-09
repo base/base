@@ -43,13 +43,13 @@ tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = {workspace = true, features = ["std"]}
+base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["default"] }
@@ -102,7 +102,7 @@ serde = [
     "smallvec/serde",
     "reth-primitives-traits/serde",
     "reth-chain-state/serde",
-    "reth-storage-api/serde",
+    "base-execution-state-api/serde",
     "base-execution-evm-runtime/serde",
 ]
 test-utils = [

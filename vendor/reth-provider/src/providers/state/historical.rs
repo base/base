@@ -2,6 +2,10 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::merge::EPOCH_SLOTS;
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageValue};
+use base_execution_state_api::{
+    BlockNumReader, BytecodeReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
+    StateProofProvider, StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
+};
 use base_execution_state_types::ProviderResult;
 use reth_db_api::{
     BlockNumberList,
@@ -11,10 +15,6 @@ use reth_db_api::{
     transaction::DbTx,
 };
 use reth_primitives_traits::{Account, Bytecode};
-use reth_storage_api::{
-    BlockNumReader, BytecodeReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
-    StateProofProvider, StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
-};
 use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
@@ -649,7 +649,7 @@ where
     }
 }
 
-reth_storage_api::impl_state_database!(['__state, Provider] HistoricalStateProviderRef<'__state, Provider> where [Provider: DBProvider
+base_execution_state_api::impl_state_database!(['__state, Provider] HistoricalStateProviderRef<'__state, Provider> where [Provider: DBProvider
         + BlockNumReader
         + BlockHashReader
         + ChangeSetReader
@@ -659,7 +659,8 @@ reth_storage_api::impl_state_database!(['__state, Provider] HistoricalStateProvi
         + StorageSettingsCache
         + RocksDBProviderFactory,]);
 
-impl<Provider> reth_storage_api::StateReadProvider for HistoricalStateProviderRef<'_, Provider>
+impl<Provider> base_execution_state_api::StateReadProvider
+    for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + BlockNumReader
@@ -757,7 +758,7 @@ impl<Provider: DBProvider + ChangeSetReader + StorageChangeSetReader + BlockNumR
 }
 
 // Delegates all provider impls to [HistoricalStateProviderRef]
-reth_storage_api::macros::delegate_provider_impls!(HistoricalStateProvider<Provider> where [Provider: DBProvider + BlockNumReader + BlockHashReader + ChangeSetReader + StorageChangeSetReader + PruneCheckpointReader + StageCheckpointReader + StorageSettingsCache + RocksDBProviderFactory]);
+base_execution_state_api::delegate_provider_impls!(HistoricalStateProvider<Provider> where [Provider: DBProvider + BlockNumReader + BlockHashReader + ChangeSetReader + StorageChangeSetReader + PruneCheckpointReader + StageCheckpointReader + StorageSettingsCache + RocksDBProviderFactory]);
 
 /// Lowest blocks at which different parts of the state are available.
 /// They may be [Some] if pruning is enabled.
@@ -874,6 +875,11 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256, keccak256};
+    use base_execution_state_api::{
+        BlockHashReader, BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
+        PruneCheckpointReader, StageCheckpointReader, StateReadProvider, StorageChangeSetReader,
+        StorageSettingsCache,
+    };
     use base_execution_state_types::ProviderError;
     use reth_db_api::{
         BlockNumberList,
@@ -882,11 +888,6 @@ mod tests {
         transaction::{DbTx, DbTxMut},
     };
     use reth_primitives_traits::{Account, StorageEntry};
-    use reth_storage_api::{
-        BlockHashReader, BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
-        PruneCheckpointReader, StageCheckpointReader, StateReadProvider, StorageChangeSetReader,
-        StorageSettingsCache,
-    };
     use reth_storage_overlay::OverlayManager;
 
     use super::needs_prev_shard_check;
@@ -902,7 +903,7 @@ mod tests {
     const STORAGE: B256 =
         b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
 
-    const fn assert_state_provider<T: reth_storage_api::StateProvider>() {}
+    const fn assert_state_provider<T: base_execution_state_api::StateProvider>() {}
     #[expect(dead_code)]
     const fn assert_historical_state_provider<
         T: DBProvider
@@ -1458,9 +1459,9 @@ mod tests {
             database::{AccountStatus, BundleAccount, BundleState},
             state::AccountInfo,
         };
+        use base_execution_state_api::HashedPostStateProvider;
         use base_execution_state_types::ExecutionOutcome;
         use base_execution_state_types::{StageCheckpoint, StageId};
-        use reth_storage_api::HashedPostStateProvider;
         use reth_testing_utils::generators::{self, BlockRangeParams};
 
         use crate::BlockWriter;
@@ -1522,7 +1523,7 @@ mod tests {
     #[test]
     fn newly_created_destroyed_account_skips_historical_overlay() {
         use base_execution_evm_runtime::database::{AccountStatus, BundleAccount, BundleState};
-        use reth_storage_api::HashedPostStateProvider;
+        use base_execution_state_api::HashedPostStateProvider;
 
         let factory = create_test_provider_factory();
         let db = factory.provider().unwrap();

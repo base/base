@@ -5,11 +5,8 @@ use alloc::vec::Vec;
 use base_execution_state_types::ProviderResult;
 use reth_db_api::models::StorageSettings;
 
-/// Metadata keys.
-pub mod keys {
-    /// Storage configuration settings for this node.
-    pub const STORAGE_SETTINGS: &str = "storage_settings";
-}
+/// Storage configuration settings for this node.
+pub const STORAGE_SETTINGS: &str = "storage_settings";
 
 /// Client trait for reading node metadata from the database.
 #[auto_impl::auto_impl(&, Arc)]
@@ -24,7 +21,7 @@ pub trait MetadataProvider: Send {
     /// still operate without requiring a compatible metadata schema.
     fn storage_settings(&self) -> ProviderResult<Option<StorageSettings>> {
         Ok(self
-            .get_metadata(keys::STORAGE_SETTINGS)?
+            .get_metadata(STORAGE_SETTINGS)?
             .and_then(|bytes| serde_json::from_slice(&bytes).ok()))
     }
 }

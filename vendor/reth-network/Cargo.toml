@@ -34,7 +34,6 @@ alloy-eip2124 = { workspace = true }
 reth-eth-wire = { workspace = true }
 reth-net-banlist = { workspace = true }
 reth-network-api = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-dns-discovery = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -42,6 +41,7 @@ serde = { workspace = true, optional = true }
 base-common-runtime-tasks = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
+base-execution-state-api = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
@@ -109,7 +109,7 @@ serde = [
     "base-execution-txpool/serde",
     "reth-network-api/serde",
     "rand_08/serde",
-    "reth-storage-api/serde",
+    "base-execution-state-api/serde",
     "reth-network-types/serde",
     "base-execution-state-types/serde",
     "reth-trie/serde",

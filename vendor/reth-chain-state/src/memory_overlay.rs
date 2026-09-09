@@ -5,12 +5,12 @@ use alloy_primitives::{
 };
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_runtime::database::BundleState;
-use base_execution_state_types::ProviderResult;
-use reth_primitives_traits::{Account, Bytecode};
-use reth_storage_api::{
+use base_execution_state_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
 };
+use base_execution_state_types::ProviderResult;
+use reth_primitives_traits::{Account, Bytecode};
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     TrieInput, updates::TrieUpdates,
@@ -233,9 +233,9 @@ impl HashedPostStateProvider for MemoryOverlayStateProviderRef<'_> {
     }
 }
 
-reth_storage_api::impl_state_database!(['__state, ] MemoryOverlayStateProviderRef<'__state> where []);
+base_execution_state_api::impl_state_database!(['__state, ] MemoryOverlayStateProviderRef<'__state> where []);
 
-impl reth_storage_api::StateReadProvider for MemoryOverlayStateProviderRef<'_> {
+impl base_execution_state_api::StateReadProvider for MemoryOverlayStateProviderRef<'_> {
     fn storage(
         &self,
         address: Address,
@@ -304,13 +304,13 @@ impl MemoryOverlayStateProvider {
 }
 
 // Delegates all provider impls to [`MemoryOverlayStateProviderRef`]
-reth_storage_api::macros::delegate_provider_impls!(MemoryOverlayStateProvider);
+base_execution_state_api::delegate_provider_impls!(MemoryOverlayStateProvider);
 
 #[cfg(test)]
 mod tests {
 
     use base_execution_evm_runtime::database::{AccountStatus, BundleAccount};
-    use reth_storage_api::noop::NoopProvider;
+    use base_execution_state_api::NoopProvider;
 
     use super::*;
 

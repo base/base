@@ -1,4 +1,4 @@
-use reth_storage_api::DatabaseProviderROFactory;
+use base_execution_state_api::DatabaseProviderROFactory;
 use std::{
     ops::{RangeBounds, RangeInclusive},
     sync::Arc,
@@ -12,6 +12,11 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_types_payload::ForkchoiceState;
+use base_execution_state_api::{
+    BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
+    StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
+    TryIntoHistoricalStateProvider,
+};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
@@ -24,11 +29,6 @@ use reth_chain_state::{
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
-};
-use reth_storage_api::{
-    BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
-    StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
-    TryIntoHistoricalStateProvider,
 };
 use reth_storage_overlay::{
     AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
@@ -204,7 +204,7 @@ impl BlockchainProvider {
                 .overlay_builder(matched.anchor().hash)
                 .with_immediate_state_trie_overlay(merged.state, merged.nodes),
         );
-        reth_storage_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
+        base_execution_state_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
             .map(Some)
     }
 
@@ -232,7 +232,7 @@ impl BlockchainProvider {
             self.database.clone(),
             self.database.overlay_manager().overlay_builder(block_hash),
         );
-        reth_storage_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
+        base_execution_state_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
             .map(Some)
     }
 }
@@ -1010,6 +1010,14 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
     use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
+    use base_execution_state_api::{
+        BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
+        BlockReaderIdExt, BlockSource, ChangeSetReader, DBProvider, DatabaseProviderFactory,
+        HashingWriter, HeaderProvider, RangeEnd, ReceiptProvider, ReceiptProviderIdExt,
+        StateProviderFactory, StateRangeProvider, StateRangeProviderFactory, StateRootProvider,
+        StateWriteConfig, StateWriter, StorageRootProvider, TransactionVariant,
+        TransactionsProvider,
+    };
     use base_execution_state_types::{
         BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
     };
@@ -1023,14 +1031,6 @@ mod tests {
     use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
     use reth_primitives_traits::{
         Account, Block as _, RecoveredBlock, SealedBlock, SignerRecoverable, StorageEntry,
-    };
-    use reth_storage_api::{
-        BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
-        BlockReaderIdExt, BlockSource, ChangeSetReader, DBProvider, DatabaseProviderFactory,
-        HashingWriter, HeaderProvider, RangeEnd, ReceiptProvider, ReceiptProviderIdExt,
-        StateProviderFactory, StateRangeProvider, StateRangeProviderFactory, StateRootProvider,
-        StateWriteConfig, StateWriter, StorageRootProvider, TransactionVariant,
-        TransactionsProvider,
     };
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,

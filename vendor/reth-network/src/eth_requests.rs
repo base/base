@@ -13,6 +13,10 @@ use alloy_rlp::Encodable;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
 };
+use base_execution_state_api::{
+    BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
+    ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
+};
 use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use reth_eth_wire::{
@@ -32,10 +36,6 @@ use reth_network_p2p::{
 };
 use reth_network_peers::PeerId;
 use reth_primitives_traits::Block;
-use reth_storage_api::{
-    BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
-    ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
-};
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -827,11 +827,11 @@ mod tests {
     };
     use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
     use base_common_types_chain::constants::EMPTY_ROOT_HASH;
+    use base_execution_state_api::NoopProvider;
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
     use reth_primitives_traits::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_storage_api::noop::NoopProvider;
     use test_case::test_case;
     use tokio::sync::mpsc;
 

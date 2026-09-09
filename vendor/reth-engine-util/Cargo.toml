@@ -20,9 +20,9 @@ tokio = { workspace = true }
 itertools = { workspace = true }
 pin-project = { workspace = true }
 reth-fs-util = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-api = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

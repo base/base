@@ -10,6 +10,7 @@ use base_common_types_rpc::{
         Params, PubSubSyncStatus, SubscriptionKind, SyncStatusMetadata, TransactionReceiptsParams,
     },
 };
+use base_execution_state_api::BlockNumReader;
 use base_execution_txpool::{NewTransactionEvent, TransactionPool};
 use futures::StreamExt;
 use jsonrpsee::{
@@ -18,7 +19,6 @@ use jsonrpsee::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
-use reth_storage_api::BlockNumReader;
 use serde::Serialize;
 use tokio_stream::{
     Stream,

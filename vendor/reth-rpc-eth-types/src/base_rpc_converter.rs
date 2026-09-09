@@ -10,11 +10,11 @@ use base_common_types_rpc::{
     BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
 };
 use base_execution_evm_blocks::{EvmEnvFor, TxEnvFor};
+use base_execution_state_api::BlockReader;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::{
     TransactionConversionError, TryIntoTxEnv, transaction::ConvertReceiptInput,
 };
-use reth_storage_api::BlockReader;
 
 use crate::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
 

@@ -7,6 +7,10 @@ use base_execution_evm_runtime::{
     database::BundleState,
     primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
+use base_execution_state_types::{
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
+    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
+};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
@@ -18,10 +22,6 @@ use reth_trie::{
     hashed_cursor::HashedCursor,
     proof::{self, Proof},
     witness::TrieWitness,
-};
-use base_execution_state_types::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
-    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 use crate::{
@@ -244,9 +244,10 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
     }
 }
 
-reth_storage_api::impl_state_database!(['a, Storage] BaseProofsStateProviderRef<'a, Storage> where [Storage: BaseProofsStore + Clone,]);
+base_execution_state_api::impl_state_database!(['a, Storage] BaseProofsStateProviderRef<'a, Storage> where [Storage: BaseProofsStore + Clone,]);
 
-impl<'a, Storage> reth_storage_api::StateReadProvider for BaseProofsStateProviderRef<'a, Storage>
+impl<'a, Storage> base_execution_state_api::StateReadProvider
+    for BaseProofsStateProviderRef<'a, Storage>
 where
     Storage: BaseProofsStore + Clone,
 {
@@ -264,7 +265,7 @@ impl<'a, Storage: BaseProofsStore> BytecodeReader for BaseProofsStateProviderRef
 
 #[cfg(all(test, not(feature = "metrics")))]
 mod tests {
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::NoopProvider;
 
     use super::*;
     use crate::InMemoryProofsStorage;

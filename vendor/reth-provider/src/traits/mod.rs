@@ -2,7 +2,7 @@
 
 // Re-export all the traits
 pub use base_common_chain_config::ChainSpecProvider;
-pub use reth_storage_api::*;
+pub use base_execution_state_api::*;
 
 mod static_file_provider;
 pub use static_file_provider::StaticFileProviderFactory;

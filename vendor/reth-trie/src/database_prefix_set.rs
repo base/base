@@ -4,6 +4,7 @@ use alloy_primitives::{
     B256, BlockNumber, keccak256,
     map::{HashMap, HashSet},
 };
+use base_execution_state_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use base_execution_state_types::ProviderError;
 use reth_db_api::{
     cursor::DbCursorRO,
@@ -11,7 +12,6 @@ use reth_db_api::{
     tables,
     transaction::DbTx,
 };
-use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 
 use crate::{
     Nibbles,

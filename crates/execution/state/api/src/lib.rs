@@ -1,5 +1,4 @@
-//! Collection of traits and types for common storage access.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -65,7 +64,8 @@ mod database_provider;
 #[cfg(feature = "db-api")]
 pub use database_provider::*;
 
-pub mod noop;
+mod noop;
+pub use noop::NoopProvider;
 
 #[cfg(feature = "db-api")]
 mod history;
@@ -97,14 +97,14 @@ mod header_sync_gap;
 pub use header_sync_gap::HeaderSyncGapProvider;
 
 #[cfg(feature = "db-api")]
-pub mod metadata;
+mod metadata;
 #[cfg(all(feature = "db-api", feature = "std"))]
 pub use metadata::StoragePath;
 #[cfg(feature = "db-api")]
-pub use metadata::{MetadataProvider, StorageSettingsCache};
+pub use metadata::{MetadataProvider, STORAGE_SETTINGS, StorageSettingsCache};
 #[cfg(feature = "db-api")]
 pub use reth_db_api::models::StorageSettings;
 
-pub mod macros;
+mod macros;
 
 pub use base_execution_state_memory::{AccountInfo, BundleState, Bytecode, Database, DatabaseRef};

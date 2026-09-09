@@ -14,17 +14,18 @@ categories.workspace = true
 [dependencies]
 tokio = { workspace = true }
 futures-util = { workspace = true }
-reth-storage-api = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
-eyre = { workspace = true, features = ["default"] }
+base-execution-state-api = { workspace = true }
 base-common-types-payload = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+
 [lints]
 workspace = true

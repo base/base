@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageValue};
+use base_execution_state_api::{
+    BytecodeReader, DBProvider, StateProofProvider, StorageRootProvider, StorageSettingsCache,
+};
 use base_execution_state_types::{ProviderError, ProviderResult};
 use reth_db_api::{cursor::DbDupCursorRO, tables, transaction::DbTx};
 use reth_primitives_traits::{Account, Bytecode};
-use reth_storage_api::{
-    BytecodeReader, DBProvider, StateProofProvider, StorageRootProvider, StorageSettingsCache,
-};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
@@ -278,10 +278,10 @@ impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_
     }
 }
 
-reth_storage_api::impl_state_database!(['__state, Provider: DBProvider + BlockHashReader + StorageSettingsCache] LatestStateProviderRef<'__state, Provider> where []);
+base_execution_state_api::impl_state_database!(['__state, Provider: DBProvider + BlockHashReader + StorageSettingsCache] LatestStateProviderRef<'__state, Provider> where []);
 
 impl<Provider: DBProvider + BlockHashReader + StorageSettingsCache>
-    reth_storage_api::StateReadProvider for LatestStateProviderRef<'_, Provider>
+    base_execution_state_api::StateReadProvider for LatestStateProviderRef<'_, Provider>
 {
     /// Get storage by plain (unhashed) storage key slot.
     fn storage(
@@ -323,23 +323,23 @@ impl<Provider: DBProvider> LatestStateProvider<Provider> {
 }
 
 // Delegates all provider impls to [LatestStateProviderRef]
-reth_storage_api::macros::delegate_provider_impls!(LatestStateProvider<Provider> where [Provider: DBProvider + BlockHashReader + StorageSettingsCache]);
+base_execution_state_api::delegate_provider_impls!(LatestStateProvider<Provider> where [Provider: DBProvider + BlockHashReader + StorageSettingsCache]);
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address, b256, keccak256};
+    use base_execution_state_api::{StateReadProvider, StorageSettingsCache};
     use reth_db_api::{
         models::StorageSettings,
         tables,
         transaction::{DbTx, DbTxMut},
     };
     use reth_primitives_traits::StorageEntry;
-    use reth_storage_api::{StateReadProvider, StorageSettingsCache};
 
     use super::*;
     use crate::test_utils::create_test_provider_factory;
 
-    const fn assert_state_provider<T: reth_storage_api::StateProvider>() {}
+    const fn assert_state_provider<T: base_execution_state_api::StateProvider>() {}
     #[expect(dead_code)]
     const fn assert_latest_state_provider<
         T: DBProvider + BlockHashReader + StorageSettingsCache,

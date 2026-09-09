@@ -32,10 +32,10 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
         mode: ExecutionWitnessMode,
     ) -> base_execution_state_types::ProviderResult<alloy_rpc_types_debug::ExecutionWitness>
     where
-        SP: reth_storage_api::HashedPostStateProvider
-            + reth_storage_api::StateProofProvider
+        SP: base_execution_state_api::HashedPostStateProvider
+            + base_execution_state_api::StateProofProvider
             + ?Sized,
-        HP: reth_storage_api::HeaderProvider + ?Sized,
+        HP: base_execution_state_api::HeaderProvider + ?Sized,
     {
         let codes = match mode {
             ExecutionWitnessMode::Legacy => self
@@ -96,7 +96,7 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
         state_provider: &SP,
     ) -> base_execution_state_types::ProviderResult<(HashedPostState, Vec<Bytes>)>
     where
-        SP: reth_storage_api::HashedPostStateProvider + ?Sized,
+        SP: base_execution_state_api::HashedPostStateProvider + ?Sized,
     {
         let mut hashed_state = HashedPostState::default();
         let mut keys = Vec::new();
@@ -139,8 +139,8 @@ mod tests {
         database::{AccountStatus, BundleAccount, CacheAccount, EmptyDB},
         state::AccountInfo,
     };
+    use base_execution_state_api::HashedPostStateProvider;
     use base_execution_state_types::ProviderResult;
-    use reth_storage_api::HashedPostStateProvider;
 
     use super::*;
 

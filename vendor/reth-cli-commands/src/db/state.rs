@@ -4,11 +4,11 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, BlockNumber, U256, keccak256};
+use base_execution_state_api::BlockNumReader;
 use clap::Parser;
 use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};
 use reth_db_common::DbTool;
 use reth_provider::StaticFileProviderFactory;
-use reth_storage_api::BlockNumReader;
 use tracing::info;
 
 /// Log progress every 30 seconds

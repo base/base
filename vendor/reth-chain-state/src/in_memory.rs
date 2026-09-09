@@ -8,6 +8,7 @@ use base_common_observability_metrics::{Metrics, metrics::Gauge};
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
+use base_execution_state_api::StateProviderBox;
 use base_execution_state_types::{
     BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
 };
@@ -15,7 +16,6 @@ use parking_lot::RwLock;
 use reth_primitives_traits::{
     BlockBody as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
 };
-use reth_storage_api::StateProviderBox;
 use reth_trie::{
     ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
 };
@@ -980,13 +980,13 @@ impl NewCanonicalChain {
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, BlockNumber, Bytes, StorageKey, StorageValue};
-    use base_execution_state_types::ProviderResult;
-    use rand::Rng;
-    use reth_primitives_traits::{Account, Bytecode};
-    use reth_storage_api::{
+    use base_execution_state_api::{
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
         StateProofProvider, StateRootProvider, StorageRootProvider,
     };
+    use base_execution_state_types::ProviderResult;
+    use rand::Rng;
+    use reth_primitives_traits::{Account, Bytecode};
     use reth_trie::{
         AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets,
         StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
@@ -1028,9 +1028,9 @@ mod tests {
 
     struct MockStateProvider;
 
-    reth_storage_api::impl_state_database!([] MockStateProvider where []);
+    base_execution_state_api::impl_state_database!([] MockStateProvider where []);
 
-    impl reth_storage_api::StateReadProvider for MockStateProvider {
+    impl base_execution_state_api::StateReadProvider for MockStateProvider {
         fn storage(
             &self,
             _address: Address,

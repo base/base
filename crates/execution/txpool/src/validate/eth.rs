@@ -23,12 +23,12 @@ use base_common_types_chain::{
 };
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_machine::Cfg;
-use reth_primitives_traits::{
-    Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
-};
-use reth_storage_api::{
+use base_execution_state_api::{
     AccountInfoReader, BlockReaderIdExt, BytecodeReader, ProviderError, StateProviderBox,
     StateProviderFactory,
+};
+use reth_primitives_traits::{
+    Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;

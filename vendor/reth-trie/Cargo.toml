@@ -26,10 +26,10 @@ base-execution-evm-runtime = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
-reth-storage-api = { workspace = true, features = ["db-api"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-state-types = {features = ["rayon"], workspace = true}
+base-execution-state-api = { workspace = true, features = ["db-api"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
@@ -72,7 +72,7 @@ serde = [
     "rand/serde",
     "base-execution-evm-runtime/serde",
     "similar-asserts/serde",
-    "reth-storage-api/serde",
+    "base-execution-state-api/serde",
 ]
 test-utils = [
     "triehash",

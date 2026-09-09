@@ -29,5 +29,5 @@ base-common-types-payload = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
-reth-storage-api = { workspace = true, features = ["std"] }
+base-execution-state-api = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

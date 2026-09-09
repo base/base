@@ -37,13 +37,13 @@ tracing = { workspace = true, features = ["attributes"]}
 tokio = { workspace = true, features = ["sync", "time"] }
 futures-core = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 base-execution-trie = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
+base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 base-execution-payload-types = {features = ["default"], workspace = true}

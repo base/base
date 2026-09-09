@@ -40,7 +40,7 @@ use utils::*;
 
 #[cfg(test)]
 mod tests {
-    use reth_storage_api::DatabaseProviderROFactory;
+    use base_execution_state_api::DatabaseProviderROFactory;
     use std::{io::Write, sync::Arc};
 
     use alloy_primitives::{
@@ -51,6 +51,7 @@ mod tests {
     use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, SignableTransaction, TxLegacy};
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_db::mdbx::{RW, cursor::Cursor};
@@ -73,7 +74,6 @@ mod tests {
     use reth_stages_api::{
         ExecInput, ExecutionStageThresholds, PipelineTarget, Stage, StageCheckpoint, StageId,
     };
-    use reth_storage_api::StorageSettingsCache;
     use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;

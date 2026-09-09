@@ -2342,6 +2342,7 @@ mod tests {
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
         BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
     };
+    use base_execution_state_api::NoopProvider;
     use base_execution_txpool::{
         BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError, InMemoryBlobStore,
         InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
@@ -2357,7 +2358,6 @@ mod tests {
         error::{RequestError, RequestResult},
         sync::{NetworkSyncUpdater, SyncState},
     };
-    use reth_storage_api::noop::NoopProvider;
     use secp256k1::SecretKey;
     use tracing::error;
 

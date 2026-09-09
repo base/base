@@ -884,9 +884,9 @@ fn nonzero_storage_value(value: StorageValue) -> Option<StorageValue> {
     if value.is_zero() { None } else { Some(value) }
 }
 
-reth_storage_api::impl_state_database!([S: reth_storage_api::StateReadProvider] CachedStateProvider<S> where []);
+base_execution_state_api::impl_state_database!([S: base_execution_state_api::StateReadProvider] CachedStateProvider<S> where []);
 
-impl<S: reth_storage_api::StateReadProvider> reth_storage_api::StateReadProvider
+impl<S: base_execution_state_api::StateReadProvider> base_execution_state_api::StateReadProvider
     for CachedStateProvider<S>
 {
     fn storage(
@@ -1406,8 +1406,8 @@ mod tests {
         database::{AccountStatus, BundleAccount},
         state::AccountInfo,
     };
+    use base_execution_state_api::StateReadProvider;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_storage_api::StateReadProvider;
 
     use super::*;
 

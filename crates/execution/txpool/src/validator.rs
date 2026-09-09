@@ -31,6 +31,9 @@ use base_execution_evm_precompiles::{
 };
 use base_execution_evm_runtime::state::{AccountInfo, Bytecode};
 use base_execution_evm_runtime::{BaseSpecId, L1BlockInfo};
+use base_execution_state_api::{
+    AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
+};
 use base_execution_txpool::{
     EthTransactionValidator, InvalidPoolTransactionError, PoolTransactionError, TransactionOrigin,
     TransactionValidationOutcome, TransactionValidator, ValidTransaction,
@@ -39,9 +42,6 @@ use lru::LruCache;
 use parking_lot::RwLock;
 use reth_primitives_traits::{
     Block, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
-};
-use reth_storage_api::{
-    AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
 };
 
 use crate::{
@@ -1490,7 +1490,7 @@ where
     fn account_has_code(
         state: &dyn StateProvider,
         address: Address,
-    ) -> Result<bool, reth_storage_api::ProviderError> {
+    ) -> Result<bool, base_execution_state_api::ProviderError> {
         Ok(state
             .basic_account(&address)?
             .and_then(|account| account.bytecode_hash)

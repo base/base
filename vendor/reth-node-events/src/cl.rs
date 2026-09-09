@@ -8,8 +8,8 @@ use std::{
 };
 
 use base_common_types_chain::Header;
+use base_execution_state_api::CanonChainTracker;
 use futures::Stream;
-use reth_storage_api::CanonChainTracker;
 use tokio::time::{Instant, Interval};
 
 /// Interval of checking Consensus Layer client health.

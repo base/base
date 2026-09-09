@@ -209,8 +209,8 @@ impl Clone for PayloadBuilderHandle {
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct PayloadBuilderService<Client, Pool, St>
 where
-    Client: reth_storage_api::StateProviderFactory
-        + reth_storage_api::BlockReaderIdExt
+    Client: base_execution_state_api::StateProviderFactory
+        + base_execution_state_api::BlockReaderIdExt
         + base_common_chain_config::ChainSpecProvider
         + Clone
         + Unpin
@@ -247,8 +247,8 @@ const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 
 impl<Client, Pool, St> PayloadBuilderService<Client, Pool, St>
 where
-    Client: reth_storage_api::StateProviderFactory
-        + reth_storage_api::BlockReaderIdExt
+    Client: base_execution_state_api::StateProviderFactory
+        + base_execution_state_api::BlockReaderIdExt
         + base_common_chain_config::ChainSpecProvider
         + Clone
         + Unpin
@@ -401,8 +401,8 @@ where
 
 impl<Client, Pool, St> Future for PayloadBuilderService<Client, Pool, St>
 where
-    Client: reth_storage_api::StateProviderFactory
-        + reth_storage_api::BlockReaderIdExt
+    Client: base_execution_state_api::StateProviderFactory
+        + base_execution_state_api::BlockReaderIdExt
         + base_common_chain_config::ChainSpecProvider
         + Clone
         + Unpin

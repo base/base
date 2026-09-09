@@ -19,14 +19,14 @@ use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };
+use base_execution_state_api::{
+    BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
+    StorageChangeSetReader, StorageSettingsCache,
+};
 use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
 use base_execution_state_types::{ProviderError, ProviderResult};
 use parking_lot::RwLock;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_storage_api::{
-    BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
-    StorageChangeSetReader, StorageSettingsCache,
-};
 #[cfg(test)]
 use reth_trie::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
 use reth_trie::{
@@ -618,6 +618,7 @@ mod tests {
         map::{B256Map, HashMap},
     };
     use base_common_types_chain::Header;
+    use base_execution_state_api::TrieWriter;
     use base_execution_state_types::{StageCheckpoint, StageId};
     use reth_db::{
         models::{AccountBeforeTx, BlockNumberAddress},
@@ -629,7 +630,6 @@ mod tests {
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
         test_utils::create_test_provider_factory,
     };
-    use reth_storage_api::TrieWriter;
     use reth_trie::{BranchNodeCompact, Nibbles, StateRoot};
 
     use super::*;

@@ -1,6 +1,6 @@
 //! Noop impls for testing.
 
-use reth_storage_api::noop::NoopProvider;
+use base_execution_state_api::NoopProvider;
 use tokio::sync::{broadcast, watch};
 
 use crate::{

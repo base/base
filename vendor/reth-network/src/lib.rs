@@ -42,7 +42,7 @@
 //! ### Configure and launch a standalone network
 //!
 //! The [`NetworkConfig`] is used to configure the network.
-//! It requires an instance of [`BlockReader`](reth_storage_api::BlockReader).
+//! It requires an instance of [`BlockReader`](base_execution_state_api::BlockReader).
 //!
 //! ```
 //! # async fn launch() {
@@ -50,7 +50,7 @@
 //!     config::rng_secret_key, NetworkConfig, NetworkManager,
 //! };
 //! use reth_network_peers::mainnet_nodes;
-//! use reth_storage_api::noop::NoopProvider;
+//! use base_execution_state_api::{NoopProvider};
 //! use base_common_runtime_tasks::Runtime;
 //!
 //! // This block provider implementation is used for testing purposes.
@@ -80,7 +80,7 @@
 //!     config::rng_secret_key, NetworkConfig, NetworkManager,
 //! };
 //! use reth_network_peers::mainnet_nodes;
-//! use reth_storage_api::noop::NoopProvider;
+//! use base_execution_state_api::{NoopProvider};
 //! use base_common_runtime_tasks::Runtime;
 //! use base_execution_txpool::TransactionPool;
 //! async fn launch<Pool: TransactionPool>(pool: Pool) {

@@ -5,9 +5,9 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_api::BlockReaderIdExt;
 use futures_util::{StreamExt, lock::Mutex};
 use reth_primitives_traits::SealedBlock;
-use reth_storage_api::BlockReaderIdExt;
 use tokio::{
     sync,
     sync::{mpsc, oneshot},

@@ -30,6 +30,7 @@ use base_execution_evm_runtime::{
 use base_execution_evm_runtime::{
     OverrideBlockHashes, apply_block_overrides, apply_state_overrides,
 };
+use base_execution_state_api::{BlockIdReader, ProviderTx};
 use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_primitives_traits::Recovered;
@@ -38,7 +39,6 @@ use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
     simulate::{self, EthSimulateError},
 };
-use reth_storage_api::{BlockIdReader, ProviderTx};
 use tracing::{trace, warn};
 
 use crate::BaseEthApi;

@@ -1,4 +1,4 @@
-use reth_storage_api::DatabaseProviderROFactory;
+use base_execution_state_api::DatabaseProviderROFactory;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
@@ -21,6 +21,11 @@ use base_common_types_chain::{
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_execution_state_api::{
+    BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,
+    HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
+    StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
+};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
@@ -35,11 +40,6 @@ use reth_db_api::{
 use reth_primitives_traits::{
     Account, Block, BlockBody, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
     SignerRecoverable, StorageEntry,
-};
-use reth_storage_api::{
-    BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,
-    HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
-    StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
@@ -1085,9 +1085,9 @@ impl HashedPostStateProvider for MockEthProvider {
     }
 }
 
-reth_storage_api::impl_state_database!([] MockEthProvider where []);
+base_execution_state_api::impl_state_database!([] MockEthProvider where []);
 
-impl reth_storage_api::StateReadProvider for MockEthProvider {
+impl base_execution_state_api::StateReadProvider for MockEthProvider {
     fn storage(
         &self,
         account: Address,

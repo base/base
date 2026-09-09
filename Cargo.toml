@@ -183,7 +183,7 @@ members = [
   "vendor/reth-stages",
   "vendor/reth-stages-api",
   "vendor/reth-static-file",
-  "vendor/reth-storage-api",
+  "crates/execution/state/api",
   "vendor/reth-storage-overlay",
   "vendor/reth-testing-utils",
   "crates/common/observability/tracing",
@@ -500,7 +500,7 @@ reth-chain-state = { path = "vendor/reth-chain-state", default-features = false 
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 reth-rpc-convert = { path = "vendor/reth-rpc-convert", default-features = false }
 reth-network-api = { path = "vendor/reth-network-api", default-features = false }
-reth-storage-api = { path = "vendor/reth-storage-api", default-features = false }
+base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 reth-static-file = { path = "vendor/reth-static-file", default-features = false }
 reth-rpc-builder = { path = "vendor/reth-rpc-builder", default-features = false }
 reth-downloaders = { path = "vendor/reth-downloaders", default-features = false }

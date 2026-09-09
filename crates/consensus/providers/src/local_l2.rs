@@ -6,10 +6,10 @@ use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::BaseBlock;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
+use base_execution_state_api::ProviderError;
 use base_execution_state_types::HashedStorage;
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use reth_provider::{BlockReaderIdExt, StateProviderFactory, providers::BlockchainProvider};
-use reth_storage_api::ProviderError;
 
 /// Direct access to the execution node's canonical and in-memory L2 state.
 #[derive(Debug, Clone)]

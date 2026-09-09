@@ -16,11 +16,11 @@ use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{BlockExecutionError, BlockValidationError};
 use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_payload_types::BaseBuiltPayload;
+use base_execution_state_api::{BlockReader, ProviderError, StateProviderFactory};
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
 use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
-use reth_storage_api::{BlockReader, ProviderError, StateProviderFactory};
 use tokio::sync::oneshot;
 use tracing::*;
 

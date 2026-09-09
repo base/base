@@ -1,10 +1,10 @@
 //! Loads Base pending block for a RPC response.
 
 use alloy_eips::BlockNumberOrTag;
+use base_execution_state_api::{BlockReaderIdExt, StateProviderBox};
 use reth_rpc_eth_types::{
     EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
 };
-use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
 use crate::{BaseEthApi, BaseEthApiError};
 

@@ -20,12 +20,12 @@ use base_execution_evm_runtime::{
         BalWrites as RevmBalWrites, StorageBal as RevmStorageBal,
     },
 };
+use base_execution_state_api::{BalProvider, BlockReader, TransactionVariant};
 use base_execution_state_types::Chain;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
 use reth_chain_state::CanonStateNotification;
 use reth_primitives_traits::{InMemorySize, RecoveredBlock};
-use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
 use schnellru::{ByLength, Limiter, LruMap};
 use tokio::sync::{
     Semaphore,
@@ -311,7 +311,7 @@ impl From<CacheServiceUnavailable> for ProviderError {
 /// A task that manages caches for data required by the `eth` rpc implementation.
 ///
 /// It provides a caching layer on top of the given
-/// [`StateProvider`](reth_storage_api::StateProvider) and keeps data fetched via the provider in
+/// [`StateProvider`](base_execution_state_api::StateProvider) and keeps data fetched via the provider in
 /// memory in an LRU cache. If the requested data is missing in the cache it is fetched and inserted
 /// into the cache afterwards. While fetching data from disk is sync, this service is async since
 /// requests and data is shared via channels.
@@ -1017,13 +1017,13 @@ mod tests {
         BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction, Header,
         transaction::TransactionMeta,
     };
+    use base_execution_state_api::{
+        BalProvider, BalStore, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,
+        BlockNumReader, BlockReader, BlockSource, HeaderProvider, NoopProvider, ReceiptProvider,
+        TransactionVariant, TransactionsProvider,
+    };
     use base_execution_state_types::StoredBlockBodyIndices;
     use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-    use reth_storage_api::{
-        BalProvider, BalStore, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,
-        BlockNumReader, BlockReader, BlockSource, HeaderProvider, ReceiptProvider,
-        TransactionVariant, TransactionsProvider, noop::NoopProvider,
-    };
 
     use super::*;
 
@@ -1238,7 +1238,11 @@ mod tests {
     }
 
     impl BalStore for TestBalStore {
-        fn insert(&self, _num_hash: NumHash, _bal: reth_storage_api::RawBal) -> ProviderResult<()> {
+        fn insert(
+            &self,
+            _num_hash: NumHash,
+            _bal: base_execution_state_api::RawBal,
+        ) -> ProviderResult<()> {
             Ok(())
         }
 
@@ -1251,8 +1255,8 @@ mod tests {
             Ok(block_hashes.iter().map(|_| Some(Bytes::from_static(&[0xc0]))).collect())
         }
 
-        fn bal_stream(&self) -> reth_storage_api::BalNotificationStream {
-            reth_storage_api::NoopBalStore.bal_stream()
+        fn bal_stream(&self) -> base_execution_state_api::BalNotificationStream {
+            base_execution_state_api::NoopBalStore.bal_stream()
         }
     }
 

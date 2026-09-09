@@ -18,6 +18,11 @@ use base_common_types_chain::{
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
+use base_execution_state_api::{
+    BlockBodyIndicesProvider, MetadataProvider, StateProvider, StateReader, StateWriteConfig,
+    StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
+    WriteStateInput,
+};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
@@ -45,11 +50,6 @@ use reth_db_api::{
 use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
     SealedHeader, StorageEntry,
-};
-use reth_storage_api::{
-    BlockBodyIndicesProvider, MetadataProvider, StateProvider, StateReader, StateWriteConfig,
-    StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
-    WriteStateInput,
 };
 use reth_storage_overlay::OverlayManager;
 use reth_trie::{
@@ -1081,7 +1081,7 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
             self.transactions_by_tx_range(tx_range.clone())?
         };
 
-        let body = reth_storage_api::BaseBodyStorage::read_block_bodies(
+        let body = base_execution_state_api::BaseBodyStorage::read_block_bodies(
             self,
             vec![(header.as_ref(), transactions)],
         )?
@@ -1166,7 +1166,7 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
             inputs.push((header.as_ref(), transactions));
         }
 
-        let bodies = reth_storage_api::BaseBodyStorage::read_block_bodies(self, inputs)?;
+        let bodies = base_execution_state_api::BaseBodyStorage::read_block_bodies(self, inputs)?;
 
         for ((tx_range, header), body) in present_headers.into_iter().zip(bodies) {
             blocks.push(assemble_block(header, body, tx_range)?);
@@ -1654,7 +1654,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
                 return Ok(None);
             };
 
-            let body = reth_storage_api::BaseBodyStorage::read_block_bodies(
+            let body = base_execution_state_api::BaseBodyStorage::read_block_bodies(
                 self,
                 vec![(&header, transactions)],
             )?
@@ -3483,7 +3483,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
             return Err(ProviderError::UnsupportedProvider);
         }
         self.write_metadata(
-            reth_storage_api::metadata::keys::STORAGE_SETTINGS,
+            base_execution_state_api::STORAGE_SETTINGS,
             serde_json::to_vec(&settings).map_err(ProviderError::other)?,
         )
     }
@@ -3525,13 +3525,13 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+    use base_execution_state_api::{MetadataProvider, StateReadProvider};
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_api::models::StorageSettings;
     use reth_primitives_traits::SealedBlock;
-    use reth_storage_api::{MetadataProvider, StateReadProvider};
     use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{
         HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
@@ -4356,7 +4356,7 @@ mod tests {
 
     #[test]
     fn test_try_into_history_rejects_unexecuted_blocks() {
-        use reth_storage_api::TryIntoHistoricalStateProvider;
+        use base_execution_state_api::TryIntoHistoricalStateProvider;
 
         let factory = create_test_provider_factory();
 

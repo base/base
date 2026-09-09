@@ -94,6 +94,9 @@ mod tests {
     use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, Header, SignableTransaction, Transaction, TxLegacy,
     };
+    use base_execution_state_api::{
+        ChangeSetReader, ReceiptProvider, StorageChangeSetReader, TransactionsProvider,
+    };
     use base_execution_state_types::{
         DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentRangeInclusive, find_fixed_range,
     };
@@ -104,9 +107,6 @@ mod tests {
     };
     use reth_db_api::{CanonicalHeaders, HeaderNumbers, Headers, transaction::DbTxMut};
     use reth_primitives_traits::Account;
-    use reth_storage_api::{
-        ChangeSetReader, ReceiptProvider, StorageChangeSetReader, TransactionsProvider,
-    };
     use reth_testing_utils::generators::{self, random_header_range};
 
     use super::*;

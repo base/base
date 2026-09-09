@@ -602,8 +602,8 @@ mod tests {
     }
 
     mod rocksdb_tests {
+        use base_execution_state_api::StorageSettings;
         use reth_provider::RocksDBProviderFactory;
-        use reth_storage_api::StorageSettings;
 
         use super::*;
 

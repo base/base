@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use base_execution_state_types::{ProviderError, ProviderResult};
 /// Re-exported for convenience
-pub use reth_storage_api::noop::NoopProvider;
+pub use base_execution_state_api::NoopProvider;
+use base_execution_state_types::{ProviderError, ProviderResult};
 
 use crate::{
     RocksDBProviderFactory, StaticFileProviderFactory,

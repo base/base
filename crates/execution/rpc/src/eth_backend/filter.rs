@@ -18,6 +18,10 @@ use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::{
     Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
 };
+use base_execution_state_api::{
+    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderReceipt,
+    ReceiptProvider,
+};
 use base_execution_state_types::ProviderError;
 use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
 use base_node_context::BaseNodePool;
@@ -34,10 +38,6 @@ use reth_rpc_eth_types::{
     logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
 };
 use reth_rpc_server_types::{ToRpcResult, result::rpc_error_with_code};
-use reth_storage_api::{
-    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderReceipt,
-    ReceiptProvider,
-};
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,
@@ -795,7 +795,7 @@ struct FullTransactionsReceiver<TxCompat> {
 
 impl<TxCompat> FullTransactionsReceiver<TxCompat>
 where
-    TxCompat: reth_storage_api::BlockReader<
+    TxCompat: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,
@@ -844,7 +844,7 @@ trait FullTransactionsFilter<T>: fmt::Debug + Send + Sync + Unpin + 'static {
 impl<TxCompat> FullTransactionsFilter<base_common_types_rpc::BaseTransaction>
     for FullTransactionsReceiver<TxCompat>
 where
-    TxCompat: reth_storage_api::BlockReader<
+    TxCompat: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
             Transaction = base_common_types_chain::BaseTxEnvelope,
             Receipt = base_common_types_chain::BaseReceipt,

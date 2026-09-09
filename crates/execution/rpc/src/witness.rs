@@ -8,12 +8,14 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilder;
+use base_execution_state_api::{
+    BlockReaderIdExt, ProviderError, ProviderResult, StateProviderFactory,
+};
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use reth_storage_api::{BlockReaderIdExt, ProviderError, ProviderResult, StateProviderFactory};
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]

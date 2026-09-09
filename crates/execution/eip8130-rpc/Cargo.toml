@@ -26,9 +26,9 @@ base-execution-evm-runtime = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 base-execution-evm-precompiles = { workspace = true }
-reth-storage-api = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
+base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 
 [dev-dependencies]

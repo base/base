@@ -41,10 +41,10 @@ reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-node-events = { workspace = true }
 reth-static-file = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-node-metrics = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-api = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 arbitrary = { workspace = true, optional = true }

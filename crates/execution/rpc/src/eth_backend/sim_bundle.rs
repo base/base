@@ -15,12 +15,12 @@ use base_execution_evm_blocks::Evm;
 use base_execution_evm_machine::{Block, ResultAndState};
 use base_execution_evm_runtime::{BlockEnvironment, apply_block_overrides};
 use base_execution_evm_runtime::{DatabaseCommit, DatabaseRef};
+use base_execution_state_api::ProviderTx;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
-use reth_storage_api::ProviderTx;
 use tracing::trace;
 
 use crate::BaseEthApi;

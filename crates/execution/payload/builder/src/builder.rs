@@ -28,6 +28,7 @@ use base_execution_evm_runtime::L1BlockInfo;
 use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{CommitChanges, Evm as AlloyEvm, TxResult};
 use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderError};
+use base_execution_state_api::{BlockReader, ProviderError, StateProvider, StateProviderFactory};
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_trie::PayloadStateRootHandle;
@@ -38,7 +39,6 @@ use base_execution_txpool::{
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
-use reth_storage_api::{BlockReader, ProviderError, StateProvider, StateProviderFactory};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -451,7 +451,7 @@ impl<Txs> Builder<'_, Txs> {
     pub fn witness(
         self,
         state_provider: impl StateProvider,
-        header_provider: impl reth_storage_api::HeaderProvider,
+        header_provider: impl base_execution_state_api::HeaderProvider,
         ctx: &BasePayloadBuilderCtx,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
@@ -1381,7 +1381,7 @@ mod tests {
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::NoopProvider;
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

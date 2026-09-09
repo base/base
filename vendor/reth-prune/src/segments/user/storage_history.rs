@@ -1,11 +1,11 @@
 use alloy_primitives::BlockNumber;
+use base_execution_state_api::{StorageChangeSetReader, StorageSettingsCache};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
 };
 use reth_db_api::transaction::DbTxMut;
 use reth_provider::{DBProvider, RocksDBProviderFactory, StaticFileProviderFactory};
-use reth_storage_api::{StorageChangeSetReader, StorageSettingsCache};
 use rustc_hash::FxHashMap;
 use tracing::{instrument, trace};
 
@@ -180,11 +180,11 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
+    use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
     use reth_db_api::{BlockNumberList, tables};
     use reth_provider::{DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
-    use reth_storage_api::StorageSettingsCache;
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
@@ -193,9 +193,9 @@ mod tests {
 
     #[test]
     fn prune_rocksdb() {
+        use base_execution_state_api::StorageSettings;
         use reth_db_api::models::storage_sharded_key::StorageShardedKey;
         use reth_provider::RocksDBProviderFactory;
-        use reth_storage_api::StorageSettings;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();
@@ -303,10 +303,10 @@ mod tests {
     #[test]
     fn dense_block_advances_rocksdb_checkpoint() {
         use alloy_primitives::U256;
+        use base_execution_state_api::StorageSettings;
         use reth_db_api::models::storage_sharded_key::StorageShardedKey;
         use reth_primitives_traits::StorageEntry;
         use reth_provider::RocksDBProviderFactory;
-        use reth_storage_api::StorageSettings;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

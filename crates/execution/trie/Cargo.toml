@@ -18,8 +18,8 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 derive_more = { workspace = true }
 reth-provider = { workspace = true }
-reth-storage-api = { workspace = true }
 static_assertions = { workspace = true }
+base-execution-state-api = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
 strum = { workspace = true, features = ["derive"] }

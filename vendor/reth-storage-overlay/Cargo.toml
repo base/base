@@ -25,8 +25,8 @@ rayon = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true}
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["db-api"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-api = { workspace = true, features = ["db-api"] }
 reth-primitives-traits = { workspace = true, features = ["dashmap", "std"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 base-common-runtime-tasks = { workspace = true, features = ["rayon"], optional = true }

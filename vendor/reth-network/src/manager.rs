@@ -32,6 +32,7 @@ use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::shutdown::GracefulShutdown;
 use base_common_types_chain::BaseBlock;
+use base_execution_state_api::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use reth_eth_wire::DisconnectReason;
@@ -43,7 +44,6 @@ use reth_network_api::{
 };
 use reth_network_peers::{NodeRecord, PeerId};
 use reth_network_types::ReputationChangeKind;
-use reth_storage_api::BlockNumReader;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -372,7 +372,7 @@ impl NetworkManager {
     ///     config::rng_secret_key, NetworkConfig, NetworkManager,
     /// };
     /// use reth_network_peers::mainnet_nodes;
-    /// use reth_storage_api::noop::NoopProvider;
+    /// use base_execution_state_api::{NoopProvider};
     /// use base_common_runtime_tasks::Runtime;
     /// use base_execution_txpool::TransactionPool;
     /// async fn launch<Pool: TransactionPool>(pool: Pool) {

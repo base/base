@@ -436,7 +436,7 @@ where
         + 'static,
     P: ChangeSetReader,
     reth_storage_overlay::OverlayStateProviderFactory<P>:
-        reth_storage_api::DatabaseProviderROFactory<
+        base_execution_state_api::DatabaseProviderROFactory<
                 Provider: reth_trie::trie_cursor::TrieCursorFactory
                               + reth_trie::hashed_cursor::HashedCursorFactory,
             > + Clone

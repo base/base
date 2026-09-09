@@ -55,14 +55,14 @@ pub use reth_chain_state::{
 // reexport traits to avoid breaking changes
 /// Re-export `OriginalValuesKnown`
 pub use base_execution_evm_runtime::database::OriginalValuesKnown;
-pub use base_execution_state_types as static_file;
-/// Re-export provider error.
-pub use base_execution_state_types::{ProviderError, ProviderResult};
-pub use reth_storage_api::{
+pub use base_execution_state_api::{
     BalNotification, BalNotificationStream, BalProvider, BalStore, BalStoreHandle,
     GetBlockAccessListLimit, HistoryWriter, MetadataProvider, NoopBalStore, RawBal,
     StateWriteConfig, StatsReader, StorageSettings, StorageSettingsCache,
 };
+pub use base_execution_state_types as static_file;
+/// Re-export provider error.
+pub use base_execution_state_types::{ProviderError, ProviderResult};
 pub use static_file::StaticFileSegment;
 
 /// Converts a [`RangeBounds`](std::ops::RangeBounds) into a concrete [`Range`](std::ops::Range)

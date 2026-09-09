@@ -11,6 +11,10 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber, U256};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
+use base_execution_state_api::{
+    BlockHashReader, DatabaseProviderFactory, HeaderProvider, StageCheckpointReader,
+    StorageSettings,
+};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StageId;
 use base_execution_txpool::TransactionPool;
@@ -23,10 +27,6 @@ pub use reth_engine_primitives::{
 };
 use reth_network_p2p::headers::client::HeadersClient;
 use reth_primitives_traits::SealedHeader;
-use reth_storage_api::{
-    BlockHashReader, DatabaseProviderFactory, HeaderProvider, StageCheckpointReader,
-    StorageSettings,
-};
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::*;
 

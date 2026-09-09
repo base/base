@@ -12,6 +12,7 @@ use base_common_runtime_tasks::{
 };
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_api::BlockReaderIdExt;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };
@@ -21,7 +22,6 @@ use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind,
 };
-use reth_storage_api::BlockReaderIdExt;
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
 use crate::{BaseRpcContext, BaseRpcConverter, BaseTimeCache, SequencerClient, SignersForRpc};

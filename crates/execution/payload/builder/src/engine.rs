@@ -12,11 +12,11 @@ use base_execution_evm_runtime::BaseTime;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError,
 };
+use base_execution_state_api::{ProviderResult, StateProvider, StateProviderBox};
 use base_execution_state_types::HashedPostState;
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_engine_primitives::InsertBlockErrorKind;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
-use reth_storage_api::{ProviderResult, StateProvider, StateProviderBox};
 
 use crate::BaseExecutionPayloadValidator;
 
@@ -275,10 +275,7 @@ mod tests {
     use base_execution_evm_blocks::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;
-    use reth_provider::{
-        noop::NoopProvider,
-        test_utils::{ExtendedAccount, MockEthProvider},
-    };
+    use reth_provider::{NoopProvider, test_utils::ExtendedAccount, test_utils::MockEthProvider};
 
     use super::*;
 
