@@ -297,7 +297,7 @@ alloy-eip7928 = { path = "vendor/alloy-eip7928", default-features = false }
 alloy-provider = { path = "vendor/alloy-provider", default-features = false }
 alloy-contract = { path = "vendor/alloy-contract", default-features = false }
 alloy-json-rpc = { path = "vendor/alloy-json-rpc", default-features = false }
-alloy-json-abi = { path = "vendor/alloy-json-abi", default-features = false }
+alloy-json-abi = { version = "=1.6.1", default-features = false }
 alloy-transport = { path = "vendor/alloy-transport", default-features = false }
 alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
 alloy-hardforks = { path = "vendor/alloy-hardforks", default-features = false }
