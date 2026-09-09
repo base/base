@@ -1,5 +1,5 @@
 [package]
-name = "base-optimism-rpc"
+name = "base-common-client-rollup"
 description = "Typed Optimism rollup JSON-RPC provider extensions and response types."
 version.workspace = true
 edition.workspace = true

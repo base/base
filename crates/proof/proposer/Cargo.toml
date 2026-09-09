@@ -21,7 +21,7 @@ async-trait = { workspace = true }
 base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
-base-optimism-rpc = { workspace = true }
+base-common-client-rollup = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }
 metrics = { workspace = true, optional = true }

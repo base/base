@@ -2614,6 +2614,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-client-rollup"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-transport",
+ "base-common-client-ethereum",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-common-codec-macros"
 version = "0.0.0"
 dependencies = [
@@ -4158,18 +4170,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-optimism-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-transport",
- "base-common-client-ethereum",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "base-proof"
 version = "0.0.0"
 dependencies = [
@@ -4308,13 +4308,13 @@ dependencies = [
  "async-trait",
  "base-common-chain-config",
  "base-common-client-ethereum",
+ "base-common-client-rollup",
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-providers",
  "base-execution-evm-runtime",
- "base-optimism-rpc",
  "base-proof",
  "base-proof-client",
  "base-proof-mpt",
@@ -4398,9 +4398,9 @@ dependencies = [
  "backon",
  "base-common-chain-config",
  "base-common-client-ethereum",
+ "base-common-client-rollup",
  "base-common-runtime-tasks",
  "base-common-types-rpc",
- "base-optimism-rpc",
  "metrics",
  "moka",
  "serde",
@@ -4589,13 +4589,13 @@ dependencies = [
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-client-ethereum",
+ "base-common-client-rollup",
  "base-common-l1-transactions",
  "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-optimism-rpc",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
@@ -4961,6 +4961,7 @@ dependencies = [
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-client-ethereum",
+ "base-common-client-rollup",
  "base-common-l1-transactions",
  "base-common-runtime-tasks",
  "base-common-types-chain",
@@ -4981,7 +4982,6 @@ dependencies = [
  "base-load-tests",
  "base-node-core",
  "base-node-runner",
- "base-optimism-rpc",
  "base-protocol",
  "base-prover-service",
  "base-prover-service-db",

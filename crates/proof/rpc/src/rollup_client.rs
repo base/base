@@ -9,7 +9,7 @@ use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use base_common_chain_config::RollupConfig;
-use base_optimism_rpc::{OptimismRollupProviderExt, OutputAtBlock, SyncStatus};
+use base_common_client_rollup::{OptimismRollupProviderExt, OutputAtBlock, SyncStatus};
 use base_common_runtime_tasks::RetryConfig;
 use url::Url;
 

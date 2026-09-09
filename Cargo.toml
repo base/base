@@ -109,7 +109,7 @@ members = [
   "crates/utilities/cli",
   "crates/common/observability/health",
   "crates/common/observability/metrics",
-  "crates/utilities/optimism-rpc",
+  "crates/common/client/rollup",
   "crates/utilities/reth-cli",
   "crates/common/runtime/tasks",
   "crates/testing/support",
@@ -408,7 +408,7 @@ base-common-runtime-tasks = { path = "crates/common/runtime/tasks", default-feat
 base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
 base-testing-support = { path = "crates/testing/support", default-features = false }
 base-common-l1-transactions = { path = "crates/common/l1/transactions", default-features = false }
-base-optimism-rpc = { path = "crates/utilities/optimism-rpc", default-features = false }
+base-common-client-rollup = { path = "crates/common/client/rollup", default-features = false }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
 base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
 

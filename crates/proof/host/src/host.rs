@@ -5,7 +5,7 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Network, RootProvider};
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_execution_evm_runtime::BaseEvmFactory;
-use base_optimism_rpc::OptimismRollupProviderExt;
+use base_common_client_rollup::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_preimage::{

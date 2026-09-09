@@ -16,7 +16,7 @@ Provides async client traits and concrete Alloy-backed implementations for:
 Also provides a `MeteredCache` with hit/miss tracking, `RetryConfig` for exponential
 backoff, tag-aware latest/finalized block access, a shared `BaseBlock` alias, and an
 `RpcError` type for error handling. Rollup response types such as `L1BlockRef`,
-`L2BlockRef`, and `SyncStatus` are provided by `base-optimism-rpc`.
+`L2BlockRef`, and `SyncStatus` are provided by `base-common-client-rollup`.
 
 These abstractions are used by both [`base-proposer`](../proposer/) and the challenger.
 
