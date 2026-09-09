@@ -11,7 +11,7 @@ use base_consensus_node::{
     EngineClientResult, NetworkActor, NetworkBuilder, NetworkEngineClient, NodeActor,
 };
 use base_consensus_peers::BootNode;
-use base_consensus_sources::BlockSigner;
+use base_consensus_source_providers::BlockSigner;
 use discv5::{ConfigBuilder, Enr, ListenConfig};
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
 use rand::RngCore;

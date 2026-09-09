@@ -6,7 +6,7 @@ use base_consensus_gossip::{
     ConnectionGater, GATER_PRUNE_INTERVAL, GossipDriver, PEER_SCORE_INSPECT_FREQUENCY,
     PENDING_DIAL_PRUNE_INTERVAL,
 };
-use base_consensus_sources::{BlockSigner, BlockSignerStartError};
+use base_consensus_source_providers::{BlockSigner, BlockSignerStartError};
 use discv5::multiaddr::Protocol;
 use futures::future::OptionFuture;
 use libp2p::{Multiaddr, TransportError};

@@ -9,7 +9,7 @@ use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
     BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, Metrics, P2pRpcRequest,
 };
-use base_consensus_sources::BlockSignerHandler;
+use base_consensus_source_providers::BlockSignerHandler;
 use discv5::Enr;
 use tokio::{
     select,

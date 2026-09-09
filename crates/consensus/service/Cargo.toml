@@ -32,18 +32,17 @@ base-consensus-derive = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
-base-consensus-sources = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
+base-consensus-source-providers = {workspace = true}
 bytes = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
-base-consensus-source-providers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }

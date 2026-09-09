@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::{Signer, k256::ecdsa};
 use base_common_client_ethereum::PrivateKeySigner;
 use base_consensus_peers::SecretKeyLoader;
-use base_consensus_sources::{BlockSigner, ClientCert, RemoteSigner};
+use base_consensus_source_providers::{BlockSigner, ClientCert, RemoteSigner};
 use clap::Parser;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;

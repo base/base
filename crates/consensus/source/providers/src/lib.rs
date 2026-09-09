@@ -38,3 +38,9 @@ pub use pipeline::OnlinePipeline;
 
 mod beacon_blobs;
 pub use beacon_blobs::GetBlobsResponse;
+
+mod signer;
+pub use signer::{
+    BlockSigner, BlockSignerError, BlockSignerHandler, BlockSignerStartError, CertificateError,
+    ClientCert, RemoteSigner, RemoteSignerError, RemoteSignerHandler, RemoteSignerStartError,
+};

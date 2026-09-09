@@ -1,33 +1,3 @@
-# `base-consensus-source-providers`
+# Consensus sources
 
-<a href="https://crates.io/crates/base-consensus-source-providers"><img src="https://img.shields.io/crates/v/base-consensus-source-providers.svg?label=base-consensus-source-providers&labelColor=2a2f35" alt="base-consensus-source-providers"></a>
-
-Alloy-backed providers for the Base consensus node.
-
-## Overview
-
-Implements data-fetching providers backed by alloy RPC clients for use during L2 derivation.
-Includes `AlloyChainProvider` for L1 block and receipt fetching, `AlloyL2ChainProvider` for L2
-block and system config access, `OnlineBeaconClient` for Ethereum beacon API queries, and
-`OnlineBlobProvider` for fetching EIP-4844 blob sidecars. Also exports `OnlinePipeline` for
-constructing a fully wired derivation pipeline against live nodes.
-
-## Usage
-
-Add the dependency to your `Cargo.toml`:
-
-```toml
-[dependencies]
-base-consensus-source-providers = { workspace = true }
-```
-
-```rust,ignore
-use base_consensus_source_providers::{AlloyChainProvider, AlloyL2ChainProvider};
-
-let l1_provider = AlloyChainProvider::new(l1_rpc_url);
-let l2_provider = AlloyL2ChainProvider::new(l2_rpc_url, rollup_config);
-```
-
-## License
-
-Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+L1 execution and Beacon clients, local and remote L2 providers, confirmation-depth filtering, derivation pipeline construction, and block-signing sources.

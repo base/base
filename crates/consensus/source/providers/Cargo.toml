@@ -16,34 +16,40 @@ workspace = true
 c-kzg = { workspace = true }
 tower = { workspace = true }
 reth-db = { workspace = true }
-tracing = { workspace = true }
 async-trait = { workspace = true }
+derive_more = { workspace = true }
+alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
+alloy-transport = {workspace = true}
 base-protocol = { workspace = true }
 reth-provider = { workspace = true }
 reth-rpc-layer = { workspace = true }
-alloy-transport = { workspace = true }
 base-consensus-derive = { workspace = true }
+serde = {workspace = true, features = ["std"]}
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 metrics = { workspace = true, optional = true }
-serde = { workspace = true, features = ["std"] }
+tracing = {workspace = true, features = ["std"]}
+url = {workspace = true, features = ["default"]}
 base-execution-state-types = { workspace = true }
 lru = { workspace = true, features = ["default"] }
-url = { workspace = true, features = ["default"] }
-thiserror = { workspace = true, features = ["std"] }
+thiserror = {workspace = true, features = ["std"]}
+notify = { workspace = true, features = ["default"] }
+rustls = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
+alloy-primitives = {workspace = true, features = ["map"]}
 base-common-types-rpc = { workspace = true, features = []}
-alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
-tokio = { workspace = true, features = ["default", "time"] }
+alloy-rpc-client = {workspace = true, features = ["default"]}
 http-body-util = { workspace = true, features = ["default"] }
-alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
+tokio = {workspace = true, features = ["default", "full", "time"]}
+base-common-types-payload = { workspace = true, features = ["std", "serde"] }
 base-common-client-ethereum = {workspace = true, features = ["default", "reqwest", "ws"]}
-alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
+alloy-transport-http = {workspace = true, features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"]}
 
 [dev-dependencies]
 reth-db-common = { workspace = true }
@@ -51,7 +57,7 @@ base-common-types-rpc = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 httpmock = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-tokio = { workspace = true, features = ["default", "macros", "test-util"] }
+tokio = {workspace = true, features = ["default", "macros", "test-util"]}
 
 [features]
 default = []
