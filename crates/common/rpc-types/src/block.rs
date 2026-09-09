@@ -67,7 +67,7 @@ impl<T, H> Block<T, H> {
     /// ```
     /// use alloy_eips::eip4895::Withdrawals;
     /// use alloy_network_primitives::BlockTransactions;
-    /// use crate::{Block, Header, Transaction};
+    /// use base_common_rpc_types::{Block, Header, Transaction};
     /// let block = Block::new(
     ///     Header::new(base_common_consensus::Header::default()),
     ///     BlockTransactions::<Transaction>::Full(vec![]),

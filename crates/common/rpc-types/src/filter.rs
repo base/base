@@ -441,7 +441,7 @@ impl Filter {
     /// Match only a specific block
     ///
     /// ```rust
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(69u64);
     /// # }
@@ -451,8 +451,8 @@ impl Filter {
     /// Match the latest block only
     ///
     /// ```rust
-    /// # use crate::BlockNumberOrTag;
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::BlockNumberOrTag;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(BlockNumberOrTag::Latest);
     /// # }
@@ -462,7 +462,7 @@ impl Filter {
     ///
     /// ```rust
     /// # use alloy_primitives::B256;
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(B256::ZERO);
     /// # }
@@ -472,7 +472,7 @@ impl Filter {
     /// Match a range of blocks
     ///
     /// ```rust
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(0u64..=100u64);
     /// # }
@@ -481,7 +481,7 @@ impl Filter {
     /// Match all blocks in range `(1337..BlockNumberOrTag::Latest)`
     ///
     /// ```rust
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(1337u64..);
     /// # }
@@ -490,7 +490,7 @@ impl Filter {
     /// Match all blocks in range `(BlockNumberOrTag::Earliest..1337)`
     ///
     /// ```rust
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(..=1337u64);
     /// # }
@@ -556,7 +556,7 @@ impl Filter {
     ///
     /// ```rust
     /// # use alloy_primitives::Address;
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let filter = Filter::new()
     ///     .address("0xAc4b3DacB91461209Ae9d41EC517c2B9Cb1B7DAF".parse::<Address>().unwrap());
@@ -568,7 +568,7 @@ impl Filter {
     ///
     /// ```rust
     /// # use alloy_primitives::Address;
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # fn main() {
     /// let addresses = vec![
     ///     "0xAc4b3DacB91461209Ae9d41EC517c2B9Cb1B7DAF".parse::<Address>().unwrap(),
@@ -919,7 +919,7 @@ impl Filter {
     /// # Example
     ///
     /// ```no_run
-    /// # use crate::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # use base_common_consensus::Receipt;
     /// # use alloy_primitives::{Address, Log, B256};
     /// # fn example(receipts: Vec<Vec<Receipt>>) {

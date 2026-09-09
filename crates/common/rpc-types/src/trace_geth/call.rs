@@ -74,7 +74,7 @@ impl CallFrame {
     ///
     /// Iterate over all frames:
     /// ```
-    /// # use crate::CallFrame;
+    /// # use base_common_rpc_types::CallFrame;
     /// # let frame = CallFrame::default();
     /// for call in frame.iter() {
     ///     println!("{} -> {:?}", call.from, call.to);
@@ -83,7 +83,7 @@ impl CallFrame {
     ///
     /// Skip child calls selectively:
     /// ```
-    /// # use crate::CallFrame;
+    /// # use base_common_rpc_types::CallFrame;
     /// # let frame = CallFrame::default();
     /// let mut iter = frame.iter();
     /// while let Some(call) = iter.next() {

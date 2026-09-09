@@ -227,7 +227,7 @@ impl TransactionRequest {
     /// still expect of the deprecated `data` field
     ///
     /// ```
-    /// use crate::{TransactionInput, TransactionRequest};
+    /// use base_common_rpc_types::{TransactionInput, TransactionRequest};
     /// let req = TransactionRequest::default().input(TransactionInput::both(b"00".into()));
     /// ```
     pub fn input(mut self, input: TransactionInput) -> Self {
@@ -720,7 +720,7 @@ impl TransactionRequest {
     /// ```rust
     /// use base_common_consensus::TxType;
     /// use alloy_eips::eip2930::AccessList;
-    /// use crate::TransactionRequest;
+    /// use base_common_rpc_types::TransactionRequest;
     ///
     /// // EIP-7702 (highest priority)
     /// let mut request = TransactionRequest::default();
@@ -795,7 +795,7 @@ impl TransactionRequest {
     /// ```rust
     /// use base_common_consensus::TxType;
     /// use alloy_eips::eip2930::AccessList;
-    /// use crate::TransactionRequest;
+    /// use base_common_rpc_types::TransactionRequest;
     ///
     /// // EIP-7702 (highest priority)
     /// let mut request = TransactionRequest::default();
@@ -833,7 +833,7 @@ impl TransactionRequest {
     /// ```rust
     /// use base_common_consensus::TxType;
     /// use alloy_eips::eip2930::AccessList;
-    /// use crate::TransactionRequest;
+    /// use base_common_rpc_types::TransactionRequest;
     ///
     /// // Empty request - preferred_type prefers EIP-1559, minimal_tx_type falls back to Legacy
     /// let request = TransactionRequest::default();
@@ -1347,7 +1347,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [serde_with::serde_as] macro in the following way:
     /// ```rust
-    /// use crate::{serde_bincode_compat, transaction, TransactionRequest};
+    /// use base_common_rpc_types::{serde_bincode_compat, transaction, TransactionRequest};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
