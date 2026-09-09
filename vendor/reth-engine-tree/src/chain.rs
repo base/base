@@ -8,7 +8,7 @@ use futures::Stream;
 use reth_stages_api::{ControlFlow, PipelineTarget};
 use tracing::*;
 
-use crate::backfill::{BackfillAction, BackfillEvent, BackfillSync};
+use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};
 
 /// The type that drives the chain forward.
 ///
@@ -32,24 +32,22 @@ use crate::backfill::{BackfillAction, BackfillEvent, BackfillSync};
 /// [`ChainHandler::on_event`].
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct ChainOrchestrator<T, P>
+pub struct ChainOrchestrator<T>
 where
     T: ChainHandler,
-    P: BackfillSync,
 {
     /// The handler for advancing the chain.
     handler: T,
     /// Controls backfill sync.
-    backfill_sync: P,
+    backfill_sync: PipelineSync,
 }
 
-impl<T, P> ChainOrchestrator<T, P>
+impl<T> ChainOrchestrator<T>
 where
     T: ChainHandler + Unpin,
-    P: BackfillSync + Unpin,
 {
     /// Creates a new [`ChainOrchestrator`] with the given handler and backfill sync.
-    pub const fn new(handler: T, backfill_sync: P) -> Self {
+    pub const fn new(handler: T, backfill_sync: PipelineSync) -> Self {
         Self { handler, backfill_sync }
     }
 
@@ -141,10 +139,9 @@ where
     }
 }
 
-impl<T, P> Stream for ChainOrchestrator<T, P>
+impl<T> Stream for ChainOrchestrator<T>
 where
     T: ChainHandler + Unpin,
-    P: BackfillSync + Unpin,
 {
     type Item = ChainEvent<T::Event>;
 

@@ -6,7 +6,7 @@
 //! * Handling and reacting to incoming consensus events ([`EngineHandler`](engine::EngineHandler))
 //! * Advancing the chain ([`ChainOrchestrator`](chain::ChainOrchestrator))
 //! * Keeping track of the chain structure in-memory ([`TreeState`](tree::state::TreeState))
-//! * Performing backfill sync and handling its progress ([`BackfillSync`](backfill::BackfillSync))
+//! * Performing backfill sync and handling its progress ([`PipelineSync`](backfill::PipelineSync))
 //! * Downloading blocks ([`BlockDownloader`](download::BlockDownloader)), and
 //! * Persisting blocks and performing pruning
 //!   ([`PersistenceService`](persistence::PersistenceService))
@@ -42,7 +42,7 @@
 //! live sync will be used.
 //!
 //! The backfill sync is driven by components which implement the
-//! [`BackfillSync`](backfill::BackfillSync) trait, like [`PipelineSync`](backfill::PipelineSync).
+//! [`PipelineSync`](backfill::PipelineSync) implementation.
 //!
 //! ## Handling consensus messages
 //!

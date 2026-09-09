@@ -46,15 +46,6 @@ impl BackfillSyncState {
     }
 }
 
-/// Backfill sync mode functionality.
-pub trait BackfillSync: Send {
-    /// Performs a backfill action.
-    fn on_action(&mut self, action: BackfillAction);
-
-    /// Polls the pipeline for completion.
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<BackfillEvent>;
-}
-
 /// The backfill actions that can be performed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackfillAction {
@@ -177,14 +168,16 @@ impl PipelineSync {
     }
 }
 
-impl BackfillSync for PipelineSync {
-    fn on_action(&mut self, event: BackfillAction) {
+impl PipelineSync {
+    /// Performs a backfill action.
+    pub fn on_action(&mut self, event: BackfillAction) {
         match event {
             BackfillAction::Start(target) => self.set_pipeline_sync_target(target),
         }
     }
 
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<BackfillEvent> {
+    /// Polls the pipeline for completion.
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<BackfillEvent> {
         // try to spawn a pipeline if a target is set
         if let Some(event) = self.try_spawn_pipeline() {
             return Poll::Ready(event);

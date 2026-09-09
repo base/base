@@ -66,7 +66,6 @@ pub fn build_engine_orchestrator<Client, S, V>(
     runtime: Runtime,
 ) -> ChainOrchestrator<
     EngineHandler<EngineApiRequestHandler<EngineApiRequest>, S, BasicBlockDownloader<Client>>,
-    PipelineSync,
 >
 where
     Client: BlockClient<Block = BaseBlock> + 'static,
