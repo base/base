@@ -1,6 +1,6 @@
 //! Storage layout and constants for the EIP-8130 2D nonce manager precompile.
 
-use alloy_primitives::{Address, B256, U256, address};
+use alloy_primitives::{Address, B256, U256};
 use base_common_eip8130::NonceManagerSlots;
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
@@ -48,8 +48,9 @@ impl NonceManagerStorage<'_> {
     ///
     /// Pinned to `NONCE_MANAGER_ADDRESS` from the EIP-8130 constant table
     /// (`0x8130…aa01`, in the `0x8130…` / EIP-number namespace for EIP-8130
-    /// system precompiles).
-    pub const ADDRESS: Address = address!("813000000000000000000000000000000000aa01");
+    /// system precompiles). Sourced from the engine-neutral [`NonceManagerSlots`]
+    /// so the precompile and the revm/EVM2 engines share one address.
+    pub const ADDRESS: Address = NonceManagerSlots::ADDRESS;
 
     /// Base storage slot of the `nonces` mapping under this contract's
     /// ERC-7201 namespace.
