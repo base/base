@@ -21,6 +21,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-genesis.workspace = true
 base-runtime.workspace = true
 base-test-utils = { workspace = true, optional = true }
 base-load-tests.workspace = true
@@ -104,9 +105,7 @@ k256.workspace = true
 libp2p.workspace = true
 
 # misc
-hex.workspace = true
 url.workspace = true
-rand.workspace = true
 eyre.workspace = true
 nanoid.workspace = true
 reqwest.workspace = true
@@ -122,15 +121,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
-
-[features]
-default = [ "upgrade-signal" ]
-# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
-# contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
-# time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
-# dependency. External consumers that only need the core L1+L2 stack disable this feature
-# (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
-upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
 
 [dev-dependencies]
 # consensus
@@ -159,6 +149,8 @@ reth-primitives-traits.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 # misc
+hex.workspace = true
+rand.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 indicatif.workspace = true
@@ -167,3 +159,12 @@ tokio-tungstenite.workspace = true
 [[bench]]
 name = "b20_zk_proving"
 harness = false
+
+[features]
+default = [ "upgrade-signal" ]
+# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
+# contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
+# time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
+# dependency. External consumers that only need the core L1+L2 stack disable this feature
+# (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
+upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]

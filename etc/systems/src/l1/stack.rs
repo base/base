@@ -22,21 +22,16 @@ pub struct L1StackConfig {
     pub container_config: Option<L1ContainerConfig>,
 }
 
-/// L1 execution layer started before consensus.
-///
-/// System tests start Reth first so live L2 contract deployment can overlap
-/// Lighthouse startup. Deployment talks to the EL RPC; transactions mine once
-/// the validator is producing blocks.
+/// A complete L1 stack comprising Reth and Lighthouse.
 #[derive(Debug)]
-pub struct L1Execution {
+pub struct L1Stack {
     reth: RethContainer,
-    jwt_path: PathBuf,
-    testnet_dir: PathBuf,
-    container_config: Option<L1ContainerConfig>,
+    beacon: LighthouseBeaconContainer,
+    validator: LighthouseValidatorContainer,
 }
 
-impl L1Execution {
-    /// Starts Reth and writes the JWT secret if needed.
+impl L1Stack {
+    /// Starts execution and consensus from the already-generated chain configuration.
     pub async fn start(config: L1StackConfig) -> Result<Self> {
         let jwt_path = config.testnet_dir.parent().unwrap_or(&config.testnet_dir).join("jwt.hex");
 
@@ -45,65 +40,31 @@ impl L1Execution {
                 .wrap_err("Failed to write JWT secret")?;
         }
 
-        let reth_config = config.container_config.clone();
-        let reth =
-            RethContainer::start(&config.el_genesis_json, &config.jwt_secret_hex, reth_config)
-                .await
-                .wrap_err("Failed to start Reth container")?;
-
-        Ok(Self {
-            reth,
-            jwt_path,
-            testnet_dir: config.testnet_dir,
-            container_config: config.container_config,
-        })
-    }
-
-    /// Returns a reference to the Reth container.
-    pub const fn reth(&self) -> &RethContainer {
-        &self.reth
-    }
-
-    /// Starts Lighthouse beacon and validator on top of the running execution layer.
-    pub async fn start_consensus(self) -> Result<L1Stack> {
-        let beacon_config = self.container_config.clone();
+        let reth = RethContainer::start(
+            &config.el_genesis_json,
+            &config.jwt_secret_hex,
+            config.container_config.clone(),
+        )
+        .await
+        .wrap_err("Failed to start Reth container")?;
         let beacon = LighthouseBeaconContainer::start(
-            &self.testnet_dir,
-            &self.jwt_path,
-            self.reth.internal_engine_url(),
-            beacon_config,
+            &config.testnet_dir,
+            &jwt_path,
+            reth.internal_engine_url(),
+            config.container_config.clone(),
         )
         .await
         .wrap_err("Failed to start Lighthouse beacon container")?;
 
-        let validator_data_dir = self.testnet_dir.join("validator_data");
         let validator = LighthouseValidatorContainer::start(
-            &self.testnet_dir,
-            &validator_data_dir,
+            &config.testnet_dir,
             beacon.internal_beacon_url(),
-            self.container_config,
+            config.container_config,
         )
         .await
         .wrap_err("Failed to start Lighthouse validator container")?;
 
-        Ok(L1Stack { reth: self.reth, beacon, validator, jwt_path: self.jwt_path })
-    }
-}
-
-#[derive(Debug)]
-/// A complete L1 stack comprising Reth and Lighthouse.
-pub struct L1Stack {
-    reth: RethContainer,
-    beacon: LighthouseBeaconContainer,
-    validator: LighthouseValidatorContainer,
-    #[allow(dead_code)]
-    jwt_path: PathBuf,
-}
-
-impl L1Stack {
-    /// Starts a new L1 stack with the given configuration.
-    pub async fn start(config: L1StackConfig) -> Result<Self> {
-        L1Execution::start(config).await?.start_consensus().await
+        Ok(Self { reth, beacon, validator })
     }
 
     /// Returns a reference to the Reth container.

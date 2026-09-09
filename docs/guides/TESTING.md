@@ -106,6 +106,13 @@ just devnet tests
 which runs `cargo nextest run -p base-system-tests` after building test contracts. See
 [`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself.
 
+Fresh-chain setup also provisions the pinned Base genesis contract export on demand,
+including when running Cargo/nextest directly. `just contracts` prepares it explicitly.
+Its content-checked cache is shared across parallel test processes; Docker/buildx is
+invoked only on a cache miss. Set `BASE_GENESIS_ARTIFACTS` to use an already-exported
+directory without automatic provisioning, or run `just contracts-rebuild` to refresh
+the default cache. The preparation helper requires Python 3.
+
 System tests require Docker and are **not** run on every pull request (see
 [CI Pipeline](#ci-pipeline) below) because of their cost. They run as the required
 `ci / System Tests` check on the merge queue, so a commit cannot reach `main` unless they pass.

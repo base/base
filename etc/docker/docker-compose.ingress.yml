@@ -12,6 +12,14 @@ x-ingress-healthcheck: &ingress-healthcheck
   start_interval: 250ms
 
 services:
+  base-client:
+    volumes:
+      - ./resource-metering.json:/config/resource-metering.json:ro
+    environment:
+      # Ingress simulation and metering-information fan-out require both RPC extensions.
+      - ENABLE_METERING=true
+      - PAYLOAD_RESOURCE_METERING_SCHEDULE=/config/resource-metering.json
+
   minio:
     image: minio/minio:latest
     container_name: minio

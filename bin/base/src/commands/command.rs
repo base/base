@@ -3,6 +3,7 @@
 use base_batcher_cli::BatcherArgs;
 use base_cli_utils::RuntimeManager;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
+use base_genesis::GenesisCommand;
 use base_node_core::BaseNode;
 use clap::Subcommand;
 use reth_cli_runner::CliRunner;
@@ -19,6 +20,9 @@ use crate::{
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
+    /// Generate an offline, single-chain development network.
+    #[command(name = "genesis", hide = true)]
+    Genesis(Box<GenesisCommand>),
     /// Submit L2 batch data to L1.
     #[command(name = "batcher", hide = true)]
     Batcher(Box<BatcherArgs>),
@@ -55,6 +59,10 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            Self::Genesis(genesis) => {
+                chain_resolver.reject_for_reth_command("base genesis")?;
+                (*genesis).run()
+            }
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
                 RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
@@ -89,6 +97,23 @@ mod tests {
     use clap::Parser;
 
     use crate::{cli::BaseCli, config::ChainResolver};
+
+    #[test]
+    fn genesis_is_hidden_but_directly_accessible() {
+        let help = BaseCli::try_parse_from(["base", "--help"]).unwrap_err().to_string();
+        assert!(!help.contains("genesis"));
+        let help = BaseCli::try_parse_from(["base", "genesis", "--help"]).unwrap_err();
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(help.to_string().contains("--l1-chain-id"));
+        let cli = BaseCli::try_parse_from(["base", "--chain", "sepolia", "genesis"]).unwrap();
+        assert!(
+            cli.command
+                .run(ChainResolver::new(cli.chain), false)
+                .unwrap_err()
+                .to_string()
+                .contains("base genesis")
+        );
+    }
 
     #[test]
     fn rejects_legacy_node_rpc_path() {

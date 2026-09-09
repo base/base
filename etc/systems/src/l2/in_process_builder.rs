@@ -34,7 +34,7 @@ use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
-use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
+use crate::config::BUILDER;
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
@@ -103,6 +103,7 @@ pub struct InProcessBuilder {
     metrics_addr: SocketAddr,
     flashblocks_port: u16,
     p2p_port: u16,
+    p2p_id: String,
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
@@ -253,6 +254,7 @@ impl InProcessBuilder {
             metrics_addr,
             flashblocks_port: flashblocks_ws_addr.port(),
             p2p_port,
+            p2p_id: node_handle.network.peer_id().encode_hex(),
             data_dir: data_path,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
@@ -304,7 +306,7 @@ impl InProcessBuilder {
 
     /// Returns the P2P enode URL with actual bound port.
     pub fn p2p_enode(&self) -> String {
-        format!("enode://{BUILDER_ENODE_ID}@127.0.0.1:{}", self.p2p_port)
+        format!("enode://{}@127.0.0.1:{}", self.p2p_id, self.p2p_port)
     }
 
     /// Returns the execution datadir used by this builder.
@@ -355,7 +357,7 @@ impl InProcessBuilder {
 
     /// Returns the P2P enode URL for Docker containers using testcontainers host port exposure.
     pub fn host_p2p_enode(&self) -> String {
-        format!("enode://{BUILDER_ENODE_ID}@{}:{}", crate::host::host_address(), self.p2p_port)
+        format!("enode://{}@{}:{}", self.p2p_id, crate::host::host_address(), self.p2p_port)
     }
 
     /// Returns the Flashblocks URL for Docker containers using testcontainers host port exposure.

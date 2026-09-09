@@ -11,9 +11,11 @@ use super::common::{
 };
 
 pub(crate) const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
-pub(crate) const BASE_ZENITH_ACTIVATION_BLOCK: u64 = 7;
+pub(crate) const BASE_ZENITH_ACTIVATION_BLOCK: u64 = 10;
 
-/// Starts a system test stack with Zenith active at block 7 and waits for block 8.
+/// Starts a system test stack with Zenith active at block 10 and waits for block 11.
+///
+/// Block 10 is the first whole-second boundary after Cobalt at block 5.
 ///
 /// The returned [`SystemTestStack`] must be kept alive for the duration of the test;
 /// dropping it shuts down the underlying containers.

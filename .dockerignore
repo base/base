@@ -2,6 +2,7 @@ reth-data/
 target/
 assets/
 .devnet/
+.contracts/
 .git/
 .github/
 .idea/

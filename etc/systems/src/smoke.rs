@@ -29,12 +29,12 @@ use url::Url;
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
-    l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
+    l1::{L1ContainerConfig, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
         SnapshotL2Stack, SnapshotL2StackConfig,
     },
-    setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
+    setup::{GenesisSetup, L1GenesisOutput, L2DeploymentOutput},
     system_config::{DevnetConfig, DevnetL1Mode, DevnetL2State},
 };
 
@@ -595,33 +595,21 @@ impl SystemTestStackBuilder {
         let temp_dir = TempDir::new().wrap_err("Failed to create temp directory")?;
         let output_dir = self.output_dir.unwrap_or_else(|| temp_dir.path().to_path_buf());
 
-        let mut setup = SetupContainer::new(&output_dir)
-            .with_chain_id(l1_chain_id)
-            .with_l2_chain_id(l2_chain_id)
-            .with_slot_duration(slot_duration);
-
-        if let Some(block) = self.isthmus_activation_block {
-            setup = setup.with_isthmus_activation_block(block);
-        }
-
-        if let Some(block) = self.base_azul_activation_block {
-            setup = setup.with_base_azul_activation_block(block);
-        }
-
-        if let Some(block) = self.base_beryl_activation_block {
-            setup = setup.with_base_beryl_activation_block(block);
-        }
-
-        if let Some(block) = self.base_cobalt_activation_block {
-            setup = setup.with_base_cobalt_activation_block(block);
-        }
-
-        if let Some(block) = self.base_denim_activation_block {
-            setup = setup.with_base_denim_activation_block(block);
-        }
-
-        if let Some(block) = self.base_zenith_activation_block {
-            setup = setup.with_base_zenith_activation_block(block);
+        let mut setup = GenesisSetup::new(&output_dir);
+        setup.config.l1_chain_id = l1_chain_id;
+        setup.config.l2_chain_id = l2_chain_id;
+        setup.config.slot_duration = slot_duration;
+        for (name, block) in [
+            ("isthmus", self.isthmus_activation_block),
+            ("azul", self.base_azul_activation_block),
+            ("beryl", self.base_beryl_activation_block),
+            ("cobalt", self.base_cobalt_activation_block),
+            ("denim", self.base_denim_activation_block),
+            ("zenith", self.base_zenith_activation_block),
+        ] {
+            if let Some(block) = block {
+                setup.config.upgrades.insert(name.into(), block);
+            }
         }
 
         let (l1_genesis, l2_deployment) =
@@ -686,10 +674,7 @@ impl SystemTestStackBuilder {
         };
 
         // Both chain configurations are complete before L1 starts.
-        let l1_execution =
-            L1Execution::start(l1_config).await.wrap_err("Failed to start L1 execution layer")?;
-        let l1_stack =
-            l1_execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
+        let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1")?;
 
         let jwt_secret = JwtSecret::random();
 

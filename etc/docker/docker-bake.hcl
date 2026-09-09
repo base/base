@@ -15,13 +15,13 @@ variable "ZK_HOST_PROFILE" {
 }
 
 # The devnet always builds both batchers: the canonical Go op-batcher and the
-# Rust base batcher (part of the `base` image), which runs in shadow mode.
+# Rust base batcher (part of the `base-devnet` image), which runs in shadow mode.
 variable "DEVNET_TARGETS" {
-  default = ["base", "op-batcher"]
+  default = ["base-devnet", "op-batcher"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "ingress-rpc", "audit-archiver", "op-batcher"]
+  default = ["base-devnet", "ingress-rpc", "audit-archiver", "op-batcher"]
 }
 
 group "default" {
@@ -83,6 +83,12 @@ target "base" {
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
+}
+
+target "base-devnet" {
+  inherits = ["base"]
+  target = "base-devnet"
+  tags = ["base-devnet:local"]
 }
 
 target "execution" {

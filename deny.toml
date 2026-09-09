@@ -67,6 +67,18 @@ multiple-versions = "deny"
 # Skip crates with multiple versions from upstream dependencies that we cannot control
 # These are primarily from reth, alloy, and upstream dependencies
 skip = [
+    # Lighthouse v8.2.2 dependencies from base-genesis. Keep these version-specific
+    # and revisit when updating the Lighthouse pin; none can be unified locally.
+    # types -> rpds 0.11 requires archery 0.4, while workspace/reth imbl 7 requires 1.x.
+    "archery@=0.4.0",
+    # state_processing uses Lighthouse's own Prometheus wrapper named metrics,
+    # not an older release of the unrelated crates.io metrics 0.24 facade.
+    "metrics@=0.2.0",
+    # Lighthouse's KZG stack -> blstrs 0.7 enables group 0.13/tests, which requires
+    # rand_xorshift 0.3 (rand_core 0.6). Lighthouse types and workspace proptest
+    # require rand_xorshift 0.4 (rand_core 0.9); disabling defaults cannot remove it.
+    "rand_xorshift@=0.3.0",
+
     # Windows platform crates - different versions used by various upstream deps
     "windows",
     "windows-core",

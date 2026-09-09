@@ -32,14 +32,11 @@ pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
     ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, ANVIL_ACCOUNT_8, ANVIL_ACCOUNT_9, Account,
     BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER, TEST_MNEMONIC, anvil_addresses,
-    l1_beacon_config_yaml, l1_el_genesis, l1_el_genesis_json, l2_intent_toml,
+    l1_beacon_config_yaml, l1_el_genesis, l1_el_genesis_json,
 };
 
 mod containers;
 pub use containers::{L1_BEACON_HTTP_PORT, L1_BEACON_NAME, L1_RETH_NAME, L1_VALIDATOR_NAME};
-
-mod deployer;
-pub use deployer::{DeployerContainer, DeploymentArtifacts, RoleAddresses};
 
 mod docker;
 pub use docker::{
@@ -54,12 +51,12 @@ mod host;
 pub use host::{host_address, with_host_port_if_needed};
 
 mod images;
-pub use images::{OP_DEPLOYER_IMAGE, RETH_IMAGE};
+pub use images::RETH_IMAGE;
 
 mod l1;
 pub use l1::{
-    L1ContainerConfig, L1Execution, L1ReorgDriver, L1ReplacementBranch, L1RpcProxy, L1Stack,
-    L1StackConfig, LighthouseBeaconContainer, LighthouseValidatorContainer, RethContainer,
+    L1ContainerConfig, L1ReorgDriver, L1ReplacementBranch, L1RpcProxy, L1Stack, L1StackConfig,
+    LighthouseBeaconContainer, LighthouseValidatorContainer, RethContainer,
 };
 
 mod l2;
@@ -86,11 +83,7 @@ mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 
 mod setup;
-pub use setup::{
-    BUILDER_ENODE_ID, CL_BOOTNODE_ENR_PATH, CL_BOOTNODE_P2P_KEY, EL_BOOTNODE_ENODE,
-    EL_BOOTNODE_ENODE_ID, EL_BOOTNODE_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer,
-    SetupImage,
-};
+pub use setup::{GenesisSetup, L1GenesisOutput, L2DeploymentOutput};
 
 mod smoke;
 #[cfg(feature = "upgrade-signal")]

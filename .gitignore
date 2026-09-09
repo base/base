@@ -19,5 +19,6 @@ crates/proof/zk/programs/succinct/elf/aggregation-elf
 crates/proof/zk/programs/succinct/elf/*.bin
 /etc/scripts/local/__pycache__/
 /.tmp/
+/.contracts/
 
 crates/infra/load-tests/examples/*.yaml

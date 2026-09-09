@@ -1,11 +1,11 @@
 x-sequencer-base: &sequencer-base
-  image: base:local
+  image: base-devnet:local
   build:
     context: ../..
     dockerfile: etc/docker/Dockerfile.rust-services
     args:
       PROFILE: "${CARGO_PROFILE:-dev}"
-    target: base
+    target: base-devnet
   entrypoint: /app/base-entrypoint.sh
   depends_on:
     setup-devnet:
@@ -396,7 +396,7 @@ services:
       <<: *conductor-healthcheck
 
   setup-conductor:
-    image: devnet-setup:local-v2
+    image: base-devnet:local
     container_name: setup-conductor
     depends_on:
       op-conductor-0:
@@ -411,4 +411,7 @@ services:
       - CONDUCTOR2_URL=http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
       - CONDUCTOR1_RAFT_ADDR=op-conductor-1:${CONDUCTOR1_RAFT_PORT}
       - CONDUCTOR2_RAFT_ADDR=op-conductor-2:${CONDUCTOR2_RAFT_PORT}
-    entrypoint: ["/usr/local/bin/setup-conductor.sh"]
+    volumes:
+      - ../scripts/devnet/setup-conductor.sh:/setup-conductor.sh:ro
+    entrypoint: ["/bin/bash", "/setup-conductor.sh"]
+    command: []

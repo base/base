@@ -11,6 +11,7 @@ use testcontainers::{
 
 use super::config::L1ContainerConfig;
 use crate::{
+    config::DEPLOYER,
     containers::{L1_BEACON_HTTP_PORT, L1_BEACON_NAME, L1_VALIDATOR_NAME},
     network::{ensure_network_exists, ensure_network_exists_with_name, network_name},
     unique_name,
@@ -114,7 +115,6 @@ impl LighthouseValidatorContainer {
     /// Starts a Lighthouse validator client.
     pub async fn start(
         testnet_dir: impl AsRef<Path>,
-        validator_keystores: impl AsRef<Path>,
         beacon_endpoint: impl AsRef<str>,
         config: Option<L1ContainerConfig>,
     ) -> Result<Self> {
@@ -127,7 +127,8 @@ impl LighthouseValidatorContainer {
         }
 
         let command = validator_command(beacon_endpoint.as_ref());
-        let image = lighthouse_image();
+        let image =
+            lighthouse_image().with_wait_for(WaitFor::message_on_stdout("Initialized validators"));
 
         let name = if config.use_stable_names {
             L1_VALIDATOR_NAME.to_string()
@@ -142,10 +143,6 @@ impl LighthouseValidatorContainer {
             .with_mount(Mount::bind_mount(
                 path_for_mount(testnet_dir.as_ref()),
                 LIGHTHOUSE_TESTNET_DIR,
-            ))
-            .with_mount(Mount::bind_mount(
-                path_for_mount(validator_keystores.as_ref()),
-                LIGHTHOUSE_VALIDATOR_DATA_DIR,
             ))
             .with_cmd(command)
             .start()
@@ -191,6 +188,7 @@ fn validator_command(beacon_endpoint: &str) -> Vec<String> {
         format!("--datadir={LIGHTHOUSE_VALIDATOR_DATA_DIR}"),
         format!("--beacon-nodes={beacon_endpoint}"),
         "--init-slashing-protection".to_string(),
+        format!("--suggested-fee-recipient={}", DEPLOYER.address),
     ]
 }
 

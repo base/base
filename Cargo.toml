@@ -630,5 +630,16 @@ tikv-jemallocator = "0.6"
 notify = "8.2"
 cargo_metadata = "0.18.1"
 
+# Offline devnet genesis. Keep features on consumers, not workspace dependencies.
+base-genesis = { path = "crates/infra/genesis" }
+coins-bip39 = { version = "0.12.0", default-features = false }
+alloy-dyn-abi = { version = "1.6.1", default-features = false }
+alloy-json-abi = { version = "1.6.1", default-features = false }
+eth2_keystore = { git = "https://github.com/sigp/lighthouse", rev = "e423a66763bb1bd780492d635123f208d80c3538", default-features = false }
+eth2_key_derivation = { git = "https://github.com/sigp/lighthouse", rev = "e423a66763bb1bd780492d635123f208d80c3538", default-features = false }
+lighthouse-bls = { package = "bls", git = "https://github.com/sigp/lighthouse", rev = "e423a66763bb1bd780492d635123f208d80c3538", default-features = false }
+lighthouse-types = { package = "types", git = "https://github.com/sigp/lighthouse", rev = "e423a66763bb1bd780492d635123f208d80c3538", default-features = false }
+lighthouse-state-processing = { package = "state_processing", git = "https://github.com/sigp/lighthouse", rev = "e423a66763bb1bd780492d635123f208d80c3538", default-features = false }
+
 # rate limiting
 governor = "0.7"

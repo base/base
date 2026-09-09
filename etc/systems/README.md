@@ -4,6 +4,29 @@ System-test and development-network infrastructure for Base nodes. In addition t
 L1/L2 stack used by system tests, this crate can continue a Base mainnet execution snapshot with
 real builder and client execution and consensus components in one managed launcher process.
 
+## Fresh-chain system tests
+
+Run `just devnet tests`, or use `RUST_MIN_STACK=33554432 cargo nextest run -p
+base-system-tests` to select tests directly. Fresh-chain setup uses the in-process
+`base-genesis` generator and automatically prepares `.contracts/artifacts` when
+needed. Python 3 and Docker/buildx are required to prepare a missing or stale export;
+concurrent test processes share a file lock and reuse a content-checked cache.
+Docker is still required for the L1 test containers.
+
+`just contracts` prepares the same export explicitly; `just contracts-rebuild`
+forces a refresh. Set `BASE_GENESIS_ARTIFACTS=/path/to/export` to use an existing
+export without any automatic build or overwrite. A missing explicit path produces
+an actionable error. Artifact preparation belongs to this test harness; the
+generator library itself remains offline and subprocess-free.
+
+`GenesisSetup` holds the generator's `GenesisConfig` directly. Both L1 contracts
+and L2 state are created before L1 starts; no live deployment container is used.
+Callers can customize roles and other native inputs through `GenesisSetup.config`.
+
+Peer defaults written by genesis live in `crates/infra/genesis/assets/peer-files.json`.
+The in-process builder advertises the identity of its actual network handle, rather
+than a separately hardcoded enode ID.
+
 ## Snapshot devnet topology
 
 The snapshot mode starts these real local network roles inside one managed launcher process:

@@ -19,7 +19,7 @@ up-single mode='default':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }}
 
 # Starts the single-Anvil L1 devnet and its two-worker local Nitro proof stack
-up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet" "dev") (_build-nitro-images "dev")
+up-anvil-nitro-local: down-anvil (_build-rust-images "devnet" "dev") (_build-nitro-images "dev")
     #!/usr/bin/env bash
     set -euo pipefail
     l1_rpc_url="http://l1-el:${L1_HTTP_PORT}"
@@ -85,7 +85,6 @@ profiling name='':
     }
 
     just --justfile {{ source_file() }} down
-    just --justfile {{ source_file() }} _build-setup-image
     just --justfile {{ source_file() }} _build-rust-images "devnet" "profiling"
     just --justfile {{ source_file() }} _build-profiling-tools-image
     docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
@@ -180,8 +179,8 @@ smoke:
 upgrade-signal *args:
     @./etc/scripts/devnet/upgrade-signal.sh {{ args }}
 
-# Moves one devnet upgrade to latest L2 timestamp + offset seconds
-upgrade-signal-future upgrade='azul' offset='120':
+# Schedules a mutable trailing upgrade with the real registry notice period
+upgrade-signal-future upgrade='denim' offset='3660':
     @./etc/scripts/devnet/upgrade-signal.sh move-future {{ quote(upgrade) }} --offset {{ quote(offset) }}
 
 # Runs full devnet checks (status + smoke tests)
@@ -217,7 +216,7 @@ conductor:
     cargo run --quiet -p basectl -- -c devnet monitor conductor
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
-ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
+ingress: ingress-down (_build-rust-images "ingress" "dev")
     mkdir -p .devnet
     docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
 
@@ -230,15 +229,15 @@ ingress-down:
 ingress-logs *containers:
     docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
 
-# Builds one of the shared Rust service images (default: base)
-build-image target='base' profile='dev':
+# Builds one of the shared Rust service images (default: base-devnet)
+build-image target='base-devnet' profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
     elf_require=1
     case "{{ profile }}" in
       dev|profiling)
         case "{{ target }}" in
-          zk-host|devnet) elf_require=0 ;;
+          zk-host|base-devnet|devnet) elf_require=0 ;;
         esac
         ;;
     esac
@@ -246,7 +245,6 @@ build-image target='base' profile='dev':
 
 # Prepares Docker images needed for system tests
 pull-images:
-    docker build --load -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v2.5.2
     docker pull sigp/lighthouse:v8.2.2
 
@@ -255,11 +253,11 @@ pull-images:
 system_test_min_stack := "33554432"
 
 # Runs system tests (requires Docker)
-tests: _install-nextest _build-contracts
+tests: _install-nextest _build-contracts _build-genesis-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -p base-system-tests
 
 # Runs system tests with ci profile for minimal disk usage
-tests-ci: _install-nextest _build-contracts
+tests-ci: _install-nextest _build-contracts _build-genesis-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
 # Runs system test benchmarks
@@ -272,12 +270,12 @@ bench name:
     esac
 
 [private]
-_install-nextest:
-    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+_build-genesis-contracts:
+    just contracts
 
 [private]
-_build-setup-image:
-    docker build --load -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+_install-nextest:
+    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
 
 [private]
 _build-profiling-tools-image:
@@ -313,8 +311,8 @@ _up-devnet compose_profile mode:
     case "$devnet_mode" in
       default) ;;
       zenith)
-        export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-25}"
-        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-100}"
+        export L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK-27}"
+        export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-102}"
         ;;
       *)
         echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
@@ -337,7 +335,6 @@ _up-devnet compose_profile mode:
     esac
 
     just --justfile {{ source_file() }} down
-    just --justfile {{ source_file() }} _build-setup-image
     just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
     docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
 

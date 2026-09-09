@@ -42,6 +42,18 @@ alias ldc := load-test-continuous
 default:
     @just --list
 
+# Prepare pinned contract data; reuse only complete, content-checked exports.
+contracts:
+    python3 etc/scripts/devnet/contracts.py
+
+# Force a fresh export of the pinned contract data.
+contracts-rebuild:
+    python3 etc/scripts/devnet/contracts.py --force
+
+# Test the native generator against freshly prepared Base contract data.
+genesis-test: contracts
+    BASE_GENESIS_ARTIFACTS="$(pwd)/.contracts/artifacts" cargo test -p base-genesis -- --include-ignored
+
 # Load test a network in continuous mode (Ctrl-C to stop)
 load-test-continuous network='devnet':
     just load-test continuous {{ network }}

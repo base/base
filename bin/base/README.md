@@ -50,8 +50,8 @@ for consensus chain resolution:
 base rpc --execution-chain dev
 ```
 
-The command also accepts metering flags such as `--enable-metering` for trusted local devnet
-simulation nodes.
+The command also accepts metering flags such as `--enable-metering` together with
+`--payload.resource-metering-schedule PATH` for trusted local devnet simulation nodes.
 
 ## `base sequencer`
 
@@ -108,3 +108,10 @@ l1_chain_id = 11155111
 ```
 
 TOML values can be overridden with environment variables using the `BASE_CHAIN_` prefix.
+
+## Internal devnet genesis
+
+`base genesis --help` documents the hidden, always-built offline development-network
+generator. It is not a production deployer. Compose runs this command from the same
+`base-devnet` image as the nodes, derived from the operator image with contract
+artifacts added; see `crates/infra/genesis/README.md` for its library and assets.

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "dimensions": [
+    {
+      "name": "gas",
+      "blockLimit": 60000000,
+      "baseGasWeight": 1,
+      "dryRun": true
+    }
+  ]
+}

@@ -155,7 +155,7 @@ pub const ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
 
 /// Local Docker devnet activation registry admin used by Beryl before Cobalt state-backed storage.
 ///
-/// Matches `L2_ACTIVATION_ADMIN_ADDR` in the offline devnet `op-deployer`, which defaults to the
+/// Matches `L2_ACTIVATION_ADMIN_ADDR` in the offline devnet `base genesis` command, which defaults to the
 /// deterministic devnet sequencer address.
 pub const DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
     address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc");

@@ -18,27 +18,22 @@ x-node-healthcheck: &node-healthcheck
 
 services:
   setup-devnet:
-    image: devnet-setup:local-v2
+    image: base-devnet:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.devnet
+      <<: *rust-service-build
+      target: base-devnet
     container_name: setup-devnet
     env_file: devnet-env
     volumes:
       - ../../.devnet/l2/configs:/devnet/l2/configs
       - ../../.devnet/l1/configs:/output
-      - ../../.devnet/l1/reth:/data/l1-reth
-      - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - UPGRADE_SIGNAL_MODE=${UPGRADE_SIGNAL_MODE:-runtime-admin}
       - UPGRADE_SIGNAL_L1_BLOCK_TAG=${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
       - UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION=${UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION:-4294967296}
-      - L2_DEPLOYMENT_TARGET=genesis
-      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
       - L1_CHAIN_ID=${L1_CHAIN_ID}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
       - DEPLOYER_ADDR=${DEPLOYER_ADDR}
-      - DEPLOYER_KEY=${DEPLOYER_KEY}
       - SEQUENCER_ADDR=${SEQUENCER_ADDR}
       - BATCHER_ADDR=${BATCHER_ADDR}
       - PROPOSER_ADDR=${PROPOSER_ADDR}
@@ -50,6 +45,7 @@ services:
       - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
       - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
       - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
+      - L2_ISTHMUS_BLOCK=${L2_ISTHMUS_BLOCK-}
       - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
       - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
@@ -59,8 +55,8 @@ services:
       - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
-      - L1_DATA_DIR=/data
-    entrypoint: ["/usr/local/bin/op-deployer"]
+    entrypoint: ["/app/base"]
+    command: ["genesis"]
 
   l1-el:
     image: ghcr.io/paradigmxyz/reth:v2.5.2
@@ -175,10 +171,10 @@ services:
     restart: unless-stopped
 
   base-bootnode:
-    image: base:local
+    image: base-devnet:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-devnet
     container_name: base-bootnode
     # Gate L2 startup on the L1 execution and beacon APIs.
     depends_on:
@@ -232,10 +228,10 @@ services:
     restart: unless-stopped
 
   base-builder:
-    image: base:local
+    image: base-devnet:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-devnet
     container_name: base-builder
     depends_on:
       setup-devnet:
@@ -398,10 +394,10 @@ services:
   # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
   # It anchors recovery on base-shadow-validator via --parity-validator-l2-rpc-url.
   base-batcher:
-    image: base:local
+    image: base-devnet:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-devnet
     container_name: base-batcher
     entrypoint: /app/base
     # Skip the L1 receipt drain when stopping the disposable devnet batcher.
@@ -431,10 +427,10 @@ services:
     restart: unless-stopped
 
   base-client:
-    image: base:local
+    image: base-devnet:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-devnet
     container_name: base-client
     depends_on:
       setup-devnet:
@@ -516,7 +512,6 @@ services:
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
       - --enable-experimental-validity-transactions
       - --enable-transaction-event-journal
-      - --enable-metering
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
@@ -550,10 +545,10 @@ services:
     restart: unless-stopped
 
   base-rpc:
-    image: base:local
+    image: base-devnet:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-devnet
     container_name: base-rpc
     depends_on:
       setup-devnet:
@@ -658,10 +653,10 @@ services:
   # base-batcher. Its derived safe head can be compared against the canonical
   # chain (see etc/scripts/devnet/compare-heads.sh) for batcher parity testing.
   base-shadow-validator:
-    image: base:local
+    image: base-devnet:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-devnet
     container_name: base-shadow-validator
     depends_on:
       setup-devnet:

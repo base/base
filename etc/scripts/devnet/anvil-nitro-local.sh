@@ -159,7 +159,7 @@ genesis_output_root() {
   fi
   root=$(docker run --rm \
     -v "$L2_CONFIG_DIR:/config:ro" \
-    base:local ./base reth genesis-output-root --chain /config/genesis.json)
+    base-devnet:local ./base reth genesis-output-root --chain /config/genesis.json)
   if ! [[ "$root" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
     echo "ERROR: invalid L2 genesis output root: $root" >&2
     exit 1

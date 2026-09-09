@@ -21,16 +21,15 @@ if [[ -n "${UPGRADE_SIGNAL_ENV_FILES:-}" ]]; then
   done
 fi
 
-CONTRACT_ROOT="${CONTRACT_ROOT:-$REPO_ROOT/crates/utilities/test-utils/contracts}"
 ENV_OUT="${UPGRADE_SIGNAL_ENV_OUT:-$REPO_ROOT/.devnet/l2/configs/upgrade-signal.env}"
-ROLLUP_JSON="${UPGRADE_SIGNAL_ROLLUP_JSON:-$REPO_ROOT/.devnet/l2/configs/rollup.json}"
+ADDRESSES_JSON="${UPGRADE_SIGNAL_ADDRESSES_JSON:-$REPO_ROOT/.devnet/l2/configs/l1-addresses.json}"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"
 L2_RPC="${UPGRADE_SIGNAL_L2_RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}"
 CONTAINER_L1_RPC="${UPGRADE_SIGNAL_CONTAINER_L1_RPC:-http://l1-el:${L1_HTTP_PORT:-4545}}"
 MODE="${UPGRADE_SIGNAL_MODE:-runtime-admin}"
 L1_BLOCK_TAG="${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}"
 MIN_PROTOCOL_VERSION="${UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION:-4294967296}"
-FUTURE_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-120}"
+FUTURE_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-3660}"
 CONTRACT_ADDRESS="${UPGRADE_SIGNAL_CONTRACT:-${BASE_NODE_UPGRADE_SIGNAL_CONTRACT:-}}"
 
 UPGRADE_IDS=()
@@ -48,11 +47,11 @@ Usage:
   upgrade-signal.sh status
 
 Commands:
-  setup        Deploys MockProtocolVersions if needed, builds the schedule from
-               .devnet/l2/configs/rollup.json, applies --set overrides, writes
-               upgrade-signal.env, and updates the L1 contract.
+  setup        Uses the real ProtocolVersions deployed by base genesis, writes
+               upgrade-signal.env, and applies explicit overrides only.
   set          Updates one or more upgrade activation timestamps on the contract.
-               Use timestamp 0 to clear an upgrade.
+               Normal owner, ordering, one-hour notice/freeze rules apply.
+               Use timestamp 0 to clear a mutable trailing upgrade.
   move-future  Sets one upgrade to latest L2 timestamp + --offset seconds.
   status       Prints the configured contract, schedule, and minimum protocol version.
 EOF
@@ -172,104 +171,28 @@ BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG=$L1_BLOCK_TAG
 EOF
 }
 
-deploy_contract() {
-  require_cmd forge
-  require_deployer_key
-
-  echo "Installing Foundry contract dependencies..."
-  (cd "$CONTRACT_ROOT" && forge soldeer install)
-
-  echo "Deploying MockProtocolVersions to $L1_RPC..."
-  local deploy_json
-  deploy_json="$(
-    forge create \
-      --root "$CONTRACT_ROOT" \
-      --rpc-url "$L1_RPC" \
-      --private-key "$DEPLOYER_KEY" \
-      --broadcast \
-      src/MockProtocolVersions.sol:MockProtocolVersions \
-      --json
-  )"
-
-  local contract
-  contract="$(
-    jq -r '.deployedTo // empty' <<<"$deploy_json"
-  )"
-
-  if [[ -z "$contract" ]]; then
-    echo "failed to parse deployed contract address" >&2
-    echo "$deploy_json" >&2
-    exit 1
-  fi
-
-  CONTRACT_ADDRESS="$contract"
-}
-
 ensure_contract() {
   wait_l1_rpc
-
   if [[ -z "$CONTRACT_ADDRESS" ]]; then
     CONTRACT_ADDRESS="$(contract_from_env_file)"
   fi
-
-  if [[ -n "$CONTRACT_ADDRESS" ]]; then
-    local code
-    code="$(contract_code "$CONTRACT_ADDRESS" || true)"
-    if [[ -n "$code" && "$code" != "0x" ]]; then
-      write_env_file "$CONTRACT_ADDRESS"
-      return
-    fi
-
-    echo "configured upgrade signal contract has no code: $CONTRACT_ADDRESS" >&2
-    echo "deploying a fresh MockProtocolVersions contract" >&2
+  if [[ -z "$CONTRACT_ADDRESS" && -f "$ADDRESSES_JSON" ]]; then
+    CONTRACT_ADDRESS="$(jq -r '.ProtocolVersionsProxy // empty' "$ADDRESSES_JSON")"
   fi
-
-  deploy_contract
-  write_env_file "$CONTRACT_ADDRESS"
-}
-
-load_schedule_from_rollup() {
-  if [[ ! -f "$ROLLUP_JSON" ]]; then
-    echo "rollup config not found: $ROLLUP_JSON" >&2
+  local code
+  if [[ -z "$CONTRACT_ADDRESS" ]]; then
+    echo "ProtocolVersions is missing; generate a fresh devnet with just devnet up" >&2
     exit 1
   fi
-
-  local upgrade_ids_csv
-  upgrade_ids_csv="$(IFS=,; printf '%s' "${UPGRADE_IDS[*]}")"
-
-  SCHEDULE=()
-  while IFS= read -r value; do
-    SCHEDULE+=("$value")
-  done < <(
-    # Positional, id-ordered. UPGRADE_IDS comes from BaseUpgrade::CONTRACT_VARIANTS.
-    # OP Stack fields are top-level; Base-specific upgrades live under .base[$id].
-    jq -r --arg upgrade_ids "$upgrade_ids_csv" '
-      . as $rollup
-      | $rollup.genesis.l2_time as $genesis
-      | def signal($value):
-          if $value == null then
-            0
-          elif ($value | tonumber) == 0 then
-            ($genesis | tonumber)
-          else
-            ($value | tonumber)
-          end;
-        def rollup_value($id):
-          if $id == "regolith" then $rollup.regolith_time
-          elif $id == "canyon" then $rollup.canyon_time
-          elif $id == "delta" then $rollup.delta_time
-          elif $id == "ecotone" then $rollup.ecotone_time
-          elif $id == "fjord" then $rollup.fjord_time
-          elif $id == "granite" then $rollup.granite_time
-          elif $id == "holocene" then $rollup.holocene_time
-          elif $id == "pectra_blob_schedule" then $rollup.pectra_blob_schedule_time
-          elif $id == "isthmus" then $rollup.isthmus_time
-          elif $id == "jovian" then $rollup.jovian_time
-          else $rollup.base[$id]
-          end;
-      $upgrade_ids | split(",")[] as $id | signal(rollup_value($id))
-    ' "$ROLLUP_JSON"
-  )
+  if ! code="$(contract_code "$CONTRACT_ADDRESS")"; then
+    echo "failed to read ProtocolVersions bytecode at $CONTRACT_ADDRESS from $L1_RPC" >&2
+    exit 1
+  fi
+  if [[ -z "$code" || "$code" == "0x" ]]; then
+    echo "ProtocolVersions has no code at $CONTRACT_ADDRESS; generate a fresh devnet with just devnet up" >&2
+    exit 1
+  fi
+  write_env_file "$CONTRACT_ADDRESS"
 }
 
 load_schedule_from_contract() {
@@ -284,39 +207,6 @@ load_schedule_from_contract() {
   while [[ "${#SCHEDULE[@]}" -lt "${#UPGRADE_IDS[@]}" ]]; do
     SCHEDULE+=("0")
   done
-}
-
-apply_set_override() {
-  local override="$1"
-  if [[ "$override" != *=* ]]; then
-    echo "override must be upgrade=timestamp, got: $override" >&2
-    exit 1
-  fi
-
-  local upgrade="${override%%=*}"
-  local timestamp="${override#*=}"
-  validate_uint "timestamp for $upgrade" "$timestamp"
-
-  local index
-  index="$(upgrade_index "$upgrade")"
-  SCHEDULE[index]="$timestamp"
-}
-
-apply_set_overrides() {
-  # Bash 3.2 (macOS) treats "${SET_OVERRIDES[@]}" as unbound under `set -u` when empty.
-  if [[ "${#SET_OVERRIDES[@]}" -eq 0 ]]; then
-    return
-  fi
-
-  local override
-  for override in "${SET_OVERRIDES[@]}"; do
-    apply_set_override "$override"
-  done
-}
-
-schedule_arg() {
-  local IFS=,
-  printf '[%s]' "${SCHEDULE[*]}"
 }
 
 update_minimum_protocol_version() {
@@ -334,16 +224,22 @@ update_minimum_protocol_version() {
 }
 
 update_contract_schedule() {
+  if [[ "${#SET_OVERRIDES[@]}" -eq 0 ]]; then
+    return
+  fi
   require_deployer_key
-
-  echo "Updating upgrade signal schedule..."
-  cast send \
-    --rpc-url "$L1_RPC" \
-    --private-key "$DEPLOYER_KEY" \
-    "$CONTRACT_ADDRESS" \
-    "setSchedule(uint64[])" \
-    "$(schedule_arg)" \
-    --json >/dev/null
+  local override upgrade timestamp index
+  # Execute explicit updates in caller order, so the real registry enforces ordering.
+  # Never rewrite imported historical activations or bypass its notice/freeze guards.
+  for override in "${SET_OVERRIDES[@]}"; do
+    [[ "$override" == *=* ]] || { echo "expected upgrade=timestamp: $override" >&2; exit 1; }
+    upgrade="${override%%=*}"
+    timestamp="${override#*=}"
+    validate_uint "timestamp for $upgrade" "$timestamp"
+    index="$(upgrade_index "$upgrade")"
+    cast send --rpc-url "$L1_RPC" --private-key "$DEPLOYER_KEY" \
+      "$CONTRACT_ADDRESS" "setTimestamp(uint256,uint64)" "$index" "$timestamp" --json >/dev/null
+  done
 }
 
 latest_l2_timestamp() {
@@ -430,8 +326,6 @@ load_upgrade_ids
 case "$COMMAND" in
   setup)
     ensure_contract
-    load_schedule_from_rollup
-    apply_set_overrides
     update_minimum_protocol_version
     update_contract_schedule
     load_schedule_from_contract
@@ -447,7 +341,6 @@ case "$COMMAND" in
       exit 1
     fi
     load_schedule_from_contract
-    apply_set_overrides
     update_contract_schedule
     load_schedule_from_contract
     print_status
@@ -461,8 +354,9 @@ case "$COMMAND" in
     fi
     load_schedule_from_contract
     latest_timestamp="$(latest_l2_timestamp)"
+    l1_timestamp="$(cast block latest --rpc-url "$L1_RPC" --json | jq -r '.timestamp')"
+    if (( l1_timestamp > latest_timestamp )); then latest_timestamp=$((l1_timestamp)); fi
     SET_OVERRIDES+=("${POSITIONAL[0]}=$((latest_timestamp + FUTURE_OFFSET))")
-    apply_set_overrides
     update_contract_schedule
     load_schedule_from_contract
     print_status

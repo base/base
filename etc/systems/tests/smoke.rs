@@ -1,6 +1,6 @@
 //! Smoke tests for the full `SystemTestStack` stack.
 
-use std::{process::Command, time::Duration};
+use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
@@ -12,7 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_system_tests::{ANVIL_ACCOUNT_1, SetupImage, SystemTestStackBuilder};
+use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -61,35 +61,6 @@ async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
     assert_eq!(genesis["config"]["base"]["zenith"].as_u64(), Some(expected_zenith));
 
     Ok(())
-}
-
-#[test]
-fn rejects_post_denim_block_without_whole_second_timestamp() {
-    SetupImage::ensure_built().unwrap();
-    let output = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "--network",
-            "none",
-            "--entrypoint",
-            "op-deployer",
-            "-e",
-            "SEQUENCER_ADDR=0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
-            "devnet-setup:local-v2",
-            "--denim-block",
-            "25",
-            "--zenith-block",
-            "26",
-        ])
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("zenith must align to a whole second after Denim")
-    );
 }
 
 #[tokio::test]
