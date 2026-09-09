@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskPool};
-use reth_chain_state::CanonStateSubscriptions;
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,

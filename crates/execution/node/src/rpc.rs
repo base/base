@@ -10,6 +10,7 @@ use base_execution_rpc::{
     AdminApi, BaseEthApi, BaseEthApiBuilder, BaseEthConfigApiServer,
     DebugExecutionWitnessApiServer, DevSigner, EthApiCtx, MinerApiExtServer,
 };
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_node_context::{AddOnsContext, BaseNodePool};
@@ -17,7 +18,6 @@ pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
-use reth_chain_state::CanonStateSubscriptions;
 use reth_engine_primitives::TreeConfig;
 pub use reth_engine_tree::tree::BasicEngineValidator;
 use reth_node_core::node_config::NodeConfig;

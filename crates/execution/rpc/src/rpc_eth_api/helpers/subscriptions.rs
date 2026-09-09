@@ -4,8 +4,8 @@ use base_common_types_chain::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use base_common_types_rpc::{
     BaseTransactionReceipt, Filter, Log, pubsub::TransactionReceiptsParams,
 };
+use base_execution_state_provider::CanonStateSubscriptions;
 use futures::StreamExt;
-use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::TransactionMeta;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::logs_utils;

@@ -117,7 +117,6 @@ members = [
   "vendor/alloy-node-bindings",
   "crates/common/client/ethereum",
   "crates/execution/network/discv5",
-  "vendor/reth-chain-state",
   "vendor/reth-cli-commands",
   "vendor/reth-cli-util",
   "crates/common/codec/macros",
@@ -453,7 +452,6 @@ reth-db-common = { path = "vendor/reth-db-common", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }
-reth-chain-state = { path = "vendor/reth-chain-state", default-features = false }
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 reth-rpc-convert = { path = "vendor/reth-rpc-convert", default-features = false }
 reth-network-api = { path = "vendor/reth-network-api", default-features = false }

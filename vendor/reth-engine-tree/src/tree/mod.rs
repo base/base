@@ -45,9 +45,10 @@ use tokio::sync::{
 };
 use tracing::*;
 use {
-    base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
-    reth_chain_state::CanonicalInMemoryState, reth_chain_state::MemoryOverlayStateProvider,
-    reth_chain_state::NewCanonicalChain,
+    base_execution_state_provider::CanonicalInMemoryState,
+    base_execution_state_provider::MemoryOverlayStateProvider,
+    base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock,
+    base_execution_state_types::ExecutionTimingStats,
 };
 
 use crate::{

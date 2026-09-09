@@ -258,12 +258,14 @@ mod tests {
     use alloy_primitives::B256;
     use base_common_types_chain::Receipt;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_provider::ForkChoiceStream;
+    use base_execution_state_provider::{
+        providers::BlockchainProvider, test_utils::create_test_provider_factory,
+    };
     use base_execution_state_types::{Chain, ExecutionOutcome};
     use futures::TryStreamExt;
-    use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
-    use base_execution_state_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};
     use tokio::{
         sync::{mpsc, watch},
         time::timeout,

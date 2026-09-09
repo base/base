@@ -9,6 +9,7 @@ use std::{
     },
 };
 
+use crate::{CanonStateNotifications, CanonStateSubscriptions};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber, U256,
@@ -37,7 +38,6 @@ use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderRes
 use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use parking_lot::Mutex;
-use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
 use reth_primitives_traits::{
     Block, BlockBody, GotExpected, RecoveredBlock, SealedHeader, SignerRecoverable,
 };

@@ -3,7 +3,7 @@
 use base_execution_state_api::NoopProvider;
 use tokio::sync::{broadcast, watch};
 
-use crate::{
+use crate::canonical_state::{
     CanonStateNotifications, CanonStateSubscriptions, ForkChoiceNotifications,
     ForkChoiceSubscriptions, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };

@@ -18,7 +18,7 @@ use base_execution_txpool::{
 use base_node_context::BaseNodePool;
 use reth_network::NetworkHandle;
 use reth_primitives_traits::RecoveredBlock;
-use {base_execution_state_types::ExecutedBlock, reth_chain_state::NewCanonicalChain};
+use {base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
 
 use crate::{BaseRpcContext, EthApiBuilder};
 

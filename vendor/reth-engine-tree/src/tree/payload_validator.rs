@@ -148,8 +148,8 @@ use reth_trie::{
 };
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 use {
+    base_execution_state_provider::CanonicalInMemoryState,
     base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
-    reth_chain_state::CanonicalInMemoryState,
 };
 
 pub use crate::tree::types::ValidationOutcome;

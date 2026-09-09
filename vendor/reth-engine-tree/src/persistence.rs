@@ -416,7 +416,8 @@ mod tests {
     use reth_prune::Pruner;
     use tokio::sync::mpsc::unbounded_channel;
     use {
-        base_execution_state_types::ExecutedBlock, reth_chain_state::test_utils::TestBlockBuilder,
+        base_execution_state_provider::test_utils::TestBlockBuilder,
+        base_execution_state_types::ExecutedBlock,
     };
 
     use super::*;

@@ -1,14 +1,6 @@
-//! Reth state related types and functionality.
+//! Canonical in-memory chain views and notification streams.
 
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-pub use base_execution_state_types::{CanonStateNotification, ExecutedBlock, ExecutionTimingStats};
+use base_execution_state_types::{CanonStateNotification, ExecutedBlock};
 
 mod in_memory;
 pub use in_memory::*;
@@ -34,5 +26,3 @@ pub use memory_overlay::{MemoryOverlayStateProvider, MemoryOverlayStateProviderR
 #[cfg(any(test, feature = "test-utils"))]
 /// Common test helpers
 pub mod test_utils;
-
-// todo: remove when generic data prim integration complete

@@ -25,7 +25,6 @@ reth-config = { workspace = true }
 reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
-reth-chain-state = { workspace = true }
 base-node-context = { workspace = true }
 base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -33,8 +32,8 @@ base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-state-types = { workspace = true }
+base-execution-state-provider = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 itertools = { workspace = true, features = ["use_std"] }
@@ -75,6 +74,6 @@ serde = [
     "reth-primitives-traits/serde",
     "base-execution-state-types/serde",
     "reth-config/serde",
-    "reth-chain-state/serde",
+    "base-execution-state-provider/serde",
     "base-execution-state-memory/serde",
 ]

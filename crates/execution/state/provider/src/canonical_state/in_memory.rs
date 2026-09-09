@@ -16,7 +16,7 @@ use reth_primitives_traits::{
 };
 use tokio::sync::{broadcast, watch};
 
-use crate::{
+use crate::canonical_state::{
     CanonStateNotification, CanonStateNotificationSender, CanonStateNotifications,
     ChainInfoTracker, ExecutedBlock, MemoryOverlayStateProvider,
 };
@@ -854,7 +854,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::test_utils::TestBlockBuilder;
+    use crate::canonical_state::test_utils::TestBlockBuilder;
 
     fn create_mock_state(
         test_block_builder: &mut TestBlockBuilder,

@@ -147,7 +147,7 @@ impl SaveBlocksInput {
 
 #[cfg(test)]
 mod tests {
-    use reth_chain_state::test_utils::TestBlockBuilder;
+    use crate::test_utils::TestBlockBuilder;
 
     use super::*;
 

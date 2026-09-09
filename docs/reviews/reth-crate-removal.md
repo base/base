@@ -81,7 +81,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | Original crate | Disposition |
 | --- | --- |
 | [reth-basic-payload-builder](../../vendor/reth-basic-payload-builder/Cargo.toml) | Retain shared infrastructure |
-| [reth-chain-state](../../vendor/reth-chain-state/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |
 | `reth-chainspec` | Deleted after Base configuration consolidation |
 | [reth-cli](../../vendor/reth-cli/Cargo.toml) | Consolidate; retain required code |
 | [reth-cli-commands](../../vendor/reth-cli-commands/Cargo.toml) | Consolidate; retain required code |

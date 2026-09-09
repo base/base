@@ -21,7 +21,8 @@ use tokio_tungstenite_0_29_0::connect_async;
 use tracing::{debug, info};
 use url::Url;
 use {
-    base_execution_state_types::CanonStateNotification, reth_chain_state::CanonStateSubscriptions,
+    base_execution_state_provider::CanonStateSubscriptions,
+    base_execution_state_types::CanonStateNotification,
 };
 
 use crate::{

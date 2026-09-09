@@ -37,12 +37,8 @@ pub use history_shards::{
 
 mod bal;
 pub use bal::{BalConfig, InMemoryBalStore, RocksDBBalStore};
+pub use base_execution_state_types::CanonStateNotification;
 pub use base_execution_state_types::*;
-pub use {
-    base_execution_state_types::CanonStateNotification,
-    reth_chain_state::CanonStateNotificationSender, reth_chain_state::CanonStateNotificationStream,
-    reth_chain_state::CanonStateNotifications, reth_chain_state::CanonStateSubscriptions,
-};
 // reexport traits to avoid breaking changes
 /// Re-export `OriginalValuesKnown`
 pub use base_execution_evm_runtime::database::OriginalValuesKnown;
@@ -66,3 +62,13 @@ pub use changeset_offsets::{ChangesetOffsetReader, ChangesetOffsetWriter};
 
 mod overlay;
 pub use overlay::*;
+
+mod canonical_state;
+pub use canonical_state::{
+    BlockState, CanonStateNotificationSender, CanonStateNotificationStream,
+    CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ChainInfoTracker,
+    ForkChoiceNotifications, ForkChoiceStream, ForkChoiceSubscriptions, MemoryOverlayStateProvider,
+    MemoryOverlayStateProviderRef, NewCanonicalChain, PersistedBlockNotifications,
+    PersistedBlockSubscriptions, PreservedSparseTrie, PreservedSparseTrieCompleter,
+    PreservedSparseTrieError, SparseTrie, WatchValueStream,
+};

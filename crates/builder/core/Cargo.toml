@@ -29,7 +29,6 @@ alloy-transport = { workspace = true }
 base-txpool-rpc = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
-reth-chain-state = { workspace = true }
 base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-payload-util = { workspace = true }
@@ -42,6 +41,7 @@ metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 base-execution-state-tasks = { workspace = true }
+base-execution-state-provider = {workspace = true}
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
@@ -53,7 +53,6 @@ k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 sha3 = { workspace = true, features = ["default"] }
 time = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
@@ -159,13 +158,12 @@ test-utils = [
     "hyper",
     "hyper-util",
     "nanoid",
-    "reth-chain-state/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-execution-state-database/test-utils",
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-tasks/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
-    "base-execution-state-provider/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",

@@ -3,14 +3,14 @@
 use std::{fmt, fmt::Debug};
 
 use alloy_eips::{BlockNumHash, eip2124::Head};
+use base_common_observability_tracing::tracing::{debug, info};
+use base_execution_state_provider::CanonStateSubscriptions;
+use base_execution_state_provider::ForkChoiceSubscriptions;
 use futures::future;
-use reth_chain_state::ForkChoiceSubscriptions;
 use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
-use base_execution_state_provider::CanonStateSubscriptions;
-use base_common_observability_tracing::tracing::{debug, info};
 use tracing::Instrument;
 
 use crate::WithConfigs;

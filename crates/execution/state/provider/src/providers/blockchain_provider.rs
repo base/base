@@ -8,6 +8,10 @@ use std::{
 use crate::{
     AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
 };
+use crate::{
+    BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
+    MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
+};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
@@ -30,10 +34,6 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_chain_state::{
-    BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
-    MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
-};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 use reth_trie::{
     MultiProofTargets, StorageRoot, TrieInput, TrieInputSorted, TrieType,
@@ -1033,9 +1033,9 @@ mod tests {
     };
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
     use {
-        base_execution_state_types::CanonStateNotification,
-        base_execution_state_types::ExecutedBlock, reth_chain_state::CanonStateSubscriptions,
-        reth_chain_state::NewCanonicalChain, reth_chain_state::test_utils::TestBlockBuilder,
+        crate::CanonStateSubscriptions, crate::NewCanonicalChain,
+        crate::test_utils::TestBlockBuilder, base_execution_state_types::CanonStateNotification,
+        base_execution_state_types::ExecutedBlock,
     };
 
     use super::SNAPSHOT_STATE_RETENTION;

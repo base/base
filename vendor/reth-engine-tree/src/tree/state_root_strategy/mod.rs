@@ -94,7 +94,9 @@ use reth_trie_sparse::{
     ArenaParallelSparseTrie, RevealableSparseTrie, SparseStateTrie, TrieNodeEpoch,
 };
 use tracing::{Span, debug, debug_span, instrument, warn};
-use {base_execution_state_types::ExecutedBlock, reth_chain_state::PreservedSparseTrie};
+use {
+    base_execution_state_provider::PreservedSparseTrie, base_execution_state_types::ExecutedBlock,
+};
 
 use self::sparse_trie::{SparseTrieCacheTask, SparseTrieTaskMetrics};
 use crate::tree::{
@@ -1305,6 +1307,7 @@ mod tests {
         AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, TransactionId,
     };
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_provider::test_utils::TestBlockBuilder;
     use base_execution_state_provider::{
         HashingWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,
@@ -1312,7 +1315,6 @@ mod tests {
     use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
     use base_execution_state_types::StorageEntry;
     use rand::Rng;
-    use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_common::init::init_genesis;
     use reth_testing_utils::generators;
     use reth_trie::test_utils::state_root;

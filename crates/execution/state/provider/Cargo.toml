@@ -22,26 +22,33 @@ strum = { workspace = true }
 alloy-eips = {workspace = true}
 smallvec = { workspace = true }
 itertools = { workspace = true }
+pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-chain-state = {workspace = true}
 base-common-io-files = { workspace = true }
-base-common-chain-config = { workspace = true }
+base-common-chain-config = {workspace = true }
+base-execution-evm-runtime = {workspace = true}
 base-common-types-payload = { workspace = true }
-base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+alloy-signer = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"] }
 reth-trie = {workspace = true, features = ["metrics"]}
 rocksdb = { workspace = true, features = ["default"] }
+alloy-hardforks = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["full"] }
 tracing = {workspace = true, features = ["attributes"]}
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 parking_lot = {workspace = true, features = ["default"]}
+tokio = {workspace = true, features = ["macros", "sync"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
-alloy-primitives = {workspace = true, features = ["map-foldhash"]}
-tokio = { workspace = true, features = ["sync"], optional = true }
-base-common-types-chain = { workspace = true, features = ["reth"] }
+reth-trie-sparse = { workspace = true, features = ["std"] }
+base-common-types-chain = {workspace = true, features = ["reth"]}
+base-common-client-ethereum = { workspace = true, optional = true }
+tokio-stream = { workspace = true, features = ["default", "sync"] }
+rand = { workspace = true, optional = true, features = ["default"] }
 base-common-runtime-tasks = {workspace = true,  features = ["rayon"]}
 base-execution-state-database = {workspace = true, features = ["mdbx"]}
+alloy-primitives = {workspace = true, features = ["map-foldhash", "std"]}
 base-execution-state-api = {workspace = true, features = ["db-api", "std"]}
 base-common-observability-metrics = {workspace = true, features = ["metrics"]}
 base-execution-state-types = {workspace = true, features = ["reth-codec", "std"]}
@@ -51,14 +58,15 @@ reth-primitives-traits = {workspace = true, features = ["dashmap", "reth-codec",
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
 [dev-dependencies]
+alloy-signer = { workspace = true }
 assert_matches = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-testing-utils = { workspace = true }
+reth-testing-utils = {workspace = true}
 base-common-chain-config = { workspace = true }
-rand = { workspace = true, features = ["default"] }
+rand = {workspace = true, features = ["default"]}
+base-common-client-ethereum = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-trie = {workspace = true, features = ["test-utils"]}
-reth-chain-state = {workspace = true, features = ["test-utils"]}
 base-common-types-chain = {workspace = true, features = ["serde"]}
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 base-execution-state-database = {workspace = true, features = ["test-utils"]}
@@ -73,12 +81,29 @@ partial-persistence = ["base-execution-state-types/partial-persistence"]
 test-utils = [
     "base-execution-state-database/test-utils",
     "reth-trie/test-utils",
-    "reth-chain-state/test-utils",
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
-    "dep:tokio",
     "base-execution-state-memory/test-utils",
+    "dep:alloy-hardforks",
+    "alloy-primitives/getrandom",
+    "alloy-signer",
+    "base-common-client-ethereum",
+    "rand",
+    "reth-trie-sparse/test-utils",
 ]
 rayon = []
+serde = [
+    "base-common-types-chain/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "parking_lot/serde",
+    "rand?/serde",
+    "base-execution-state-types/serde",
+    "reth-primitives-traits/serde",
+    "reth-trie/serde",
+    "base-execution-evm-runtime/serde",
+    "base-execution-state-api/serde",
+    "base-execution-state-memory/serde",
+]

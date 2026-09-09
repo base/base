@@ -26,9 +26,9 @@ pub mod blocks;
 mod mock;
 mod noop;
 
+pub use crate::canonical_state::test_utils::{TestBlockBuilder, TestCanonStateSubscriptions};
 pub use mock::{ExtendedAccount, MockEthProvider};
 pub use noop::NoopProvider;
-pub use reth_chain_state::test_utils::TestCanonStateSubscriptions;
 
 /// Temporary database retained for the lifetime of provider tests.
 pub type MockNodeDatabase = Arc<TempDatabase<DatabaseEnv>>;

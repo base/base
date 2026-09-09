@@ -22,15 +22,15 @@ use base_execution_payload_builder::{
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_payload_types::PayloadAttributesBuilder;
+use base_execution_state_provider::CanonStateSubscriptions;
+use base_execution_state_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
 use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
-use reth_chain_state::CanonStateSubscriptions;
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
-use base_execution_state_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{

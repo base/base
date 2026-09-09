@@ -28,7 +28,7 @@ use reth_primitives_traits::{
 use reth_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
 use tokio::sync::broadcast::{self, Sender};
 
-use crate::{
+use crate::canonical_state::{
     CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions, ExecutedBlock,
 };
 

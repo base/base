@@ -1,8 +1,8 @@
 //! Pool component for the node builder.
 
 use base_common_types_chain::BaseBlock;
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_txpool::{DiskFileBlobStore, PoolConfig, TransactionPool};
-use reth_chain_state::CanonStateSubscriptions;
 
 use crate::BuilderContext;
 

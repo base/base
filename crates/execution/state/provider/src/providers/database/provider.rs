@@ -3536,6 +3536,8 @@ impl<TX: Send> StoragePath for DatabaseProvider<TX> {
 mod tests {
     use std::{sync::mpsc, time::Duration};
 
+    #[cfg(feature = "partial-persistence")]
+    use crate::test_utils::TestBlockBuilder;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
     use base_common_chain_config::BaseChainSpecBuilder;
@@ -3545,8 +3547,6 @@ mod tests {
     use base_execution_state_database::models::StorageSettings;
     use base_execution_state_types::ExecutedBlock;
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
-    #[cfg(feature = "partial-persistence")]
-    use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_primitives_traits::SealedBlock;
     use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{

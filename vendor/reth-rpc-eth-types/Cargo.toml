@@ -28,7 +28,6 @@ alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
-reth-chain-state = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 base-common-chain-config = {workspace = true}
@@ -43,6 +42,7 @@ base-execution-evm-machine = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
+base-execution-state-provider = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }

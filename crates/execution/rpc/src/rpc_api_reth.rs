@@ -2,7 +2,6 @@ use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 // Required for the subscription attributes below
-use reth_chain_state as _;
 use serde::{Deserialize, Serialize};
 
 /// Reth API namespace for reth-specific methods

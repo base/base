@@ -18,8 +18,10 @@ use reth_rpc_eth_types::{EthApiError, EthResult};
 use serde::Serialize;
 use tokio::sync::oneshot;
 use {
-    base_execution_state_types::CanonStateNotification, reth_chain_state::CanonStateSubscriptions,
-    reth_chain_state::ForkChoiceSubscriptions, reth_chain_state::PersistedBlockSubscriptions,
+    base_execution_state_provider::CanonStateSubscriptions,
+    base_execution_state_provider::ForkChoiceSubscriptions,
+    base_execution_state_provider::PersistedBlockSubscriptions,
+    base_execution_state_types::CanonStateNotification,
 };
 
 /// `reth` API implementation.
@@ -296,8 +298,8 @@ where
 /// Buffers committed chain notifications and emits them when a new finalized block is received.
 async fn finalized_chain_notifications(
     sink: SubscriptionSink,
-    mut canon_stream: reth_chain_state::CanonStateNotificationStream,
-    mut finalized_stream: reth_chain_state::ForkChoiceStream<SealedHeader>,
+    mut canon_stream: base_execution_state_provider::CanonStateNotificationStream,
+    mut finalized_stream: base_execution_state_provider::ForkChoiceStream<SealedHeader>,
 ) {
     let mut buffered: Vec<CanonStateNotification> = Vec::new();
 

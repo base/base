@@ -11,12 +11,12 @@ use base_common_types_rpc::{
     },
 };
 use base_execution_state_api::BlockNumReader;
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_txpool::{NewTransactionEvent, TransactionPool};
 use futures::StreamExt;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink, server::SubscriptionMessage, types::ErrorObject,
 };
-use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use serde::Serialize;

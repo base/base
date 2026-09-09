@@ -7,7 +7,7 @@ use base_execution_payload_builder::{
     BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, PayloadBuilderHandle,
     PayloadBuilderService, config::BaseBuilderConfig,
 };
-use reth_chain_state::CanonStateSubscriptions;
+use base_execution_state_provider::CanonStateSubscriptions;
 
 use crate::BuilderContext;
 
@@ -54,7 +54,9 @@ impl BasePayloadServiceConfig {
     pub async fn start(
         self,
         ctx: &BuilderContext,
-        pool: base_node_context::BaseNodePool<base_execution_state_provider::providers::BlockchainProvider>,
+        pool: base_node_context::BaseNodePool<
+            base_execution_state_provider::providers::BlockchainProvider,
+        >,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle> {
         let payload_builder =

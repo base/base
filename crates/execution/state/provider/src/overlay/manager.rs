@@ -31,7 +31,7 @@ use reth_primitives_traits::{
 };
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, trace};
-use {base_execution_state_types::ExecutedBlock, reth_chain_state::PreservedSparseTrie};
+use {crate::PreservedSparseTrie, base_execution_state_types::ExecutedBlock};
 
 use crate::overlay::{
     ChangesetCache, OverlayBuilder, changeset_cache::compute_block_trie_updates,
@@ -665,8 +665,8 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
     use {
-        base_execution_state_types::ExecutedBlock, reth_chain_state::SparseTrie,
-        reth_chain_state::test_utils::TestBlockBuilder,
+        crate::SparseTrie, crate::test_utils::TestBlockBuilder,
+        base_execution_state_types::ExecutedBlock,
     };
 
     use super::*;

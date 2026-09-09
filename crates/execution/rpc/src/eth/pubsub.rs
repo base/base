@@ -1,8 +1,8 @@
 //! Base `eth_subscribe` stream customization.
 
 use base_common_types_rpc::Header;
+use base_execution_state_provider::CanonStateSubscriptions;
 use futures::StreamExt;
-use reth_chain_state::CanonStateSubscriptions;
 use tracing::error;
 
 use crate::BaseEthApi;

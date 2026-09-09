@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::{BlockState, CanonicalInMemoryState};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
@@ -24,7 +25,6 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_primitives_traits::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 
 use super::{DatabaseProviderRO, ProviderFactory};
@@ -1482,7 +1482,7 @@ mod tests {
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
-    use {base_execution_state_types::ExecutedBlock, reth_chain_state::NewCanonicalChain};
+    use {crate::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
 
     use crate::{
         BlockWriter, providers::blockchain_provider::BlockchainProvider,

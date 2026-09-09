@@ -235,16 +235,11 @@ where
 
 #[cfg(all(test, feature = "partial-persistence"))]
 mod tests {
-    use crate::{
-        BlockWriter, ProviderFactory,
-        test_utils::{MockNodeDatabase, create_test_provider_factory},
-    };
+    use crate::{BlockWriter, ProviderFactory, test_utils::create_test_provider_factory};
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
-    use {
-        base_execution_state_types::ExecutedBlock, reth_chain_state::test_utils::TestBlockBuilder,
-    };
+    use {crate::test_utils::TestBlockBuilder, base_execution_state_types::ExecutedBlock};
 
     use reth_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,

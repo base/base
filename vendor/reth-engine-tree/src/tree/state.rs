@@ -395,7 +395,7 @@ impl TreeState {
 
 #[cfg(test)]
 mod tests {
-    use reth_chain_state::test_utils::TestBlockBuilder;
+    use base_execution_state_provider::test_utils::TestBlockBuilder;
 
     use super::*;
 
