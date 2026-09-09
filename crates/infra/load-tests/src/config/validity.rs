@@ -79,7 +79,7 @@ pub enum ValidityPredicateConfig {
         /// Storage slot to read.
         slot: PredicateSlotConfig,
         /// Optional bit mask; defaults to all ones server-side.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         mask: Option<U256>,
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
