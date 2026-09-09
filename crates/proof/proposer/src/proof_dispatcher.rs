@@ -145,7 +145,7 @@ impl ProofDispatcher {
     /// Dispatches every target from the current dispatcher cursor up to `finalized_head`.
     pub async fn tick(&self, current: &mut RecoveredState, finalized_head: u64) {
         loop {
-            // Resolved per target: the interval changes at the Cobalt activation
+            // Resolved per target: the interval changes at the Denim activation
             // block, so the cursor's own starting block picks the cadence.
             let intervals = match self.intervals.for_starting_block(current.l2_block_number).await {
                 Ok(intervals) => intervals,

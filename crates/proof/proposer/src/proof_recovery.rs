@@ -207,7 +207,7 @@ impl ProofRecovery {
 
         loop {
             // Resolved per step so the walk keeps reconstructing games across the
-            // Cobalt activation block, where the verifier switches cadence.
+            // Denim activation block, where the verifier switches cadence.
             let intervals = self.intervals.for_starting_block(state.l2_block_number).await?;
 
             let Some(expected_block) =
@@ -587,7 +587,7 @@ mod tests {
             )
         };
 
-        let cobalt_aware = fixture(test_interval_resolver(MockAggregateVerifier {
+        let denim_aware = fixture(test_interval_resolver(MockAggregateVerifier {
             block_interval: SLOW_INTERVAL,
             intermediate_block_interval: SLOW_INTERMEDIATE,
             fast_activation_block: FAST_ACTIVATION_BLOCK,
@@ -595,7 +595,7 @@ mod tests {
             fast_intermediate_block_interval: FAST_INTERMEDIATE,
             ..Default::default()
         }));
-        let (state, _) = recover_uncached(&cobalt_aware).await;
+        let (state, _) = recover_uncached(&denim_aware).await;
         assert_eq!(state.l2_block_number, 700, "walk must not stall at the cadence boundary");
         assert_eq!(state.parent_address, proxy_addr(4));
 

@@ -124,7 +124,7 @@ impl ProofSubmitter {
         }
 
         // The intervals are a function of the starting block, not of process
-        // config: the verifier switches cadence at the Cobalt activation block.
+        // config: the verifier switches cadence at the Denim activation block.
         let intervals = self
             .intervals
             .for_starting_block(starting_block_number)

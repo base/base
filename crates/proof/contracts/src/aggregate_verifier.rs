@@ -250,7 +250,7 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// `AggregateVerifier` implementation applies to a game whose range starts
     /// at `starting_block`.
     ///
-    /// Cobalt switches the verifier to a shorter cadence at a fixed L2 block, so
+    /// Denim switches the verifier to a shorter cadence at a fixed L2 block, so
     /// the pair is a function of the game's starting block. Callers must resolve
     /// it per game rather than reading `BLOCK_INTERVAL` once at startup.
     /// Legacy implementations fall back to their fixed interval getters.
