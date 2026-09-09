@@ -13,9 +13,11 @@ use enr::Enr;
 use futures::StreamExt;
 use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{DiscoveredPeer, Discv5};
-use reth_dns_discovery::{
-    DnsDiscoveryConfig, DnsDiscoveryHandle, DnsDiscoveryService, DnsNodeRecordUpdate, DnsResolver,
-};
+use base_execution_network_discovery::DnsDiscoveryConfig;
+use base_execution_network_discovery::DnsDiscoveryHandle;
+use base_execution_network_discovery::DnsDiscoveryService;
+use base_execution_network_discovery::DnsNodeRecordUpdate;
+use base_execution_network_discovery::DnsResolver;
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent};
 use base_execution_network_types::{NodeRecord, PeerId};
 use base_execution_network_types::PeerAddr;

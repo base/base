@@ -1,12 +1,12 @@
-use crate::tree::TreeRootEntry;
+use crate::dns::tree::DnsTreeRootEntry;
 
 /// Alias for a parse result
-pub(crate) type ParseEntryResult<T> = Result<T, ParseDnsEntryError>;
+pub type DnsParseEntryResult<T> = Result<T, ParseDnsEntryError>;
 
 /// Alias for lookup results
-pub(crate) type LookupResult<T> = Result<T, LookupError>;
+pub type DnsLookupResult<T> = Result<T, DnsLookupError>;
 
-/// Error while parsing a [`DnsEntry`](crate::tree::DnsEntry)
+/// Error while parsing a [`DnsEntry`](crate::dns::tree::DnsEntry)
 #[derive(thiserror::Error, Debug)]
 pub enum ParseDnsEntryError {
     /// Unknown entry error.
@@ -41,7 +41,7 @@ pub enum ParseDnsEntryError {
 
 /// Errors that can happen during lookups
 #[derive(thiserror::Error, Debug)]
-pub(crate) enum LookupError {
+pub enum DnsLookupError {
     /// Parse error.
     #[error(transparent)]
     /// Represents errors during parsing.
@@ -49,7 +49,7 @@ pub(crate) enum LookupError {
     /// Invalid root error.
     #[error("failed to verify root {0}")]
     /// Indicates failure while verifying the root entry.
-    InvalidRoot(TreeRootEntry),
+    InvalidRoot(DnsTreeRootEntry),
     /// Request timed out error.
     #[error("request timed out")]
     /// Indicates a timeout occurred during the request.

@@ -22,7 +22,7 @@ use base_execution_state_api::{
 };
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
-use reth_dns_discovery::DnsDiscoveryConfig;
+use base_execution_network_discovery::DnsDiscoveryConfig;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 

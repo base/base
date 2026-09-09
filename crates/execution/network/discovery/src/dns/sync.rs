@@ -4,14 +4,14 @@ use enr::EnrKeyUnambiguous;
 use linked_hash_set::LinkedHashSet;
 use secp256k1::SecretKey;
 
-use crate::tree::{LinkEntry, TreeRootEntry};
+use crate::dns::tree::{DnsLinkEntry, DnsTreeRootEntry};
 
 /// A sync-able tree
-pub(crate) struct SyncTree<K: EnrKeyUnambiguous = SecretKey> {
+pub struct DnsSyncTree<K: EnrKeyUnambiguous = SecretKey> {
     /// Root of the tree
-    root: TreeRootEntry,
+    root: DnsTreeRootEntry,
     /// Link to this tree
-    link: LinkEntry<K>,
+    link: DnsLinkEntry<K>,
     /// Timestamp when the root was updated
     root_updated: Instant,
     /// The state of the tree sync progress.
@@ -22,10 +22,10 @@ pub(crate) struct SyncTree<K: EnrKeyUnambiguous = SecretKey> {
     unresolved_nodes: LinkedHashSet<String>,
 }
 
-// === impl SyncTree ===
+// === impl DnsSyncTree ===
 
-impl<K: EnrKeyUnambiguous> SyncTree<K> {
-    pub(crate) fn new(root: TreeRootEntry, link: LinkEntry<K>) -> Self {
+impl<K: EnrKeyUnambiguous> DnsSyncTree<K> {
+    pub fn new(root: DnsTreeRootEntry, link: DnsLinkEntry<K>) -> Self {
         Self {
             root,
             link,
@@ -37,63 +37,63 @@ impl<K: EnrKeyUnambiguous> SyncTree<K> {
     }
 
     #[cfg(test)]
-    pub(crate) const fn root(&self) -> &TreeRootEntry {
+    pub const fn root(&self) -> &DnsTreeRootEntry {
         &self.root
     }
 
-    pub(crate) const fn link(&self) -> &LinkEntry<K> {
+    pub const fn link(&self) -> &DnsLinkEntry<K> {
         &self.link
     }
 
-    pub(crate) fn extend_children(
+    pub fn extend_children(
         &mut self,
-        kind: ResolveKind,
+        kind: DnsResolveKind,
         children: impl IntoIterator<Item = String>,
     ) {
         match kind {
-            ResolveKind::Enr => {
+            DnsResolveKind::Enr => {
                 self.unresolved_nodes.extend(children);
             }
-            ResolveKind::Link => {
+            DnsResolveKind::Link => {
                 self.unresolved_links.extend(children);
             }
         }
     }
 
     /// Advances the state of the tree by returning actions to perform
-    pub(crate) fn poll(&mut self, now: Instant, update_timeout: Duration) -> Option<SyncAction> {
+    pub fn poll(&mut self, now: Instant, update_timeout: Duration) -> Option<DnsSyncAction> {
         match self.sync_state {
             SyncState::Pending => {
                 self.sync_state = SyncState::Enr;
-                return Some(SyncAction::Link(self.root.link_root.clone()));
+                return Some(DnsSyncAction::Link(self.root.link_root.clone()));
             }
             SyncState::Enr => {
                 self.sync_state = SyncState::Active;
-                return Some(SyncAction::Enr(self.root.enr_root.clone()));
+                return Some(DnsSyncAction::Enr(self.root.enr_root.clone()));
             }
             SyncState::Link => {
                 self.sync_state = SyncState::Active;
-                return Some(SyncAction::Link(self.root.link_root.clone()));
+                return Some(DnsSyncAction::Link(self.root.link_root.clone()));
             }
             SyncState::Active => {
                 if now > self.root_updated + update_timeout {
                     self.sync_state = SyncState::RootUpdate;
-                    return Some(SyncAction::UpdateRoot);
+                    return Some(DnsSyncAction::UpdateRoot);
                 }
             }
             SyncState::RootUpdate => return None,
         }
 
         if let Some(link) = self.unresolved_links.pop_front() {
-            return Some(SyncAction::Link(link));
+            return Some(DnsSyncAction::Link(link));
         }
 
         let enr = self.unresolved_nodes.pop_front()?;
-        Some(SyncAction::Enr(enr))
+        Some(DnsSyncAction::Enr(enr))
     }
 
     /// Updates the root and returns what changed
-    pub(crate) fn update_root(&mut self, root: TreeRootEntry) {
+    pub fn update_root(&mut self, root: DnsTreeRootEntry) {
         let enr_unchanged = root.enr_root == self.root.enr_root;
         let link_unchanged = root.link_root == self.root.link_root;
 
@@ -126,13 +126,13 @@ impl<K: EnrKeyUnambiguous> SyncTree<K> {
 
 /// The action to perform by the service
 #[derive(Debug)]
-pub(crate) enum SyncAction {
+pub enum DnsSyncAction {
     UpdateRoot,
     Enr(String),
     Link(String),
 }
 
-/// How the [`SyncTree::update_root`] changed the root
+/// How the [`DnsSyncTree::update_root`] changed the root
 enum SyncState {
     RootUpdate,
     Pending,
@@ -142,15 +142,15 @@ enum SyncState {
 }
 
 /// What kind of hash to resolve
-pub(crate) enum ResolveKind {
+pub enum DnsResolveKind {
     Enr,
     Link,
 }
 
-// === impl ResolveKind ===
+// === impl DnsResolveKind ===
 
-impl ResolveKind {
-    pub(crate) const fn is_link(&self) -> bool {
+impl DnsResolveKind {
+    pub const fn is_link(&self) -> bool {
         matches!(self, Self::Link)
     }
 }
@@ -162,20 +162,20 @@ mod tests {
 
     use super::*;
 
-    fn base_root() -> TreeRootEntry {
+    fn base_root() -> DnsTreeRootEntry {
         // taken from existing tests to ensure valid formatting
         let s = "enrtree-root:v1 e=QFT4PBCRX4XQCV3VUYJ6BTCEPU l=JGUFMSAGI7KZYB3P7IZW4S5Y3A seq=3 sig=3FmXuVwpa8Y7OstZTx9PIb1mt8FrW7VpDOFv4AaGCsZ2EIHmhraWhe4NxYhQDlw5MjeFXYMbJjsPeKlHzmJREQE";
-        s.parse::<TreeRootEntry>().unwrap()
+        s.parse::<DnsTreeRootEntry>().unwrap()
     }
 
-    fn make_tree() -> SyncTree {
+    fn make_tree() -> DnsSyncTree {
         let secret_key = SecretKey::new(&mut thread_rng());
         let link =
-            LinkEntry { domain: "nodes.example.org".to_string(), pubkey: secret_key.public() };
-        SyncTree::new(base_root(), link)
+            DnsLinkEntry { domain: "nodes.example.org".to_string(), pubkey: secret_key.public() };
+        DnsSyncTree::new(base_root(), link)
     }
 
-    fn advance_to_active(tree: &mut SyncTree) {
+    fn advance_to_active(tree: &mut DnsSyncTree) {
         // Move Pending -> (emit Link) -> Enr, then Enr -> (emit Enr) -> Active
         let now = Instant::now();
         let timeout = Duration::from_secs(60 * 60 * 24);
@@ -207,7 +207,7 @@ mod tests {
 
         tree.update_root(new_root.clone());
         match tree.poll(now, timeout) {
-            Some(SyncAction::Enr(hash)) => assert_eq!(hash, new_root.enr_root),
+            Some(DnsSyncAction::Enr(hash)) => assert_eq!(hash, new_root.enr_root),
             other => panic!("expected Enr action, got {:?}", other),
         }
     }
@@ -223,7 +223,7 @@ mod tests {
 
         tree.update_root(new_root.clone());
         match tree.poll(now, timeout) {
-            Some(SyncAction::Link(hash)) => assert_eq!(hash, new_root.link_root),
+            Some(DnsSyncAction::Link(hash)) => assert_eq!(hash, new_root.link_root),
             other => panic!("expected Link action, got {:?}", other),
         }
     }
@@ -240,11 +240,11 @@ mod tests {
 
         tree.update_root(new_root.clone());
         match tree.poll(now, timeout) {
-            Some(SyncAction::Link(hash)) => assert_eq!(hash, new_root.link_root),
+            Some(DnsSyncAction::Link(hash)) => assert_eq!(hash, new_root.link_root),
             other => panic!("expected first Link action, got {:?}", other),
         }
         match tree.poll(now, timeout) {
-            Some(SyncAction::Enr(hash)) => assert_eq!(hash, new_root.enr_root),
+            Some(DnsSyncAction::Enr(hash)) => assert_eq!(hash, new_root.enr_root),
             other => panic!("expected second Enr action, got {:?}", other),
         }
     }

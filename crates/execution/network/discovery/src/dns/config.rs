@@ -7,9 +7,9 @@ use std::{
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::tree::LinkEntry;
+use crate::dns::tree::DnsLinkEntry;
 
-/// Settings for the [`DnsDiscoveryService`](crate::DnsDiscoveryService).
+/// Settings for the [`DnsDiscoveryService`](crate::dns::DnsDiscoveryService).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DnsDiscoveryConfig {
@@ -28,7 +28,7 @@ pub struct DnsDiscoveryConfig {
     /// Maximum number of cached DNS records.
     pub dns_record_cache_limit: NonZeroU32,
     /// Links to the DNS networks to bootstrap.
-    pub bootstrap_dns_networks: Option<HashSet<LinkEntry>>,
+    pub bootstrap_dns_networks: Option<HashSet<DnsLinkEntry>>,
 }
 
 impl Default for DnsDiscoveryConfig {

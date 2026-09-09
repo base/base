@@ -133,7 +133,6 @@ members = [
   "vendor/reth-db-common",
   "vendor/reth-discv4",
   "vendor/reth-discv5",
-  "vendor/reth-dns-discovery",
   "vendor/reth-downloaders",
   "vendor/reth-e2e-test-utils",
   "vendor/reth-engine-local",
@@ -496,7 +495,6 @@ base-execution-network-types = { path = "crates/execution/network/types", defaul
 reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
 reth-rpc-eth-types = { path = "vendor/reth-rpc-eth-types", default-features = false }
 reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = false }
-reth-dns-discovery = { path = "vendor/reth-dns-discovery", default-features = false }
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
 base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }

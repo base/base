@@ -30,7 +30,6 @@ pin-project = { workspace = true }
 reth-discv5 = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-network-api = { workspace = true }
-reth-dns-discovery = { workspace = true }
 base-common-io-files = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -43,6 +42,7 @@ socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
+base-execution-network-discovery = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -88,7 +88,7 @@ serde = [
     "dep:serde",
     "secp256k1/serde",
     "enr/serde",
-    "reth-dns-discovery/serde",
+    "base-execution-network-discovery/serde",
     "base-execution-network-wire/serde",
     "base-common-types-chain/serde",
     "alloy-eips/serde",

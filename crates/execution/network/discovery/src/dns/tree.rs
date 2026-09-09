@@ -29,10 +29,9 @@ use secp256k1::SecretKey;
 #[cfg(feature = "serde")]
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 
-use crate::error::{
-    ParseDnsEntryError,
+use crate::dns::error::{
+    DnsParseEntryResult, ParseDnsEntryError,
     ParseDnsEntryError::{FieldNotFound, UnknownEntry},
-    ParseEntryResult,
 };
 
 /// Prefix used for root entries in the ENR tree.
@@ -48,13 +47,13 @@ const ENR_PREFIX: &str = "enr:";
 #[derive(Debug, Clone)]
 pub enum DnsEntry<K: EnrKeyUnambiguous> {
     /// Represents a root entry in the DNS tree containing node records.
-    Root(TreeRootEntry),
+    Root(DnsTreeRootEntry),
     /// Represents a link entry in the DNS tree pointing to another node list.
-    Link(LinkEntry<K>),
+    Link(DnsLinkEntry<K>),
     /// Represents a branch entry in the DNS tree containing hashes of subtree entries.
-    Branch(BranchEntry),
+    Branch(DnsBranchEntry),
     /// Represents a leaf entry in the DNS tree containing a node record.
-    Node(NodeEntry<K>),
+    Node(DnsNodeEntry<K>),
 }
 
 impl<K: EnrKeyUnambiguous> fmt::Display for DnsEntry<K> {
@@ -73,13 +72,13 @@ impl<K: EnrKeyUnambiguous> FromStr for DnsEntry<K> {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(s) = s.strip_prefix(ROOT_V1_PREFIX) {
-            TreeRootEntry::parse_value(s).map(DnsEntry::Root)
+            DnsTreeRootEntry::parse_value(s).map(DnsEntry::Root)
         } else if let Some(s) = s.strip_prefix(BRANCH_PREFIX) {
-            BranchEntry::parse_value(s).map(DnsEntry::Branch)
+            DnsBranchEntry::parse_value(s).map(DnsEntry::Branch)
         } else if let Some(s) = s.strip_prefix(LINK_PREFIX) {
-            LinkEntry::parse_value(s).map(DnsEntry::Link)
+            DnsLinkEntry::parse_value(s).map(DnsEntry::Link)
         } else if let Some(s) = s.strip_prefix(ENR_PREFIX) {
-            NodeEntry::parse_value(s).map(DnsEntry::Node)
+            DnsNodeEntry::parse_value(s).map(DnsEntry::Node)
         } else {
             Err(UnknownEntry(s.to_string()))
         }
@@ -88,7 +87,7 @@ impl<K: EnrKeyUnambiguous> FromStr for DnsEntry<K> {
 
 /// Represents an `enr-root` hash of subtrees containing nodes and links.
 #[derive(Clone, Eq, PartialEq)]
-pub struct TreeRootEntry {
+pub struct DnsTreeRootEntry {
     /// The `enr-root` hash.
     pub enr_root: String,
     /// The root hash of the links.
@@ -99,13 +98,13 @@ pub struct TreeRootEntry {
     pub signature: Bytes,
 }
 
-// === impl TreeRootEntry ===
+// === impl DnsTreeRootEntry ===
 
-impl TreeRootEntry {
+impl DnsTreeRootEntry {
     /// Parses the entry from text.
     ///
     /// Caution: This assumes the prefix is already removed.
-    fn parse_value(mut input: &str) -> ParseEntryResult<Self> {
+    fn parse_value(mut input: &str) -> DnsParseEntryResult<Self> {
         let input = &mut input;
         let enr_root = parse_value(input, "e=", "ENR Root", |s| Ok(s.to_string()))?;
         let link_root = parse_value(input, "l=", "Link Root", |s| Ok(s.to_string()))?;
@@ -152,7 +151,7 @@ impl TreeRootEntry {
     }
 }
 
-impl FromStr for TreeRootEntry {
+impl FromStr for DnsTreeRootEntry {
     type Err = ParseDnsEntryError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -164,9 +163,9 @@ impl FromStr for TreeRootEntry {
     }
 }
 
-impl fmt::Debug for TreeRootEntry {
+impl fmt::Debug for DnsTreeRootEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TreeRootEntry")
+        f.debug_struct("DnsTreeRootEntry")
             .field("enr_root", &self.enr_root)
             .field("link_root", &self.link_root)
             .field("sequence_number", &self.sequence_number)
@@ -175,7 +174,7 @@ impl fmt::Debug for TreeRootEntry {
     }
 }
 
-impl fmt::Display for TreeRootEntry {
+impl fmt::Display for DnsTreeRootEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} sig={}", self.content(), BASE64URL_NOPAD.encode(self.signature.as_ref()))
     }
@@ -183,20 +182,20 @@ impl fmt::Display for TreeRootEntry {
 
 /// Represents a branch entry in the DNS tree, containing base32 hashes of subtree entries.
 #[derive(Debug, Clone)]
-pub struct BranchEntry {
+pub struct DnsBranchEntry {
     /// The list of base32-encoded hashes of subtree entries in the branch.
     pub children: Vec<String>,
 }
 
-// === impl BranchEntry ===
+// === impl DnsBranchEntry ===
 
-impl BranchEntry {
+impl DnsBranchEntry {
     /// Parses the entry from text.
     ///
     /// Caution: This assumes the prefix is already removed.
-    fn parse_value(input: &str) -> ParseEntryResult<Self> {
+    fn parse_value(input: &str) -> DnsParseEntryResult<Self> {
         #[inline]
-        fn ensure_valid_hash(hash: &str) -> ParseEntryResult<String> {
+        fn ensure_valid_hash(hash: &str) -> DnsParseEntryResult<String> {
             /// Returns the maximum length in bytes of the no-padding decoded data corresponding to
             /// `n` bytes of base32-encoded data.
             /// See also <https://cs.opensource.google/go/go/+/refs/tags/go1.19.5:src/encoding/base32/base32.go;l=526-531;drc=8a5845e4e34c046758af3729acf9221b8b6c01ae>
@@ -212,13 +211,16 @@ impl BranchEntry {
             Ok(hash.to_string())
         }
 
-        let children =
-            input.trim().split(',').map(ensure_valid_hash).collect::<ParseEntryResult<Vec<_>>>()?;
+        let children = input
+            .trim()
+            .split(',')
+            .map(ensure_valid_hash)
+            .collect::<DnsParseEntryResult<Vec<_>>>()?;
         Ok(Self { children })
     }
 }
 
-impl FromStr for BranchEntry {
+impl FromStr for DnsBranchEntry {
     type Err = ParseDnsEntryError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -227,7 +229,7 @@ impl FromStr for BranchEntry {
     }
 }
 
-impl fmt::Display for BranchEntry {
+impl fmt::Display for DnsBranchEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", BRANCH_PREFIX, self.children.join(","))
     }
@@ -236,20 +238,20 @@ impl fmt::Display for BranchEntry {
 /// Represents a link entry in the DNS tree, facilitating federation and web-of-trust functionality.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(SerializeDisplay, DeserializeFromStr))]
-pub struct LinkEntry<K: EnrKeyUnambiguous = SecretKey> {
+pub struct DnsLinkEntry<K: EnrKeyUnambiguous = SecretKey> {
     /// The domain associated with the link entry.
     pub domain: String,
     /// The public key corresponding to the Ethereum Node Record (ENR) used for the link entry.
     pub pubkey: K::PublicKey,
 }
 
-// === impl LinkEntry ===
+// === impl DnsLinkEntry ===
 
-impl<K: EnrKeyUnambiguous> LinkEntry<K> {
+impl<K: EnrKeyUnambiguous> DnsLinkEntry<K> {
     /// Parses the entry from text.
     ///
     /// Caution: This assumes the prefix is already removed.
-    fn parse_value(input: &str) -> ParseEntryResult<Self> {
+    fn parse_value(input: &str) -> DnsParseEntryResult<Self> {
         let (pubkey, domain) = input.split_once('@').ok_or_else(|| {
             ParseDnsEntryError::Other(format!("Missing @ delimiter in Link entry: {input}"))
         })?;
@@ -262,7 +264,7 @@ impl<K: EnrKeyUnambiguous> LinkEntry<K> {
     }
 }
 
-impl<K> PartialEq for LinkEntry<K>
+impl<K> PartialEq for DnsLinkEntry<K>
 where
     K: EnrKeyUnambiguous,
     K::PublicKey: PartialEq,
@@ -272,13 +274,13 @@ where
     }
 }
 
-impl<K> Eq for LinkEntry<K>
+impl<K> Eq for DnsLinkEntry<K>
 where
     K: EnrKeyUnambiguous,
     K::PublicKey: Eq + PartialEq,
 {
 }
-impl<K> Hash for LinkEntry<K>
+impl<K> Hash for DnsLinkEntry<K>
 where
     K: EnrKeyUnambiguous,
     K::PublicKey: Hash,
@@ -289,7 +291,7 @@ where
     }
 }
 
-impl<K: EnrKeyUnambiguous> FromStr for LinkEntry<K> {
+impl<K: EnrKeyUnambiguous> FromStr for DnsLinkEntry<K> {
     type Err = ParseDnsEntryError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -298,7 +300,7 @@ impl<K: EnrKeyUnambiguous> FromStr for LinkEntry<K> {
     }
 }
 
-impl<K: EnrKeyUnambiguous> fmt::Display for LinkEntry<K> {
+impl<K: EnrKeyUnambiguous> fmt::Display for DnsLinkEntry<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -312,23 +314,23 @@ impl<K: EnrKeyUnambiguous> fmt::Display for LinkEntry<K> {
 
 /// Represents the actual Ethereum Node Record (ENR) entry in the DNS tree.
 #[derive(Debug, Clone)]
-pub struct NodeEntry<K: EnrKeyUnambiguous> {
+pub struct DnsNodeEntry<K: EnrKeyUnambiguous> {
     /// The Ethereum Node Record (ENR) associated with the node entry.
     pub enr: Enr<K>,
 }
 
-// === impl NodeEntry ===
+// === impl DnsNodeEntry ===
 
-impl<K: EnrKeyUnambiguous> NodeEntry<K> {
+impl<K: EnrKeyUnambiguous> DnsNodeEntry<K> {
     /// Parses the entry from text.
     ///
     /// Caution: This assumes the prefix is already removed.
-    fn parse_value(s: &str) -> ParseEntryResult<Self> {
+    fn parse_value(s: &str) -> DnsParseEntryResult<Self> {
         Ok(Self { enr: s.parse().map_err(ParseDnsEntryError::Other)? })
     }
 }
 
-impl<K: EnrKeyUnambiguous> FromStr for NodeEntry<K> {
+impl<K: EnrKeyUnambiguous> FromStr for DnsNodeEntry<K> {
     type Err = ParseDnsEntryError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -337,23 +339,29 @@ impl<K: EnrKeyUnambiguous> FromStr for NodeEntry<K> {
     }
 }
 
-impl<K: EnrKeyUnambiguous> fmt::Display for NodeEntry<K> {
+impl<K: EnrKeyUnambiguous> fmt::Display for DnsNodeEntry<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.enr.to_base64().fmt(f)
     }
 }
 
-/// Returns whether the value starts with a recognized EIP-1459 entry prefix.
-pub(crate) fn has_entry_prefix(value: &str) -> bool {
-    [ROOT_V1_PREFIX, BRANCH_PREFIX, LINK_PREFIX, ENR_PREFIX]
-        .iter()
-        .any(|prefix| value.starts_with(prefix))
+/// Identifies supported DNS discovery record encodings.
+#[derive(Debug)]
+pub struct DnsRecordText;
+
+impl DnsRecordText {
+    /// Returns whether the value starts with a recognized EIP-1459 entry prefix.
+    pub fn has_entry_prefix(value: &str) -> bool {
+        [ROOT_V1_PREFIX, BRANCH_PREFIX, LINK_PREFIX, ENR_PREFIX]
+            .iter()
+            .any(|prefix| value.starts_with(prefix))
+    }
 }
 
 /// Parses the value of the key value pair
-fn parse_value<F, V>(input: &mut &str, key: &str, err: &'static str, f: F) -> ParseEntryResult<V>
+fn parse_value<F, V>(input: &mut &str, key: &str, err: &'static str, f: F) -> DnsParseEntryResult<V>
 where
-    F: Fn(&str) -> ParseEntryResult<V>,
+    F: Fn(&str) -> DnsParseEntryResult<V>,
 {
     ensure_strip_key(input, key, err)?;
     let val = input.split_whitespace().next().ok_or(FieldNotFound(err))?;
@@ -365,7 +373,7 @@ where
 /// Strips the `key` from the `input`
 ///
 /// Returns an err if the `input` does not start with the `key`
-fn ensure_strip_key(input: &mut &str, key: &str, err: &'static str) -> ParseEntryResult<()> {
+fn ensure_strip_key(input: &mut &str, key: &str, err: &'static str) -> DnsParseEntryResult<()> {
     *input = input.trim_start().strip_prefix(key).ok_or(FieldNotFound(err))?;
     Ok(())
 }
@@ -377,7 +385,7 @@ mod tests {
     #[test]
     fn parse_root_entry() {
         let s = "enrtree-root:v1 e=QFT4PBCRX4XQCV3VUYJ6BTCEPU l=JGUFMSAGI7KZYB3P7IZW4S5Y3A seq=3 sig=3FmXuVwpa8Y7OstZTx9PIb1mt8FrW7VpDOFv4AaGCsZ2EIHmhraWhe4NxYhQDlw5MjeFXYMbJjsPeKlHzmJREQE";
-        let root: TreeRootEntry = s.parse().unwrap();
+        let root: DnsTreeRootEntry = s.parse().unwrap();
         assert_eq!(root.to_string(), s);
 
         match s.parse::<DnsEntry<SecretKey>>().unwrap() {
@@ -391,7 +399,7 @@ mod tests {
     #[test]
     fn parse_branch_entry() {
         let s = "enrtree-branch:CCCCCCCCCCCCCCCCCCCC,BBBBBBBBBBBBBBBBBBBB";
-        let entry: BranchEntry = s.parse().unwrap();
+        let entry: DnsBranchEntry = s.parse().unwrap();
         assert_eq!(entry.to_string(), s);
 
         match s.parse::<DnsEntry<SecretKey>>().unwrap() {
@@ -404,7 +412,7 @@ mod tests {
     #[test]
     fn parse_branch_entry_base32() {
         let s = "enrtree-branch:YNEGZIWHOM7TOOSUATAPTM";
-        let entry: BranchEntry = s.parse().unwrap();
+        let entry: DnsBranchEntry = s.parse().unwrap();
         assert_eq!(entry.to_string(), s);
 
         match s.parse::<DnsEntry<SecretKey>>().unwrap() {
@@ -418,25 +426,25 @@ mod tests {
     #[test]
     fn parse_invalid_branch_entry() {
         let s = "enrtree-branch:1,2";
-        let res = s.parse::<BranchEntry>();
+        let res = s.parse::<DnsBranchEntry>();
         assert!(res.is_err());
         let s = "enrtree-branch:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-        let res = s.parse::<BranchEntry>();
+        let res = s.parse::<DnsBranchEntry>();
         assert!(res.is_err());
 
         let s = "enrtree-branch:,BBBBBBBBBBBBBBBBBBBB";
-        let res = s.parse::<BranchEntry>();
+        let res = s.parse::<DnsBranchEntry>();
         assert!(res.is_err());
 
         let s = "enrtree-branch:CCCCCCCCCCCCCCCCCCCC\n,BBBBBBBBBBBBBBBBBBBB";
-        let res = s.parse::<BranchEntry>();
+        let res = s.parse::<DnsBranchEntry>();
         assert!(res.is_err());
     }
 
     #[test]
     fn parse_link_entry() {
         let s = "enrtree://AM5FCQLWIZX2QFPNJAP7VUERCCRNGRHWZG3YYHIUV7BVDQ5FDPRT2@nodes.example.org";
-        let entry: LinkEntry<SecretKey> = s.parse().unwrap();
+        let entry: DnsLinkEntry<SecretKey> = s.parse().unwrap();
         assert_eq!(entry.to_string(), s);
 
         match s.parse::<DnsEntry<SecretKey>>().unwrap() {
@@ -450,7 +458,7 @@ mod tests {
     #[test]
     fn parse_enr_entry() {
         let s = "enr:-HW4QES8QIeXTYlDzbfr1WEzE-XKY4f8gJFJzjJL-9D7TC9lJb4Z3JPRRz1lP4pL_N_QpT6rGQjAU9Apnc-C1iMP36OAgmlkgnY0iXNlY3AyNTZrMaED5IdwfMxdmR8W37HqSFdQLjDkIwBd4Q_MjxgZifgKSdM";
-        let entry: NodeEntry<SecretKey> = s.parse().unwrap();
+        let entry: DnsNodeEntry<SecretKey> = s.parse().unwrap();
         assert_eq!(entry.to_string(), s);
 
         match s.parse::<DnsEntry<SecretKey>>().unwrap() {

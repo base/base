@@ -9,7 +9,7 @@ use base_execution_network_wire::EthHandshakeError;
 use base_execution_network_wire::EthStreamError;
 use base_execution_network_wire::P2PHandshakeError;
 use base_execution_network_wire::P2PStreamError;
-use reth_dns_discovery::resolver::NetError;
+use base_execution_network_discovery::NetError;
 
 use crate::session::PendingSessionHandshakeError;
 
@@ -63,7 +63,7 @@ pub enum NetworkError {
     Discv5Error(#[from] reth_discv5::Error),
     /// Error when setting up the DNS resolver failed
     ///
-    /// See also [`DnsResolver`](reth_dns_discovery::DnsResolver::from_system_conf)
+    /// See also [`DnsResolver`](base_execution_network_discovery::DnsResolver::from_system_conf)
     #[error("failed to configure DNS resolver: {0}")]
     DnsResolver(#[from] NetError),
 }

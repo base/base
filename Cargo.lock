@@ -3575,13 +3575,31 @@ dependencies = [
 name = "base-execution-network-discovery"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
+ "alloy-eip2124",
+ "alloy-hardforks 0.4.7",
+ "alloy-primitives",
+ "alloy-rlp",
+ "base-common-chain-config",
  "base-common-observability-tracing",
+ "base-common-runtime-tasks",
+ "base-execution-network-types",
+ "dashmap",
+ "data-encoding",
+ "enr",
  "futures-util",
+ "hickory-resolver 0.26.1",
  "if-addrs 0.14.0",
+ "linked_hash_set",
+ "rand 0.9.5",
  "reqwest",
+ "schnellru",
+ "secp256k1 0.30.0",
+ "serde",
  "serde_with",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
@@ -13925,35 +13943,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-dns-discovery"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-eip2124",
- "alloy-hardforks 0.4.7",
- "alloy-primitives",
- "alloy-rlp",
- "base-common-chain-config",
- "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "base-execution-network-types",
- "dashmap",
- "data-encoding",
- "enr",
- "hickory-resolver 0.26.1",
- "linked_hash_set",
- "rand 0.9.5",
- "schnellru",
- "secp256k1 0.30.0",
- "serde",
- "serde_with",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
 name = "reth-downloaders"
 version = "0.0.0"
 dependencies = [
@@ -14353,6 +14342,7 @@ dependencies = [
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-execution-evm-blocks",
+ "base-execution-network-discovery",
  "base-execution-network-types",
  "base-execution-network-wire",
  "base-execution-state-api",
@@ -14371,7 +14361,6 @@ dependencies = [
  "rayon",
  "reth-discv4",
  "reth-discv5",
- "reth-dns-discovery",
  "reth-network",
  "reth-network-api",
  "reth-network-p2p",

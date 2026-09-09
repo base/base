@@ -10,15 +10,15 @@ use hickory_resolver::{
 pub use hickory_resolver::{TokioResolver, net::NetError};
 use tracing::trace;
 
-use crate::tree::has_entry_prefix;
+use crate::DnsRecordText;
 
 /// A type that can lookup DNS entries
-pub trait Resolver: Send + Sync + Unpin + 'static {
+pub trait DnsLookup: Send + Sync + Unpin + 'static {
     /// Performs a textual lookup and returns the first text
     fn lookup_txt(&self, query: &str) -> impl Future<Output = Option<String>> + Send;
 }
 
-impl<P: ConnectionProvider> Resolver for hickory_resolver::Resolver<P> {
+impl<P: ConnectionProvider> DnsLookup for hickory_resolver::Resolver<P> {
     async fn lookup_txt(&self, query: &str) -> Option<String> {
         // See: [AsyncResolver::txt_lookup]
         // > *hint* queries that end with a '.' are fully qualified names and are cheaper lookups
@@ -41,7 +41,7 @@ fn find_txt_entry(records: &[Record]) -> Option<String> {
             let RData::TXT(txt) = &record.data else { return None };
             txt_entry(txt)
         })
-        .find(|entry| has_entry_prefix(entry))
+        .find(|entry| DnsRecordText::has_entry_prefix(entry))
 }
 
 /// Joins all `<character-string>`s of a TXT record into a single entry.
@@ -61,12 +61,12 @@ fn txt_entry(txt: &TXT) -> Option<String> {
 ///
 /// ```
 /// # fn t() {
-/// use reth_dns_discovery::resolver::DnsResolver;
+/// use base_execution_network_discovery::DnsResolver;
 /// let resolver = DnsResolver::from_system_conf().unwrap();
 /// # }
 /// ```
 ///
-/// Note: This [Resolver] can send multiple lookup attempts, See also
+/// Note: This [DnsLookup] can send multiple lookup attempts, See also
 /// [`ResolverOpts`](hickory_resolver::config::ResolverOpts) which configures 2 attempts (1 retry)
 /// by default.
 #[derive(Clone, Debug)]
@@ -80,7 +80,7 @@ impl DnsResolver {
         Self(resolver)
     }
 
-    /// Constructs a new Tokio based Resolver with the system configuration.
+    /// Constructs a new Tokio based DnsLookup with the system configuration.
     ///
     /// This will use `/etc/resolv.conf` on Unix OSes and the registry on Windows.
     pub fn from_system_conf() -> Result<Self, NetError> {
@@ -88,19 +88,19 @@ impl DnsResolver {
     }
 }
 
-impl Resolver for DnsResolver {
+impl DnsLookup for DnsResolver {
     async fn lookup_txt(&self, query: &str) -> Option<String> {
-        Resolver::lookup_txt(&self.0, query).await
+        DnsLookup::lookup_txt(&self.0, query).await
     }
 }
 
-/// A [Resolver] that uses an in memory map to lookup entries
+/// A [DnsLookup] that uses an in memory map to lookup entries
 #[derive(Debug, Default)]
-pub struct MapResolver(DashMap<String, String>);
+pub struct DnsMapResolver(DashMap<String, String>);
 
-// === impl MapResolver ===
+// === impl DnsMapResolver ===
 
-impl MapResolver {
+impl DnsMapResolver {
     /// Inserts a key-value pair into the map.
     pub fn insert(&self, k: String, v: String) -> Option<String> {
         self.0.insert(k, v)
@@ -118,18 +118,18 @@ impl MapResolver {
     }
 }
 
-impl Resolver for MapResolver {
+impl DnsLookup for DnsMapResolver {
     async fn lookup_txt(&self, query: &str) -> Option<String> {
         self.get(query)
     }
 }
 
-/// A Resolver that always times out.
+/// A DnsLookup that always times out.
 #[cfg(test)]
-pub(crate) struct TimeoutResolver(pub(crate) std::time::Duration);
+pub struct DnsTimeoutResolver(pub std::time::Duration);
 
 #[cfg(test)]
-impl Resolver for TimeoutResolver {
+impl DnsLookup for DnsTimeoutResolver {
     async fn lookup_txt(&self, _query: &str) -> Option<String> {
         tokio::time::sleep(self.0).await;
         None
