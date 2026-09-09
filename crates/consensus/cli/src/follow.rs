@@ -204,7 +204,7 @@ pub struct EmbeddedConsensusFollowNodeConfigArgs {
     /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
     ///
     /// Namespaced as `--follow.proofs` (not `--proofs`) to avoid colliding with the execution
-    /// node's `--proofs`/`--proofs-history` ExEx toggle when both are flattened into the unified
+    /// node's `--proofs`/`--proofs-history` `ExEx` toggle when both are flattened into the unified
     /// `base follow` command. The `BASE_NODE_PROOFS` env var is unchanged.
     #[arg(long = "follow.proofs", default_value_t = false, env = "BASE_NODE_PROOFS")]
     pub proofs: bool,
