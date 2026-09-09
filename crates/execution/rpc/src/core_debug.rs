@@ -1,3 +1,4 @@
+use reth_rpc_convert::RpcBlockConverter;
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::DebugApiServer;
@@ -830,7 +831,8 @@ impl DebugApiServer for DebugApi {
             let rlp = alloy_rlp::encode(entry.block.sealed_block()).into();
             let hash = entry.block.hash();
 
-            let block = entry.block.clone_into_rpc_block(
+            let block = RpcBlockConverter::clone_into_rpc_block(
+                &entry.block,
                 BlockTransactionsKind::Full,
                 |tx, tx_info| self.eth_api().converter().fill(tx, tx_info),
                 |header, size| self.eth_api().converter().convert_header(header, size),

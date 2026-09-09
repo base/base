@@ -14555,7 +14555,6 @@ dependencies = [
  "alloy-trie",
  "arbitrary",
  "base-common-types-chain",
- "base-common-types-rpc",
  "byteorder",
  "bytes",
  "dashmap",
@@ -14696,7 +14695,9 @@ dependencies = [
 name = "reth-rpc-convert"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-common-types-chain",
+ "base-common-types-rpc",
  "base-execution-evm-runtime",
  "reth-primitives-traits",
  "serde_json",

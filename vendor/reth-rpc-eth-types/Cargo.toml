@@ -50,12 +50,12 @@ schnellru = { workspace = true, features = ["default"] }
 base-common-types-rpc = {workspace = true, features = []}
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = [] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}

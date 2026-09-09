@@ -54,6 +54,7 @@ base-common-observability-metrics = { workspace = true }
 tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = []}
 tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
@@ -69,7 +70,6 @@ base-common-chain-config = {features = ["default"], workspace = true}
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
-reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 base-common-client-ethereum = { workspace = true, features = ["mnemonic"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}

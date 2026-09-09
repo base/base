@@ -31,8 +31,6 @@ mod tests {
     #[cfg(feature = "reth-codec")]
     use base_common_types_chain::Compact;
     use base_common_types_chain::{EthereumTxEnvelope, ReceiptWithBloom, TxEip4844, TxType};
-    #[cfg(all(feature = "rpc-compat", feature = "serde"))]
-    use base_common_types_chain::{ReceiptEnvelope, TxReceipt};
 
     use super::*;
     use crate::proofs::{
@@ -250,19 +248,4 @@ mod tests {
     }
 
     // Ensures that reth and alloy receipts encode to the same JSON
-    #[test]
-    #[cfg(all(feature = "rpc-compat", feature = "serde"))]
-    fn test_receipt_serde() {
-        let input = r#"{"status":"0x1","cumulativeGasUsed":"0x175cc0e","logs":[{"address":"0xa18b9ca2a78660d44ab38ae72e72b18792ffe413","topics":["0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925","0x000000000000000000000000e7e7d8006cbff47bc6ac2dabf592c98e97502708","0x0000000000000000000000007a250d5630b4cf539739df2c5dacb4c659f2488d"],"data":"0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","blockHash":"0xbf9e6a368a399f996a0f0b27cab4191c028c3c99f5f76ea08a5b70b961475fcb","blockNumber":"0x164b59f","blockTimestamp":"0x68c9a713","transactionHash":"0x533aa9e57865675bb94f41aa2895c0ac81eee69686c77af16149c301e19805f1","transactionIndex":"0x14d","logIndex":"0x238","removed":false}],"logsBloom":"0x00000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000400000040000000000000004000000000000000000000000000000000000000000000020000000000000000000000000080000000000000000000000000200000020000000000000000000000000000000000000000000000000000000000000020000010000000000000000000000000000000000000000000000000000000000000","type":"0x2","transactionHash":"0x533aa9e57865675bb94f41aa2895c0ac81eee69686c77af16149c301e19805f1","transactionIndex":"0x14d","blockHash":"0xbf9e6a368a399f996a0f0b27cab4191c028c3c99f5f76ea08a5b70b961475fcb","blockNumber":"0x164b59f","gasUsed":"0xb607","effectiveGasPrice":"0x4a3ee768","from":"0xe7e7d8006cbff47bc6ac2dabf592c98e97502708","to":"0xa18b9ca2a78660d44ab38ae72e72b18792ffe413","contractAddress":null}"#;
-        let receipt: EthereumReceipt<TxType, base_common_types_rpc::Log> =
-            serde_json::from_str(input).unwrap();
-        let envelope: ReceiptEnvelope<base_common_types_rpc::Log> =
-            serde_json::from_str(input).unwrap();
-
-        assert_eq!(envelope, receipt.clone().into());
-
-        let json_envelope = serde_json::to_value(&envelope).unwrap();
-        let json_receipt = serde_json::to_value(receipt.into_with_bloom()).unwrap();
-        assert_eq!(json_envelope, json_receipt);
-    }
 }

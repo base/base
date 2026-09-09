@@ -3,6 +3,7 @@
 use alloy_eips::BlockId;
 use base_common_types_rpc::{BaseBlockResponse, Header};
 use reth_primitives_traits::AlloyBlockHeader;
+use reth_rpc_convert::RpcBlockConverter;
 
 use crate::{BaseEthApi, BaseEthApiError};
 
@@ -36,7 +37,8 @@ impl BaseEthApi {
             block.timestamp(),
             &block.body().transactions,
         );
-        let mut block = block.clone_into_rpc_block(
+        let mut block = RpcBlockConverter::clone_into_rpc_block(
+            &block,
             full.into(),
             |tx, tx_info| self.converter().fill(tx, tx_info),
             |header, size| self.converter().convert_header(header, size),

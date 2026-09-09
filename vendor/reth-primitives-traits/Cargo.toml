@@ -32,7 +32,6 @@ rayon = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-common-types-rpc = { workspace = true, optional = true }
 once_cell = { workspace = true, features = ["critical-section"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true, features = ["k256"] }
@@ -90,7 +89,6 @@ arbitrary = [
     "secp256k1?/global-context",
     "secp256k1?/rand",
     "alloy-trie/arbitrary",
-    "base-common-types-rpc?/arbitrary",
     "dashmap?/arbitrary",
 ]
 dashmap = ["dep:dashmap"]
@@ -98,7 +96,6 @@ default = ["std", "quanta"]
 quanta = ["std", "dep:quanta"]
 rayon = ["dep:rayon"]
 reth-codec = ["base-common-types-chain/reth"]
-rpc-compat = ["base-common-types-rpc"]
 secp256k1 = ["base-common-types-chain/secp256k1"]
 serde = [
     "base-common-types-chain/serde",
@@ -110,7 +107,6 @@ serde = [
     "secp256k1?/serde",
     "alloy-trie/serde",
     "rand_08/serde",
-    "base-common-types-rpc?/serde",
     "dashmap?/serde",
 ]
 std = [
@@ -126,6 +122,5 @@ std = [
     "thiserror/std",
     "alloy-trie/std",
     "serde_json/std",
-    "base-common-types-rpc?/std",
 ]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils"]

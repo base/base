@@ -21,6 +21,7 @@ use base_execution_evm_runtime::{PrecompilesMap, TxResult};
 use base_execution_state_api::{NoopProvider, StateProvider};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
+use reth_rpc_convert::RpcBlockConverter;
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 
 use crate::{EthApiError, error::ToRpcError};
@@ -577,7 +578,8 @@ where
         calls.push(call);
     }
 
-    let block = block.into_rpc_block(
+    let block = RpcBlockConverter::into_rpc_block(
+        block,
         txs_kind,
         |tx, tx_info| converter.fill(tx, tx_info),
         |header, size| converter.convert_header(header, size),

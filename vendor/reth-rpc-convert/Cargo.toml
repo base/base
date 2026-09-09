@@ -17,11 +17,13 @@ workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+base-common-types-rpc = {workspace = true}
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = { workspace = true  }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
+alloy-primitives = {workspace = true}
 serde_json = { workspace = true, features = ["alloc"] }
 
 [features]

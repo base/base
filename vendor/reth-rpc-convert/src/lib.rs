@@ -14,3 +14,6 @@ pub mod transaction;
 
 pub use base_execution_evm_runtime::{CallFees, CallFeesError, EthTxEnvError, TryIntoTxEnv};
 pub use transaction::TransactionConversionError;
+
+mod block;
+pub use block::RpcBlockConverter;
