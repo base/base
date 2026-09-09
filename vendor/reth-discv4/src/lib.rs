@@ -82,9 +82,9 @@ pub use base_execution_network_types::NodeRecord;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-use reth_net_nat::ResolveNatInterval;
+use base_execution_network_discovery::ResolveNatInterval;
 /// reexport to get public ip.
-pub use reth_net_nat::{NatResolver, external_ip};
+pub use base_execution_network_discovery::NatResolver;
 
 use crate::table::PongTable;
 

@@ -1,5 +1,5 @@
 [package]
-name = "reth-net-nat"
+name = "base-execution-network-discovery"
 description = "Helpers for working around NAT"
 version.workspace = true
 edition.workspace = true

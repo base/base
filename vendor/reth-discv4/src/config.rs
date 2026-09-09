@@ -11,7 +11,7 @@ use std::{
 use alloy_primitives::bytes::Bytes;
 use alloy_rlp::Encodable;
 use base_execution_network_types::BanList;
-use reth_net_nat::{NatResolver, ResolveNatInterval};
+use base_execution_network_discovery::{NatResolver, ResolveNatInterval};
 use base_execution_network_types::NodeRecord;
 
 /// Configuration parameters that define the performance of the discovery network.
@@ -334,7 +334,7 @@ mod tests {
     async fn test_resolve_external_ip_interval_uses_interval_at() {
         use std::net::{IpAddr, Ipv4Addr};
 
-        use reth_net_nat::NatResolver;
+        use base_execution_network_discovery::NatResolver;
 
         let ip_addr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
 

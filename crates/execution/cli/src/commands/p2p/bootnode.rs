@@ -10,7 +10,7 @@ use reth_discv5::{
     Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
     discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
 };
-use reth_net_nat::{NatResolver, external_addr_with};
+use base_execution_network_discovery::NatResolver;
 use base_execution_network_types::NodeRecord;
 use secp256k1::SecretKey;
 use tokio::select;
@@ -71,7 +71,7 @@ impl Command {
             // The upstream reth bootnode skips NAT resolution for discv5, leaving the ENR with
             // no IP address. Peers receiving the ENR cannot send WHOAREYOU back because they
             // have no address to target. Resolve the external IP and update the ENR here.
-            match external_addr_with(nat).await {
+            match nat.external_addr().await {
                 Some(external_ip) => {
                     let socket = SocketAddr::new(external_ip, self.v5_addr.port());
                     discv5.with_discv5(|d| d.update_local_enr_socket(socket, false));

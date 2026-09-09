@@ -25,12 +25,12 @@ serde = { workspace = true, optional = true }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
-reth-net-nat = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 tokio = { workspace = true, features = ["io-util", "net", "time"] }
 rand_08 = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-execution-network-discovery = { workspace = true, features = ["default"] }
 base-execution-network-types = {features = ["secp256k1", "std"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "serde"] }
 

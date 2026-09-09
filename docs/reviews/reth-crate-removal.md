@@ -134,7 +134,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-mdbx-sys](../../vendor/reth-mdbx-sys/Cargo.toml) | Retain shared infrastructure |
 | [base-common-observability-metrics](../../crates/common/observability/metrics/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
-| [reth-net-nat](../../vendor/reth-net-nat/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [reth-network](../../vendor/reth-network/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-api](../../vendor/reth-network-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-p2p](../../vendor/reth-network-p2p/Cargo.toml) | Retain shared infrastructure |

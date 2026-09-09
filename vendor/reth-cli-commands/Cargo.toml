@@ -65,7 +65,6 @@ tracing = { workspace = true, features = ["attributes"] }
 comfy-table = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
-reth-net-nat = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
@@ -81,6 +80,7 @@ base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-network-types = { workspace = true, features = ["secp256k1"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }
+base-execution-network-discovery = { workspace = true, features = ["default"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default", "display"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 

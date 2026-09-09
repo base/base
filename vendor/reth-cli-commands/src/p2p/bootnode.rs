@@ -13,7 +13,7 @@ use reth_discv5::{
     Config, Discv5,
     discv5::{self, Event, ListenConfig},
 };
-use reth_net_nat::NatResolver;
+use base_execution_network_discovery::NatResolver;
 use base_execution_network_types::NodeRecord;
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};

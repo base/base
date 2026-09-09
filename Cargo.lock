@@ -3271,6 +3271,7 @@ dependencies = [
  "base-common-observability-events",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-execution-network-discovery",
  "base-execution-network-types",
  "base-execution-payload-builder",
  "base-execution-state-types",
@@ -3295,7 +3296,6 @@ dependencies = [
  "reth-db-api",
  "reth-discv4",
  "reth-discv5",
- "reth-net-nat",
  "reth-network",
  "reth-network-p2p",
  "reth-node-core",
@@ -3567,6 +3567,20 @@ dependencies = [
  "reth-provider",
  "reth-trie",
  "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-execution-network-discovery"
+version = "0.0.0"
+dependencies = [
+ "base-common-observability-tracing",
+ "futures-util",
+ "if-addrs 0.14.0",
+ "reqwest",
+ "serde_with",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
@@ -13658,6 +13672,7 @@ dependencies = [
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
+ "base-execution-network-discovery",
  "base-execution-network-types",
  "base-execution-network-wire",
  "base-execution-state-api",
@@ -13689,7 +13704,6 @@ dependencies = [
  "reth-discv5",
  "reth-downloaders",
  "reth-exex",
- "reth-net-nat",
  "reth-network",
  "reth-network-p2p",
  "reth-node-core",
@@ -13868,13 +13882,13 @@ dependencies = [
  "alloy-rlp",
  "assert_matches",
  "base-common-observability-tracing",
+ "base-execution-network-discovery",
  "base-execution-network-types",
  "discv5-reth",
  "enr",
  "itertools 0.14.0",
  "parking_lot",
  "rand 0.8.7",
- "reth-net-nat",
  "schnellru",
  "secp256k1 0.30.0",
  "serde",
@@ -14318,20 +14332,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-net-nat"
-version = "0.0.0"
-dependencies = [
- "base-common-observability-tracing",
- "futures-util",
- "if-addrs 0.14.0",
- "reqwest",
- "serde_with",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "reth-network"
 version = "0.0.0"
 dependencies = [
@@ -14471,6 +14471,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-execution-evm-blocks",
+ "base-execution-network-discovery",
  "base-execution-network-types",
  "base-execution-state-api",
  "base-execution-state-types",
@@ -14490,7 +14491,6 @@ dependencies = [
  "reth-discv5",
  "reth-engine-local",
  "reth-engine-primitives",
- "reth-net-nat",
  "reth-network",
  "reth-network-p2p",
  "reth-primitives-traits",

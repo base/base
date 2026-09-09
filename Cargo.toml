@@ -150,7 +150,7 @@ members = [
   "vendor/reth-invalid-block-hooks",
   "vendor/reth-libmdbx",
   "vendor/reth-mdbx-sys",
-  "vendor/reth-net-nat",
+  "crates/execution/network/discovery",
   "vendor/reth-network",
   "vendor/reth-network-api",
   "vendor/reth-network-p2p",
@@ -461,7 +461,7 @@ reth-discv5 = { path = "vendor/reth-discv5", default-features = false }
 reth-db-api = { path = "vendor/reth-db-api", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
-reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }
+base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 reth-network = { path = "vendor/reth-network", default-features = false }
 reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }

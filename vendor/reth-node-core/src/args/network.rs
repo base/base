@@ -26,7 +26,7 @@ use reth_discv5::{
     discv5::ListenConfig,
 };
 use base_execution_network_types::IpFilter;
-use reth_net_nat::{DEFAULT_NET_IF_NAME, NatResolver};
+use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
 use reth_network::{
     HelloMessageWithProtocols, NetworkConfigBuilder,
     transactions::{
@@ -455,7 +455,7 @@ impl NetworkArgs {
     pub fn resolved_addr(&self) -> IpAddr {
         if let Some(ref if_name) = self.net_if {
             let if_name = if if_name.is_empty() { DEFAULT_NET_IF_NAME } else { if_name };
-            return match reth_net_nat::net_if::resolve_net_if_ip(if_name) {
+            return match base_execution_network_discovery::NetworkInterface::resolve_ip(if_name) {
                 Ok(addr) => addr,
                 Err(err) => {
                     error!(target: "reth::cli",
