@@ -15,7 +15,6 @@ use base_common_rpc_types::{
     BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
 };
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::RethL1BlockInfo;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_storage_api::BlockReader;
@@ -195,21 +194,19 @@ impl ReceiptFieldsBuilder {
         chain_spec: &impl Upgrades,
         tx: &T,
         l1_block_info: &mut base_common_evm::L1BlockInfo,
-    ) -> Result<Self, BaseEthApiError> {
+    ) -> Self {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
 
-        self.l1_fee = Some(
-            l1_block_info
-                .l1_tx_data_fee(chain_spec, timestamp, &raw_tx, tx.is_deposit())
-                .map_err(|_| BaseEthApiError::L1BlockFeeError)?
-                .saturating_to(),
-        );
-
+        let spec_id = base_common_evm::BaseSpecId::from_timestamp(chain_spec, timestamp);
+        self.l1_fee = Some(if tx.is_deposit() {
+            0
+        } else {
+            l1_block_info.calculate_tx_l1_cost(&raw_tx, spec_id).saturating_to()
+        });
         self.l1_data_gas = Some(
             l1_block_info
-                .l1_data_gas(chain_spec, timestamp, &raw_tx)
-                .map_err(|_| BaseEthApiError::L1BlockGasError)?
+                .data_gas(&raw_tx, spec_id)
                 .saturating_add(l1_block_info.l1_fee_overhead.unwrap_or_default())
                 .saturating_to(),
         );
@@ -239,7 +236,7 @@ impl ReceiptFieldsBuilder {
 
         self.da_footprint_gas_scalar = l1_block_info.da_footprint_gas_scalar;
 
-        Ok(self)
+        self
     }
 
     /// Applies deposit transaction metadata: deposit nonce.
@@ -377,7 +374,7 @@ impl BaseReceiptBuilder {
         });
 
         let receipt_fields = ReceiptFieldsBuilder::new(timestamp, block_number)
-            .l1_block_info(chain_spec, tx_signed, l1_block_info)?
+            .l1_block_info(chain_spec, tx_signed, l1_block_info)
             .build();
 
         Ok(Self { core_receipt, receipt_fields, payer, phase_statuses, metadata })
@@ -474,7 +471,6 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&base_mainnet, &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
             .build();
 
         let L1BlockInfo {
@@ -552,7 +548,6 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
             .build();
 
         let L1BlockInfo { operator_fee_scalar, operator_fee_constant, .. } =
@@ -576,7 +571,6 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
             .build();
 
         let L1BlockInfo { operator_fee_scalar, operator_fee_constant, .. } =
@@ -610,7 +604,6 @@ mod tests {
 
         let receipt_meta = ReceiptFieldsBuilder::new(1730216981, 21713817)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
-            .expect("should parse revm l1 info")
             .build();
 
         let L1BlockInfo {
@@ -673,7 +666,6 @@ mod tests {
             u64::MAX,
         )
         .l1_block_info(&upgrades, &tx, &mut l1_block_info)
-        .expect("should parse revm l1 info")
         .build();
 
         assert_eq!(receipt.l1_block_info.da_footprint_gas_scalar, Some(DA_FOOTPRINT_GAS_SCALAR));

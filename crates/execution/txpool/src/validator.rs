@@ -3440,16 +3440,15 @@ mod tests {
 
         let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
         let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
-        let l1_only_cost = base_execution_evm::RethL1BlockInfo::l1_tx_data_fee(
-            &mut l1_block_info,
-            Arc::clone(&chain_spec),
-            chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
-                .as_timestamp()
-                .unwrap_or_default(),
+        let l1_only_cost = l1_block_info.calculate_tx_l1_cost(
             &encoded,
-            false,
-        )
-        .unwrap();
+            BaseSpecId::from_timestamp(
+                Arc::clone(&chain_spec),
+                chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                    .as_timestamp()
+                    .unwrap_or_default(),
+            ),
+        );
         let full_additional_cost = l1_block_info.tx_cost(
             &encoded,
             U256::from(gas_limit),

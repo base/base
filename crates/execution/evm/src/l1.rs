@@ -1,10 +1,8 @@
 //! Base-specific implementation and utilities for the executor
 
 use alloy_primitives::{U16, U256, hex};
-use base_common_chains::Upgrades;
 use base_common_consensus::Transaction;
-use base_common_evm::{BaseSpecId, L1BlockInfo};
-use base_evm_handler::BlockExecutionError;
+use base_common_evm::L1BlockInfo;
 use reth_primitives_traits::BlockBody;
 
 use crate::{BaseBlockExecutionError, L1BlockInfoError};
@@ -297,71 +295,6 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
         da_footprint_gas_scalar: Some(da_footprint_gas_scalar),
         ..Default::default()
     })
-}
-
-/// Returns the [`BaseSpecId`] at the given timestamp using the [`Upgrades`] trait from
-/// `base-common-chains`.
-fn base_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> BaseSpecId {
-    BaseSpecId::from_timestamp(chain_spec, timestamp)
-}
-
-/// An extension trait for [`L1BlockInfo`] that allows us to calculate the L1 cost of a transaction
-/// based off of the chain spec's activated upgrade.
-pub trait RethL1BlockInfo {
-    /// Forwards an L1 transaction calculation to revm and returns the gas cost.
-    ///
-    /// ### Takes
-    /// - `chain_spec`: The chain spec for the node.
-    /// - `timestamp`: The timestamp of the current block.
-    /// - `input`: The calldata of the transaction.
-    /// - `is_deposit`: Whether or not the transaction is a deposit.
-    fn l1_tx_data_fee(
-        &mut self,
-        chain_spec: impl Upgrades,
-        timestamp: u64,
-        input: &[u8],
-        is_deposit: bool,
-    ) -> Result<U256, BlockExecutionError>;
-
-    /// Computes the data gas cost for an L2 transaction.
-    ///
-    /// ### Takes
-    /// - `chain_spec`: The chain spec for the node.
-    /// - `timestamp`: The timestamp of the current block.
-    /// - `input`: The calldata of the transaction.
-    fn l1_data_gas(
-        &self,
-        chain_spec: impl Upgrades,
-        timestamp: u64,
-        input: &[u8],
-    ) -> Result<U256, BlockExecutionError>;
-}
-
-impl RethL1BlockInfo for L1BlockInfo {
-    fn l1_tx_data_fee(
-        &mut self,
-        chain_spec: impl Upgrades,
-        timestamp: u64,
-        input: &[u8],
-        is_deposit: bool,
-    ) -> Result<U256, BlockExecutionError> {
-        if is_deposit {
-            return Ok(U256::ZERO);
-        }
-
-        let spec_id = base_spec_id(&chain_spec, timestamp);
-        Ok(self.calculate_tx_l1_cost(input, spec_id))
-    }
-
-    fn l1_data_gas(
-        &self,
-        chain_spec: impl Upgrades,
-        timestamp: u64,
-        input: &[u8],
-    ) -> Result<U256, BlockExecutionError> {
-        let spec_id = base_spec_id(&chain_spec, timestamp);
-        Ok(self.data_gas(input, spec_id))
-    }
 }
 
 #[cfg(test)]

@@ -27,12 +27,6 @@ pub enum BaseEthApiError {
     /// EVM error originating from invalid Base data.
     #[error(transparent)]
     Evm(#[from] BaseBlockExecutionError),
-    /// Thrown when calculating L1 gas fee.
-    #[error("failed to calculate l1 gas fee")]
-    L1BlockFeeError,
-    /// Thrown when calculating L1 gas used
-    #[error("failed to calculate l1 gas used")]
-    L1BlockGasError,
     /// Wrapper for [`revm_primitives::InvalidTransaction`](InvalidTransaction).
     #[error(transparent)]
     InvalidTransaction(#[from] BaseInvalidTransactionError),
@@ -55,9 +49,7 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
         match err {
             BaseEthApiError::Eth(err) => err.into(),
             BaseEthApiError::InvalidTransaction(err) => err.into(),
-            BaseEthApiError::Evm(_)
-            | BaseEthApiError::L1BlockFeeError
-            | BaseEthApiError::L1BlockGasError => internal_rpc_err(err.to_string()),
+            BaseEthApiError::Evm(_) => internal_rpc_err(err.to_string()),
             BaseEthApiError::Sequencer(err) => err.into(),
         }
     }
