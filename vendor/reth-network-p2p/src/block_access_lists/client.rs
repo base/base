@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use auto_impl::auto_impl;
+use base_execution_network_wire::BlockAccessLists;
 use futures::Future;
-use reth_eth_wire_types::BlockAccessLists;
 
 use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
 

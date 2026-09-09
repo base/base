@@ -6,10 +6,10 @@ use std::{fmt, io, net::SocketAddr, time::Duration};
 use alloy_primitives::B512;
 use async_trait::async_trait;
 use reth_ecies::{ECIESError, stream::ECIESStream};
-use reth_eth_wire::{
-    HelloMessage, UnauthedP2PStream,
-    errors::{P2PHandshakeError, P2PStreamError},
-};
+use reth_eth_wire::HelloMessage;
+use reth_eth_wire::UnauthedP2PStream;
+use reth_eth_wire::errors::P2PHandshakeError;
+use reth_eth_wire::errors::P2PStreamError;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -251,7 +251,9 @@ mod tests {
 
     use alloy_primitives::B512;
     use reth_ecies::stream::ECIESStream;
-    use reth_eth_wire::{DisconnectReason, HelloMessage, UnauthedP2PStream};
+    use reth_eth_wire::DisconnectReason;
+    use reth_eth_wire::HelloMessage;
+    use reth_eth_wire::UnauthedP2PStream;
     use secp256k1::{PublicKey, Secp256k1, SecretKey};
     use tokio::{net::TcpListener, sync::oneshot, time::Instant};
 

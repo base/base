@@ -1,5 +1,5 @@
 [package]
-name = "reth-eth-wire-types"
+name = "base-execution-network-wire"
 description = "types for eth-wire"
 version.workspace = true
 edition.workspace = true
@@ -28,11 +28,11 @@ alloy-chains = { workspace = true, features = ["rlp"] }
 derive_more = { workspace = true, features = ["full"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
+base-common-types-chain = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
-base-common-types-chain = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 test-case = { workspace = true }

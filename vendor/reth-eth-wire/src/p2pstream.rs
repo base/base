@@ -22,13 +22,15 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 use tracing::{debug, trace};
 
-use crate::{
-    DisconnectReason, HelloMessage, HelloMessageWithProtocols,
-    capability::SharedCapabilities,
-    disconnect::CanDisconnect,
-    errors::{P2PHandshakeError, P2PStreamError},
-    pinger::{Pinger, PingerEvent},
-};
+use crate::DisconnectReason;
+use crate::HelloMessage;
+use crate::HelloMessageWithProtocols;
+use crate::capability::SharedCapabilities;
+use crate::disconnect::CanDisconnect;
+use crate::errors::P2PHandshakeError;
+use crate::errors::P2PStreamError;
+use crate::pinger::Pinger;
+use crate::pinger::PingerEvent;
 
 /// [`MAX_PAYLOAD_SIZE`] is the maximum size of an uncompressed message payload.
 /// This is defined in [EIP-706](https://eips.ethereum.org/EIPS/eip-706).
@@ -245,7 +247,7 @@ where
 /// This stream emits _non-empty_ Bytes that start with the normalized message id, so that the first
 /// byte of each message starts from 0. If this stream only supports a single capability, for
 /// example `eth` then the first byte of each message will match
-/// [EthMessageID](reth_eth_wire_types::message::EthMessageID).
+/// [EthMessageID](base_execution_network_wire::EthMessageID).
 ///
 /// ### Sink behavior
 ///
@@ -873,10 +875,11 @@ mod tests {
     use tokio_util::codec::Decoder;
 
     use super::*;
-    use crate::{
-        Capability, EthVersion, ProtocolVersion, capability::SharedCapability,
-        test_utils::eth_hello,
-    };
+    use crate::Capability;
+    use crate::EthVersion;
+    use crate::ProtocolVersion;
+    use crate::capability::SharedCapability;
+    use crate::test_utils::eth_hello;
 
     /// A sink that records started frames and counts flushes, to observe batching behavior.
     #[derive(Default)]

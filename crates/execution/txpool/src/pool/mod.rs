@@ -79,9 +79,9 @@ use alloy_primitives::{
     Address, B256, TxHash,
     map::{AddressSet, HashSet},
 };
+use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use reth_eth_wire_types::HandleMempoolData;
 use reth_primitives_traits::Recovered;
 use rustc_hash::FxHashMap;
 pub use state::SubPool;

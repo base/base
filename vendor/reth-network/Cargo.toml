@@ -53,10 +53,10 @@ reth-discv4 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 enr = { workspace = true, features = ["serde", "rust-secp256k1"] }
-reth-eth-wire-types = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-network-wire = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
@@ -92,7 +92,7 @@ serde = [
     "enr/serde",
     "reth-dns-discovery/serde",
     "reth-eth-wire/serde",
-    "reth-eth-wire-types/serde",
+    "base-execution-network-wire/serde",
     "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",

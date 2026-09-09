@@ -1,9 +1,13 @@
+use base_execution_network_wire::AccountRangeMessage;
+use base_execution_network_wire::BlockAccessListsMessage;
+use base_execution_network_wire::ByteCodesMessage;
+use base_execution_network_wire::GetAccountRangeMessage;
+use base_execution_network_wire::GetBlockAccessListsMessage;
+use base_execution_network_wire::GetByteCodesMessage;
+use base_execution_network_wire::GetStorageRangesMessage;
+use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::StorageRangesMessage;
 use futures::Future;
-use reth_eth_wire_types::snap::{
-    AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage, GetAccountRangeMessage,
-    GetBlockAccessListsMessage, GetByteCodesMessage, GetStorageRangesMessage, SnapProtocolMessage,
-    StorageRangesMessage,
-};
 
 use crate::{
     download::DownloadClient,
@@ -175,7 +179,7 @@ fn unsupported() -> futures::future::Ready<PeerRequestResult<SnapResponse>> {
 
 #[cfg(test)]
 mod tests {
-    use reth_eth_wire_types::BlockAccessLists;
+    use base_execution_network_wire::BlockAccessLists;
     use test_case::test_case;
 
     use super::*;

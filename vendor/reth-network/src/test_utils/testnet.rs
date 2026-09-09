@@ -14,6 +14,7 @@ use base_common_runtime_tasks::EventStream;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_network_types::PeerId;
 use base_execution_state_api::{
     BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
@@ -23,13 +24,14 @@ use base_execution_txpool::{
 };
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
-use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::HelloMessageWithProtocols;
+use reth_eth_wire::protocol::Protocol;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, NetworkInfo, Peers,
     events::{PeerEvent, SessionInfo},
     test_utils::{PeersHandle, PeersHandleProvider},
 };
-use base_execution_network_types::PeerId;
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},

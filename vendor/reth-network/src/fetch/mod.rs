@@ -14,12 +14,18 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_execution_network_types::PeerId;
+use base_execution_network_types::ReputationChangeKind;
 pub use client::FetchClient;
 use futures::StreamExt;
-use reth_eth_wire::{
-    BlockAccessLists, Capabilities, EthVersion, GetBlockAccessLists, GetBlockBodies,
-    GetBlockHeaders, GetReceipts, snap::SnapProtocolMessage,
-};
+use reth_eth_wire::BlockAccessLists;
+use reth_eth_wire::Capabilities;
+use reth_eth_wire::EthVersion;
+use reth_eth_wire::GetBlockAccessLists;
+use reth_eth_wire::GetBlockBodies;
+use reth_eth_wire::GetBlockHeaders;
+use reth_eth_wire::GetReceipts;
+use reth_eth_wire::SnapProtocolMessage;
 use reth_network_api::test_utils::PeersHandle;
 use reth_network_p2p::{
     block_access_lists::client::BalRequirement,
@@ -29,8 +35,6 @@ use reth_network_p2p::{
     receipts::client::ReceiptsResponse,
     snap::client::SnapResponse,
 };
-use base_execution_network_types::PeerId;
-use base_execution_network_types::ReputationChangeKind;
 use tokio::sync::{mpsc, mpsc::UnboundedSender, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -854,8 +858,9 @@ mod tests {
 
     use alloy_primitives::B512;
     use base_common_types_chain::Header;
+    use base_execution_network_wire::AccountRangeMessage;
+    use base_execution_network_wire::GetAccountRangeMessage;
     use reth_eth_wire::Capability;
-    use reth_eth_wire_types::snap::{AccountRangeMessage, GetAccountRangeMessage};
 
     use super::*;
     use crate::{PeersConfig, peers::PeersManager};

@@ -148,6 +148,8 @@ mod state;
 mod swarm;
 mod trusted_peers_resolver;
 
+pub use base_execution_network_types::PeersConfig;
+pub use base_execution_network_types::SessionsConfig;
 pub use builder::NetworkBuilder;
 pub use config::{NetworkConfig, NetworkConfigBuilder};
 pub use discovery::Discovery;
@@ -156,7 +158,8 @@ pub use flattened_response::FlattenedResponse;
 pub use manager::NetworkManager;
 pub use metrics::TxTypesCounter;
 pub use network::NetworkHandle;
-pub use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols};
+pub use reth_eth_wire::DisconnectReason;
+pub use reth_eth_wire::HelloMessageWithProtocols;
 pub use reth_network_api::{
     BlockDownloaderProvider, DiscoveredEvent, DiscoveryEvent, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, PeerRequest, PeerRequestSender, Peers, PeersInfo,
@@ -165,8 +168,6 @@ pub use reth_network_api::{
 /// re-export p2p interfaces
 pub use reth_network_p2p as p2p;
 pub use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
-pub use base_execution_network_types::PeersConfig;
-pub use base_execution_network_types::SessionsConfig;
 pub use session::{
     ActiveSessionHandle, ActiveSessionMessage, Direction, EthRlpxConnection, PeerInfo,
     PendingSessionEvent, PendingSessionHandle, PendingSessionHandshakeError, SessionCommand,
@@ -176,9 +177,9 @@ pub use swarm::NetworkConnectionState;
 
 /// re-export types crates
 pub mod types {
-    pub use reth_discv4::NatResolver;
-    pub use reth_eth_wire_types::*;
     pub use base_execution_network_types::*;
+    pub use base_execution_network_wire::*;
+    pub use reth_discv4::NatResolver;
 }
 
 use aquamarine as _;

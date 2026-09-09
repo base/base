@@ -2,10 +2,12 @@
 
 use std::io;
 
-use reth_eth_wire_types::{DisconnectReason, UnknownDisconnectReason};
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::UnknownDisconnectReason;
 use reth_primitives_traits::GotExpected;
 
-use crate::{ProtocolVersion, capability::SharedCapabilityError};
+use crate::ProtocolVersion;
+use crate::capability::SharedCapabilityError;
 
 /// Errors when sending/receiving p2p messages. These should result in kicking the peer.
 #[derive(thiserror::Error, Debug)]

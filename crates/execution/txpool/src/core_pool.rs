@@ -8,9 +8,9 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B128, B256, TxHash, map::AddressSet};
 use base_common_chain_config::ChainSpecProvider;
+use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_api::{BlockReaderIdExt, StateProviderFactory};
 use base_execution_state_types::ChangedAccount;
-use reth_eth_wire_types::HandleMempoolData;
 use reth_primitives_traits::Recovered;
 use tokio::sync::mpsc::Receiver;
 use tracing::{instrument, trace};

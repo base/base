@@ -3595,6 +3595,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-network-wire"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-eip7928",
+ "alloy-eips",
+ "alloy-hardforks 0.4.7",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "arbitrary",
+ "base-common-codec-macros",
+ "base-common-types-chain",
+ "bytes",
+ "derive_more",
+ "proptest",
+ "proptest-arbitrary-interop",
+ "rand 0.9.5",
+ "reth-primitives-traits",
+ "serde",
+ "test-case",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-execution-payload-builder"
 version = "0.0.0"
 dependencies = [
@@ -3917,6 +3942,7 @@ dependencies = [
  "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
+ "base-execution-network-wire",
  "base-execution-state-api",
  "base-execution-state-types",
  "base-execution-txpool",
@@ -3937,7 +3963,6 @@ dependencies = [
  "proptest-arbitrary-interop",
  "rand 0.9.5",
  "reth-chain-state",
- "reth-eth-wire-types",
  "reth-primitives-traits",
  "reth-provider",
  "rustc-hash",
@@ -14145,6 +14170,7 @@ dependencies = [
  "base-common-observability-tracing",
  "base-common-types-chain",
  "base-execution-network-types",
+ "base-execution-network-wire",
  "bytes",
  "derive_more",
  "futures",
@@ -14154,7 +14180,6 @@ dependencies = [
  "rand 0.8.7",
  "rand 0.9.5",
  "reth-ecies",
- "reth-eth-wire-types",
  "reth-primitives-traits",
  "secp256k1 0.30.0",
  "serde",
@@ -14165,31 +14190,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "reth-eth-wire-types"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-eip7928",
- "alloy-eips",
- "alloy-hardforks 0.4.7",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "arbitrary",
- "base-common-codec-macros",
- "base-common-types-chain",
- "bytes",
- "derive_more",
- "proptest",
- "proptest-arbitrary-interop",
- "rand 0.9.5",
- "reth-primitives-traits",
- "serde",
- "test-case",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -14396,6 +14396,7 @@ dependencies = [
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-network-types",
+ "base-execution-network-wire",
  "base-execution-state-api",
  "base-execution-state-types",
  "base-execution-txpool",
@@ -14415,7 +14416,6 @@ dependencies = [
  "reth-dns-discovery",
  "reth-ecies",
  "reth-eth-wire",
- "reth-eth-wire-types",
  "reth-network",
  "reth-network-api",
  "reth-network-p2p",
@@ -14449,10 +14449,10 @@ dependencies = [
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-execution-network-types",
+ "base-execution-network-wire",
  "derive_more",
  "enr",
  "futures",
- "reth-eth-wire-types",
  "reth-network-p2p",
  "serde",
  "thiserror 2.0.19",
@@ -14471,11 +14471,11 @@ dependencies = [
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-network-types",
+ "base-execution-network-wire",
  "base-execution-state-types",
  "derive_more",
  "futures",
  "parking_lot",
- "reth-eth-wire-types",
  "reth-primitives-traits",
  "test-case",
  "tokio",

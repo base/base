@@ -13,20 +13,27 @@ use std::{
 
 use alloy_eip2124::ForkFilter;
 use alloy_primitives::bytes::{Bytes, BytesMut};
+use base_execution_network_wire::EthMessageID;
+use base_execution_network_wire::RawCapabilityMessage;
 use futures::{Sink, SinkExt, ready};
 use pin_project::pin_project;
-use reth_eth_wire_types::{EthMessageID, RawCapabilityMessage};
 use tokio::time::timeout;
 use tokio_stream::Stream;
 use tracing::{debug, trace};
 
-use crate::{
-    CanDisconnect, DisconnectReason, EthMessage, EthVersion, ProtocolMessage, UnifiedStatus,
-    errors::{EthHandshakeError, EthStreamError},
-    handshake::EthereumEthHandshake,
-    message::{EthBroadcastMessage, MAX_MESSAGE_SIZE, TX_MEMORY_BUDGET_MULTIPLIER},
-    p2pstream::HANDSHAKE_TIMEOUT,
-};
+use crate::CanDisconnect;
+use crate::DisconnectReason;
+use crate::EthBroadcastMessage;
+use crate::EthMessage;
+use crate::EthVersion;
+use crate::MAX_MESSAGE_SIZE;
+use crate::ProtocolMessage;
+use crate::TX_MEMORY_BUDGET_MULTIPLIER;
+use crate::UnifiedStatus;
+use crate::errors::EthHandshakeError;
+use crate::errors::EthStreamError;
+use crate::handshake::EthereumEthHandshake;
+use crate::p2pstream::HANDSHAKE_TIMEOUT;
 
 /// An un-authenticated [`EthStream`]. This is consumed and returns a [`EthStream`] after the
 /// `Status` handshake is completed.
@@ -349,24 +356,29 @@ mod tests {
     use alloy_eip2124::{ForkFilter, Head};
     use alloy_primitives::{B256, U256, bytes::Bytes};
     use alloy_rlp::Decodable;
+    use base_execution_network_types::pk2id;
+    use base_execution_network_wire::UnifiedStatus;
     use futures::{SinkExt, StreamExt};
     use reth_ecies::stream::ECIESStream;
-    use reth_eth_wire_types::UnifiedStatus;
-    use base_execution_network_types::pk2id;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::net::{TcpListener, TcpStream};
     use tokio_util::codec::Decoder;
 
     use super::UnauthedEthStream;
-    use crate::{
-        EthMessage, EthStream, EthVersion, HelloMessageWithProtocols, PassthroughCodec,
-        ProtocolVersion, Status, StatusMessage,
-        broadcast::BlockHashNumber,
-        errors::{EthHandshakeError, EthStreamError},
-        ethstream::RawCapabilityMessage,
-        hello::DEFAULT_TCP_PORT,
-        p2pstream::UnauthedP2PStream,
-    };
+    use crate::BlockHashNumber;
+    use crate::EthMessage;
+    use crate::EthStream;
+    use crate::EthVersion;
+    use crate::HelloMessageWithProtocols;
+    use crate::PassthroughCodec;
+    use crate::ProtocolVersion;
+    use crate::Status;
+    use crate::StatusMessage;
+    use crate::errors::EthHandshakeError;
+    use crate::errors::EthStreamError;
+    use crate::ethstream::RawCapabilityMessage;
+    use crate::hello::DEFAULT_TCP_PORT;
+    use crate::p2pstream::UnauthedP2PStream;
 
     #[tokio::test]
     async fn can_handshake() {

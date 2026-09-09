@@ -9,21 +9,39 @@ use std::{
 };
 
 use alloy_eip2124::ForkId;
+use base_common_runtime_tasks::EventStream;
 use base_common_types_chain::BaseReceipt;
-use reth_eth_wire_types::{
-    BlockAccessLists, BlockBodies, BlockHeaders, Capabilities, Cells, DisconnectReason, EthMessage,
-    EthVersion, GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetCells, GetNodeData,
-    GetPooledTransactions, GetReceipts, GetReceipts70, NodeData, PooledTransactions, Receipts,
-    Receipts69, Receipts70, UnifiedStatus, message::RequestPair, snap::SnapProtocolMessage,
-};
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerKind;
+use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_wire::BlockAccessLists;
+use base_execution_network_wire::BlockBodies;
+use base_execution_network_wire::BlockHeaders;
+use base_execution_network_wire::Capabilities;
+use base_execution_network_wire::Cells;
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::EthMessage;
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::GetBlockAccessLists;
+use base_execution_network_wire::GetBlockBodies;
+use base_execution_network_wire::GetBlockHeaders;
+use base_execution_network_wire::GetCells;
+use base_execution_network_wire::GetNodeData;
+use base_execution_network_wire::GetPooledTransactions;
+use base_execution_network_wire::GetReceipts;
+use base_execution_network_wire::GetReceipts70;
+use base_execution_network_wire::NodeData;
+use base_execution_network_wire::PooledTransactions;
+use base_execution_network_wire::Receipts;
+use base_execution_network_wire::Receipts69;
+use base_execution_network_wire::Receipts70;
+use base_execution_network_wire::RequestPair;
+use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::UnifiedStatus;
 use reth_network_p2p::{
     error::{RequestError, RequestResult},
     snap::client::SnapResponse,
 };
-use base_execution_network_types::{NodeRecord, PeerId};
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::PeerKind;
-use base_common_runtime_tasks::EventStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{Stream, StreamExt, wrappers::UnboundedReceiverStream};
 
@@ -208,7 +226,8 @@ pub enum PeerRequest {
         /// The request for block bodies.
         request: GetBlockBodies,
         /// The channel to send the response for block bodies.
-        response: oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
+        response:
+            oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
     },
     /// Requests pooled transactions from the peer.
     ///

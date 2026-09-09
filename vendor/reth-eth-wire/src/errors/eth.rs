@@ -5,12 +5,14 @@ use std::io;
 use alloy_chains::Chain;
 use alloy_eip2124::ValidationError;
 use alloy_primitives::B256;
-use reth_eth_wire_types::{EthVersion, snap::SnapProtocolError};
+use base_execution_network_wire::EthVersion;
+use base_execution_network_wire::SnapProtocolError;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 
-use crate::{
-    DisconnectReason, errors::P2PStreamError, message::MessageError, version::ParseVersionError,
-};
+use crate::DisconnectReason;
+use crate::MessageError;
+use crate::ParseVersionError;
+use crate::errors::P2PStreamError;
 
 /// Errors when sending/receiving messages
 #[derive(thiserror::Error, Debug)]

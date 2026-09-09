@@ -1,6 +1,9 @@
 //! A Protocol defines a P2P subprotocol in an `RLPx` connection
 
-use crate::{Capability, EthMessageID, EthVersion, SnapVersion};
+use crate::Capability;
+use crate::EthMessageID;
+use crate::EthVersion;
+use crate::SnapVersion;
 
 /// Type that represents a [Capability] and the number of messages it uses.
 ///

@@ -34,6 +34,8 @@ use base_common_observability_metrics::common::mpsc::MemoryBoundedReceiver;
 use base_common_runtime_tasks::EventStream;
 use base_common_types_chain::TxType;
 use base_execution_evm_blocks::SenderRecoveryCache;
+use base_execution_network_types::PeerId;
+use base_execution_network_types::ReputationChangeKind;
 use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
     PropagatedTransactions, TransactionPool, ValidPoolTransaction,
@@ -47,12 +49,22 @@ use constants::SOFT_LIMIT_COUNT_HASHES_IN_NEW_POOLED_TRANSACTIONS_BROADCAST_MESS
 pub(crate) use fetcher::{FetchEvent, TransactionFetcher};
 use futures::{Future, StreamExt, stream::FuturesUnordered};
 use policy::NetworkPolicies;
-use reth_eth_wire::{
-    BroadcastPoolTransactions, DedupPayload, EthVersion, GetPooledTransactions, HandleMempoolData,
-    HandleVersionedMempoolData, LazyEncoded, LazyEncodedTransaction, NewPooledTransactionHashes,
-    NewPooledTransactionHashes66, NewPooledTransactionHashes68, NewPooledTransactionHashes72,
-    PooledTransactions, RequestTxHashes, Transactions, ValidAnnouncementData,
-};
+use reth_eth_wire::BroadcastPoolTransactions;
+use reth_eth_wire::DedupPayload;
+use reth_eth_wire::EthVersion;
+use reth_eth_wire::GetPooledTransactions;
+use reth_eth_wire::HandleMempoolData;
+use reth_eth_wire::HandleVersionedMempoolData;
+use reth_eth_wire::LazyEncoded;
+use reth_eth_wire::LazyEncodedTransaction;
+use reth_eth_wire::NewPooledTransactionHashes;
+use reth_eth_wire::NewPooledTransactionHashes66;
+use reth_eth_wire::NewPooledTransactionHashes68;
+use reth_eth_wire::NewPooledTransactionHashes72;
+use reth_eth_wire::PooledTransactions;
+use reth_eth_wire::RequestTxHashes;
+use reth_eth_wire::Transactions;
+use reth_eth_wire::ValidAnnouncementData;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerKind, PeerRequest, PeerRequestSender, Peers,
     events::{PeerEvent, SessionInfo},
@@ -61,8 +73,6 @@ use reth_network_p2p::{
     error::{RequestError, RequestResult},
     sync::SyncStateProvider,
 };
-use base_execution_network_types::PeerId;
-use base_execution_network_types::ReputationChangeKind;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;

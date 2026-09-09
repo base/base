@@ -124,7 +124,7 @@ impl Decodable for EthVersion {
 ///
 /// # Example
 /// ```
-/// use reth_eth_wire_types::EthVersion;
+/// use base_execution_network_wire::EthVersion;
 ///
 /// let version = EthVersion::try_from("67").unwrap();
 /// assert_eq!(version, EthVersion::Eth67);
@@ -151,7 +151,7 @@ impl TryFrom<&str> for EthVersion {
 ///
 /// # Example
 /// ```
-/// use reth_eth_wire_types::EthVersion;
+/// use base_execution_network_wire::EthVersion;
 ///
 /// let version = EthVersion::try_from(67).unwrap();
 /// assert_eq!(version, EthVersion::Eth67);

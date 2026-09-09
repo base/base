@@ -3,7 +3,10 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use reth_eth_wire::{Capability, EthVersion, protocol::Protocol, snap::GetAccountRangeMessage};
+use reth_eth_wire::Capability;
+use reth_eth_wire::EthVersion;
+use reth_eth_wire::GetAccountRangeMessage;
+use reth_eth_wire::protocol::Protocol;
 use reth_network::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,

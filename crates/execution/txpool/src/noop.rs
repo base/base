@@ -11,7 +11,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
-use reth_eth_wire_types::HandleMempoolData;
+use base_execution_network_wire::HandleMempoolData;
 use reth_primitives_traits::Recovered;
 use tokio::sync::{mpsc, mpsc::Receiver};
 

@@ -8,7 +8,10 @@ use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_types_chain::{BaseBlock as Block, Header};
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
-use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDirection};
+use reth_eth_wire::BlockAccessLists;
+use reth_eth_wire::EthVersion;
+use reth_eth_wire::GetBlockAccessLists;
+use reth_eth_wire::HeadersDirection;
 use reth_network::{
     BlockDownloaderProvider, NetworkEventListenerProvider,
     eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},

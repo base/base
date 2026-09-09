@@ -44,7 +44,6 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
-reth-eth-wire-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
@@ -53,6 +52,7 @@ base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["default"] }
+base-execution-network-wire = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
@@ -91,7 +91,7 @@ default = ["metrics"]
 metrics = ["base-execution-evm-runtime/metrics", "base-common-observability-metrics/metrics", "base-common-observability-events/metrics"]
 serde = [
     "base-execution-state-types/serde",
-    "reth-eth-wire-types/serde",
+    "base-execution-network-wire/serde",
     "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
@@ -120,7 +120,7 @@ arbitrary = [
     "proptest",
     "proptest-arbitrary-interop",
     "imbl/arbitrary",
-    "reth-eth-wire-types/arbitrary",
+    "base-execution-network-wire/arbitrary",
     "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",

@@ -18,17 +18,22 @@ use alloy_eips::merge::EPOCH_SLOTS;
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
 use base_execution_network_types::PeerId;
+use base_execution_network_wire::NewPooledTransactionHashes;
+use base_execution_network_wire::RawCapabilityMessage;
+use base_execution_network_wire::RequestPair;
+use base_execution_network_wire::SnapProtocolMessage;
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
-use reth_eth_wire::{
-    Capabilities, DisconnectP2P, DisconnectReason, EthMessage, EthSnapMessage, NewBlockPayload,
-    errors::{EthHandshakeError, EthStreamError},
-    message::{EthBroadcastMessage, MessageError},
-};
-use reth_eth_wire_types::{
-    NewPooledTransactionHashes, RawCapabilityMessage, message::RequestPair,
-    snap::SnapProtocolMessage,
-};
+use reth_eth_wire::Capabilities;
+use reth_eth_wire::DisconnectP2P;
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::EthBroadcastMessage;
+use reth_eth_wire::EthMessage;
+use reth_eth_wire::EthSnapMessage;
+use reth_eth_wire::MessageError;
+use reth_eth_wire::NewBlockPayload;
+use reth_eth_wire::errors::EthHandshakeError;
+use reth_eth_wire::errors::EthStreamError;
 use reth_network_api::{PeerRequest, RequestMessage};
 use reth_network_p2p::{error::RequestError, snap::client::SnapResponse};
 use reth_primitives_traits::Block;
@@ -1309,21 +1314,26 @@ mod tests {
     use alloy_primitives::B256;
     use base_execution_network_types::PROTOCOL_BREACH_REQUEST_TIMEOUT;
     use base_execution_network_types::pk2id;
+    use base_execution_network_wire::AccountRangeMessage;
+    use base_execution_network_wire::BlockAccessLists;
+    use base_execution_network_wire::BlockAccessListsMessage;
+    use base_execution_network_wire::EthMessageID;
+    use base_execution_network_wire::GetAccountRangeMessage;
+    use base_execution_network_wire::GetBlockAccessListsMessage;
+    use base_execution_network_wire::MAX_MESSAGE_SIZE;
+    use base_execution_network_wire::NewPooledTransactionHashes72;
     use futures::task::noop_waker;
     use reth_ecies::stream::ECIESStream;
-    use reth_eth_wire::{
-        EthStream, GetBlockAccessLists, GetBlockBodies, HelloMessageWithProtocols, P2PStream,
-        UnauthedEthStream, UnauthedP2PStream, UnifiedStatus, handshake::EthHandshake,
-        protocol::Protocol,
-    };
-    use reth_eth_wire_types::{
-        BlockAccessLists, EthMessageID, NewPooledTransactionHashes72,
-        message::MAX_MESSAGE_SIZE,
-        snap::{
-            AccountRangeMessage, BlockAccessListsMessage, GetAccountRangeMessage,
-            GetBlockAccessListsMessage,
-        },
-    };
+    use reth_eth_wire::EthStream;
+    use reth_eth_wire::GetBlockAccessLists;
+    use reth_eth_wire::GetBlockBodies;
+    use reth_eth_wire::HelloMessageWithProtocols;
+    use reth_eth_wire::P2PStream;
+    use reth_eth_wire::UnauthedEthStream;
+    use reth_eth_wire::UnauthedP2PStream;
+    use reth_eth_wire::UnifiedStatus;
+    use reth_eth_wire::handshake::EthHandshake;
+    use reth_eth_wire::protocol::Protocol;
     use reth_network_p2p::error::RequestResult;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::{

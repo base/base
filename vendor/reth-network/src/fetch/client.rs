@@ -10,12 +10,15 @@ use std::{
 
 use alloy_primitives::B256;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_execution_network_types::PeerId;
+use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_wire::GetAccountRangeMessage;
+use base_execution_network_wire::GetBlockAccessListsMessage;
+use base_execution_network_wire::GetByteCodesMessage;
+use base_execution_network_wire::GetStorageRangesMessage;
+use base_execution_network_wire::SnapProtocolMessage;
 use futures::{future, future::Either};
 use reth_eth_wire::BlockAccessLists;
-use reth_eth_wire_types::snap::{
-    GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
-    GetStorageRangesMessage, SnapProtocolMessage,
-};
 use reth_network_api::test_utils::PeersHandle;
 use reth_network_p2p::{
     BlockClient,
@@ -28,8 +31,6 @@ use reth_network_p2p::{
     receipts::client::{ReceiptsClient, ReceiptsFut},
     snap::client::{SnapClient, SnapResponse},
 };
-use base_execution_network_types::PeerId;
-use base_execution_network_types::ReputationChangeKind;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{fetch::DownloadRequest, flattened_response::FlattenedResponse};

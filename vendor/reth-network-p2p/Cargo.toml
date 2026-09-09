@@ -26,8 +26,8 @@ futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 tracing = { workspace = true, features = ["attributes"] }
-reth-eth-wire-types = { workspace = true, features = ["default"] }
 base-execution-network-types = {features = ["std"], workspace = true}
+base-execution-network-wire = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }

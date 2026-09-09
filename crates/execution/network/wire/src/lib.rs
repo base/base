@@ -1,5 +1,4 @@
-//! Types for the eth wire protocol: <https://github.com/ethereum/devp2p/blob/master/caps/eth.md>
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -14,40 +13,40 @@ extern crate alloc;
 mod status;
 pub use status::{Status, StatusBuilder, StatusEth69, StatusMessage, UnifiedStatus};
 
-pub mod version;
-pub use version::{EthVersion, ProtocolVersion};
+mod version;
+pub use version::*;
 
-pub mod message;
-pub use message::{EthMessage, EthMessageID, ProtocolMessage};
+mod message;
+pub use message::*;
 
-pub mod header;
+mod header;
 pub use header::*;
 
-pub mod blocks;
+mod blocks;
 pub use blocks::*;
 
-pub mod broadcast;
+mod broadcast;
 pub use broadcast::*;
 
-pub mod transactions;
+mod transactions;
 pub use transactions::*;
 
-pub mod state;
+mod state;
 pub use state::*;
 
-pub mod receipts;
+mod receipts;
 pub use receipts::*;
 
-pub mod block_access_lists;
+mod block_access_lists;
 pub use block_access_lists::*;
 
-pub mod disconnect_reason;
+mod disconnect_reason;
 pub use disconnect_reason::*;
 
-pub mod capability;
+mod capability;
 pub use capability::*;
 
-pub mod snap;
+mod snap;
 /// re-export for convenience
 pub use alloy_eips::eip1898::{BlockHashOrNumber, HashOrNumber};
 pub use alloy_eips::eip2718::Encodable2718;

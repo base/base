@@ -18,16 +18,19 @@ use alloy_primitives::{
     map::{FbBuildHasher, HashMap},
 };
 use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerId;
+use base_execution_network_types::PeerKind;
 use rand::seq::SliceRandom;
-use reth_eth_wire::{
-    BlockHashNumber, Capabilities, DisconnectReason, GetReceipts70, NewBlockHashes,
-    NewBlockPayload, UnifiedStatus,
-};
+use reth_eth_wire::BlockHashNumber;
+use reth_eth_wire::Capabilities;
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::GetReceipts70;
+use reth_eth_wire::NewBlockHashes;
+use reth_eth_wire::NewBlockPayload;
+use reth_eth_wire::UnifiedStatus;
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use reth_network_p2p::receipts::client::ReceiptsResponse;
-use base_execution_network_types::PeerId;
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::PeerKind;
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
@@ -208,7 +211,7 @@ impl NetworkState {
     /// See also <https://github.com/ethereum/devp2p/blob/master/caps/eth.md>
     pub(crate) fn announce_new_block(
         &mut self,
-        msg: NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>,
+        msg: NewBlockMessage<base_execution_network_wire::NewBlock<BaseBlock>>,
     ) {
         // send a `NewBlock` message to a fraction of the connected peers (square root of the total
         // number of peers)
@@ -253,7 +256,7 @@ impl NetworkState {
     /// but sending `NewBlockHash` broadcast to all peers that haven't seen it yet.
     pub(crate) fn announce_new_block_hash(
         &mut self,
-        msg: NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>,
+        msg: NewBlockMessage<base_execution_network_wire::NewBlock<BaseBlock>>,
     ) {
         let number = msg.block.block().header().number();
         let hashes = NewBlockHashes(vec![BlockHashNumber { hash: msg.hash, number }]);
@@ -323,7 +326,10 @@ impl NetworkState {
     }
 
     /// Adds a trusted peer that may use a hostname, with periodic DNS re-resolution.
-    pub(crate) fn add_trusted_peer_node(&mut self, trusted: base_execution_network_types::TrustedPeer) {
+    pub(crate) fn add_trusted_peer_node(
+        &mut self,
+        trusted: base_execution_network_types::TrustedPeer,
+    ) {
         self.peers_manager.add_trusted_peer_node(trusted)
     }
 
@@ -650,7 +656,7 @@ pub(crate) enum StateAction {
         /// Target of the message
         peer_id: PeerId,
         /// The `NewBlock` message
-        block: NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>,
+        block: NewBlockMessage<base_execution_network_wire::NewBlock<BaseBlock>>,
     },
     NewBlockHashes {
         /// Target of the message
@@ -691,11 +697,14 @@ mod tests {
 
     use alloy_primitives::B256;
     use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
+    use base_execution_network_types::PeerId;
     use base_execution_state_api::NoopProvider;
-    use reth_eth_wire::{BlockBodies, Capabilities, Capability, EthVersion};
+    use reth_eth_wire::BlockBodies;
+    use reth_eth_wire::Capabilities;
+    use reth_eth_wire::Capability;
+    use reth_eth_wire::EthVersion;
     use reth_network_api::PeerRequestSender;
     use reth_network_p2p::{bodies::client::BodiesClient, error::RequestError};
-    use base_execution_network_types::PeerId;
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 

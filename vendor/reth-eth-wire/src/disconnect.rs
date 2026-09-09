@@ -2,9 +2,9 @@
 
 use std::{future::Future, pin::Pin};
 
+use base_execution_network_wire::DisconnectReason;
 use futures::{Sink, SinkExt};
 use reth_ecies::stream::ECIESStream;
-use reth_eth_wire_types::DisconnectReason;
 use tokio::io::AsyncWrite;
 use tokio_util::codec::{Encoder, Framed};
 
@@ -54,7 +54,8 @@ mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable};
 
-    use crate::{DisconnectReason, p2pstream::P2PMessage};
+    use crate::DisconnectReason;
+    use crate::p2pstream::P2PMessage;
 
     fn all_reasons() -> Vec<DisconnectReason> {
         vec![

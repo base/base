@@ -7,13 +7,15 @@ use std::{
 
 use derive_more::{Deref, DerefMut};
 
-use crate::{
-    Capability, EthMessageID, EthVersion,
-    errors::{P2PHandshakeError, P2PStreamError},
-    p2pstream::MAX_RESERVED_MESSAGE_ID,
-    protocol::{ProtoVersion, Protocol},
-    version::ParseVersionError,
-};
+use crate::Capability;
+use crate::EthMessageID;
+use crate::EthVersion;
+use crate::ParseVersionError;
+use crate::errors::P2PHandshakeError;
+use crate::errors::P2PStreamError;
+use crate::p2pstream::MAX_RESERVED_MESSAGE_ID;
+use crate::protocol::ProtoVersion;
+use crate::protocol::Protocol;
 
 /// This represents a shared capability, its version, and its message id offset.
 ///
@@ -401,10 +403,12 @@ impl UnsupportedCapabilityError {
 mod tests {
     use alloy_primitives::bytes::Bytes;
     use alloy_rlp::{Decodable, Encodable};
-    use reth_eth_wire_types::RawCapabilityMessage;
+    use base_execution_network_wire::RawCapabilityMessage;
 
     use super::*;
-    use crate::{Capabilities, Capability, SnapVersion};
+    use crate::Capabilities;
+    use crate::Capability;
+    use crate::SnapVersion;
 
     #[test]
     fn from_eth_68() {

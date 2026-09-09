@@ -2,8 +2,8 @@ use std::pin::Pin;
 
 use alloy_primitives::B256;
 use base_common_types_chain::TxReceipt;
+use base_execution_network_wire::Receipts70;
 use futures::Future;
-use reth_eth_wire_types::Receipts70;
 
 use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
 

@@ -40,16 +40,19 @@ use base_common_types_chain::EthereumTxEnvelope;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
 use base_common_types_chain::transaction::PooledTransaction;
+use base_execution_network_types::PeerId;
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;
-use reth_eth_wire::{
-    DedupPayload, GetPooledTransactions, HandleMempoolData, HandleVersionedMempoolData,
-    PartiallyValidData, RequestTxHashes, ValidAnnouncementData,
-};
+use reth_eth_wire::DedupPayload;
+use reth_eth_wire::GetPooledTransactions;
+use reth_eth_wire::HandleMempoolData;
+use reth_eth_wire::HandleVersionedMempoolData;
+use reth_eth_wire::PartiallyValidData;
+use reth_eth_wire::RequestTxHashes;
+use reth_eth_wire::ValidAnnouncementData;
 use reth_network_api::PeerRequest;
 use reth_network_p2p::error::{RequestError, RequestResult};
-use base_execution_network_types::PeerId;
 use reth_primitives_traits::SignedTransaction;
 use schnellru::ByLength;
 use tokio::sync::{mpsc::error::TrySendError, oneshot, oneshot::error::RecvError};
@@ -1318,8 +1321,8 @@ mod test {
         map::{B256Map, B256Set, HashMap},
     };
     use alloy_rlp::Decodable;
+    use base_execution_network_wire::EthVersion;
     use derive_more::IntoIterator;
-    use reth_eth_wire_types::EthVersion;
 
     use super::*;
     use crate::test_utils::transactions::{buffer_hash_to_tx_fetcher, new_mock_session};

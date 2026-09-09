@@ -12,10 +12,15 @@ use secp256k1::{SECP256K1, SecretKey};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
-use crate::{
-    EthVersion, HelloMessageWithProtocols, P2PStream, ProtocolVersion, Status, StatusMessage,
-    UnauthedP2PStream, UnifiedStatus, hello::DEFAULT_TCP_PORT,
-};
+use crate::EthVersion;
+use crate::HelloMessageWithProtocols;
+use crate::P2PStream;
+use crate::ProtocolVersion;
+use crate::Status;
+use crate::StatusMessage;
+use crate::UnauthedP2PStream;
+use crate::UnifiedStatus;
+use crate::hello::DEFAULT_TCP_PORT;
 
 pub type P2pPassthroughTcpStream = P2PStream<Framed<TcpStream, LengthDelimitedCodec>>;
 
@@ -69,7 +74,8 @@ pub mod proto {
     use bytes::{Buf, BufMut, BytesMut};
 
     use super::*;
-    use crate::{Capability, protocol::Protocol};
+    use crate::Capability;
+    use crate::protocol::Protocol;
 
     /// Returns a new testing `HelloMessage` with eth and the test protocol
     pub fn test_hello() -> (HelloMessageWithProtocols, SecretKey) {

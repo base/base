@@ -5,10 +5,12 @@ use std::time::Duration;
 use alloy_primitives::map::HashSet;
 use base_common_observability_tracing::init_test_tracing;
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use base_execution_state_api::NoopProvider;
 use futures::StreamExt;
 use reth_discv4::Discv4Config;
-use reth_eth_wire::{DisconnectReason, HeadersDirection};
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::HeadersDirection;
 use reth_network::{
     BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
     NetworkManager, PeersConfig,
@@ -22,7 +24,6 @@ use reth_network_p2p::{
     headers::client::{HeadersClient, HeadersRequest},
     sync::{NetworkSyncUpdater, SyncState},
 };
-use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use reth_provider::test_utils::MockEthProvider;
 use secp256k1::SecretKey;
 use tokio::task;

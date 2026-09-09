@@ -142,7 +142,7 @@ members = [
   "vendor/reth-engine-tree",
   "vendor/reth-engine-util",
   "vendor/reth-eth-wire",
-  "vendor/reth-eth-wire-types",
+  "crates/execution/network/wire",
   "vendor/reth-etl",
   "vendor/reth-execution-cache",
   "vendor/reth-exex",
@@ -503,7 +503,7 @@ reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = fa
 reth-dns-discovery = { path = "vendor/reth-dns-discovery", default-features = false }
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
-reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
+base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
 reth-execution-cache = { path = "vendor/reth-execution-cache", default-features = false }
 reth-storage-overlay = { path = "vendor/reth-storage-overlay", default-features = false }

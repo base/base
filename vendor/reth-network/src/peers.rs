@@ -12,15 +12,14 @@ use std::{
 
 use alloy_eip2124::ForkId;
 use alloy_primitives::map::{FbBuildHasher, HashMap, HashSet, hash_map::Entry};
-use futures::StreamExt;
-use rand::Rng;
-use reth_eth_wire::{DisconnectReason, errors::EthStreamError};
 use base_execution_network_types::BanList;
-use reth_network_api::test_utils::{PeerCommand, PeersHandle};
-use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
 use base_execution_network_types::ConnectionsConfig;
+use base_execution_network_types::DEFAULT_REPUTATION;
+use base_execution_network_types::MAX_TRUSTED_PEER_REPUTATION_CHANGE;
+use base_execution_network_types::PEER_ROTATION_MIN_UPTIME;
 use base_execution_network_types::Peer;
 use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerBackoffDurations;
 use base_execution_network_types::PeerConnectionState;
 use base_execution_network_types::PeerKind;
 use base_execution_network_types::PeersConfig;
@@ -29,10 +28,12 @@ use base_execution_network_types::ReputationChangeKind;
 use base_execution_network_types::ReputationChangeOutcome;
 use base_execution_network_types::ReputationChangeWeights;
 use base_execution_network_types::is_connection_failed_reputation;
-use base_execution_network_types::PEER_ROTATION_MIN_UPTIME;
-use base_execution_network_types::PeerBackoffDurations;
-use base_execution_network_types::DEFAULT_REPUTATION;
-use base_execution_network_types::MAX_TRUSTED_PEER_REPUTATION_CHANGE;
+use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
+use futures::StreamExt;
+use rand::Rng;
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::errors::EthStreamError;
+use reth_network_api::test_utils::{PeerCommand, PeersHandle};
 use thiserror::Error;
 use tokio::{
     sync::mpsc,
@@ -1519,17 +1520,18 @@ mod tests {
 
     use alloy_eip2124::{ForkHash, ForkId};
     use alloy_primitives::B512;
-    use reth_eth_wire::{
-        DisconnectReason,
-        errors::{EthHandshakeError, EthStreamError, P2PHandshakeError, P2PStreamError},
-    };
-    use base_execution_network_types::BanList;
-    use reth_network_api::Direction;
-    use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
     use base_execution_network_types::BackoffKind;
+    use base_execution_network_types::BanList;
+    use base_execution_network_types::DEFAULT_REPUTATION;
     use base_execution_network_types::Peer;
     use base_execution_network_types::ReputationChangeKind;
-    use base_execution_network_types::DEFAULT_REPUTATION;
+    use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
+    use reth_eth_wire::DisconnectReason;
+    use reth_eth_wire::errors::EthHandshakeError;
+    use reth_eth_wire::errors::EthStreamError;
+    use reth_eth_wire::errors::P2PHandshakeError;
+    use reth_eth_wire::errors::P2PStreamError;
+    use reth_network_api::Direction;
     use url::Host;
 
     use super::PeersManager;
@@ -3323,7 +3325,7 @@ mod tests {
             peers.on_active_session_dropped(
                 &socket_addr,
                 &peer,
-                &EthStreamError::InvalidMessage(reth_eth_wire::message::MessageError::Invalid(
+                &EthStreamError::InvalidMessage(reth_eth_wire::MessageError::Invalid(
                     reth_eth_wire::EthVersion::Eth68,
                     reth_eth_wire::EthMessageID::Status,
                 )),

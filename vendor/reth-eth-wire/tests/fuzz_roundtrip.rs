@@ -51,12 +51,25 @@ macro_rules! fuzz_type_and_name {
 pub mod fuzz_rlp {
     use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
     use base_common_types_chain::add_arbitrary_tests;
-    use reth_eth_wire::{
-        BlockBodies, BlockHeaders, DisconnectReason, GetBlockBodies, GetBlockHeaders, GetNodeData,
-        GetPooledTransactions, GetReceipts, HelloMessage, NewBlock, NewBlockHashes,
-        NewPooledTransactionHashes66, NewPooledTransactionHashes68, NodeData, P2PMessage,
-        PooledTransactions, Receipts, Status, Transactions,
-    };
+    use reth_eth_wire::BlockBodies;
+    use reth_eth_wire::BlockHeaders;
+    use reth_eth_wire::DisconnectReason;
+    use reth_eth_wire::GetBlockBodies;
+    use reth_eth_wire::GetBlockHeaders;
+    use reth_eth_wire::GetNodeData;
+    use reth_eth_wire::GetPooledTransactions;
+    use reth_eth_wire::GetReceipts;
+    use reth_eth_wire::HelloMessage;
+    use reth_eth_wire::NewBlock;
+    use reth_eth_wire::NewBlockHashes;
+    use reth_eth_wire::NewPooledTransactionHashes66;
+    use reth_eth_wire::NewPooledTransactionHashes68;
+    use reth_eth_wire::NodeData;
+    use reth_eth_wire::P2PMessage;
+    use reth_eth_wire::PooledTransactions;
+    use reth_eth_wire::Receipts;
+    use reth_eth_wire::Status;
+    use reth_eth_wire::Transactions;
     use serde::{Deserialize, Serialize};
     use test_fuzz::test_fuzz;
 

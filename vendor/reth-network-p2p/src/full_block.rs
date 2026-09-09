@@ -13,9 +13,10 @@ use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
-use futures::FutureExt;
-use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use base_execution_network_types::{PeerId, WithPeerId};
+use base_execution_network_wire::BlockAccessLists;
+use base_execution_network_wire::HeadersDirection;
+use futures::FutureExt;
 use reth_primitives_traits::{SealedBlock, SealedBlockWith, SealedHeader};
 use tracing::{debug, trace};
 

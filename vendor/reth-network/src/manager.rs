@@ -33,6 +33,8 @@ use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::shutdown::GracefulShutdown;
 use base_common_types_chain::BaseBlock;
+use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_types::{NodeRecord, PeerId};
 use base_execution_state_api::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
@@ -42,8 +44,6 @@ use reth_network_api::{
     events::{PeerEvent, SessionInfo},
     test_utils::PeersHandle,
 };
-use base_execution_network_types::{NodeRecord, PeerId};
-use base_execution_network_types::ReputationChangeKind;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -115,7 +115,7 @@ pub struct NetworkManager {
     /// Receiver half of the command channel set up between this type and the [`NetworkHandle`]
     from_handle_rx: UnboundedReceiverStream<NetworkHandleMessage>,
     /// Handles block imports according to the `eth` protocol.
-    block_import: Box<dyn BlockImport<reth_eth_wire_types::NewBlock<BaseBlock>>>,
+    block_import: Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>,
     /// Sender for high level network events.
     event_sender: EventSender<NetworkEvent<PeerRequest>>,
     /// Sender half to send events to the
@@ -583,7 +583,7 @@ impl NetworkManager {
     /// Invoked after a `NewBlock` message from the peer was validated
     fn on_block_import_result(
         &mut self,
-        event: BlockImportEvent<reth_eth_wire_types::NewBlock<BaseBlock>>,
+        event: BlockImportEvent<base_execution_network_wire::NewBlock<BaseBlock>>,
     ) {
         match event {
             BlockImportEvent::Announcement(validation) => match validation {

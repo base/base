@@ -10,6 +10,7 @@ use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_network_types::PeersConfig;
 use base_execution_network_types::SessionsConfig;
 use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
+use base_execution_network_wire::MAX_MESSAGE_SIZE;
 use base_execution_state_api::{
     BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
@@ -17,11 +18,11 @@ use base_execution_state_api::{
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
 use reth_dns_discovery::DnsDiscoveryConfig;
-use reth_eth_wire::{
-    HelloMessage, HelloMessageWithProtocols, UnifiedStatus,
-    handshake::{EthHandshake, EthRlpxHandshake},
-};
-use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
+use reth_eth_wire::HelloMessage;
+use reth_eth_wire::HelloMessageWithProtocols;
+use reth_eth_wire::UnifiedStatus;
+use reth_eth_wire::handshake::EthHandshake;
+use reth_eth_wire::handshake::EthRlpxHandshake;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
@@ -75,7 +76,7 @@ pub struct NetworkConfig<C> {
     /// first hardfork, `Frontier` for mainnet.
     pub fork_filter: ForkFilter,
     /// The block importer type.
-    pub block_import: Box<dyn BlockImport<reth_eth_wire_types::NewBlock<BaseBlock>>>,
+    pub block_import: Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>,
     /// The default mode of the network.
     pub network_mode: NetworkMode,
     /// The executor to use for spawning tasks.
@@ -210,7 +211,7 @@ pub struct NetworkConfigBuilder {
     /// Whether tx gossip is disabled
     tx_gossip_disabled: bool,
     /// The block importer type
-    block_import: Option<Box<dyn BlockImport<reth_eth_wire_types::NewBlock<BaseBlock>>>>,
+    block_import: Option<Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>>,
     /// How to instantiate transactions manager.
     transactions_manager_config: TransactionsManagerConfig,
     /// The NAT resolver for external IP
@@ -549,7 +550,7 @@ impl NetworkConfigBuilder {
     /// Sets the block import type.
     pub fn block_import(
         mut self,
-        block_import: Box<dyn BlockImport<reth_eth_wire_types::NewBlock<BaseBlock>>>,
+        block_import: Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>,
     ) -> Self {
         self.block_import = Some(block_import);
         self

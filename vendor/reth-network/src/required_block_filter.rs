@@ -4,8 +4,9 @@
 //! specific required blocks (primarily used for shadowfork testing).
 
 use alloy_eips::BlockNumHash;
+use base_execution_network_wire::GetBlockHeaders;
+use base_execution_network_wire::HeadersDirection;
 use futures::StreamExt;
-use reth_eth_wire_types::{GetBlockHeaders, HeadersDirection};
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerRequest, Peers, ReputationChangeKind,
 };

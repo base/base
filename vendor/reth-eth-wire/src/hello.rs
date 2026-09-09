@@ -3,7 +3,9 @@ use base_common_types_chain::add_arbitrary_tests;
 use base_execution_network_types::PeerId;
 use reth_primitives_traits::constants::RETH_CLIENT_VERSION;
 
-use crate::{Capability, EthVersion, ProtocolVersion};
+use crate::Capability;
+use crate::EthVersion;
+use crate::ProtocolVersion;
 
 /// The default tcp port for p2p.
 ///
@@ -234,10 +236,12 @@ mod tests {
     use base_execution_network_types::pk2id;
     use secp256k1::{SECP256K1, SecretKey};
 
-    use crate::{
-        Capability, EthVersion, HelloMessage, HelloMessageWithProtocols, ProtocolVersion,
-        p2pstream::P2PMessage,
-    };
+    use crate::Capability;
+    use crate::EthVersion;
+    use crate::HelloMessage;
+    use crate::HelloMessageWithProtocols;
+    use crate::ProtocolVersion;
+    use crate::p2pstream::P2PMessage;
 
     #[test]
     fn test_hello_encoding_round_trip() {

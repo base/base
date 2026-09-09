@@ -14,20 +14,23 @@ use std::{
 
 use alloy_eip2124::ForkFilter;
 use alloy_primitives::bytes::{Bytes, BytesMut};
+use base_execution_network_wire::RawCapabilityMessage;
+use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::SnapVersion;
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use reth_eth_wire_types::{
-    RawCapabilityMessage,
-    snap::{SnapProtocolMessage, SnapVersion},
-};
 
-use crate::{
-    Capability, EthMessage, EthStreamInner, EthVersion, HANDSHAKE_TIMEOUT, P2PStream,
-    UnifiedStatus,
-    capability::SharedCapabilities,
-    errors::{EthStreamError, P2PStreamError},
-    handshake::EthRlpxHandshake,
-    message::EthBroadcastMessage,
-};
+use crate::Capability;
+use crate::EthBroadcastMessage;
+use crate::EthMessage;
+use crate::EthStreamInner;
+use crate::EthVersion;
+use crate::HANDSHAKE_TIMEOUT;
+use crate::P2PStream;
+use crate::UnifiedStatus;
+use crate::capability::SharedCapabilities;
+use crate::errors::EthStreamError;
+use crate::errors::P2PStreamError;
+use crate::handshake::EthRlpxHandshake;
 
 /// A dedicated stream that carries `eth` as the primary protocol and `snap/2` (EIP-8189) as a typed
 /// side-channel on the same `RLPx` connection.
@@ -236,21 +239,20 @@ fn mask_snap(bytes: &mut BytesMut, snap_offset: u8) -> Result<(), io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use reth_eth_wire_types::{
-        EthVersion,
-        snap::{BlockAccessListsMessage, GetBlockAccessListsMessage},
-    };
+    use base_execution_network_wire::BlockAccessListsMessage;
+    use base_execution_network_wire::EthVersion;
+    use base_execution_network_wire::GetBlockAccessListsMessage;
     use tokio::net::TcpListener;
     use tokio_util::codec::Decoder;
 
     use super::*;
-    use crate::{
-        UnauthedP2PStream,
-        handshake::EthHandshake,
-        message::MAX_MESSAGE_SIZE,
-        protocol::Protocol,
-        test_utils::{connect_passthrough, eth_handshake, eth_hello},
-    };
+    use crate::MAX_MESSAGE_SIZE;
+    use crate::UnauthedP2PStream;
+    use crate::handshake::EthHandshake;
+    use crate::protocol::Protocol;
+    use crate::test_utils::connect_passthrough;
+    use crate::test_utils::eth_handshake;
+    use crate::test_utils::eth_hello;
 
     /// Builds shared capabilities from matching local protocols and peer capabilities.
     fn shared_caps(local: Vec<Protocol>, peer: Vec<Capability>) -> SharedCapabilities {
@@ -355,7 +357,9 @@ mod tests {
                 if let EthSnapMessage::Snap(SnapProtocolMessage::GetBlockAccessLists(req)) = msg {
                     let response = SnapProtocolMessage::BlockAccessLists(BlockAccessListsMessage {
                         request_id: req.request_id,
-                        block_access_lists: reth_eth_wire_types::BlockAccessLists(vec![None]),
+                        block_access_lists: base_execution_network_wire::BlockAccessLists(vec![
+                            None,
+                        ]),
                     });
                     stream.send(EthSnapMessage::Snap(response)).await.unwrap();
                 }

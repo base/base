@@ -31,20 +31,27 @@ pub mod test_utils;
 
 // Re-export wire types
 #[doc(inline)]
-pub use reth_eth_wire_types::*;
+pub use base_execution_network_wire::*;
 #[cfg(test)]
 pub use tokio_util::codec::{
     LengthDelimitedCodec as PassthroughCodec, LengthDelimitedCodecError as PassthroughCodecError,
 };
 
-pub use crate::{
-    Capability, ProtocolVersion,
-    disconnect::CanDisconnect,
-    eth_snap::{EthSnapMessage, EthSnapStream},
-    ethstream::{EthStream, EthStreamInner, UnauthedEthStream},
-    hello::{HelloMessage, HelloMessageBuilder, HelloMessageWithProtocols},
-    p2pstream::{
-        DisconnectP2P, HANDSHAKE_TIMEOUT, MAX_RESERVED_MESSAGE_ID, P2PMessage, P2PMessageID,
-        P2PStream, UnauthedP2PStream,
-    },
-};
+pub use crate::Capability;
+pub use crate::ProtocolVersion;
+pub use crate::disconnect::CanDisconnect;
+pub use crate::eth_snap::EthSnapMessage;
+pub use crate::eth_snap::EthSnapStream;
+pub use crate::ethstream::EthStream;
+pub use crate::ethstream::EthStreamInner;
+pub use crate::ethstream::UnauthedEthStream;
+pub use crate::hello::HelloMessage;
+pub use crate::hello::HelloMessageBuilder;
+pub use crate::hello::HelloMessageWithProtocols;
+pub use crate::p2pstream::DisconnectP2P;
+pub use crate::p2pstream::HANDSHAKE_TIMEOUT;
+pub use crate::p2pstream::MAX_RESERVED_MESSAGE_ID;
+pub use crate::p2pstream::P2PMessage;
+pub use crate::p2pstream::P2PMessageID;
+pub use crate::p2pstream::P2PStream;
+pub use crate::p2pstream::UnauthedP2PStream;

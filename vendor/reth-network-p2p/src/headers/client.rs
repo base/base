@@ -6,8 +6,9 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use base_common_types_chain::Header;
+pub use base_execution_network_wire::BlockHeaders;
+pub use base_execution_network_wire::HeadersDirection;
 use futures::{Future, FutureExt};
-pub use reth_eth_wire_types::{BlockHeaders, HeadersDirection};
 
 use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
 

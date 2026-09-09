@@ -13,28 +13,43 @@ use alloy_rlp::Encodable;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
 };
+use base_execution_network_types::PeerId;
 use base_execution_state_api::{
     BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
     ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
 };
 use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
-use reth_eth_wire::{
-    BlockAccessLists, BlockBodies, BlockHeaders, Cells, GetBlockAccessLists, GetBlockBodies,
-    GetBlockHeaders, GetCells, GetNodeData, GetReceipts, GetReceipts70, HeadersDirection, NodeData,
-    Receipts, Receipts69, Receipts70,
-    snap::{
-        AccountData, AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage,
-        GetAccountRangeMessage, GetStorageRangesMessage, SnapProtocolMessage, StorageData,
-        StorageRangesMessage,
-    },
-};
+use reth_eth_wire::AccountData;
+use reth_eth_wire::AccountRangeMessage;
+use reth_eth_wire::BlockAccessLists;
+use reth_eth_wire::BlockAccessListsMessage;
+use reth_eth_wire::BlockBodies;
+use reth_eth_wire::BlockHeaders;
+use reth_eth_wire::ByteCodesMessage;
+use reth_eth_wire::Cells;
+use reth_eth_wire::GetAccountRangeMessage;
+use reth_eth_wire::GetBlockAccessLists;
+use reth_eth_wire::GetBlockBodies;
+use reth_eth_wire::GetBlockHeaders;
+use reth_eth_wire::GetCells;
+use reth_eth_wire::GetNodeData;
+use reth_eth_wire::GetReceipts;
+use reth_eth_wire::GetReceipts70;
+use reth_eth_wire::GetStorageRangesMessage;
+use reth_eth_wire::HeadersDirection;
+use reth_eth_wire::NodeData;
+use reth_eth_wire::Receipts;
+use reth_eth_wire::Receipts69;
+use reth_eth_wire::Receipts70;
+use reth_eth_wire::SnapProtocolMessage;
+use reth_eth_wire::StorageData;
+use reth_eth_wire::StorageRangesMessage;
 use reth_network_api::test_utils::PeersHandle;
 use reth_network_p2p::{
     error::{RequestError, RequestResult},
     snap::client::SnapResponse,
 };
-use base_execution_network_types::PeerId;
 use reth_primitives_traits::Block;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -1023,7 +1038,7 @@ mod tests {
         }); "storage ranges"
     )]
     #[test_case(
-        SnapProtocolMessage::GetByteCodes(reth_eth_wire::snap::GetByteCodesMessage {
+        SnapProtocolMessage::GetByteCodes(reth_eth_wire::GetByteCodesMessage {
             request_id: 3,
             hashes: vec![B256::repeat_byte(0x11)],
             response_bytes: SOFT_RESPONSE_LIMIT as u64,
@@ -1335,7 +1350,7 @@ mod tests {
         let (response, rx) = oneshot::channel();
         handler.on_snap_request(
             PeerId::default(),
-            SnapProtocolMessage::GetByteCodes(reth_eth_wire::snap::GetByteCodesMessage {
+            SnapProtocolMessage::GetByteCodes(reth_eth_wire::GetByteCodesMessage {
                 request_id: 3,
                 hashes: vec![KECCAK_EMPTY, B256::repeat_byte(0xff), code_hash, later_code_hash],
                 response_bytes: 1,

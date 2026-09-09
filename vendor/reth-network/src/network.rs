@@ -8,16 +8,23 @@ use std::{
 
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::B256;
+use base_common_runtime_tasks::{EventSender, EventStream};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerKind;
+use base_execution_network_types::Reputation;
+use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reth_discv4::{Discv4, NatResolver};
 use reth_discv5::Discv5;
-use reth_eth_wire::{
-    BlockRangeUpdate, BroadcastPoolTransactions, DisconnectReason, NewPooledTransactionHashes,
-    SharedTransactions,
-};
+use reth_eth_wire::BlockRangeUpdate;
+use reth_eth_wire::BroadcastPoolTransactions;
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::NewPooledTransactionHashes;
+use reth_eth_wire::SharedTransactions;
 use reth_network_api::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerInfo, PeerRequest, Peers,
@@ -26,12 +33,6 @@ use reth_network_api::{
     test_utils::{PeersHandle, PeersHandleProvider},
 };
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState, SyncStateProvider};
-use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::PeerKind;
-use base_execution_network_types::Reputation;
-use base_execution_network_types::ReputationChangeKind;
-use base_common_runtime_tasks::{EventSender, EventStream};
 use secp256k1::SecretKey;
 use tokio::sync::{
     mpsc::{self, UnboundedSender},
@@ -156,7 +157,11 @@ impl NetworkHandle {
     /// Caution: in `PoS` this is a noop because new blocks are no longer announced over devp2p.
     /// Instead they are sent to the node by CL and can be requested over devp2p.
     /// Broadcasting new blocks is considered a protocol violation.
-    pub fn announce_block(&self, block: reth_eth_wire_types::NewBlock<BaseBlock>, hash: B256) {
+    pub fn announce_block(
+        &self,
+        block: base_execution_network_wire::NewBlock<BaseBlock>,
+        hash: B256,
+    ) {
         self.send_message(NetworkHandleMessage::AnnounceBlock(block, hash))
     }
 
@@ -599,7 +604,7 @@ pub(crate) enum NetworkHandleMessage {
     /// Unbans a peer.
     UnbanPeer(PeerId),
     /// Broadcasts an event to announce a new block to all nodes.
-    AnnounceBlock(reth_eth_wire_types::NewBlock<BaseBlock>, B256),
+    AnnounceBlock(base_execution_network_wire::NewBlock<BaseBlock>, B256),
     /// Sends a list of transactions to the given peer.
     SendTransaction {
         /// The ID of the peer to which the transactions are sent.

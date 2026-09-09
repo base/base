@@ -1,7 +1,8 @@
 use alloy_primitives::{B256, Signature};
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
 use base_execution_txpool::{TransactionPool, test_utils::MockTransaction};
-use reth_eth_wire::{GetPooledTransactions, PooledTransactions};
+use reth_eth_wire::GetPooledTransactions;
+use reth_eth_wire::PooledTransactions;
 use reth_network::{
     NetworkEventListenerProvider, PeerRequest,
     test_utils::{NetworkEventStream, NetworkTestData, Testnet},

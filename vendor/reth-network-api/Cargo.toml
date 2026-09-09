@@ -27,16 +27,16 @@ derive_more = { workspace = true, features = ["full"] }
 enr = { workspace = true, features = ["rust-secp256k1"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-eth-wire-types = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 base-execution-network-types = {features = ["std"], workspace = true}
+base-execution-network-wire = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [features]
 serde = [
     "dep:serde",
-    "reth-eth-wire-types/serde",
+    "base-execution-network-wire/serde",
     "base-execution-network-types/serde",
     "alloy-primitives/serde",
     "enr/serde",

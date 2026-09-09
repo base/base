@@ -31,11 +31,11 @@ futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-eth-wire-types = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 tokio-util = { workspace = true, features = ["default", "codec", "io"] }
+base-execution-network-wire = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
@@ -52,9 +52,9 @@ arbitrary = { workspace = true, features = ["derive"] }
 proptest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
-reth-eth-wire-types = { workspace = true, features = ["default", "arbitrary"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-execution-network-wire = { workspace = true, features = ["default", "arbitrary"] }
 
 [[test]]
 name = "fuzz_roundtrip"
@@ -63,7 +63,7 @@ required-features = ["arbitrary", "serde"]
 
 [features]
 arbitrary = [
-    "reth-eth-wire-types/arbitrary",
+    "base-execution-network-wire/arbitrary",
     "dep:arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
@@ -73,7 +73,7 @@ arbitrary = [
 ]
 serde = [
     "dep:serde",
-    "reth-eth-wire-types/serde",
+    "base-execution-network-wire/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bytes/serde",

@@ -1,21 +1,23 @@
 use std::{fmt::Debug, future::Future, pin::Pin, time::Duration};
 
 use alloy_eip2124::ForkFilter;
+use base_execution_network_wire::DisconnectReason;
+use base_execution_network_wire::EthMessage;
+use base_execution_network_wire::ProtocolMessage;
+use base_execution_network_wire::StatusMessage;
+use base_execution_network_wire::UnifiedStatus;
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream};
-use reth_eth_wire_types::{
-    DisconnectReason, EthMessage, ProtocolMessage, StatusMessage, UnifiedStatus,
-};
 use reth_primitives_traits::GotExpected;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, trace};
 
-use crate::{
-    CanDisconnect,
-    errors::{EthHandshakeError, EthStreamError, P2PStreamError},
-    message::MAX_MESSAGE_SIZE,
-};
+use crate::CanDisconnect;
+use crate::MAX_MESSAGE_SIZE;
+use crate::errors::EthHandshakeError;
+use crate::errors::EthStreamError;
+use crate::errors::P2PStreamError;
 
 /// A trait that knows how to perform the P2P handshake.
 pub trait EthRlpxHandshake: Debug + Send + Sync + 'static {

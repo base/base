@@ -6,12 +6,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::Stream;
-use reth_eth_wire::{
-    Capabilities, DisconnectReason, EthVersion, UnifiedStatus, errors::EthStreamError,
-};
-use reth_network_api::{PeerRequest, PeerRequestSender};
 use base_execution_network_types::PeerId;
+use futures::Stream;
+use reth_eth_wire::Capabilities;
+use reth_eth_wire::DisconnectReason;
+use reth_eth_wire::EthVersion;
+use reth_eth_wire::UnifiedStatus;
+use reth_eth_wire::errors::EthStreamError;
+use reth_network_api::{PeerRequest, PeerRequestSender};
 use tracing::trace;
 
 use crate::{

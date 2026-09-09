@@ -17,15 +17,18 @@ use base_common_types_chain::{
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_eth_wire::{
-    BlockAccessLists, EthVersion,
-    protocol::Protocol,
-    snap::{
-        AccountData, AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage,
-        GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
-        GetStorageRangesMessage, StorageRangesMessage,
-    },
-};
+use reth_eth_wire::AccountData;
+use reth_eth_wire::AccountRangeMessage;
+use reth_eth_wire::BlockAccessLists;
+use reth_eth_wire::BlockAccessListsMessage;
+use reth_eth_wire::ByteCodesMessage;
+use reth_eth_wire::EthVersion;
+use reth_eth_wire::GetAccountRangeMessage;
+use reth_eth_wire::GetBlockAccessListsMessage;
+use reth_eth_wire::GetByteCodesMessage;
+use reth_eth_wire::GetStorageRangesMessage;
+use reth_eth_wire::StorageRangesMessage;
+use reth_eth_wire::protocol::Protocol;
 use reth_network::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,
