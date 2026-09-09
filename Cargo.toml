@@ -290,6 +290,7 @@ alloy-eip7702 = { version = "=0.6.3", default-features = false }
 alloy-dyn-abi = { version = "=1.6.1", default-features = false }
 alloy-chains = { version = "=0.2.36", default-features = false }
 alloy-json-abi = { version = "=1.6.1", default-features = false }
+alloy-json-rpc = { version = "=2.4.1", default-features = false }
 alloy-sol-macro = { version = "=1.6.1", default-features = false }
 alloy-sol-types = { version = "=1.6.1", default-features = false }
 alloy-tx-macros = { version = "=2.4.1", default-features = false }
@@ -306,7 +307,6 @@ alloy-eip7928 = { path = "vendor/alloy-eip7928", default-features = false }
 alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
 alloy-provider = { path = "vendor/alloy-provider", default-features = false }
 alloy-contract = { path = "vendor/alloy-contract", default-features = false }
-alloy-json-rpc = { path = "vendor/alloy-json-rpc", default-features = false }
 alloy-transport = { path = "vendor/alloy-transport", default-features = false }
 alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
 alloy-rpc-client = { path = "vendor/alloy-rpc-client", default-features = false }
