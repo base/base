@@ -1,5 +1,5 @@
 [package]
-name = "base-observability-events"
+name = "base-common-observability-events"
 description = "Shared observability event envelopes and JSONL writers"
 version.workspace = true
 edition.workspace = true

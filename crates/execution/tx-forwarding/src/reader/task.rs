@@ -6,7 +6,7 @@ use base_execution_txpool::{
     NoExtensions, TransactionPool, ValidPoolTransaction, ValidatedTransaction,
     ValidatedTransactionExtensions,
 };
-use base_observability_events::{
+use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use tokio::sync::mpsc;

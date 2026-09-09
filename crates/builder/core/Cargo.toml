@@ -44,7 +44,7 @@ nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
@@ -135,7 +135,7 @@ metrics = [
     "base-execution-evm-runtime/metrics",
     "base-execution-payload-builder/metrics",
     "base-common-observability-metrics/metrics",
-    "base-observability-events/metrics",
+    "base-common-observability-events/metrics",
     "dep:metrics",
     "base-execution-evm-blocks/metrics",
     "reth-trie/metrics",
@@ -154,7 +154,7 @@ test-utils = [
     "base-execution-rpc/client",
     "base-node-core/test-utils",
     "base-node-runner/test-utils",
-    "base-observability-events/test-utils",
+    "base-common-observability-events/test-utils",
     "ctor",
     "http-body-util",
     "hyper",

@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_primitives::TxHash;
-use base_observability_events::{
+use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{

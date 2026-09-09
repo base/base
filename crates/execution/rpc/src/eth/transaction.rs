@@ -8,7 +8,7 @@ use base_common_chain_config::Upgrades;
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
 use base_common_types_rpc::BaseTransactionReceipt;
 use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
-use base_observability_events::{
+use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use futures::StreamExt;

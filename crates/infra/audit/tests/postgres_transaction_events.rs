@@ -13,7 +13,7 @@ use audit_archiver_lib::{
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
     TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
 };
-use base_observability_events::TransactionEvent;
+use base_common_observability_events::TransactionEvent;
 use chrono::Utc;
 use serde_json::json;
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};

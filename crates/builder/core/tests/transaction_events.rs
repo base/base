@@ -13,7 +13,7 @@ use base_common_network::TransactionResponse;
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
-use base_observability_events::{TransactionEventCapture, TransactionEventType};
+use base_common_observability_events::{TransactionEventCapture, TransactionEventType};
 
 fn validity_instance() -> LocalInstanceBuilder {
     LocalInstanceBuilder::new(BuilderConfig::for_tests())

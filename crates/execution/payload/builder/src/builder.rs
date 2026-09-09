@@ -30,7 +30,7 @@ use base_execution_txpool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
-use base_observability_events::{
+use base_common_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
@@ -1377,7 +1377,7 @@ mod tests {
         StateRootUpdateStream,
     };
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
-    use base_observability_events::{TransactionEventCapture, TransactionEventType};
+    use base_common_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;

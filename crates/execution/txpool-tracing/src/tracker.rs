@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::TxHash;
 use base_execution_txpool::FullTransactionEvent;
-use base_observability_events::{
+use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use chrono::Local;

@@ -1,4 +1,4 @@
-# `base-observability-events`
+# `base-common-observability-events`
 
 Shared transaction observability event envelopes and dedicated JSONL writer
 utilities for Base services.

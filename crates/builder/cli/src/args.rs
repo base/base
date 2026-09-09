@@ -10,7 +10,7 @@ use base_builder_core::{
 };
 use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::RollupArgs;
-use base_observability_events::{
+use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
 };

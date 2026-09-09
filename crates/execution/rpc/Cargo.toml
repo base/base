@@ -44,7 +44,7 @@ alloy-rpc-types-debug = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
@@ -112,7 +112,7 @@ metrics = [
     "base-execution-payload-builder/metrics",
     "base-execution-trie/metrics",
     "base-common-observability-metrics/metrics",
-    "base-observability-events/metrics",
+    "base-common-observability-events/metrics",
     "base-execution-evm-blocks/metrics",
 ]
 test-utils = [

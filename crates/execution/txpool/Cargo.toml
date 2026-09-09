@@ -31,7 +31,7 @@ reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
@@ -88,7 +88,7 @@ required-features = ["test-utils"]
 
 [features]
 default = ["metrics"]
-metrics = ["base-execution-evm-runtime/metrics", "base-common-observability-metrics/metrics", "base-observability-events/metrics"]
+metrics = ["base-execution-evm-runtime/metrics", "base-common-observability-metrics/metrics", "base-common-observability-events/metrics"]
 serde = [
     "reth-execution-types/serde",
     "reth-eth-wire-types/serde",

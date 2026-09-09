@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default"] }

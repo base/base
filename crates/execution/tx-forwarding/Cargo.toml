@@ -20,7 +20,7 @@ serde_json = { workspace = true }
 alloy-primitives = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 url = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
@@ -46,4 +46,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] 
 
 [features]
 default = ["metrics"]
-metrics = ["base-common-observability-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "base-common-observability-events/metrics", "dep:metrics"]

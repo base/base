@@ -20,7 +20,7 @@ alloy-primitives = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 base-common-observability-metrics = { workspace = true }
 reth-storage-api = { workspace = true, features = ["default"] }
@@ -40,7 +40,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
-base-observability-events = { workspace = true, features = ["test-utils"] }
+base-common-observability-events = { workspace = true, features = ["test-utils"] }
 
 [features]
 metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]

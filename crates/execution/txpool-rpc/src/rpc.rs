@@ -8,7 +8,7 @@ use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,
     ValidityPredicate,
 };
-use base_observability_events::{
+use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
@@ -309,7 +309,7 @@ mod tests {
         NoopTransactionPool, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},
     };
-    use base_observability_events::{
+    use base_common_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };

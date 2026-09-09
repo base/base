@@ -11,7 +11,7 @@ use base_execution_payload_builder::{
 };
 use base_metering::{MeteredOpcodes, MeteringConfig};
 use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
-use base_observability_events::{
+use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };

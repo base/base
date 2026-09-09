@@ -46,7 +46,7 @@ members = [
   "crates/execution/evm/machine",
   "crates/execution/evm/fees",
   "crates/common/network",
-  "crates/common/observability-events",
+  "crates/common/observability/events",
   "crates/execution/evm/macros",
   "crates/execution/evm/precompiles",
   "crates/common/types/rpc",
@@ -338,7 +338,7 @@ base-common-types-chain = { path = "crates/common/types/chain", default-features
 base-execution-evm-precompiles = { path = "crates/execution/evm/precompiles", default-features = false }
 base-execution-evm-macros = { path = "crates/execution/evm/macros", default-features = false }
 base-common-types-payload = { path = "crates/common/types/payload", default-features = false }
-base-observability-events = { path = "crates/common/observability-events", default-features = false }
+base-common-observability-events = { path = "crates/common/observability/events", default-features = false }
 
 # Builder
 base-builder-cli = { path = "crates/builder/cli", default-features = false }

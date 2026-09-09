@@ -14,7 +14,7 @@ workspace = true
 async-trait = { workspace = true }
 jsonrpsee-types = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-observability-events = { workspace = true }
+base-common-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 base-execution-payload-types = { workspace = true }
 bytes = { workspace = true, features = ["default"] }
@@ -46,7 +46,7 @@ aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"]
 default = ["metrics"]
 metrics = [
     "base-common-observability-metrics/metrics",
-    "base-observability-events/metrics",
+    "base-common-observability-events/metrics",
     "dep:metrics",
     "tower-http/metrics",
 ]
