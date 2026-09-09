@@ -1,6 +1,6 @@
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes, map::HashSet};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockOpcodeGas, BlockOverrides, Index, LocalizedTransactionTrace, TraceFilter, TraceResults,
     TraceResultsWithTransactionHash, TraceType, TransactionOpcodeGas, state::StateOverride,
 };
@@ -14,7 +14,7 @@ pub trait TraceApi {
     #[method(name = "call")]
     async fn trace_call(
         &self,
-        call: base_common_rpc_types::BaseTransactionRequest,
+        call: base_common_types_rpc::BaseTransactionRequest,
         trace_types: HashSet<TraceType>,
         block_id: Option<BlockId>,
         state_overrides: Option<StateOverride>,
@@ -27,7 +27,7 @@ pub trait TraceApi {
     #[method(name = "callMany")]
     async fn trace_call_many(
         &self,
-        calls: Vec<(base_common_rpc_types::BaseTransactionRequest, HashSet<TraceType>)>,
+        calls: Vec<(base_common_types_rpc::BaseTransactionRequest, HashSet<TraceType>)>,
         block_id: Option<BlockId>,
     ) -> RpcResult<Vec<TraceResults>>;
 

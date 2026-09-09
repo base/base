@@ -6,7 +6,7 @@ use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HA
 use alloy_primitives::B256;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, Block, Transaction};
 use base_common_genesis::ChainGenesis;
-use base_common_rpc_types::Block as RpcBlock;
+use base_common_types_rpc::Block as RpcBlock;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError, CancunPayloadFields,
     PraguePayloadFields,
@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn test_rpc_block_into_info() {
-        let block: base_common_rpc_types::Block<BaseTxEnvelope> = base_common_rpc_types::Block {
-            header: base_common_rpc_types::Header {
+        let block: base_common_types_rpc::Block<BaseTxEnvelope> = base_common_types_rpc::Block {
+            header: base_common_types_rpc::Header {
                 hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
                 inner: base_common_types_chain::Header {
                     number: 1,
@@ -283,7 +283,7 @@ mod tests {
             l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
             ..Default::default()
         };
-        let tx_env = base_common_rpc_types::Transaction {
+        let tx_env = base_common_types_rpc::Transaction {
             inner: base_common_types_chain::transaction::Recovered::new_unchecked(
                 base_common_types_chain::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
                     base_common_types_chain::TxDeposit {
@@ -299,9 +299,9 @@ mod tests {
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };
-        let block: base_common_rpc_types::Block<base_common_rpc_types::BaseTransaction> =
-            base_common_rpc_types::Block {
-                header: base_common_rpc_types::Header {
+        let block: base_common_types_rpc::Block<base_common_types_rpc::BaseTransaction> =
+            base_common_types_rpc::Block {
+                header: base_common_types_rpc::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
                     inner: base_common_types_chain::Header {
                         number: 3,
@@ -313,8 +313,8 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                transactions: base_common_rpc_types::BlockTransactions::Full(vec![
-                    base_common_rpc_types::BaseTransaction {
+                transactions: base_common_types_rpc::BlockTransactions::Full(vec![
+                    base_common_types_rpc::BaseTransaction {
                         inner: tx_env,
                         block_timestamp_ms: None,
                         deposit_nonce: None,

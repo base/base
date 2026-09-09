@@ -2,7 +2,7 @@
 //!
 //! See also <https://docs.flashbots.net/flashbots-auction/advanced/rpc-endpoint>
 
-use base_common_rpc_types::{EthCallBundle, EthCallBundleResponse};
+use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse};
 use jsonrpsee::proc_macros::rpc;
 
 /// The `eth_callBundle` simulation API.

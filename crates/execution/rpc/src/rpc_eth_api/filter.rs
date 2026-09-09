@@ -1,6 +1,6 @@
 //! `eth_` RPC API for filtering.
 
-use base_common_rpc_types::{Filter, FilterChanges, FilterId, PendingTransactionFilterKind};
+use base_common_types_rpc::{Filter, FilterChanges, FilterId, PendingTransactionFilterKind};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 /// Rpc Interface for poll-based ethereum filter API.
@@ -24,11 +24,11 @@ pub trait EthFilterApi {
 
     /// Returns all filter changes since last poll.
     #[method(name = "getFilterChanges")]
-    async fn filter_changes(&self, id: FilterId) -> RpcResult<FilterChanges<base_common_rpc_types::BaseTransaction, base_common_rpc_types::Log>>;
+    async fn filter_changes(&self, id: FilterId) -> RpcResult<FilterChanges<base_common_types_rpc::BaseTransaction, base_common_types_rpc::Log>>;
 
     /// Returns all logs matching given filter (in a range 'from' - 'to').
     #[method(name = "getFilterLogs")]
-    async fn filter_logs(&self, id: FilterId) -> RpcResult<Vec<base_common_rpc_types::Log>>;
+    async fn filter_logs(&self, id: FilterId) -> RpcResult<Vec<base_common_types_rpc::Log>>;
 
     /// Uninstalls filter.
     #[method(name = "uninstallFilter")]
@@ -36,7 +36,7 @@ pub trait EthFilterApi {
 
     /// Returns logs matching given filter object.
     #[method(name = "getLogs")]
-    async fn logs(&self, filter: Filter) -> RpcResult<Vec<base_common_rpc_types::Log>>;
+    async fn logs(&self, filter: Filter) -> RpcResult<Vec<base_common_types_rpc::Log>>;
 }
 
 /// Limits for logs queries

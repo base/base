@@ -3,7 +3,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::TxHash;
 use alloy_transport::TransportResult;
 use base_common_network::Network;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Index, LocalizedTransactionTrace, TraceFilter, TraceResults, TraceResultsWithTransactionHash,
     TraceType,
 };
@@ -170,7 +170,7 @@ mod test {
     use base_common_network::{
         EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

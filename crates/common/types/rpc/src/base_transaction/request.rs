@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network_primitives::TransactionBuilder7702;
+use crate::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use base_common_types_chain::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,

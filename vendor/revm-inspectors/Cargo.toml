@@ -36,7 +36,7 @@ alloy-sol-types = { workspace = true }
 base-evm-handler = { workspace = true }
 
 base-evm-context = { workspace = true }
-base-common-rpc-types = {workspace = true}
+base-common-types-rpc = {workspace = true}
 boa_gc = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-primitives = { workspace = true, features = ["map"] }

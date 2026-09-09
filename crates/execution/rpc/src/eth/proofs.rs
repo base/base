@@ -6,7 +6,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use alloy_serde::JsonStorageKey;
 use async_trait::async_trait;
-use base_common_rpc_types::EIP1186AccountProofResponse;
+use base_common_types_rpc::EIP1186AccountProofResponse;
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;

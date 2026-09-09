@@ -405,7 +405,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_common_types_chain::Header as ConsensusHeader;
-    use base_common_rpc_types::Header as RpcHeader;
+    use base_common_types_rpc::Header as RpcHeader;
     #[cfg(feature = "metrics")]
     use metrics_util::{
         MetricKind,

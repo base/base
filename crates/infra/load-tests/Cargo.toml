@@ -40,6 +40,6 @@ tokio = { workspace = true, features = ["default", "signal"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["serde", "std"] }
+base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter"] }

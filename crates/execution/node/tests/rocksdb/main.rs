@@ -12,7 +12,7 @@ use reth_e2e_test_utils::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Transaction, TransactionInput, TransactionReceipt, TransactionRequest,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -291,7 +291,7 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
     assert_eq!(payload.block().number(), 1);
 
     // Verify block contains all 3 txs
-    let block: Option<base_common_rpc_types::BaseBlockResponse> =
+    let block: Option<base_common_types_rpc::BaseBlockResponse> =
         client.request("eth_getBlockByNumber", ("0x1", true)).await?;
     let block = block.expect("Block 1 should exist");
     assert_eq!(block.transactions.len(), 4, "Block should contain the deposit and 3 user txs");
@@ -540,7 +540,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 
     // Verify we can still query transactions and the chain is consistent
     // If unwind_trie_state_from failed, this would have errored during reorg
-    let latest: Option<base_common_rpc_types::BaseBlockResponse> =
+    let latest: Option<base_common_types_rpc::BaseBlockResponse> =
         client.request("eth_getBlockByNumber", ("latest", false)).await?;
     let latest = latest.expect("Latest block should exist");
     // The alt block is at height 4 (on top of block 3)

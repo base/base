@@ -21,7 +21,7 @@ base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-genesis = { workspace = true }
-base-common-rpc-types = {workspace = true}
+base-common-types-rpc = {workspace = true}
 serde = { workspace = true, optional = true }
 base-common-precompiles = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -37,7 +37,7 @@ sha2 = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-rpc-types = { workspace = true }
+base-common-types-rpc = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }

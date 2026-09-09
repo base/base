@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256};
 use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope};
-use base_common_rpc_types::TransactionReceipt;
+use base_common_types_rpc::TransactionReceipt;
 use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;

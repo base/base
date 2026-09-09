@@ -2,7 +2,7 @@
 
 use alloy_primitives::{U64, U256};
 use base_common_types_chain::ChainInfo;
-use base_common_rpc_types::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus};
+use base_common_types_rpc::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus};
 use futures::Future;
 use reth_network_api::NetworkInfo;
 use reth_prune_types::{PruneMode, PruneSegment};

@@ -35,7 +35,7 @@ alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-base-common-rpc-types = {workspace = true, features = ["default", "std"]}
+base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
@@ -45,7 +45,7 @@ metrics-exporter-prometheus = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default", "thread_rng"] }
-base-common-rpc-types = { workspace = true, features = ["default", "arbitrary", "k256"] }
+base-common-types-rpc = { workspace = true, features = ["default", "arbitrary", "k256"] }
 
 [features]
 metrics = [

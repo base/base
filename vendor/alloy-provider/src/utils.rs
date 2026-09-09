@@ -164,7 +164,7 @@ pub(crate) async fn hashes_to_blocks<BlockResp: BlockResponse + RpcRecv>(
 
 /// Fetches headers for a list of block hashes.
 pub(crate) async fn hashes_to_headers<
-    HeaderResp: alloy_network_primitives::HeaderResponse + RpcRecv,
+    HeaderResp: base_common_types_rpc::HeaderResponse + RpcRecv,
 >(
     hashes: Vec<B256>,
     client: WeakClient,

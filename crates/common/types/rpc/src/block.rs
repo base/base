@@ -8,7 +8,7 @@ pub use alloy_eips::{
     calc_blob_gasprice, calc_excess_blob_gas,
 };
 use alloy_eips::{Encodable2718, eip4895::Withdrawals, eip7840::BlobParams};
-use alloy_network_primitives::{
+use crate::{
     BlockResponse, BlockTransactions, HeaderResponse, TransactionResponse,
 };
 use alloy_primitives::{Address, B64, B256, BlockHash, Bloom, Bytes, Sealable, U256};
@@ -66,8 +66,8 @@ impl<T, H> Block<T, H> {
     ///
     /// ```
     /// use alloy_eips::eip4895::Withdrawals;
-    /// use alloy_network_primitives::BlockTransactions;
-    /// use base_common_rpc_types::{Block, Header, Transaction};
+    /// use crate::BlockTransactions;
+    /// use base_common_types_rpc::{Block, Header, Transaction};
     /// let block = Block::new(
     ///     Header::new(base_common_types_chain::Header::default()),
     ///     BlockTransactions::<Transaction>::Full(vec![]),

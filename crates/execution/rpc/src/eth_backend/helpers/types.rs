@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod tests {
     use base_common_types_chain::Transaction;
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
     use base_evm_handler::database::CacheDB;
     use reth_provider::test_utils::MockEthProvider;
     use reth_rpc_eth_types::simulate::resolve_transaction;

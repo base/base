@@ -6,7 +6,7 @@ use crate::MevSimApiServer;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockId, BundleItem, Inclusion, Log, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
     SimBundleRequest, SimBundleResponse, Validity,
 };
@@ -549,7 +549,7 @@ pub enum EthSimBundleError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Bytes;
-    use base_common_rpc_types::{Inclusion, ProtocolVersion};
+    use base_common_types_rpc::{Inclusion, ProtocolVersion};
 
     use super::*;
 

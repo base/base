@@ -5,7 +5,7 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use alloy_primitives::{B256, Bytes, Log, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, network::eip2718::Encodable2718};
 use alloy_rlp::Decodable;
-use base_common_rpc_types::{BlockId, BlockNumberOrTag, BlockTransactions};
+use base_common_types_rpc::{BlockId, BlockNumberOrTag, BlockTransactions};
 use base_common_types_chain::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, TxType};
 use reqwest::Url;
 

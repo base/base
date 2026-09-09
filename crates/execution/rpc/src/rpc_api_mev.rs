@@ -1,4 +1,4 @@
-use base_common_rpc_types::{SimBundleOverrides, SimBundleRequest, SimBundleResponse};
+use base_common_types_rpc::{SimBundleOverrides, SimBundleRequest, SimBundleResponse};
 use jsonrpsee::proc_macros::rpc;
 
 /// Mev rpc interface.

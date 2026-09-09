@@ -2,7 +2,7 @@
 
 use alloy_eips::BlockId;
 use async_trait::async_trait;
-use base_common_rpc_types::{Block, Filter, Log};
+use base_common_types_rpc::{Block, Filter, Log};
 
 /// A narrow trait exposing only the two L1 RPC methods used by [`super::L1WatcherActor`].
 ///

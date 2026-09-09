@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_common_types_chain::Transaction;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
 use base_execution_txpool::{AllPoolTransactions, TransactionPool};
@@ -46,7 +46,7 @@ where
     fn content(
         &self,
     ) -> Result<
-        TxpoolContent<base_common_rpc_types::BaseTransaction>,
+        TxpoolContent<base_common_types_rpc::BaseTransaction>,
         reth_rpc_eth_types::BaseEthApiError,
     > {
         #[inline]
@@ -54,7 +54,7 @@ where
             tx: &base_execution_txpool::BasePooledTransaction,
             content: &mut BTreeMap<
                 Address,
-                BTreeMap<String, base_common_rpc_types::BaseTransaction>,
+                BTreeMap<String, base_common_types_rpc::BaseTransaction>,
             >,
             resp_builder: &reth_rpc_eth_types::BaseRpcConverter<RpcTxB>,
         ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
@@ -159,7 +159,7 @@ where
     async fn txpool_content_from(
         &self,
         from: Address,
-    ) -> RpcResult<TxpoolContentFrom<base_common_rpc_types::BaseTransaction>> {
+    ) -> RpcResult<TxpoolContentFrom<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", ?from, "Serving txpool_contentFrom");
         Ok(self.content()?.remove_from(&from))
     }
@@ -171,7 +171,7 @@ where
     /// Handler for `txpool_content`
     async fn txpool_content(
         &self,
-    ) -> RpcResult<TxpoolContent<base_common_rpc_types::BaseTransaction>> {
+    ) -> RpcResult<TxpoolContent<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", "Serving txpool_content");
         Ok(self.content()?)
     }

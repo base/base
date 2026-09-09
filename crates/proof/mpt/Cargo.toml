@@ -26,7 +26,7 @@ tokio = { workspace = true, features = ["default", "full"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
-base-common-rpc-types = { workspace = true, features = ["serde", "std"] }
+base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
 [[bench]]
 name = "trie_node"
 harness = false

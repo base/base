@@ -36,7 +36,7 @@ url = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = []}
+base-common-types-rpc = { workspace = true, features = []}
 alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
 tokio = { workspace = true, features = ["default", "time"] }
@@ -48,7 +48,7 @@ alloy-transport-http = { workspace = true, features = ["default", "reqwest", "re
 
 [dev-dependencies]
 reth-db-common = { workspace = true }
-base-common-rpc-types = { workspace = true }
+base-common-types-rpc = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 httpmock = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

@@ -118,7 +118,7 @@ impl StorageValuesRequest {
     ///
     /// ```
     /// use alloy_primitives::{address, b256};
-    /// use base_common_rpc_types::StorageValuesRequest;
+    /// use base_common_types_rpc::StorageValuesRequest;
     ///
     /// let usdt = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
     /// let req = StorageValuesRequest::new().with_keys(

@@ -2,13 +2,13 @@ use std::{io::BufReader, marker::PhantomData, num::NonZero, path::PathBuf, sync:
 
 use alloy_eips::BlockId;
 use alloy_json_rpc::{RpcError, RpcSend};
-use alloy_network_primitives::TransactionResponse;
+use base_common_types_rpc::TransactionResponse;
 use alloy_primitives::{
     Address, B256, Bytes, StorageKey, StorageValue, TxHash, U64, U256, keccak256,
 };
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_network::Network;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockNumberOrTag, EIP1186AccountProofResponse, Filter, Log, StorageValuesRequest,
     StorageValuesResponse,
 };
@@ -602,7 +602,7 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, b256, bytes, hex, utils::Unit};
     use alloy_transport::mock::Asserter;
     use base_common_network::TransactionBuilder;
-    use base_common_rpc_types::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
+    use base_common_types_rpc::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
 
     use super::*;
     use crate::ProviderBuilder;

@@ -9,7 +9,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::{RpcError, RpcRecv};
-use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
+use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::U64;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
@@ -490,7 +490,7 @@ mod tests {
         layers::{RetryBackoffLayer, RetryPolicy},
         mock::MockTransport,
     };
-    use base_common_rpc_types::Block;
+    use base_common_types_rpc::Block;
     use futures::StreamExt;
     use tokio::time::timeout;
 

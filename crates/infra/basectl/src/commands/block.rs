@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use alloy_provider::Network;
 use anyhow::Result;
 use base_common_network::Base;
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use clap::Args;
 use serde::Serialize;
 
@@ -185,7 +185,7 @@ impl BlockSummaryJson {
 mod tests {
     use alloy_eips::BlockId;
     use alloy_primitives::B256;
-    use base_common_rpc_types::BlockNumberOrTag;
+    use base_common_types_rpc::BlockNumberOrTag;
 
     use super::{BlockCommand, BlockSummaryJson};
     use crate::{BlockRefParseError, TimestampJson};

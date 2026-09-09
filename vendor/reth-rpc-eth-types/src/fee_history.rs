@@ -14,7 +14,7 @@ use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt};
-use base_common_rpc_types::TxGasAndReward;
+use base_common_types_rpc::TxGasAndReward;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures::{
     FutureExt, Stream, StreamExt,

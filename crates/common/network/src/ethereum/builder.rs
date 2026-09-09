@@ -1,5 +1,5 @@
 use base_common_types_chain::{TxType, TypedTransaction};
-use base_common_rpc_types::request::TransactionRequest;
+use base_common_types_rpc::request::TransactionRequest;
 
 use crate::{
     BuildResult, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
@@ -93,7 +93,7 @@ mod tests {
         BlobTransactionSidecar, SignableTransaction, TxEip1559, TxEnvelope, TxType,
         TypedTransaction, transaction::Recovered,
     };
-    use base_common_rpc_types::{AccessList, TransactionRequest};
+    use base_common_types_rpc::{AccessList, TransactionRequest};
 
     use crate::{
         NetworkTransactionBuilder, TransactionBuilder, TransactionBuilder4844,
@@ -285,7 +285,7 @@ mod tests {
     fn test_tx_response_into_req() {
         let from = Address::from(U160::from(1));
         let to = Address::from(U160::from(1));
-        let access_list_item = base_common_rpc_types::AccessListItem {
+        let access_list_item = base_common_types_rpc::AccessListItem {
             address: Address::from(U160::from(3)),
             storage_keys: vec![B256::from(U256::from(4)), B256::from(U256::from(5))],
         };
@@ -302,7 +302,7 @@ mod tests {
         };
         let envelope =
             TxEnvelope::Eip1559(tx.into_signed(Signature::new(U256::ZERO, U256::ZERO, false)));
-        let tx_response = base_common_rpc_types::Transaction {
+        let tx_response = base_common_types_rpc::Transaction {
             inner: Recovered::new_unchecked(envelope, from),
             effective_gas_price: Some(1000),
             block_hash: None,

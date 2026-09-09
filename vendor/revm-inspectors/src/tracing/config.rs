@@ -1,5 +1,5 @@
 use alloy_primitives::{U256, map::HashSet};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     CallConfig, Erc7562Config, FlatCallConfig, GethDefaultTracingOptions, PreStateConfig, TraceType,
 };
 use base_evm_handler::bytecode::opcode::OpCode;
@@ -147,7 +147,7 @@ impl TracingInspectorConfig {
     /// This config does _not_ record opcode level traces and is suited for `debug_traceTransaction`
     ///
     /// This will configure the default output of geth's default
-    /// [StructLogTracer](base_common_rpc_types::DefaultFrame).
+    /// [StructLogTracer](base_common_types_rpc::DefaultFrame).
     pub const fn default_geth() -> Self {
         Self {
             record_steps: true,
@@ -180,7 +180,7 @@ impl TracingInspectorConfig {
     /// Returns a config for geth style traces based on the given [GethDefaultTracingOptions].
     ///
     /// This will configure the output of geth's default
-    /// [StructLogTracer](base_common_rpc_types::DefaultFrame) according to the given config.
+    /// [StructLogTracer](base_common_types_rpc::DefaultFrame) according to the given config.
     #[inline]
     pub fn from_geth_config(config: &GethDefaultTracingOptions) -> Self {
         Self {
@@ -196,7 +196,7 @@ impl TracingInspectorConfig {
         }
     }
 
-    /// Returns a config for geth's [CallTracer](base_common_rpc_types::CallFrame).
+    /// Returns a config for geth's [CallTracer](base_common_types_rpc::CallFrame).
     ///
     /// This returns [Self::none] and enables [TracingInspectorConfig::record_logs] if configured in
     /// the given [CallConfig]
@@ -208,7 +208,7 @@ impl TracingInspectorConfig {
     }
 
     /// Returns a config for geth's
-    /// [Erc7562Frame](base_common_rpc_types::Erc7562Frame).
+    /// [Erc7562Frame](base_common_types_rpc::Erc7562Frame).
     #[inline]
     pub fn from_geth_erc7562_config(config: &Erc7562Config) -> Self {
         Self::none()
@@ -224,7 +224,7 @@ impl TracingInspectorConfig {
     }
 
     /// Returns a config for geth's
-    /// [FlatCallTracer](base_common_rpc_types::FlatCallFrame).
+    /// [FlatCallTracer](base_common_types_rpc::FlatCallFrame).
     ///
     /// This returns [Self::default_parity] and sets
     /// [TracingInspectorConfig::exclude_precompile_calls] if configured in the given
@@ -236,7 +236,7 @@ impl TracingInspectorConfig {
             .set_exclude_precompile_calls(!config.include_precompiles.unwrap_or_default())
     }
 
-    /// Returns a config for geth's [PrestateTracer](base_common_rpc_types::PreStateFrame).
+    /// Returns a config for geth's [PrestateTracer](base_common_types_rpc::PreStateFrame).
     ///
     /// Note: This currently returns [Self::none] because the prestate tracer result currently
     /// relies on the execution result entirely, see

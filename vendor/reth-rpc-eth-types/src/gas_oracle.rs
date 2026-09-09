@@ -6,7 +6,7 @@ use std::fmt::{self, Debug, Formatter};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_common_types_chain::{BlockHeader, Transaction, TxReceipt, constants::GWEI_TO_WEI};
-use base_common_rpc_types::BlockId;
+use base_common_types_rpc::BlockId;
 use derive_more::{Deref, DerefMut, From, Into};
 use itertools::Itertools;
 use reth_rpc_server_types::{

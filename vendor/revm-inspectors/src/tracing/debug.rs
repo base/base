@@ -1,7 +1,7 @@
 #[cfg(feature = "js-tracer")]
 use alloc::boxed::Box;
 
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     CallConfig, Erc7562Config, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
     GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace, MuxConfig, NoopFrame,
     PreStateConfig, TransactionInfo,

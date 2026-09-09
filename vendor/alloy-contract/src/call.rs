@@ -8,7 +8,7 @@ use std::{
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_network_primitives::ReceiptResponse;
+use base_common_types_rpc::ReceiptResponse;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_sol_types::SolCall;
@@ -19,7 +19,7 @@ use base_common_network::{
     TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
     eip2718::Encodable2718,
 };
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     AccessList, BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlockId,
     SignedAuthorization, state::StateOverride,
 };
@@ -784,7 +784,7 @@ mod tests {
     use alloy_sol_types::sol;
     use base_common_types_chain::Transaction;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
-    use base_common_rpc_types::{AccessListItem, Authorization};
+    use base_common_types_rpc::{AccessListItem, Authorization};
     use futures::Future;
 
     use super::*;

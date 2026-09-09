@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use anyhow::Result;
-use base_common_rpc_types::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
+use base_common_types_rpc::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use base_protocol::{BlockInfo, L2BlockInfo};
 use clap::Args;
 use serde::Serialize;
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn sync_status_json_serializes_camelcase_with_lag_and_tip_reference() {
         let report =
-            SyncStatusReport { cl: sample_status(), el: base_common_rpc_types::SyncStatus::None };
+            SyncStatusReport { cl: sample_status(), el: base_common_types_rpc::SyncStatus::None };
         // Public reference 2 blocks ahead of local — within the caught-up
         // tolerance (5).
         let summary = SyncStatusJson::from_report(
@@ -481,7 +481,7 @@ mod tests {
         let mut status = sample_status();
         status.unsafe_l2 = sample_l2(100, 1_000);
         status.safe_l2 = sample_l2(200, 2_000);
-        let report = SyncStatusReport { cl: status, el: base_common_rpc_types::SyncStatus::None };
+        let report = SyncStatusReport { cl: status, el: base_common_types_rpc::SyncStatus::None };
         let summary = SyncStatusJson::from_report("mainnet", &report, "https://example/", None, 5);
         assert_eq!(summary.safe_lag_seconds, 0);
         assert_eq!(summary.safe_lag_blocks, 0);
@@ -491,7 +491,7 @@ mod tests {
     fn tip_reference_classifies_behind_when_local_significantly_behind_public() {
         // Local at 18,432,100; public at 18,432,500 → 400 blocks behind.
         let report =
-            SyncStatusReport { cl: sample_status(), el: base_common_rpc_types::SyncStatus::None };
+            SyncStatusReport { cl: sample_status(), el: base_common_types_rpc::SyncStatus::None };
         let summary = SyncStatusJson::from_report(
             "mainnet",
             &report,
@@ -509,7 +509,7 @@ mod tests {
     fn tip_reference_classifies_ahead_when_local_ahead_of_public() {
         // Local at 18,432,100; public at 18,431,700 → 400 ahead (negative delta).
         let report =
-            SyncStatusReport { cl: sample_status(), el: base_common_rpc_types::SyncStatus::None };
+            SyncStatusReport { cl: sample_status(), el: base_common_types_rpc::SyncStatus::None };
         let summary = SyncStatusJson::from_report(
             "mainnet",
             &report,
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn tip_reference_unavailable_when_public_block_is_none() {
         let report =
-            SyncStatusReport { cl: sample_status(), el: base_common_rpc_types::SyncStatus::None };
+            SyncStatusReport { cl: sample_status(), el: base_common_types_rpc::SyncStatus::None };
         let summary =
             SyncStatusJson::from_report("mainnet", &report, "https://mainnet.base.org/", None, 5);
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn el_sync_info_includes_remaining_and_processed_when_syncing() {
-        let info = Box::new(base_common_rpc_types::SyncInfo {
+        let info = Box::new(base_common_types_rpc::SyncInfo {
             starting_block: U256::from(1_000u64),
             current_block: U256::from(1_500u64),
             highest_block: U256::from(2_000u64),
@@ -557,7 +557,7 @@ mod tests {
         });
         let report = SyncStatusReport {
             cl: sample_status(),
-            el: base_common_rpc_types::SyncStatus::Info(info),
+            el: base_common_types_rpc::SyncStatus::Info(info),
         };
         let summary = SyncStatusJson::from_report(
             "mainnet",
@@ -580,7 +580,7 @@ mod tests {
     fn el_sync_info_saturates_when_current_exceeds_highest() {
         // Pathological: current > highest (e.g. RPC reordering during a
         // probe). remaining_blocks must saturate to 0, not underflow.
-        let info = Box::new(base_common_rpc_types::SyncInfo {
+        let info = Box::new(base_common_types_rpc::SyncInfo {
             starting_block: U256::from(1_000u64),
             current_block: U256::from(2_500u64),
             highest_block: U256::from(2_000u64),
@@ -590,7 +590,7 @@ mod tests {
         });
         let report = SyncStatusReport {
             cl: sample_status(),
-            el: base_common_rpc_types::SyncStatus::Info(info),
+            el: base_common_types_rpc::SyncStatus::Info(info),
         };
         let summary = SyncStatusJson::from_report("mainnet", &report, "https://example/", None, 5);
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
@@ -605,7 +605,7 @@ mod tests {
         // bumped to 500 — classification flips to caught_up, demonstrating
         // that the --tip-tolerance flag actually controls the boundary.
         let report =
-            SyncStatusReport { cl: sample_status(), el: base_common_rpc_types::SyncStatus::None };
+            SyncStatusReport { cl: sample_status(), el: base_common_types_rpc::SyncStatus::None };
         let summary = SyncStatusJson::from_report(
             "mainnet",
             &report,

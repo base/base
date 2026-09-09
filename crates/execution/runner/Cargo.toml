@@ -40,7 +40,7 @@ alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
 base-common-types-payload = {workspace = true, optional = true, features = ["std"]}
 base-execution-chainspec = { workspace = true, features = ["default"], optional = true }
-base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
+base-common-types-rpc = { workspace = true, optional = true, features = ["serde", "std"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -72,7 +72,7 @@ test-utils = [
     "dep:alloy-primitives",
     "dep:alloy-provider",
     "dep:alloy-rpc-client",
-    "dep:base-common-rpc-types",
+    "dep:base-common-types-rpc",
     "dep:base-common-types-payload",
     "dep:base-common-types-payload",
     "dep:base-test-utils",

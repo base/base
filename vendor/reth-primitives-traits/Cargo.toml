@@ -49,7 +49,7 @@ secp256k1 = { workspace = true, features = [
     "recovery",
 ], optional = true }
 base-state = {workspace = true}
-base-common-rpc-types = { workspace = true, optional = true }
+base-common-types-rpc = { workspace = true, optional = true }
 [dev-dependencies]
 serde = { workspace = true }
 alloy-genesis = { workspace = true }
@@ -91,7 +91,7 @@ arbitrary = [
     "secp256k1?/global-context",
     "secp256k1?/rand",
     "alloy-trie/arbitrary",
-    "base-common-rpc-types?/arbitrary",
+    "base-common-types-rpc?/arbitrary",
     "dashmap?/arbitrary",
     "base-state/arbitrary",
 ]
@@ -100,7 +100,7 @@ default = ["std", "quanta"]
 quanta = ["std", "dep:quanta"]
 rayon = ["dep:rayon"]
 reth-codec = ["base-common-types-chain/reth", "base-state/reth-codec"]
-rpc-compat = ["base-common-rpc-types"]
+rpc-compat = ["base-common-types-rpc"]
 secp256k1 = ["base-common-types-chain/secp256k1"]
 serde = [
     "base-common-types-chain/serde",
@@ -114,7 +114,7 @@ serde = [
     "secp256k1?/serde",
     "alloy-trie/serde",
     "rand_08/serde",
-    "base-common-rpc-types?/serde",
+    "base-common-types-rpc?/serde",
     "dashmap?/serde",
     "base-state/serde",
 ]
@@ -132,7 +132,7 @@ std = [
     "thiserror/std",
     "alloy-trie/std",
     "serde_json/std",
-    "base-common-rpc-types?/std",
+    "base-common-types-rpc?/std",
     "base-state/std",
 ]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-state/test-utils"]

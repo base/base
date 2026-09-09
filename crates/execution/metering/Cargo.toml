@@ -51,4 +51,4 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types = {workspace = true, features = ["default", "std"]}
+base-common-types-rpc = {workspace = true, features = ["default", "std"]}

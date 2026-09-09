@@ -8,8 +8,8 @@ use alloy_rpc_client::{ClientRef, NoParams, WeakClient};
 use alloy_transport::TransportResult;
 use base_common_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
-use base_common_rpc_types::pubsub::{Params, SubscriptionKind};
-use base_common_rpc_types::{
+use base_common_types_rpc::pubsub::{Params, SubscriptionKind};
+use base_common_types_rpc::{
     AccessListResult, BlockId, BlockNumberOrTag, Bundle, EIP1186AccountProofResponse,
     EthCallResponse, FeeHistory, FillTransaction, Filter, FilterChanges, Index, Log,
     StorageValuesRequest, StorageValuesResponse, SyncStatus,
@@ -145,7 +145,7 @@ impl<N: Network> Provider<N> for DynProvider<N> {
     fn get_account_info(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, base_common_rpc_types::AccountInfo> {
+    ) -> RpcWithBlock<Address, base_common_types_rpc::AccountInfo> {
         self.0.get_account_info(address)
     }
 

@@ -2,13 +2,13 @@ use std::{fmt::Debug, marker::PhantomData, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_json_rpc::RpcRecv;
-use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
+use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::{Address, B64, B256, BlockHash};
 use alloy_rpc_client::{ClientRef, RpcCall};
 use alloy_transport::{TransportError, TransportResult};
 use base_common_network::BlockResponse;
 #[cfg(feature = "pubsub")]
-use base_common_rpc_types::pubsub::SubscriptionKind;
+use base_common_types_rpc::pubsub::SubscriptionKind;
 use either::Either;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -402,8 +402,8 @@ where
     }
 }
 
-/// A builder type for subscribing to full blocks i.e [`alloy_network_primitives::BlockResponse`],
-/// and not just [`alloy_network_primitives::HeaderResponse`].
+/// A builder type for subscribing to full blocks i.e [`base_common_types_rpc::BlockResponse`],
+/// and not just [`base_common_types_rpc::HeaderResponse`].
 ///
 /// By default this subscribes to block with tx hashes only. Use [`SubFullBlocks::full`] to
 /// subscribe to blocks with full transactions.
@@ -451,7 +451,7 @@ impl<N: base_common_network::Network> SubFullBlocks<N> {
     pub async fn into_stream(
         self,
     ) -> TransportResult<impl Stream<Item = TransportResult<N::BlockResponse>> + Unpin> {
-        use alloy_network_primitives::HeaderResponse;
+        use base_common_types_rpc::HeaderResponse;
         use futures::StreamExt;
 
         let sub = self.sub.await?;
@@ -490,7 +490,7 @@ impl<N: base_common_network::Network> SubFullBlocks<N> {
 
 #[cfg(test)]
 mod tests {
-    use base_common_rpc_types::Block;
+    use base_common_types_rpc::Block;
 
     use super::*;
     use crate::{Provider, ProviderBuilder};

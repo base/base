@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{Block, BlockTransactions, Transaction as EthTransaction};
+use base_common_types_rpc::{Block, BlockTransactions, Transaction as EthTransaction};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -628,7 +628,7 @@ impl ActionEngineClient {
 
     fn header_to_l1_rpc_block(header: &Header, block_hash: B256) -> Block<EthTransaction> {
         let sealed = Sealed::new_unchecked(header.clone(), block_hash);
-        let rpc_header = base_common_rpc_types::Header::from_sealed(sealed);
+        let rpc_header = base_common_types_rpc::Header::from_sealed(sealed);
         Block {
             header: rpc_header,
             uncles: vec![],

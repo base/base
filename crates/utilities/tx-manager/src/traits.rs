@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_common_rpc_types::TransactionReceipt;
+use base_common_types_rpc::TransactionReceipt;
 use tokio::sync::oneshot;
 
 use crate::{TxCandidate, TxManagerError, TxManagerResult};

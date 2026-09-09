@@ -9,7 +9,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use base_common_rpc_types::{BlockId, EIP1186AccountProofResponse};
+use base_common_types_rpc::{BlockId, EIP1186AccountProofResponse};
 use base_optimism_rpc::DebugProviderExt;
 use base_retry::RetryConfig;
 use url::Url;

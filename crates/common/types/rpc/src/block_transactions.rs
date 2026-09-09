@@ -15,9 +15,8 @@ use crate::TransactionResponse;
 /// empty `Hashes` value, not an empty `Full` value. With Serde, the representation is untagged and
 /// an empty JSON array deserializes as `Full([])`, so that ambiguous case does not preserve which
 /// request form produced it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum BlockTransactions<T> {
     /// Full transactions
     Full(Vec<T>),
@@ -335,8 +334,7 @@ impl<T: TransactionResponse> std::iter::FusedIterator for BlockTransactionHashes
 ///
 /// This essentially represents the `full:bool` argument in RPC calls that determine whether the
 /// response should include full transaction objects or just the hashes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum BlockTransactionsKind {
     /// Only include hashes: [BlockTransactions::Hashes]
     #[default]

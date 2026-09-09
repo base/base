@@ -8,7 +8,7 @@ use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_types_chain::Transaction;
 use base_common_network::Base;
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tracing::warn;

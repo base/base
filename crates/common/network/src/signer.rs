@@ -6,7 +6,7 @@ use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
 use async_trait::async_trait;
 use base_common_types_chain::{SignableTransaction, TxEnvelope};
-use base_common_rpc_types::TransactionRequest;
+use base_common_types_rpc::TransactionRequest;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
 use url::Url;

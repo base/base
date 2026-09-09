@@ -1,7 +1,7 @@
 use alloc::string::ToString;
 
 use alloy_primitives::map::HashMap;
-use base_common_rpc_types::OpcodeGas;
+use base_common_types_rpc::OpcodeGas;
 use base_evm_context::{ContextTr, JournalTr};
 use base_evm_handler::{
     Inspector,

@@ -9,7 +9,7 @@ no_std_packages=(
   base-common-types-chain
   base-common-evm
   base-common-chains
-  base-common-rpc-types
+  base-common-types-rpc
   base-common-types-payload
 
   # consensus protocol crates

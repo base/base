@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{TxKind, U256};
-use base_common_rpc_types::request::{TransactionInputError, TransactionRequest};
+use base_common_types_rpc::request::{TransactionInputError, TransactionRequest};
 use base_evm_context::{TxEnv, either::Either};
 use thiserror::Error;
 

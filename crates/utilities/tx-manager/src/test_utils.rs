@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bloom};
 use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-use base_common_rpc_types::TransactionReceipt;
+use base_common_types_rpc::TransactionReceipt;
 
 /// Helpers for building test transaction receipts.
 #[derive(Debug)]

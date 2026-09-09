@@ -69,7 +69,7 @@ impl TryFrom<Eip8130ReceiptFields> for OtherFields {
     }
 }
 
-impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
+impl crate::ReceiptResponse for BaseTransactionReceipt {
     fn contract_address(&self) -> Option<alloy_primitives::Address> {
         self.inner.contract_address
     }

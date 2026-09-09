@@ -24,13 +24,13 @@ impl Network for Ethereum {
 
     type Header = base_common_types_chain::Header;
 
-    type TransactionRequest = base_common_rpc_types::transaction::TransactionRequest;
+    type TransactionRequest = base_common_types_rpc::transaction::TransactionRequest;
 
-    type TransactionResponse = base_common_rpc_types::Transaction;
+    type TransactionResponse = base_common_types_rpc::Transaction;
 
-    type ReceiptResponse = base_common_rpc_types::TransactionReceipt;
+    type ReceiptResponse = base_common_types_rpc::TransactionReceipt;
 
-    type HeaderResponse = base_common_rpc_types::Header;
+    type HeaderResponse = base_common_types_rpc::Header;
 
-    type BlockResponse = base_common_rpc_types::Block;
+    type BlockResponse = base_common_types_rpc::Block;
 }

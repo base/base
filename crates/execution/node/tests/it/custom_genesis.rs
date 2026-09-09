@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
 use base_common_types_chain::BlockHeader;
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use base_common_types_payload::ForkchoiceState;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_node_core::NodeConfig;

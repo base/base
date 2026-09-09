@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, U256};
-use base_common_rpc_types::TransactionRequest;
+use base_common_types_rpc::TransactionRequest;
 use tracing::instrument;
 
 use super::{

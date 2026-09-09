@@ -6,7 +6,7 @@ use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use base_common_chains::Upgrades;
 use base_common_types_chain::Predeploys;
 use base_common_evm::BaseTime;

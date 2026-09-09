@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
 use async_trait::async_trait;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
-use base_common_rpc_types::{BaseTransaction, Block as RpcBlock, BlockTransactions};
+use base_common_types_rpc::{BaseTransaction, Block as RpcBlock, BlockTransactions};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, PayloadStatus,
     PayloadStatusEnum,
@@ -318,7 +318,7 @@ fn l1_info_rpc_transaction(block_number: u64) -> BaseTransaction {
         B256::ZERO,
     ));
     BaseTransaction {
-        inner: base_common_rpc_types::Transaction {
+        inner: base_common_types_rpc::Transaction {
             inner: Recovered::new_unchecked(envelope, Address::ZERO),
             block_hash: None,
             block_number: Some(block_number),

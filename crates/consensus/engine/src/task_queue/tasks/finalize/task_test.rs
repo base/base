@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{B256, b256};
 use base_common_genesis::{ChainGenesis, RollupConfig};
-use base_common_rpc_types::{BaseTransaction, Block as RpcBlock};
+use base_common_types_rpc::{BaseTransaction, Block as RpcBlock};
 use base_common_types_payload::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 
 use crate::{

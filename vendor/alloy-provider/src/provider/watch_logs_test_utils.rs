@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_network_primitives::HeaderResponse;
+use base_common_types_rpc::HeaderResponse;
 use alloy_primitives::{B256, U64};
 use alloy_rpc_client::RpcClient;
 use alloy_transport::{
@@ -15,7 +15,7 @@ use alloy_transport::{
 };
 use base_common_types_chain::BlockHeader;
 use base_common_network::BlockResponse as _;
-use base_common_rpc_types::{Block, Filter, Log};
+use base_common_types_rpc::{Block, Filter, Log};
 
 use crate::{BlockLogs, Provider, ProviderBuilder};
 

@@ -3,7 +3,7 @@ use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use async_trait::async_trait;
 use base_common_types_chain::{BlockHeader, Typed2718};
 use base_common_network::{ReceiptResponse, TransactionResponse};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Action, BaseBlockResponse, BaseTransactionReceipt, BlockDetails, BlockTransactions,
     ContractCreator, CreateAction, CreateOutput, Header, InternalOperation, OperationType,
     OtsBlockTransactions, OtsReceipt, OtsTransactionReceipt, TraceEntry, TraceOutput,
@@ -183,7 +183,7 @@ impl OtterscanServer for OtterscanApi<BaseEthApi> {
         block_number: LenientBlockNumberOrTag,
         page_number: usize,
         page_size: usize,
-    ) -> RpcResult<OtsBlockTransactions<base_common_rpc_types::BaseTransaction, Header>> {
+    ) -> RpcResult<OtsBlockTransactions<base_common_types_rpc::BaseTransaction, Header>> {
         let block_number = block_number.into_inner();
         // retrieve full block and its receipts
         let block = self.eth.block_by_number(block_number, true);

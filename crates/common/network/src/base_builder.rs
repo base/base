@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use base_common_types_chain::{BaseTypedTransaction, OpTxType, TxType};
-use base_common_rpc_types::{BaseTransactionRequest, TransactionRequest};
+use base_common_types_rpc::{BaseTransactionRequest, TransactionRequest};
 
 use crate::{
     Base, BuildResult, NetworkTransactionBuilder, TransactionBuilder, TransactionBuilderError,
@@ -80,7 +80,7 @@ impl TransactionBuilder for BaseTransactionRequest {
     fn set_input_kind<T: Into<Bytes>>(
         &mut self,
         input: T,
-        _: base_common_rpc_types::TransactionInputKind,
+        _: base_common_types_rpc::TransactionInputKind,
     ) {
         self.set_input(input);
     }

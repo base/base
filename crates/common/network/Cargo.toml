@@ -33,9 +33,8 @@ zeroize = { workspace = true, features = [
 auto_impl = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
-alloy-network-primitives = { workspace = true }
 futures-utils-wasm = { workspace = true, features = ["default"] }
-base-common-rpc-types = {workspace = true, features = ["std", "serde"]}
+base-common-types-rpc = {workspace = true, features = ["std", "serde"]}
 base-common-types-chain = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
@@ -52,5 +51,5 @@ k256 = [
     "alloy-primitives/k256",
     "base-common-types-chain/k256",
     "alloy-eips/k256",
-    "base-common-rpc-types/k256",
+    "base-common-types-rpc/k256",
 ]

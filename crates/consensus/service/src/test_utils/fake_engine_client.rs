@@ -16,7 +16,7 @@ use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::BaseBlockResponse;
+use base_common_types_rpc::BaseBlockResponse;
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,

@@ -2,7 +2,7 @@ use alloc::{collections::VecDeque, string::ToString, vec, vec::Vec};
 use core::iter::Peekable;
 
 use alloy_primitives::{Address, U64, U256, map::HashSet};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     ChangedType, Delta, LocalizedTransactionTrace, MemoryDelta, StateDiff, StorageDelta,
     TraceResults, TraceType, TransactionInfo, TransactionTrace, VmExecutedOperation, VmInstruction,
     VmTrace,

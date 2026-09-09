@@ -1,7 +1,7 @@
 //! Transaction payload types for different workload scenarios.
 
 use alloy_primitives::Address;
-use base_common_rpc_types::TransactionRequest;
+use base_common_types_rpc::TransactionRequest;
 use async_trait::async_trait;
 
 use crate::{

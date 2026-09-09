@@ -8,7 +8,7 @@ use alloc::{
 use core::{hash::Hash, str::FromStr};
 
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network_primitives::{TransactionBuilder4844, TransactionBuilder7702};
+use crate::{TransactionBuilder4844, TransactionBuilder7702};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use base_common_types_chain::{
     BlobTransactionSidecarVariant, SignableTransaction, TxEip1559, TxEip2930, TxEip4844,
@@ -227,7 +227,7 @@ impl TransactionRequest {
     /// still expect of the deprecated `data` field
     ///
     /// ```
-    /// use base_common_rpc_types::{TransactionInput, TransactionRequest};
+    /// use base_common_types_rpc::{TransactionInput, TransactionRequest};
     /// let req = TransactionRequest::default().input(TransactionInput::both(b"00".into()));
     /// ```
     pub fn input(mut self, input: TransactionInput) -> Self {
@@ -720,7 +720,7 @@ impl TransactionRequest {
     /// ```rust
     /// use base_common_types_chain::TxType;
     /// use alloy_eips::eip2930::AccessList;
-    /// use base_common_rpc_types::TransactionRequest;
+    /// use base_common_types_rpc::TransactionRequest;
     ///
     /// // EIP-7702 (highest priority)
     /// let mut request = TransactionRequest::default();
@@ -795,7 +795,7 @@ impl TransactionRequest {
     /// ```rust
     /// use base_common_types_chain::TxType;
     /// use alloy_eips::eip2930::AccessList;
-    /// use base_common_rpc_types::TransactionRequest;
+    /// use base_common_types_rpc::TransactionRequest;
     ///
     /// // EIP-7702 (highest priority)
     /// let mut request = TransactionRequest::default();
@@ -833,7 +833,7 @@ impl TransactionRequest {
     /// ```rust
     /// use base_common_types_chain::TxType;
     /// use alloy_eips::eip2930::AccessList;
-    /// use base_common_rpc_types::TransactionRequest;
+    /// use base_common_types_rpc::TransactionRequest;
     ///
     /// // Empty request - preferred_type prefers EIP-1559, minimal_tx_type falls back to Legacy
     /// let request = TransactionRequest::default();
@@ -1347,7 +1347,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [serde_with::serde_as] macro in the following way:
     /// ```rust
-    /// use base_common_rpc_types::{serde_bincode_compat, transaction, TransactionRequest};
+    /// use base_common_types_rpc::{serde_bincode_compat, transaction, TransactionRequest};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///

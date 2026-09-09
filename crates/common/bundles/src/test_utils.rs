@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
 use alloy_provider::network::{TxSignerSync, eip2718::Encodable2718};
 use base_common_types_chain::{BaseTxEnvelope, SignableTransaction};
 use base_common_network::PrivateKeySigner;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_types_rpc::BaseTransactionRequest;
 
 use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
 

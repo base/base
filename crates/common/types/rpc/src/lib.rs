@@ -24,9 +24,6 @@ pub use eip8130::{EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce};
 
 mod base_transaction;
 pub use alloy_eips::eip4895::{Withdrawal, Withdrawals};
-pub use alloy_network_primitives::{
-    BlockTransactionHashes, BlockTransactions, BlockTransactionsKind,
-};
 pub use base_transaction::{
     BaseTransaction, BaseTransactionFields, BaseTransactionRequest, Eip8130AuthScheme,
     Eip8130RequestFields,
@@ -121,3 +118,17 @@ mod u256_numeric_string;
 
 mod rpc_modules;
 pub use rpc_modules::RpcModules;
+
+mod response;
+pub use response::{
+    BlockResponse, HeaderResponse, ReceiptResponse, TransactionFailedError, TransactionResponse,
+};
+
+mod block_transactions;
+pub use block_transactions::{BlockTransactionHashes, BlockTransactions, BlockTransactionsKind};
+
+mod transaction_builders;
+pub use transaction_builders::{TransactionBuilder4844, TransactionBuilder7702};
+
+mod inclusion;
+pub use inclusion::InclusionInfo;

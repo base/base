@@ -5,7 +5,7 @@ use alloy_provider::{FilterPollerBuilder, Network, Provider};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
 use base_common_network::Ethereum;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray,
 };
 use futures::Stream;

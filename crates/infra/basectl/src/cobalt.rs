@@ -18,7 +18,7 @@ use anyhow::{Context, Result, anyhow};
 use base_common_types_chain::Predeploys;
 use base_common_evm::BaseTime;
 use base_common_network::Base;
-use base_common_rpc_types::{BlockNumberOrTag, TransactionRequest};
+use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BaseTimeUpdateTx;
 use futures::{SinkExt, StreamExt};

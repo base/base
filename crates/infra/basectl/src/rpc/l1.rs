@@ -8,7 +8,7 @@ use alloy_transport_http::Http;
 use anyhow::{Context, Result};
 use base_common_types_chain::Transaction;
 use base_common_genesis::SystemConfig;
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -260,7 +260,7 @@ async fn run_l1_blob_watcher_poll(
 }
 
 fn extract_l1_block_info(
-    block: &base_common_rpc_types::Block<base_common_rpc_types::Transaction>,
+    block: &base_common_types_rpc::Block<base_common_types_rpc::Transaction>,
     batcher_address: Address,
 ) -> L1BlockInfo {
     let mut total_blobs: u64 = 0;

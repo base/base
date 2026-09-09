@@ -4,7 +4,7 @@ use alloy_primitives::{B256, Bytes, TxHash, hex};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_transport::TransportResult;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BadBlock, BlockId, BlockNumberOrTag, BlockTraceResult, Bundle, CallFrame,
     GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
     GethTraceResult as TraceResult, PreStateFrame, StateContext,
@@ -48,7 +48,7 @@ pub trait DebugApi<N: Network = Ethereum>: Send + Sync {
         trace_options: Option<GethDebugTracingOptions>,
     ) -> crate::GetSubscription<
         (&'static str, BlockNumberOrTag, BlockNumberOrTag, Option<GethDebugTracingOptions>),
-        base_common_rpc_types::ChainBlockTraceResult,
+        base_common_types_rpc::ChainBlockTraceResult,
     >;
 
     /// The debug_traceBlock method will return a full stack trace of all invoked opcodes of all
@@ -421,7 +421,7 @@ where
         trace_options: Option<GethDebugTracingOptions>,
     ) -> crate::GetSubscription<
         (&'static str, BlockNumberOrTag, BlockNumberOrTag, Option<GethDebugTracingOptions>),
-        base_common_rpc_types::ChainBlockTraceResult,
+        base_common_types_rpc::ChainBlockTraceResult,
     > {
         let mut call = self.client().request(
             "debug_subscribe",
@@ -613,7 +613,7 @@ mod test {
     use alloy_node_bindings::{Geth, Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
     use base_common_network::TransactionBuilder;
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use super::*;
     use crate::{ProviderBuilder, WalletProvider, ext::test::async_ci_only};

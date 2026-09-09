@@ -1,5 +1,5 @@
 [package]
-name = "base-common-rpc-types"
+name = "base-common-types-rpc"
 description = "Base RPC types"
 
 version.workspace = true
@@ -22,7 +22,6 @@ alloy-eips = {workspace = true, features = ["serde"]}
 serde_json = {workspace = true, features = ["alloc"]}
 serde = {workspace = true, features = ["derive", "alloc"]}
 base-common-types-chain = {workspace = true, features = ["serde"]}
-alloy-network-primitives = {workspace = true,features = ["serde"]}
 arbitrary = {workspace = true, features = ["derive"], optional = true}
 alloy-primitives = {workspace = true, features = ["map", "rlp", "serde"]}
 serde_with = { workspace = true, features = ["macros"], optional = true }
@@ -51,7 +50,6 @@ default = ["std", "serde"]
 std = [
     "base-common-types-chain/std",
     "alloy-eips/std",
-    "alloy-network-primitives/std",
     "alloy-primitives/std",
     "alloy-serde/std",
     "derive_more/std",
@@ -75,7 +73,6 @@ k256 = ["base-common-types-chain/k256", "alloy-eips/k256", "alloy-primitives/k25
 serde = [
     "base-common-types-chain/serde",
     "alloy-eips/serde",
-    "alloy-network-primitives/serde",
     "alloy-primitives/serde",
     "rand_08/serde",
 ]

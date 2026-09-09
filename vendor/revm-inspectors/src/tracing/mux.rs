@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Log, U256, map::HashMap};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     CallConfig, FlatCallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
     MuxConfig, MuxFrame, NoopFrame, PreStateConfig, TransactionInfo,
 };

@@ -17,7 +17,7 @@ use crate::{Provider, provider::SendableTx};
 ///
 /// ```
 /// # use base_common_network::{IntoWallet, EthereumWallet, Ethereum};
-/// # use base_common_rpc_types::TransactionRequest;
+/// # use base_common_types_rpc::TransactionRequest;
 /// # use base_common_network::PrivateKeySigner;
 /// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
@@ -126,7 +126,7 @@ mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{U256, address, b256};
     use base_common_network::PrivateKeySigner;
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use crate::{Provider, ProviderBuilder, WalletProvider};
 

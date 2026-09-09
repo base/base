@@ -528,13 +528,13 @@ impl ImpersonateConfig {
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumberOrTag;
-    use alloy_network_primitives::BlockResponse as _;
+    use base_common_types_rpc::BlockResponse as _;
     use alloy_primitives::{B256, address};
     use alloy_sol_types::{SolCall, sol};
     use alloy_transport::mock::Asserter;
     use base_common_types_chain::{BlockHeader, SidecarBuilder, SimpleCoder};
     use base_common_network::{Ethereum, TransactionBuilder, TransactionBuilder4844};
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use super::*;
     use crate::{

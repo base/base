@@ -5,7 +5,7 @@ pub use alloy_eips::{
     eip2930::{AccessList, AccessListItem, AccessListResult},
     eip7702::{Authorization, SignedAuthorization},
 };
-use alloy_network_primitives::TransactionResponse;
+use crate::TransactionResponse;
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 pub use base_common_types_chain::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, Receipt, ReceiptEnvelope,

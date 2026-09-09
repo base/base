@@ -50,7 +50,7 @@ reth-node-ethstats = { workspace = true }
 base-shadow-indexer = { workspace = true }
 base-txpool-tracing = { workspace = true }
 reth-rpc-server-types = { workspace = true }
-base-common-rpc-types = { workspace = true }
+base-common-types-rpc = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
@@ -108,7 +108,7 @@ reth-e2e-test-utils = { workspace = true  }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = [] }
+base-common-types-rpc = { workspace = true, features = [] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }

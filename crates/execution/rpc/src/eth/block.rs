@@ -1,7 +1,7 @@
 //! Loads and formats Base block RPC response.
 
 use alloy_eips::BlockId;
-use base_common_rpc_types::{BaseBlockResponse, Header};
+use base_common_types_rpc::{BaseBlockResponse, Header};
 use reth_primitives_traits::AlloyBlockHeader;
 
 use crate::{BaseEthApi, BaseEthApiError};

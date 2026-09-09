@@ -13,7 +13,7 @@ use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,
     IActivationRegistry, IB20, IB20Factory, IB20Stablecoin,
 };
-use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest, TransactionInput};
+use base_common_types_rpc::{BaseTransactionReceipt, BaseTransactionRequest, TransactionInput};
 use eyre::{ContextCompat, Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 

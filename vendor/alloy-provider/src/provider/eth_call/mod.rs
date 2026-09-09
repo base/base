@@ -12,7 +12,7 @@ use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use alloy_transport::TransportResult;
 use base_common_network::Network;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockOverrides,
     state::{AccountOverride, StateOverride},
 };
@@ -259,7 +259,7 @@ where
     /// ```no_run
     /// # async fn example<P: alloy_provider::Provider>(
     /// #     provider: P,
-    /// #     tx: base_common_rpc_types::TransactionRequest,
+    /// #     tx: base_common_types_rpc::TransactionRequest,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_provider::Provider as _;
     /// use std::time::Duration;
@@ -429,7 +429,7 @@ mod test {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{U256, address};
     use base_common_network::{Ethereum, TransactionBuilder};
-    use base_common_rpc_types::{TransactionRequest, state::StateOverride};
+    use base_common_types_rpc::{TransactionRequest, state::StateOverride};
 
     use super::*;
 

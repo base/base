@@ -740,8 +740,8 @@ impl TransactionContext {
     }
 }
 
-impl From<base_common_rpc_types::TransactionInfo> for TransactionContext {
-    fn from(tx_info: base_common_rpc_types::TransactionInfo) -> Self {
+impl From<base_common_types_rpc::TransactionInfo> for TransactionContext {
+    fn from(tx_info: base_common_types_rpc::TransactionInfo) -> Self {
         Self {
             block_hash: tx_info.block_hash,
             tx_index: tx_info.index.map(|idx| idx as usize),

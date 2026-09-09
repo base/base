@@ -60,7 +60,7 @@ impl BaseDebugServices {
                     )
                 })?,
                 chain.id(),
-                move |rpc_block: base_common_rpc_types::Block<
+                move |rpc_block: base_common_types_rpc::Block<
                     base_common_types_chain::BaseTxEnvelope,
                 >| {
                     let primitive_block = rpc_block.into_consensus();

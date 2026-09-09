@@ -37,7 +37,6 @@ alloy-json-abi = { workspace = true }
 alloy-provider = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
-alloy-network-primitives = { workspace = true }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["default"] }
@@ -50,7 +49,7 @@ serde_json = { workspace = true, features = [
 ] }
 base-common-network = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-common-rpc-types = { workspace = true, features = ["serde"] }
+base-common-types-rpc = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 base-common-network = { workspace = true }
 alloy-node-bindings = { workspace = true }

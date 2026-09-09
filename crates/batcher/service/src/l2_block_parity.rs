@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use alloy_provider::{Network, Provider};
 use async_trait::async_trait;
 use base_common_network::Base;
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};

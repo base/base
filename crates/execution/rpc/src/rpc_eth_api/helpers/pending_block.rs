@@ -10,7 +10,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use base_common_types_chain::{BlockHeader, Transaction};
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 use base_evm_context::{Block, Cfg as _};
 use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};

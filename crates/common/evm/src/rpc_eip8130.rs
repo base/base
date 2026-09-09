@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use base_common_types_chain::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
 };
-use base_common_rpc_types::{BaseTransactionRequest, Eip8130AuthScheme};
+use base_common_types_rpc::{BaseTransactionRequest, Eip8130AuthScheme};
 use base_evm_handler::FromRecoveredTx;
 
 use crate::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
@@ -137,7 +137,7 @@ impl BaseRevm {
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_types_chain::{Eip8130Constants, Eip8130Signed};
-    use base_common_rpc_types::{Eip8130Nonce, state::AccountOverride};
+    use base_common_types_rpc::{Eip8130Nonce, state::AccountOverride};
     use serde_json::json;
 
     use super::*;

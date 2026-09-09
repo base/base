@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, U64, U256};
 use base_common_network::Network;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     AccessListResult, EIP1186AccountProofResponse, StorageValuesRequest, StorageValuesResponse,
     simulate::{SimulatePayload, SimulatedBlock},
 };
@@ -102,7 +102,7 @@ impl<P: Provider<N>, N: Network> Provider<N> for BlockIdProvider<P, N> {
     fn get_account_info(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, base_common_rpc_types::AccountInfo> {
+    ) -> RpcWithBlock<Address, base_common_types_rpc::AccountInfo> {
         self.inner.get_account_info(address).block_id(self.block_id)
     }
 

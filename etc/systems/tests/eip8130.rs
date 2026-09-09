@@ -12,7 +12,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use base_common_types_chain::{Eip8130Signed, TxEip8130, Typed2718};
 use base_common_network::{Base, PrivateKeySigner, ReceiptResponse};
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_types_rpc::BaseTransactionReceipt;
 use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestProviderExt};
 use eyre::{Result, WrapErr, ensure};
 

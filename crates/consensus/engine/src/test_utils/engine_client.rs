@@ -10,7 +10,7 @@ use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, Ethereum, Network};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseTransaction, Block, EIP1186AccountProofResponse, Transaction as EthTransaction,
 };
 use base_common_types_payload::{

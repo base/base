@@ -5,7 +5,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use base_common_network::Network;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockId, BlockOverrides,
     state::{AccountOverride, StateOverride},
 };

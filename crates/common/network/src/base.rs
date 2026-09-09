@@ -21,13 +21,13 @@ impl Network for Base {
 
     type Header = base_common_types_chain::Header;
 
-    type TransactionRequest = base_common_rpc_types::BaseTransactionRequest;
+    type TransactionRequest = base_common_types_rpc::BaseTransactionRequest;
 
-    type TransactionResponse = base_common_rpc_types::BaseTransaction;
+    type TransactionResponse = base_common_types_rpc::BaseTransaction;
 
-    type ReceiptResponse = base_common_rpc_types::BaseTransactionReceipt;
+    type ReceiptResponse = base_common_types_rpc::BaseTransactionReceipt;
 
-    type HeaderResponse = base_common_rpc_types::Header;
+    type HeaderResponse = base_common_types_rpc::Header;
 
-    type BlockResponse = base_common_rpc_types::BaseBlockResponse;
+    type BlockResponse = base_common_types_rpc::BaseBlockResponse;
 }

@@ -8,7 +8,7 @@ use alloy_primitives::TxHash;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
-use base_common_rpc_types::{Filter, Log};
+use base_common_types_rpc::{Filter, Log};
 use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use reth_storage_api::BlockReader;
@@ -230,7 +230,7 @@ pub enum FilterBlockRangeError {
 
 #[cfg(test)]
 mod tests {
-    use base_common_rpc_types::Filter;
+    use base_common_types_rpc::Filter;
 
     use super::*;
 
@@ -328,8 +328,8 @@ mod tests {
         let start_block = info.best_number;
 
         let (from_block_number, to_block_number) = get_filter_block_range(
-            from_block.and_then(base_common_rpc_types::BlockNumberOrTag::as_number),
-            to_block.and_then(base_common_rpc_types::BlockNumberOrTag::as_number),
+            from_block.and_then(base_common_types_rpc::BlockNumberOrTag::as_number),
+            to_block.and_then(base_common_types_rpc::BlockNumberOrTag::as_number),
             start_block,
             info,
         )

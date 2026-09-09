@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use base_common_types_chain::{
     Eip658Value, Header as ConsensusHeader, Predeploys, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
-use base_common_rpc_types::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
+use base_common_types_rpc::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,

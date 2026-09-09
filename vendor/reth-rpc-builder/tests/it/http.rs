@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use alloy_eips::{BlockId, BlockNumberOrTag, Encodable2718, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U64, U256};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseTransactionRequest, Block, FeeHistory, Filter, Index, Log, PendingTransactionFilterKind,
     SyncStatus, TraceFilter, Transaction, TransactionReceipt,
 };

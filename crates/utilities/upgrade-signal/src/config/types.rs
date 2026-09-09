@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use base_common_rpc_types::BlockNumberOrTag;
+use base_common_types_rpc::BlockNumberOrTag;
 
 /// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
 #[derive(

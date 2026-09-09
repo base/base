@@ -9,7 +9,7 @@ use alloy_signer::SignerSync;
 use base_common_types_chain::SignableTransaction;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, Ethereum, PrivateKeySigner, ReceiptResponse, TransactionBuilder};
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_types_rpc::BaseTransactionRequest;
 use base_system_tests::{ANVIL_ACCOUNT_1, SEQUENCER, SetupImage, SystemTestStackBuilder};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};

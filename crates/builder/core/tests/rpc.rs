@@ -9,7 +9,7 @@ use base_common_types_chain::{
     BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
 };
 use base_common_network::TransactionBuilder;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_types_rpc::BaseTransactionRequest;
 use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,
     ValidityOperator, ValidityPredicate,

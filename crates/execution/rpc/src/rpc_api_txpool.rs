@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_common_rpc_types::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolStatus};
+use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolStatus};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 /// Txpool rpc interface.
@@ -28,7 +28,7 @@ pub trait TxPoolApi {
     async fn txpool_content_from(
         &self,
         from: Address,
-    ) -> RpcResult<TxpoolContentFrom<base_common_rpc_types::BaseTransaction>>;
+    ) -> RpcResult<TxpoolContentFrom<base_common_types_rpc::BaseTransaction>>;
 
     /// Returns the details of all transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
@@ -37,5 +37,5 @@ pub trait TxPoolApi {
     #[method(name = "content")]
     async fn txpool_content(
         &self,
-    ) -> RpcResult<TxpoolContent<base_common_rpc_types::BaseTransaction>>;
+    ) -> RpcResult<TxpoolContent<base_common_types_rpc::BaseTransaction>>;
 }

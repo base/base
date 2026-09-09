@@ -4,7 +4,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_provider::Provider;
 use alloy_rpc_client::PollerBuilder;
 use async_stream::stream;
-use base_common_rpc_types::Block;
+use base_common_types_rpc::Block;
 use base_protocol::BlockInfo;
 use futures::{Stream, StreamExt};
 

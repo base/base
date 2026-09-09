@@ -1,6 +1,6 @@
 //! `eth_` RPC API for pubsub subscription.
 
-use base_common_rpc_types::pubsub::{Params, SubscriptionKind};
+use base_common_types_rpc::pubsub::{Params, SubscriptionKind};
 use jsonrpsee::proc_macros::rpc;
 
 /// Ethereum pub-sub rpc interface.
@@ -10,7 +10,7 @@ pub trait EthPubSubApi {
     #[subscription(
         name = "subscribe" => "subscription",
         unsubscribe = "unsubscribe",
-        item = base_common_rpc_types::pubsub::SubscriptionResult
+        item = base_common_types_rpc::pubsub::SubscriptionResult
     )]
     async fn subscribe(
         &self,

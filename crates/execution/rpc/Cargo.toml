@@ -79,7 +79,7 @@ alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
-base-common-rpc-types = {workspace = true, features = ["default", "serde"]}
+base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 
@@ -94,7 +94,7 @@ reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-common-rpc-types = { workspace = true, features = [] }
+base-common-types-rpc = { workspace = true, features = [] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

@@ -4,7 +4,7 @@ use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
 use alloy_transport::TransportResult;
 use base_common_network::Network;
-use base_common_rpc_types::{Bundle, StateContext, TransactionIndex, state::StateOverride};
+use base_common_types_rpc::{Bundle, StateContext, TransactionIndex, state::StateOverride};
 use futures::{FutureExt, future};
 
 use super::{Caller, EthCallManyParams};

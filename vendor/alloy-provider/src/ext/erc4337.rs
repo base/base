@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes};
 use alloy_transport::TransportResult;
 use base_common_network::Network;
-use base_common_rpc_types::erc4337::{
+use base_common_types_rpc::erc4337::{
     SendUserOperation, SendUserOperationResponse, UserOperationGasEstimation, UserOperationReceipt,
 };
 

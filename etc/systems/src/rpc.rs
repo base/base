@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_network::{Base, Network};
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_types_rpc::BaseTransactionReceipt;
 use base_consensus_rpc::SyncStatusApiClient;
 use base_protocol::SyncStatus;
 use eyre::{Result, WrapErr};

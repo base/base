@@ -11,7 +11,7 @@ use alloy_transport::TransportError;
 use alloy_transport_http::Http;
 use base_common_types_chain::Transaction as ConsensusTransaction;
 use base_common_network::Base;
-use base_common_rpc_types::{TxpoolContent, TxpoolContentFrom};
+use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
     http_client::HttpClientBuilder,
@@ -486,7 +486,7 @@ mod tests {
     use alloy_primitives::{Address, B256, address};
     use alloy_provider::Network;
     use base_common_network::Base;
-    use base_common_rpc_types::{TxpoolContent, TxpoolContentFrom};
+    use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom};
     use serde_json::json;
 
     use super::{TxpoolReport, TxpoolScope, TxpoolTransactionPool};

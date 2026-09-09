@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::TxHash;
 use base_common_types_chain::{BaseReceipt, BlockHeader, TxReceipt, transaction::TransactionMeta};
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_types_rpc::BaseTransactionReceipt;
 use reth_primitives_traits::{BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 

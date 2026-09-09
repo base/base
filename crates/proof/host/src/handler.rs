@@ -11,7 +11,7 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
-use base_common_rpc_types::Block;
+use base_common_types_rpc::Block;
 use alloy_rpc_types_debug::ExecutionWitness;
 use ark_ff::{BigInteger, PrimeField};
 use base_common_types_chain::{Header, HoloceneExtraData, JovianExtraData, Predeploys};

@@ -5,7 +5,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
     transaction::Recovered,
 };
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
 };
 use base_execution_chainspec::ChainSpecProvider;
@@ -57,7 +57,7 @@ where
     pub fn fill_pending(
         &self,
         tx: Recovered<BaseTxEnvelope>,
-    ) -> Result<base_common_rpc_types::BaseTransaction, BaseEthApiError> {
+    ) -> Result<base_common_types_rpc::BaseTransaction, BaseEthApiError> {
         self.fill(tx, TransactionInfo::default())
     }
 
@@ -66,11 +66,11 @@ where
         &self,
         tx: Recovered<BaseTxEnvelope>,
         tx_info: TransactionInfo,
-    ) -> Result<base_common_rpc_types::BaseTransaction, BaseEthApiError> {
+    ) -> Result<base_common_types_rpc::BaseTransaction, BaseEthApiError> {
         let (tx, signer) = tx.into_parts();
         let tx_info = self.mapper.try_map(&tx, tx_info)?;
 
-        Ok(base_common_rpc_types::BaseTransaction::from_transaction(
+        Ok(base_common_types_rpc::BaseTransaction::from_transaction(
             Recovered::new_unchecked(tx, signer),
             tx_info,
         ))
@@ -131,7 +131,7 @@ where
         header: reth_primitives_traits::SealedHeader,
         block_size: usize,
     ) -> Result<Header, BaseEthApiError> {
-        Ok(base_common_rpc_types::Header::from_consensus(
+        Ok(base_common_types_rpc::Header::from_consensus(
             header.into(),
             None,
             Some(U256::from(block_size)),

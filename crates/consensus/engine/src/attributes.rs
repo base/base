@@ -358,7 +358,7 @@ mod tests {
     use base_common_chains::{ChainConfig, rollup_config};
     use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_network::TransactionResponse;
-    use base_common_rpc_types::{BaseTransaction as Transaction, Block, BlockTransactions};
+    use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactions};
     use base_common_types_payload::BasePayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -741,7 +741,7 @@ mod tests {
         // For canyon and above we also need to specify the withdrawal headers
         let block = Block {
             withdrawals: Some(Withdrawals(vec![])),
-            header: base_common_rpc_types::Header {
+            header: base_common_types_rpc::Header {
                 inner: base_common_types_chain::Header {
                     withdrawals_root: Some(EMPTY_ROOT_HASH),
                     ..Default::default()

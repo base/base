@@ -268,7 +268,7 @@ skip = [
     # alloy-hardforks than the rest of the workspace.
     "alloy-hardforks",
     "alloy-json-rpc",
-    "alloy-network-primitives",
+    "base-common-types-rpc",
     "cpufeatures",
     "num-bigint",
 

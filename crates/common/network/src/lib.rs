@@ -41,7 +41,7 @@ pub use transaction::{
 mod ethereum;
 /// Types for handling unknown network types.
 pub use alloy_eips::eip2718;
-pub use alloy_network_primitives::{
+pub use base_common_types_rpc::{
     self as primitives, BlockResponse, ReceiptResponse, TransactionResponse,
 };
 pub use ethereum::{Ethereum, EthereumWallet, IntoWallet};

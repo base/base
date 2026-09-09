@@ -3,7 +3,7 @@ use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportError;
 use base_common_network::{Network, TransactionBuilder};
-use base_common_rpc_types::state::{AccountOverride, StateOverridesBuilder};
+use base_common_types_rpc::state::{AccountOverride, StateOverridesBuilder};
 
 /// A utility for finding storage slots in smart contracts, particularly useful for ERC20 tokens.
 ///
@@ -195,7 +195,7 @@ mod tests {
     use alloy_provider::{Provider, ProviderBuilder, ext::AnvilApi};
     use alloy_sol_types::sol;
     use base_common_network::TransactionBuilder;
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use crate::StorageSlotFinder;
     const FORK_URL: &str = "https://ethereum.reth.rs/rpc";

@@ -4,7 +4,7 @@ use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
 use alloy_primitives::{Address, U256, utils::format_ether};
 use alloy_provider::Provider;
-use base_common_rpc_types::{BlockNumberOrTag, TransactionRequest};
+use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use base_cli_utils::RuntimeManager;
 use base_common_network::{EthereumWallet, PrivateKeySigner, TransactionBuilder};
 use base_load_tests::{

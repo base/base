@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_network_primitives::HeaderResponse;
+use base_common_types_rpc::HeaderResponse;
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
 use base_common_network::{BlockResponse as _, Network};
@@ -316,7 +316,7 @@ mod tests {
     use alloy_primitives::{B256, U64};
     use alloy_rpc_client::RpcClient;
     use alloy_transport::{TransportError, TransportFut};
-    use base_common_rpc_types::Block;
+    use base_common_types_rpc::Block;
     use futures::StreamExt;
     use tokio::time::timeout;
 

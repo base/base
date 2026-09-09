@@ -743,7 +743,7 @@ impl AccountProof {
     pub fn into_eip1186_response(
         self,
         slots: Vec<alloy_serde::JsonStorageKey>,
-    ) -> base_common_rpc_types::EIP1186AccountProofResponse {
+    ) -> base_common_types_rpc::EIP1186AccountProofResponse {
         self.into_eip1186_response_with(slots, false)
     }
 
@@ -761,7 +761,7 @@ impl AccountProof {
         self,
         slots: Vec<alloy_serde::JsonStorageKey>,
         zero_empty_account: bool,
-    ) -> base_common_rpc_types::EIP1186AccountProofResponse {
+    ) -> base_common_types_rpc::EIP1186AccountProofResponse {
         let is_non_existent = self.info.is_none();
         let info = self.info.unwrap_or_default();
         let (code_hash, storage_hash) = if is_non_existent && zero_empty_account {
@@ -769,7 +769,7 @@ impl AccountProof {
         } else {
             (info.get_bytecode_hash(), self.storage_root)
         };
-        base_common_rpc_types::EIP1186AccountProofResponse {
+        base_common_types_rpc::EIP1186AccountProofResponse {
             address: self.address,
             balance: info.balance,
             code_hash,
@@ -788,12 +788,12 @@ impl AccountProof {
     }
 
     /// Converts an
-    /// [`EIP1186AccountProofResponse`](base_common_rpc_types::EIP1186AccountProofResponse) to an
+    /// [`EIP1186AccountProofResponse`](base_common_types_rpc::EIP1186AccountProofResponse) to an
     /// [`AccountProof`].
     ///
     /// This is the inverse of [`Self::into_eip1186_response`]
-    pub fn from_eip1186_proof(proof: base_common_rpc_types::EIP1186AccountProofResponse) -> Self {
-        let base_common_rpc_types::EIP1186AccountProofResponse {
+    pub fn from_eip1186_proof(proof: base_common_types_rpc::EIP1186AccountProofResponse) -> Self {
+        let base_common_types_rpc::EIP1186AccountProofResponse {
             nonce,
             address,
             balance,
@@ -828,8 +828,8 @@ impl AccountProof {
 }
 
 #[cfg(feature = "eip1186")]
-impl From<base_common_rpc_types::EIP1186AccountProofResponse> for AccountProof {
-    fn from(proof: base_common_rpc_types::EIP1186AccountProofResponse) -> Self {
+impl From<base_common_types_rpc::EIP1186AccountProofResponse> for AccountProof {
+    fn from(proof: base_common_types_rpc::EIP1186AccountProofResponse) -> Self {
         Self::from_eip1186_proof(proof)
     }
 }
@@ -959,8 +959,8 @@ impl StorageProof {
     pub fn into_eip1186_proof(
         self,
         slot: alloy_serde::JsonStorageKey,
-    ) -> base_common_rpc_types::EIP1186StorageProof {
-        base_common_rpc_types::EIP1186StorageProof {
+    ) -> base_common_types_rpc::EIP1186StorageProof {
+        base_common_types_rpc::EIP1186StorageProof {
             key: slot,
             value: self.value,
             proof: normalize_eip1186_empty_trie_proof(self.proof),
@@ -968,10 +968,10 @@ impl StorageProof {
     }
 
     /// Convert from an
-    /// [`EIP1186StorageProof`](base_common_rpc_types::EIP1186StorageProof)
+    /// [`EIP1186StorageProof`](base_common_types_rpc::EIP1186StorageProof)
     ///
     /// This is the inverse of [`Self::into_eip1186_proof`].
-    pub fn from_eip1186_proof(storage_proof: base_common_rpc_types::EIP1186StorageProof) -> Self {
+    pub fn from_eip1186_proof(storage_proof: base_common_types_rpc::EIP1186StorageProof) -> Self {
         Self {
             value: storage_proof.value,
             proof: storage_proof.proof,
@@ -981,8 +981,8 @@ impl StorageProof {
 }
 
 #[cfg(feature = "eip1186")]
-impl From<base_common_rpc_types::EIP1186StorageProof> for StorageProof {
-    fn from(proof: base_common_rpc_types::EIP1186StorageProof) -> Self {
+impl From<base_common_types_rpc::EIP1186StorageProof> for StorageProof {
+    fn from(proof: base_common_types_rpc::EIP1186StorageProof) -> Self {
         Self::from_eip1186_proof(proof)
     }
 }
@@ -1265,7 +1265,7 @@ mod tests {
         // in exclusion proofs for non-existent accounts, instead of
         // KECCAK_EMPTY / EMPTY_ROOT_HASH. Verify that from_eip1186_proof
         // correctly recognizes this format as a non-existent account.
-        let geth_proof = base_common_rpc_types::EIP1186AccountProofResponse {
+        let geth_proof = base_common_types_rpc::EIP1186AccountProofResponse {
             address: Address::random(),
             balance: U256::ZERO,
             code_hash: B256::ZERO,
@@ -1284,7 +1284,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eip1186")]
     fn from_eip1186_proof_accepts_empty_hashes() {
-        let proof = base_common_rpc_types::EIP1186AccountProofResponse {
+        let proof = base_common_types_rpc::EIP1186AccountProofResponse {
             address: Address::random(),
             balance: U256::ZERO,
             code_hash: KECCAK_EMPTY,

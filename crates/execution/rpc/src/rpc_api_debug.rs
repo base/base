@@ -2,7 +2,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, U64};
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Account, AccountInfo, BlockTraceResult, Bundle, GethDebugTracingCallOptions,
     GethDebugTracingOptions, GethTrace, GethTraceResult as TraceResult, Index, StateContext,
 };
@@ -113,7 +113,7 @@ pub trait DebugApi {
     #[method(name = "traceCall")]
     async fn debug_trace_call(
         &self,
-        request: base_common_rpc_types::BaseTransactionRequest,
+        request: base_common_types_rpc::BaseTransactionRequest,
         block_id: Option<BlockId>,
         opts: Option<GethDebugTracingCallOptions>,
     ) -> RpcResult<GethTrace>;
@@ -136,7 +136,7 @@ pub trait DebugApi {
     #[method(name = "traceCallMany")]
     async fn debug_trace_call_many(
         &self,
-        bundles: Vec<Bundle<base_common_rpc_types::BaseTransactionRequest>>,
+        bundles: Vec<Bundle<base_common_types_rpc::BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
     ) -> RpcResult<Vec<Vec<GethTrace>>>;

@@ -4,7 +4,7 @@ use std::{net::TcpListener, path::PathBuf, sync::Arc};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
-use base_common_rpc_types::{BaseTransaction as Transaction, Block, BlockTransactionHashes};
+use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactionHashes};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},

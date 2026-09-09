@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use alloy_eips::BlockId;
 use base_common_network::Network;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockOverrides, Bundle, StateContext, TransactionIndex, state::StateOverride,
 };
 use serde::ser::SerializeSeq;

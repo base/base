@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
 use base_common_types_chain::{TxReceipt, transaction::TxHashRef};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionReceipt, Block, BlockTransactions, Index,
 };
 use futures::Future;

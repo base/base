@@ -17,7 +17,7 @@ cadence = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["std"] }
+base-common-types-rpc = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "macros"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }

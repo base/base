@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Keccak256, U256, uint};
 use base_common_types_chain::{Transaction as _, transaction::TxHashRef};
-use base_common_rpc_types::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
+use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
 use base_evm_handler::{DatabaseCommit, DatabaseRef};
@@ -87,7 +87,7 @@ impl EthBundle {
             .map(|tx| recover_raw_transaction::<PoolPooledTx>(&tx))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let block_id: base_common_rpc_types::BlockId = state_block_number.into();
+        let block_id: base_common_types_rpc::BlockId = state_block_number.into();
         // Note: the block number is considered the `parent` block: <https://github.com/flashbots/mev-geth/blob/fddf97beec5877483f879a77b7dea2e58a58d653/internal/ethapi/api.go#L2104>
         let (mut evm_env, at) = self.eth_api().evm_env_at(block_id).await?;
 

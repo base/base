@@ -40,7 +40,7 @@ serde_json = { workspace = true, features = [
     "preserve_order",
 ], optional = true }
 derive_more = { workspace = true, features = ["full"] }
-base-common-rpc-types = { workspace = true, optional = true }
+base-common-types-rpc = { workspace = true, optional = true }
 base-common-types-chain = {workspace = true, features = ["k256"]}
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
@@ -83,15 +83,15 @@ std = [
     "alloy-eips/std",
     "derive_more/std",
     "thiserror/std",
-    "base-common-rpc-types?/std",
+    "base-common-types-rpc?/std",
     "tracing/std",
 ]
 tracer = ["std", "serde", "dep:serde", "dep:serde_json"]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
 call-util = ["overrides"]
 gmp = ["revm-precompile/gmp"]
-overrides = ["dep:base-common-rpc-types"]
-rpc = ["dep:base-common-rpc-types"]
+overrides = ["dep:base-common-types-rpc"]
+rpc = ["dep:base-common-types-rpc"]
 secp256k1 = ["revm-precompile/secp256k1"]
 alloydb = ["base-state/alloydb"]
 arbitrary = ["revm-primitives/arbitrary"]

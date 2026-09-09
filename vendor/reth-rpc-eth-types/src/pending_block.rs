@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Instant};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
 use base_common_types_chain::{BaseReceipt, BlockHeader, EthereumReceipt as Receipt};
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_types_rpc::BaseTransactionReceipt;
 use base_execution_evm::EvmEnvFor;
 use derive_more::Constructor;
 use reth_chain_state::{BlockState, ExecutedBlock};

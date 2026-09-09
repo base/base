@@ -81,7 +81,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
-base-common-rpc-types = {workspace = true, features = ["default", "std"]}
+base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }

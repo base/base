@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
 use base_common_types_chain::{SignableTransaction, Transaction};
 use base_common_network::PrivateKeySigner;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_types_rpc::BaseTransactionRequest;
 use eyre::{Result, eyre};
 
 use crate::DEVNET_CHAIN_ID;

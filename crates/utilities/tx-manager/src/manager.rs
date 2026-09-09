@@ -31,7 +31,7 @@
 //! [`prepare`]: SimpleTxManager::prepare
 //! [`craft_tx`]: SimpleTxManager::craft_tx
 //! [`send_tx`]: SimpleTxManager::send_tx
-//! [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
+//! [`TransactionRequest`]: base_common_types_rpc::TransactionRequest
 
 use std::{
     fmt::Debug,
@@ -54,7 +54,7 @@ use base_common_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
 };
-use base_common_rpc_types::{TransactionReceipt, TransactionRequest};
+use base_common_types_rpc::{TransactionReceipt, TransactionRequest};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -2024,7 +2024,7 @@ mod tests {
             let asserter = Asserter::new();
             for _ in 0..5 {
                 asserter.push_success(&1u64);
-                asserter.push_success(&Option::<base_common_rpc_types::TransactionReceipt>::None);
+                asserter.push_success(&Option::<base_common_types_rpc::TransactionReceipt>::None);
             }
             let provider = ProviderBuilder::new().connect_mocked_client(asserter);
             let send_state = SendState::new(3).expect("send state should be valid");

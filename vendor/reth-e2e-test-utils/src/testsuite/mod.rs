@@ -59,7 +59,7 @@ impl NodeClient {
     pub async fn get_block_by_number(
         &self,
         number: alloy_eips::BlockNumberOrTag,
-    ) -> Result<Option<base_common_rpc_types::Block>> {
+    ) -> Result<Option<base_common_types_rpc::Block>> {
         self.provider
             .get_block_by_number(number)
             .await

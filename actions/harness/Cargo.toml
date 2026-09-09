@@ -33,7 +33,7 @@ base-batcher-encoder = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-safedb = { workspace = true }
-base-common-rpc-types = { workspace = true }
+base-common-types-rpc = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }

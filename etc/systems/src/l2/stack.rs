@@ -16,7 +16,7 @@ use alloy_signer::SignerSync;
 use base_common_types_chain::SignableTransaction;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, Ethereum, PrivateKeySigner, TransactionBuilder};
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_types_rpc::BaseTransactionRequest;
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_tx_forwarding::TxForwardingConfig;

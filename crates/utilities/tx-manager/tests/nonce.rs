@@ -6,7 +6,7 @@ use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
-use base_common_rpc_types::TransactionRequest;
+use base_common_types_rpc::TransactionRequest;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
 use rayon::prelude::*;
 

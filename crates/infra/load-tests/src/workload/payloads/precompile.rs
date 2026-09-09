@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
 use base_common_network::TransactionBuilder;
-use base_common_rpc_types::TransactionRequest;
+use base_common_types_rpc::TransactionRequest;
 use base_evm_handler::precompile::{PrecompileId, PrecompileSpecId};
 
 use super::Payload;

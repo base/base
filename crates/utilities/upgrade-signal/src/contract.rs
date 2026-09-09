@@ -10,7 +10,7 @@ use alloy_sol_types::{SolCall, sol};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
 use backon::Retryable;
 use base_common_genesis::BaseUpgrade;
-use base_common_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
+use base_common_types_rpc::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use base_retry::RetryConfig;
 use futures::future::try_join;
 use reqwest::Client;
@@ -410,7 +410,7 @@ impl AlloyUpgradeSignalReader {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_common_rpc_types::Block;
+    use base_common_types_rpc::Block;
     use httpmock::prelude::*;
 
     use super::*;

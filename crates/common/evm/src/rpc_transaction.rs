@@ -1,7 +1,7 @@
 //! Reth compatibility implementations for RPC types.
 
 use alloy_primitives::Bytes;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_types_rpc::BaseTransactionRequest;
 use base_evm_handler::{BlockEnvironment, EthTxEnvError, EvmEnv, TryIntoTxEnv};
 
 use crate::BaseTransaction as BaseRevm;
@@ -23,7 +23,7 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for Base
 mod tests {
     use alloy_primitives::{Address, address};
     use base_common_types_chain::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
-    use base_common_rpc_types::Eip8130AuthScheme;
+    use base_common_types_rpc::Eip8130AuthScheme;
     use serde_json::json;
 
     use super::*;

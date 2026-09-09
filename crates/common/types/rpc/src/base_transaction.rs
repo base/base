@@ -147,7 +147,7 @@ impl TransactionTrait for BaseTransaction {
     }
 }
 
-impl alloy_network_primitives::TransactionResponse for BaseTransaction {
+impl crate::TransactionResponse for BaseTransaction {
     fn tx_hash(&self) -> alloy_primitives::TxHash {
         self.inner.tx_hash()
     }

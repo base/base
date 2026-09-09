@@ -6,7 +6,7 @@ use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, b256};
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::{BaseTransaction, Block as RpcBlock, BlockTransactions};
+use base_common_types_rpc::{BaseTransaction, Block as RpcBlock, BlockTransactions};
 use base_common_types_payload::{
     ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
@@ -36,7 +36,7 @@ fn encoded_l1_info_deposit_tx() -> Bytes {
 
 fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
     BaseTransaction {
-        inner: base_common_rpc_types::Transaction {
+        inner: base_common_types_rpc::Transaction {
             inner: Recovered::new_unchecked(tx, Address::ZERO),
             block_hash: None,
             block_number: Some(block_number),

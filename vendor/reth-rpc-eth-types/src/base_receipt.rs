@@ -10,7 +10,7 @@ use base_common_types_chain::{
     ReceiptWithBloom, TxReceipt,
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt, TransactionReceiptFields,
 };
 use base_execution_chainspec::ChainSpecProvider;

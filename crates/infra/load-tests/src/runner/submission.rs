@@ -13,7 +13,7 @@ use std::{
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Bytes, TxHash, U256};
 use alloy_provider::RootProvider;
-use base_common_rpc_types::TransactionRequest;
+use base_common_types_rpc::TransactionRequest;
 use alloy_signer::SignerSync;
 use base_common_types_chain::transaction::SignableTransaction;
 use base_common_network::{Ethereum, PrivateKeySigner, TransactionBuilder};

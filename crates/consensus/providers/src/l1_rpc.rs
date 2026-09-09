@@ -38,7 +38,7 @@ mod tests {
 
     use alloy_eips::BlockId;
     use alloy_provider::Provider;
-    use base_common_rpc_types::Filter;
+    use base_common_types_rpc::Filter;
     use httpmock::prelude::*;
 
     use super::*;

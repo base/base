@@ -2,7 +2,7 @@
 use alloy_primitives::{Address, U64, U256, map::HashMap};
 use alloy_transport::TransportResult;
 use base_common_network::Network;
-use base_common_rpc_types::BlockId;
+use base_common_types_rpc::BlockId;
 
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;

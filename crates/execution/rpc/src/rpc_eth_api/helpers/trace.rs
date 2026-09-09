@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
-use base_common_rpc_types::{BlockId, TransactionInfo};
+use base_common_types_rpc::{BlockId, TransactionInfo};
 use base_evm_context::{Block, ResultAndState};
 use base_execution_evm::{
     BlockExecutor, Evm, EvmEnvFor, EvmFactoryExt, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv,

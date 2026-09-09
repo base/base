@@ -9,7 +9,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockId, Header, TransactionInput, TransactionReceipt, TransactionRequest,
 };
 use base_retry::RetryConfig;

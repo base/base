@@ -10,7 +10,7 @@ use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{Entry, HashMap},
 };
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     AccessedSlots, AccountChangeKind, AccountState, CallConfig, CallFrame, CallFrameType,
     ContractSize, DefaultFrame, DiffMode, Erc7562Config, Erc7562Frame, GethDefaultTracingOptions,
     PreStateConfig, PreStateFrame, PreStateMode, StructLog,

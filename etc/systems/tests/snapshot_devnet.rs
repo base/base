@@ -8,7 +8,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use base_common_types_chain::SignableTransaction;
 use base_common_network::{Base, PrivateKeySigner, TransactionBuilder};
-use base_common_rpc_types::{BaseTransactionRequest, BlockNumberOrTag};
+use base_common_types_rpc::{BaseTransactionRequest, BlockNumberOrTag};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
     SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,

@@ -10,7 +10,7 @@ use alloc::{
 
 pub use alloy_primitives::Log;
 use alloy_primitives::{Address, Bytes, FixedBytes, LogData, U256};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Action, ActionType, CallAction, CallFrame, CallLogFrame, CallOutput, CallType, CreateAction,
     CreateOutput, CreationMethod, GethDefaultTracingOptions, SelfdestructAction, StructLog,
     TraceOutput, TransactionTrace,

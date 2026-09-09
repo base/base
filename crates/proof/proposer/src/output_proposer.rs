@@ -172,7 +172,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 mod tests {
     use alloy_primitives::{Address, Bloom};
     use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use base_common_rpc_types::TransactionReceipt;
+    use base_common_types_rpc::TransactionReceipt;
     use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
 
     use super::*;

@@ -46,7 +46,7 @@ base-prover-service-protocol = { workspace = true, features = ["default"] }
 [dev-dependencies]
 serde_json = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-common-rpc-types = { workspace = true }
+base-common-types-rpc = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["default", "test-util"] }

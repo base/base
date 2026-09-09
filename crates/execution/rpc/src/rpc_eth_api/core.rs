@@ -7,7 +7,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag, eip2930::AccessListResult};
 use alloy_primitives::{Address, B64, B256, Bytes, U64, U256};
 use alloy_serde::JsonStorageKey;
 use base_common_types_chain::BaseTxEnvelope;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionReceipt, BaseTransactionRequest, BlockOverrides, Bundle,
     EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext,
     SyncStatus, Work,
@@ -125,7 +125,7 @@ pub trait EthApi {
     async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>>;
 
     /// Returns information about a raw transaction by block hash and transaction index position.
     #[method(name = "getRawTransactionByBlockHashAndIndex")]
@@ -141,7 +141,7 @@ pub trait EthApi {
         &self,
         hash: B256,
         index: Index,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>>;
 
     /// Returns information about a raw transaction by block number and transaction index
     /// position.
@@ -158,7 +158,7 @@ pub trait EthApi {
         &self,
         number: BlockNumberOrTag,
         index: Index,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>>;
 
     /// Returns information about a transaction by sender and nonce.
     #[method(name = "getTransactionBySenderAndNonce")]
@@ -166,11 +166,11 @@ pub trait EthApi {
         &self,
         address: Address,
         nonce: U64,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>>;
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>>;
 
     /// Returns all transactions in the local pending pool.
     #[method(name = "pendingTransactions")]
-    fn pending_transactions(&self) -> RpcResult<Vec<base_common_rpc_types::BaseTransaction>>;
+    fn pending_transactions(&self) -> RpcResult<Vec<base_common_types_rpc::BaseTransaction>>;
 
     /// Returns the receipt of a transaction by transaction hash.
     #[method(name = "getTransactionReceipt")]
@@ -296,7 +296,7 @@ pub trait EthApi {
         &self,
         address: Address,
         block: BlockId,
-    ) -> RpcResult<Option<base_common_rpc_types::Account>>;
+    ) -> RpcResult<Option<base_common_types_rpc::Account>>;
 
     /// Introduced in EIP-1559, returns suggestion for the priority for dynamic fee transactions.
     #[method(name = "maxPriorityFeePerGas")]
@@ -409,7 +409,7 @@ pub trait EthApi {
         &self,
         address: Address,
         block: BlockId,
-    ) -> RpcResult<base_common_rpc_types::AccountInfo>;
+    ) -> RpcResult<base_common_types_rpc::AccountInfo>;
 
     /// Returns the EIP-7928 block access list for a block by hash.
     #[method(name = "getBlockAccessListByBlockHash")]
@@ -571,7 +571,7 @@ impl EthApiServer for BaseEthApi {
     async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>> {
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getTransactionByHash");
         Ok(BaseEthApi::transaction_by_hash(self, hash)
             .await?
@@ -596,7 +596,7 @@ impl EthApiServer for BaseEthApi {
         &self,
         hash: B256,
         index: Index,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>> {
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", ?hash, ?index, "Serving eth_getTransactionByBlockHashAndIndex");
         Ok(BaseEthApi::transaction_by_block_and_tx_index(self, hash.into(), index.into()).await?)
     }
@@ -617,7 +617,7 @@ impl EthApiServer for BaseEthApi {
         &self,
         number: BlockNumberOrTag,
         index: Index,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>> {
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", ?number, ?index, "Serving eth_getTransactionByBlockNumberAndIndex");
         Ok(BaseEthApi::transaction_by_block_and_tx_index(self, number.into(), index.into()).await?)
     }
@@ -627,13 +627,13 @@ impl EthApiServer for BaseEthApi {
         &self,
         sender: Address,
         nonce: U64,
-    ) -> RpcResult<Option<base_common_rpc_types::BaseTransaction>> {
+    ) -> RpcResult<Option<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", ?sender, ?nonce, "Serving eth_getTransactionBySenderAndNonce");
         Ok(BaseEthApi::get_transaction_by_sender_and_nonce(self, sender, nonce.to(), true).await?)
     }
 
     /// Handler for: `eth_pendingTransactions`
-    fn pending_transactions(&self) -> RpcResult<Vec<base_common_rpc_types::BaseTransaction>> {
+    fn pending_transactions(&self) -> RpcResult<Vec<base_common_types_rpc::BaseTransaction>> {
         trace!(target: "rpc::eth", "Serving eth_pendingTransactions");
         Ok(BaseEthApi::pending_transactions(self)?)
     }
@@ -788,7 +788,7 @@ impl EthApiServer for BaseEthApi {
         &self,
         address: Address,
         block: BlockId,
-    ) -> RpcResult<Option<base_common_rpc_types::Account>> {
+    ) -> RpcResult<Option<base_common_types_rpc::Account>> {
         trace!(target: "rpc::eth", "Serving eth_getAccount");
         Ok(BaseEthApi::get_account(self, address, block).await?)
     }
@@ -927,7 +927,7 @@ impl EthApiServer for BaseEthApi {
         &self,
         address: Address,
         block: BlockId,
-    ) -> RpcResult<base_common_rpc_types::AccountInfo> {
+    ) -> RpcResult<base_common_types_rpc::AccountInfo> {
         trace!(target: "rpc::eth", "Serving eth_getAccountInfo");
         Ok(BaseEthApi::get_account_info(self, address, block).await?)
     }

@@ -1,6 +1,6 @@
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockDetails, ContractCreator, InternalOperation, OtsBlockTransactions, TraceEntry,
     TransactionsWithReceipts,
 };
@@ -21,7 +21,7 @@ pub trait Otterscan {
     async fn get_header_by_number(
         &self,
         block_number: LenientBlockNumberOrTag,
-    ) -> RpcResult<Option<base_common_rpc_types::Header>>;
+    ) -> RpcResult<Option<base_common_types_rpc::Header>>;
 
     /// Check if a certain address contains a deployed code.
     #[method(name = "hasCode")]
@@ -52,7 +52,7 @@ pub trait Otterscan {
     async fn get_block_details(
         &self,
         block_number: LenientBlockNumberOrTag,
-    ) -> RpcResult<BlockDetails<base_common_rpc_types::Header>>;
+    ) -> RpcResult<BlockDetails<base_common_types_rpc::Header>>;
 
     /// Tailor-made and expanded version of `eth_getBlockByHash` for block details page in
     /// Otterscan.
@@ -60,7 +60,7 @@ pub trait Otterscan {
     async fn get_block_details_by_hash(
         &self,
         block_hash: B256,
-    ) -> RpcResult<BlockDetails<base_common_rpc_types::Header>>;
+    ) -> RpcResult<BlockDetails<base_common_types_rpc::Header>>;
 
     /// Get paginated transactions for a certain block. Also remove some verbose fields like logs.
     #[method(name = "getBlockTransactions")]
@@ -70,7 +70,7 @@ pub trait Otterscan {
         page_number: usize,
         page_size: usize,
     ) -> RpcResult<
-        OtsBlockTransactions<base_common_rpc_types::BaseTransaction, base_common_rpc_types::Header>,
+        OtsBlockTransactions<base_common_types_rpc::BaseTransaction, base_common_types_rpc::Header>,
     >;
 
     /// Gets paginated inbound/outbound transaction calls for a certain address.

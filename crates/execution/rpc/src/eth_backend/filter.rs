@@ -14,7 +14,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::TxHash;
 use async_trait::async_trait;
 use base_common_types_chain::BlockHeader;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
 };
 use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
@@ -128,7 +128,7 @@ impl EthFilter {
     }
 
     /// Returns all currently active filters
-    pub fn active_filters(&self) -> &ActiveFilters<base_common_rpc_types::BaseTransaction> {
+    pub fn active_filters(&self) -> &ActiveFilters<base_common_types_rpc::BaseTransaction> {
         &self.inner.active_filters
     }
 
@@ -179,7 +179,7 @@ impl EthFilter {
     pub async fn filter_changes(
         &self,
         id: FilterId,
-    ) -> Result<FilterChanges<base_common_rpc_types::BaseTransaction, Log>, EthFilterError> {
+    ) -> Result<FilterChanges<base_common_types_rpc::BaseTransaction, Log>, EthFilterError> {
         let info = self.provider().chain_info()?;
         let best_number = info.best_number;
 
@@ -300,7 +300,7 @@ impl EthFilterApiServer for EthFilter {
     async fn new_filter(&self, filter: Filter) -> RpcResult<FilterId> {
         trace!(target: "rpc::eth", "Serving eth_newFilter");
         self.inner
-            .install_filter(FilterKind::<base_common_rpc_types::BaseTransaction>::Log(Box::new(
+            .install_filter(FilterKind::<base_common_types_rpc::BaseTransaction>::Log(Box::new(
                 filter,
             )))
             .await
@@ -309,7 +309,7 @@ impl EthFilterApiServer for EthFilter {
     /// Handler for `eth_newBlockFilter`
     async fn new_block_filter(&self) -> RpcResult<FilterId> {
         trace!(target: "rpc::eth", "Serving eth_newBlockFilter");
-        self.inner.install_filter(FilterKind::<base_common_rpc_types::BaseTransaction>::Block).await
+        self.inner.install_filter(FilterKind::<base_common_types_rpc::BaseTransaction>::Block).await
     }
 
     /// Handler for `eth_newPendingTransactionFilter`
@@ -345,7 +345,7 @@ impl EthFilterApiServer for EthFilter {
     async fn filter_changes(
         &self,
         id: FilterId,
-    ) -> RpcResult<FilterChanges<base_common_rpc_types::BaseTransaction, Log>> {
+    ) -> RpcResult<FilterChanges<base_common_types_rpc::BaseTransaction, Log>> {
         trace!(target: "rpc::eth", "Serving eth_getFilterChanges");
         Ok(Self::filter_changes(self, id).await?)
     }
@@ -393,7 +393,7 @@ struct EthFilterInner {
     /// Inner `eth` API implementation.
     eth_api: BaseEthApi,
     /// All currently installed filters.
-    active_filters: ActiveFilters<base_common_rpc_types::BaseTransaction>,
+    active_filters: ActiveFilters<base_common_types_rpc::BaseTransaction>,
     /// Provides ids to identify filters
     id_provider: Arc<dyn IdProvider>,
     /// limits for logs queries
@@ -552,7 +552,7 @@ impl EthFilterInner {
     /// Installs a new filter and returns the new identifier.
     async fn install_filter(
         &self,
-        kind: FilterKind<base_common_rpc_types::BaseTransaction>,
+        kind: FilterKind<base_common_types_rpc::BaseTransaction>,
     ) -> RpcResult<FilterId> {
         let last_poll_block_number = self.provider().best_block_number().to_rpc_result()?;
         let subscription_id = self.id_provider.next_id();
@@ -815,7 +815,7 @@ where
     }
 
     /// Returns all new pending transactions received since the last poll.
-    async fn drain(&self) -> FilterChanges<base_common_rpc_types::BaseTransaction> {
+    async fn drain(&self) -> FilterChanges<base_common_types_rpc::BaseTransaction> {
         let mut pending_txs = Vec::new();
         let mut prepared_stream = self.txs_stream.lock().await;
 
@@ -841,7 +841,7 @@ trait FullTransactionsFilter<T>: fmt::Debug + Send + Sync + Unpin + 'static {
 }
 
 #[async_trait]
-impl<TxCompat> FullTransactionsFilter<base_common_rpc_types::BaseTransaction>
+impl<TxCompat> FullTransactionsFilter<base_common_types_rpc::BaseTransaction>
     for FullTransactionsReceiver<TxCompat>
 where
     TxCompat: reth_storage_api::BlockReader<
@@ -855,7 +855,7 @@ where
         + Unpin
         + 'static + 'static,
 {
-    async fn drain(&self) -> FilterChanges<base_common_rpc_types::BaseTransaction> {
+    async fn drain(&self) -> FilterChanges<base_common_types_rpc::BaseTransaction> {
         Self::drain(self).await
     }
 }

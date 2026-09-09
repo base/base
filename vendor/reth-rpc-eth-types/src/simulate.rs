@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, Transaction as _};
 use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, BlockOverrides, BlockTransactionsKind,
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
@@ -285,7 +285,7 @@ pub fn apply_precompile_overrides(
 /// execution. This matches the spec rule `"gasLimit: blockGasLimit - soFarUsedGasInBlock"` and
 /// geth's per-call `sanitizeCall` behavior.
 ///
-/// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
+/// [`TransactionRequest`]: base_common_types_rpc::TransactionRequest
 #[expect(clippy::type_complexity)]
 pub fn execute_transactions<S, T>(
     mut builder: S,
@@ -408,7 +408,7 @@ where
 ///
 /// This will set the defaults as defined in <https://github.com/ethereum/execution-apis/blob/e56d3208789259d0b09fa68e9d8594aa4d73c725/docs/ethsimulatev1-notes.md#default-values-for-transactions>
 ///
-/// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
+/// [`TransactionRequest`]: base_common_types_rpc::TransactionRequest
 pub fn resolve_transaction<DB: Database, T>(
     mut tx: BaseTransactionRequest,
     default_gas_limit: u64,
@@ -556,7 +556,7 @@ where
                     .into_iter()
                     .map(|log| {
                         log_index += 1;
-                        base_common_rpc_types::Log {
+                        base_common_types_rpc::Log {
                             inner: log,
                             log_index: Some(log_index - 1),
                             transaction_index: Some(index as u64),
@@ -588,7 +588,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{U256, address};
     use base_common_types_chain::Header;
-    use base_common_rpc_types::{
+    use base_common_types_rpc::{
         BlockOverrides, TransactionRequest,
         simulate::SimBlock,
         state::{AccountOverride, StateOverride},

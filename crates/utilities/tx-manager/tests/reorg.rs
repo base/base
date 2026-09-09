@@ -64,7 +64,7 @@ async fn query(
     send_state: &SendState,
     manager: &SimpleTxManager<RootProvider>,
     tx_hash: B256,
-) -> Option<base_common_rpc_types::TransactionReceipt> {
+) -> Option<base_common_types_rpc::TransactionReceipt> {
     SimpleTxManager::<RootProvider>::query_receipt(
         send_state,
         manager.provider(),

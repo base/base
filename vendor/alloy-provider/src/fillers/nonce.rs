@@ -108,7 +108,7 @@ impl NonceManager for CachedNonceManager {
 ///
 /// ```
 /// # use base_common_network::{Ethereum};
-/// # use base_common_rpc_types::TransactionRequest;
+/// # use base_common_types_rpc::TransactionRequest;
 /// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
 /// # use base_common_network::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
@@ -209,7 +209,7 @@ impl<M: NonceManager, N: Network> TxFiller<N> for NonceFiller<M> {
 mod tests {
     use alloy_primitives::{U256, address};
     use base_common_types_chain::Transaction;
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use super::*;
     use crate::{ProviderBuilder, WalletProvider};

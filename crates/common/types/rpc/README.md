@@ -1,4 +1,4 @@
-# `base-common-rpc-types`
+# `base-common-types-rpc`
 
 Shared RPC schemas for Base execution and Ethereum L1 access.
 
@@ -19,11 +19,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-common-rpc-types = { workspace = true }
+base-common-types-rpc = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo};
+use base_common_types_rpc::{BaseTransactionReceipt, L1BlockInfo};
 
 let receipt: BaseTransactionReceipt = provider.get_transaction_receipt(hash).await?;
 let l1_fee = receipt.l1_block_info.l1_fee;
@@ -32,3 +32,5 @@ let l1_fee = receipt.l1_block_info.l1_fee;
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+
+Response traits, block transaction representations, inclusion metadata and transaction builder capabilities were consolidated here from the locally maintained Alloy network-primitives crate. Their wire encodings and client contracts are retained.

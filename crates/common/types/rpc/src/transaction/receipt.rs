@@ -1,4 +1,4 @@
-use alloy_network_primitives::ReceiptResponse;
+use crate::ReceiptResponse;
 use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_sol_types::SolEvent;
 use base_common_types_chain::{ReceiptEnvelope, TxReceipt, TxType};

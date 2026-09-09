@@ -32,7 +32,7 @@ alloy-provider = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = ["std"] }
+base-common-types-rpc = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }

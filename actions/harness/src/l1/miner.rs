@@ -7,7 +7,7 @@ use base_common_types_chain::{
 };
 use base_common_genesis::SystemConfigUpdate;
 use base_common_network::PrivateKeySigner;
-use base_common_rpc_types::{Log as RpcLog, TransactionReceipt};
+use base_common_types_rpc::{Log as RpcLog, TransactionReceipt};
 use base_protocol::{BlockInfo, Deposits};
 use tracing::info;
 

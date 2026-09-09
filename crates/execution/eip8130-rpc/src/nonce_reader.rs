@@ -2,10 +2,10 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
-use base_common_rpc_types::state::StateOverride;
+use base_common_types_rpc::state::StateOverride;
 use base_common_types_chain::Eip8130Constants;
 use base_common_precompiles::NonceManagerStorage;
-use base_common_rpc_types::Eip8130Nonce;
+use base_common_types_rpc::Eip8130Nonce;
 use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_types::EthApiError;
@@ -114,7 +114,7 @@ impl ChannelNonceReader {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_common_rpc_types::state::AccountOverride;
+    use base_common_types_rpc::state::AccountOverride;
 
     use super::*;
 

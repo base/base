@@ -54,7 +54,7 @@ alloy-chains = { workspace = true, features = ["std"] }
 tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
-base-common-rpc-types = {workspace = true, features = ["std"]}
+base-common-types-rpc = {workspace = true, features = ["std"]}
 derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }
@@ -84,7 +84,7 @@ base-protocol = { workspace = true, features = ["test-utils"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
+base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }

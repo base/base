@@ -9,7 +9,7 @@ use alloy_hardforks::ForkCondition;
 use alloy_provider::{Provider, RootProvider};
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
-use base_common_rpc_types::SyncStatus as EthSyncStatus;
+use base_common_types_rpc::SyncStatus as EthSyncStatus;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, WrapErr, ensure};

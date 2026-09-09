@@ -2,7 +2,7 @@
 
 use alloy_primitives::{B256, Bytes, hex};
 use alloy_sol_types::SolCall;
-use base_common_rpc_types::Block;
+use base_common_types_rpc::Block;
 use httpmock::{Mock, prelude::*};
 
 use crate::contract::IProtocolVersions;

@@ -231,7 +231,7 @@ mod tests {
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_genesis::ChainGenesis;
     use base_common_network::Base;
-    use base_common_rpc_types::{
+    use base_common_types_rpc::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
@@ -282,7 +282,7 @@ mod tests {
             B256::ZERO,
         ));
         BaseTransaction {
-            inner: base_common_rpc_types::Transaction {
+            inner: base_common_types_rpc::Transaction {
                 inner: Recovered::new_unchecked(envelope, Address::ZERO),
                 block_hash: None,
                 block_number: Some(block_number),

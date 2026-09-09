@@ -11,7 +11,7 @@ use alloy_sol_types::SolCall;
 use base_common_chains::{BaseUpgrade, ChainConfig};
 use base_common_genesis::UpgradeConfig;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     BlockId, BlockNumberOrTag, Filter, TransactionInput, TransactionRequest,
 };
 use chrono::{DateTime, Utc};
@@ -1766,7 +1766,7 @@ fn activation_feature_detail(feature: B256) -> String {
 }
 
 fn decode_admin_activity_log(
-    log: &base_common_rpc_types::Log,
+    log: &base_common_types_rpc::Log,
     block_number: u64,
     fallback_timestamp: u64,
 ) -> Option<(AdminActivityEntry, Option<Address>)> {
@@ -3253,7 +3253,7 @@ mod tests {
         let new_admin = address!("2222222222222222222222222222222222222222");
         let caller = address!("3333333333333333333333333333333333333333");
         let tx_hash = B256::repeat_byte(0x44);
-        let log = base_common_rpc_types::Log {
+        let log = base_common_types_rpc::Log {
             inner: PrimitiveLog {
                 address: ActivationRegistryStorage::ADDRESS,
                 data: IActivationRegistry::AdminChanged {

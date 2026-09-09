@@ -11,7 +11,7 @@ use base_common_types_chain::{
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_common_network::{TransactionBuilder, TransactionBuilder4844};
-use base_common_rpc_types::{BaseTransactionRequest, TransactionInfo, state::EvmOverrides};
+use base_common_types_rpc::{BaseTransactionRequest, TransactionInfo, state::EvmOverrides};
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
 };
@@ -97,7 +97,7 @@ impl BaseEthApi {
     /// Returns all transactions from the local pending pool.
     pub fn pending_transactions(
         &self,
-    ) -> Result<Vec<base_common_rpc_types::BaseTransaction>, BaseEthApiError> {
+    ) -> Result<Vec<base_common_types_rpc::BaseTransaction>, BaseEthApiError> {
         self.pool()
             .pending_transactions()
             .into_iter()
@@ -252,7 +252,7 @@ impl BaseEthApi {
         block_id: BlockId,
         index: usize,
     ) -> impl Future<
-        Output = Result<Option<base_common_rpc_types::BaseTransaction>, BaseEthApiError>,
+        Output = Result<Option<base_common_types_rpc::BaseTransaction>, BaseEthApiError>,
     > + Send {
         async move {
             if let Some(block) = self.recovered_block(block_id).await? {
@@ -287,7 +287,7 @@ impl BaseEthApi {
         nonce: u64,
         include_pending: bool,
     ) -> impl Future<
-        Output = Result<Option<base_common_rpc_types::BaseTransaction>, BaseEthApiError>,
+        Output = Result<Option<base_common_types_rpc::BaseTransaction>, BaseEthApiError>,
     > + Send {
         async move {
             // Check the pool first
@@ -639,7 +639,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
     use base_common_types_chain::{Block, Header, Transaction};
-    use base_common_rpc_types::request::TransactionRequest;
+    use base_common_types_rpc::request::TransactionRequest;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_txpool::{
         TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,

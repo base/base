@@ -9,13 +9,13 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::RpcError;
-use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
+use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::B256;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
 use base_common_network::{BlockResponse as _, Network};
-use base_common_rpc_types::{Filter, Log};
+use base_common_types_rpc::{Filter, Log};
 use futures::{Stream, ready};
 use pin_project::pin_project;
 
@@ -63,7 +63,7 @@ impl<N: Network> BlockLogs<N> {
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # use alloy_eips::BlockNumberOrTag;
 /// # use alloy_provider::{Provider, ProviderBuilder};
-/// # use base_common_rpc_types::Filter;
+/// # use base_common_types_rpc::Filter;
 /// # use futures::StreamExt;
 ///
 /// let provider = ProviderBuilder::new().connect_http("http://localhost:8545".parse()?);
@@ -539,7 +539,7 @@ fn normalize_range_logs_if_matches(
 #[cfg(test)]
 mod tests {
     use base_common_network::Ethereum;
-    use base_common_rpc_types::Block;
+    use base_common_types_rpc::Block;
     use futures::{Stream, StreamExt};
     use tokio::time::timeout;
 

@@ -151,7 +151,7 @@ mod test {
     use alloy_primitives::{Address, U256, address, bytes};
     use alloy_sol_types::{SolCall, sol};
     use base_common_network::TransactionBuilder;
-    use base_common_rpc_types::TransactionRequest;
+    use base_common_types_rpc::TransactionRequest;
 
     use super::*;
     use crate::ProviderBuilder;

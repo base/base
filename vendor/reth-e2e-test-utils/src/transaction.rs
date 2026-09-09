@@ -8,7 +8,7 @@ use base_common_network::{
     Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder4844,
     eip2718::Encodable2718,
 };
-use base_common_rpc_types::{Authorization, TransactionInput, TransactionRequest};
+use base_common_types_rpc::{Authorization, TransactionInput, TransactionRequest};
 use eyre::Ok;
 
 /// Helper for transaction operations

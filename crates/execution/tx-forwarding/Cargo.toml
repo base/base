@@ -39,7 +39,7 @@ eyre = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
+base-common-types-rpc = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 

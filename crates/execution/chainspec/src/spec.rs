@@ -44,7 +44,7 @@ pub enum BaseChainSpecError {
 #[derive(Debug)]
 pub struct GenesisInfo {
     /// Base chain info extracted from genesis extra fields.
-    pub base_chain_info: base_common_rpc_types::ChainInfo,
+    pub base_chain_info: base_common_types_rpc::ChainInfo,
     /// Base fee params derived from the genesis config.
     pub fee_config: FeeConfig,
 }
@@ -53,7 +53,7 @@ impl GenesisInfo {
     /// Extracts fee and upgrade boundary fields from a genesis document.
     pub fn extract_from(genesis: &Genesis) -> Self {
         let base_chain_info =
-            base_common_rpc_types::ChainInfo::extract_from(&genesis.config.extra_fields)
+            base_common_types_rpc::ChainInfo::extract_from(&genesis.config.extra_fields)
                 .unwrap_or_default();
         let mut fee_config = FeeConfig {
             eip1559_elasticity: 2,
@@ -670,7 +670,7 @@ mod tests {
     use base_common_chains::{ChainConfig, Upgrades};
     use base_common_types_chain::proofs::storage_root_unhashed;
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
-    use base_common_rpc_types::FeeInfo;
+    use base_common_types_rpc::FeeInfo;
 
     use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, GenesisInfo};
 

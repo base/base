@@ -52,7 +52,7 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
-base-common-rpc-types = {workspace = true, features = []}
+base-common-types-rpc = {workspace = true, features = []}
 tokio-stream = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }

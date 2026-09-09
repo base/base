@@ -3,8 +3,8 @@
 use alloy_eips::BlockId;
 use alloy_primitives::U256;
 use base_common_evm::BaseTransaction as BaseRevm;
-use base_common_rpc_types::BaseTransactionRequest;
-use base_common_rpc_types::state::EvmOverrides;
+use base_common_types_rpc::BaseTransactionRequest;
+use base_common_types_rpc::state::EvmOverrides;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};
 use base_evm_handler::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};

@@ -12,7 +12,7 @@ use alloy_primitives::{Address, B256, LogData};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_network::PrivateKeySigner;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_types_rpc::BaseTransactionReceipt;
 use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient};
 use eyre::{Result, WrapErr};
 

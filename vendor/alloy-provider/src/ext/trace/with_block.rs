@@ -5,7 +5,7 @@ use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{B256, map::HashSet};
 use alloy_rpc_client::RpcCall;
 use alloy_transport::TransportResult;
-use base_common_rpc_types::TraceType;
+use base_common_types_rpc::TraceType;
 
 use crate::ProviderCall;
 

@@ -27,6 +27,6 @@ futures = { workspace = true, features = ["default"] }
 indicatif = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-common-rpc-types = { workspace = true, features = ["serde", "std"] }
+base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "signal", "time"] }

@@ -686,7 +686,7 @@ mod tests {
     use base_common_genesis::{
         BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
     };
-    use base_common_rpc_types::{
+    use base_common_types_rpc::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
     use base_common_types_payload::{
@@ -1839,7 +1839,7 @@ mod tests {
             B256::ZERO,
         ));
         BaseTransaction {
-            inner: base_common_rpc_types::Transaction {
+            inner: base_common_types_rpc::Transaction {
                 inner: Recovered::new_unchecked(envelope, Address::ZERO),
                 block_hash: None,
                 block_number: Some(block_number),

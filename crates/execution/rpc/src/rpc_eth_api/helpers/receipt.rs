@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use base_common_types_chain::{TxReceipt, transaction::TransactionMeta};
-use base_common_rpc_types::BaseTransactionReceipt;
+use base_common_types_rpc::BaseTransactionReceipt;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;

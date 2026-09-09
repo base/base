@@ -2,7 +2,7 @@
 
 use alloy_primitives::{TxKind, U256};
 use base_common_network::TransactionBuilder;
-use base_common_rpc_types::{BaseTransactionRequest, BlockId, state::EvmOverrides};
+use base_common_types_rpc::{BaseTransactionRequest, BlockId, state::EvmOverrides};
 use base_evm_context::{Block, Cfg, ExecutionResult, Transaction};
 use base_evm_handler::{apply_block_overrides, apply_state_overrides};
 use base_evm_handler::{

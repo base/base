@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use base_common_rpc_types::{
+use base_common_types_rpc::{
     Filter, Header, Log,
     pubsub::{
         Params, PubSubSyncStatus, SubscriptionKind, SyncStatusMetadata, TransactionReceiptsParams,

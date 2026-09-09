@@ -632,7 +632,7 @@ mod tests {
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
     use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use base_common_rpc_types::TransactionReceipt;
+    use base_common_types_rpc::TransactionReceipt;
     use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,

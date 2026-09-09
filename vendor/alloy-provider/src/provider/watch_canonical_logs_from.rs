@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_network_primitives::HeaderResponse;
+use base_common_types_rpc::HeaderResponse;
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
 use base_common_network::{BlockResponse as _, Network};
@@ -27,7 +27,7 @@ const MAX_REORG_DEPTH_DEFAULT: usize = 64;
 ///
 /// This wraps a block/log source stream and performs reorg detection like
 /// [`super::WatchCanonicalBlocksFrom`]. Each item represents one canonical block and the logs in
-/// that block matching the configured [`Filter`](base_common_rpc_types::Filter). When the chain tip
+/// that block matching the configured [`Filter`](base_common_types_rpc::Filter). When the chain tip
 /// changes incompatibly, the stream yields [`CanonicalEvent::Removed`] for retained block log
 /// batches followed by
 /// [`CanonicalEvent::Added`] for the new canonical chain segment.
@@ -298,7 +298,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_eips::BlockNumberOrTag;
-    use base_common_rpc_types::Filter;
+    use base_common_types_rpc::Filter;
     use futures::StreamExt;
     use tokio::time::timeout;
 

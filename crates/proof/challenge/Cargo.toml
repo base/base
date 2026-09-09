@@ -43,7 +43,7 @@ tokio-util = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, optional = false}
 alloy-provider = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
-base-common-rpc-types = { workspace = true, optional = true }
+base-common-types-rpc = { workspace = true, optional = true }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
@@ -56,7 +56,7 @@ base-challenger = { workspace = true, features = ["test-utils"] }
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
 test-utils = [
-    "base-common-rpc-types",
+    "base-common-types-rpc",
     "async-trait",
     "base-protocol/test-utils",
     "base-runtime/test-utils",

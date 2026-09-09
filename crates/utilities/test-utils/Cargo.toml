@@ -22,7 +22,7 @@ alloy-contract = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
-base-common-rpc-types = { workspace = true, features = ["default"] }
+base-common-types-rpc = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 

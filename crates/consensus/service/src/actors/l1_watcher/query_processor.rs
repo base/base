@@ -259,7 +259,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Bloom, U256};
     use base_common_types_chain::Header;
-    use base_common_rpc_types::{Block, Header as RpcHeader, Log};
+    use base_common_types_rpc::{Block, Header as RpcHeader, Log};
     use tokio::{sync::oneshot, time::Instant};
 
     use super::*;
@@ -313,7 +313,7 @@ mod tests {
 
         async fn get_logs(
             &self,
-            _: base_common_rpc_types::Filter,
+            _: base_common_types_rpc::Filter,
         ) -> Result<Vec<Log>, Self::Error> {
             Ok(vec![])
         }

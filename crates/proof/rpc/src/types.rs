@@ -14,9 +14,9 @@ pub type HttpProvider = RootProvider<Ethereum>;
 pub type L2HttpProvider = RootProvider<Base>;
 
 /// Base header type with Base-specific optional timestamp extensions.
-pub type BaseHeader = base_common_rpc_types::Header;
+pub type BaseHeader = base_common_types_rpc::Header;
 
 /// Base block type with Base-specific transactions.
 ///
-/// Uses `base_common_rpc_types::BaseTransaction` which can deserialize deposit transactions (type 0x7E).
-pub type BaseBlock = base_common_rpc_types::BaseBlockResponse;
+/// Uses `base_common_types_rpc::BaseTransaction` which can deserialize deposit transactions (type 0x7E).
+pub type BaseBlock = base_common_types_rpc::BaseBlockResponse;
