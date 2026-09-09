@@ -16,6 +16,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+alloy-eips = {workspace = true}
 thiserror = { workspace = true }
 bytes = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
@@ -41,7 +42,6 @@ plain_hasher = { workspace = true, optional = true, features = ["default"] }
 bytes = { workspace = true }
 serde = { workspace = true }
 arrayvec = { workspace = true }
-alloy-eips = { workspace = true }
 alloy-genesis = { workspace = true }
 bincode_1_3_3 = { workspace = true }
 base-common-types-chain = { workspace = true }

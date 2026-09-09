@@ -16,10 +16,10 @@ workspace = true
 
 [dependencies]
 alloy-eips = { workspace = true }
-base-execution-state-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-base-execution-evm-runtime = { workspace = true }
+base-execution-state-types = { workspace = true }
+base-execution-state-memory = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
@@ -40,7 +40,7 @@ default = ["std"]
 serde = [
     "dep:serde",
     "rand/serde",
-    "base-execution-evm-runtime/serde",
+    "base-execution-state-memory/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "reth-primitives-traits/serde",
@@ -58,7 +58,7 @@ serde-bincode-compat = [
 std = [
     "alloy-eips/std",
     "alloy-primitives/std",
-    "base-execution-evm-runtime/std",
+    "base-execution-state-memory/std",
     "serde?/std",
     "reth-primitives-traits/std",
     "base-common-types-chain/std",

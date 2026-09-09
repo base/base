@@ -23,6 +23,7 @@ alloy-hardforks = { workspace = true }
 base-common-types-rpc = { workspace = true}
 base-execution-evm-fees = {workspace = true}
 base-execution-evm-machine = {workspace = true}
+base-execution-state-types = {workspace = true}
 metrics = { workspace = true, optional = true }
 base-execution-evm-crypto = { workspace = true }
 base-execution-state-memory = {workspace = true}
@@ -80,6 +81,7 @@ std = [
     "serde_json?/std",
     "thiserror/std",
     "tracing/std",
+    "base-execution-state-types/std",
 ]
 serde = [
     "alloy-eips/serde",

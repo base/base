@@ -102,3 +102,6 @@ pub use alloy_trie::{
 
 mod errors;
 pub use errors::*;
+
+mod block_result;
+pub use block_result::BlockExecutionResult;

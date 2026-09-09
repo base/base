@@ -1,8 +1,6 @@
 //! Block execution abstraction.
 
-use alloc::vec::Vec;
-
-use alloy_eips::{eip2718::WithEncoded, eip7685::Requests};
+use alloy_eips::eip2718::WithEncoded;
 use base_common_types_chain::transaction::Recovered;
 use base_execution_evm_machine::{ResultAndState, either::Either};
 use base_execution_evm_runtime::Inspector;
@@ -28,29 +26,7 @@ pub use state::*;
 mod calc;
 pub use calc::*;
 
-/// The result of executing a block.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockExecutionResult<T> {
-    /// All the receipts of the transactions in the block.
-    pub receipts: Vec<T>,
-    /// All the EIP-7685 requests in the block.
-    pub requests: Requests,
-    /// The total gas used by the block.
-    pub gas_used: u64,
-    /// Blob gas used by the block.
-    pub blob_gas_used: u64,
-}
-
-impl<T> Default for BlockExecutionResult<T> {
-    fn default() -> Self {
-        Self {
-            receipts: Default::default(),
-            requests: Default::default(),
-            gas_used: 0,
-            blob_gas_used: 0,
-        }
-    }
-}
+pub use base_execution_state_types::BlockExecutionResult;
 
 /// Helper trait to encapsulate requirements for a type to be used as input for [`BlockExecutor`].
 ///

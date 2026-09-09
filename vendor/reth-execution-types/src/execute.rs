@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::BaseReceipt;
-pub use base_execution_evm_runtime::BlockExecutionResult;
-use base_execution_evm_runtime::database::{BundleAccount, BundleState};
+pub use base_execution_state_types::BlockExecutionResult;
+use base_execution_state_memory::BundleAccount;
+use base_execution_state_memory::BundleState;
 use reth_primitives_traits::{Account, Bytecode};
 
 /// [`BlockExecutionResult`] combined with state.
