@@ -23,7 +23,7 @@ use crate::{
     backfill::PipelineSync,
     chain::ChainOrchestrator,
     download::BasicBlockDownloader,
-    engine::{EngineApiKind, EngineApiRequest, EngineApiRequestHandler, EngineHandler},
+    engine::{EngineApiKind, EngineHandler},
     persistence::PersistenceHandle,
     tree::{EngineApiTreeHandler, EngineValidator, TreeConfig},
 };
@@ -37,7 +37,7 @@ use crate::{
 ///   blocks and performing pruning outside the critical consensus path.
 /// - **[`EngineApiTreeHandler`]** — spawns the tree handler that processes engine API requests
 ///   (`newPayload`, `forkchoiceUpdated`) and maintains the in-memory chain state.
-/// - **[`EngineApiRequestHandler`]** + **[`EngineHandler`]** — glue that routes incoming CL
+/// - **[`EngineHandler`]** — glue that routes incoming CL
 ///   messages to the tree handler and manages download requests.
 /// - **[`PipelineSync`]** — wraps the staged sync [`Pipeline`] for backfill sync when the node
 ///   needs to catch up over large block ranges.
@@ -65,7 +65,7 @@ pub fn build_engine_orchestrator<Client, S, V>(
     evm_config: BaseEvmConfig,
     runtime: Runtime,
 ) -> ChainOrchestrator<
-    EngineHandler<EngineApiRequestHandler<EngineApiRequest>, S, BasicBlockDownloader<Client>>,
+    S, BasicBlockDownloader<Client>,
 >
 where
     Client: BlockClient<Block = BaseBlock> + 'static,
@@ -92,8 +92,7 @@ where
         runtime,
     );
 
-    let engine_handler = EngineApiRequestHandler::new(to_tree_tx, from_tree);
-    let handler = EngineHandler::new(engine_handler, downloader, incoming_requests);
+    let handler = EngineHandler::new(to_tree_tx, from_tree, downloader, incoming_requests);
 
     let backfill_sync = PipelineSync::new(pipeline, pipeline_task_spawner);
 

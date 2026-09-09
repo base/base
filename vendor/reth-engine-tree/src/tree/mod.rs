@@ -352,9 +352,9 @@ pub struct EngineApiTreeHandler<P, V> {
     /// them one by one so that we can handle incoming engine API in between and don't become
     /// unresponsive. This can happen during live sync transition where we're trying to close the
     /// gap (up to 3 epochs of blocks in the worst case).
-    incoming_tx: Sender<FromEngine<EngineApiRequest>>,
+    incoming_tx: Sender<FromEngine>,
     /// Incoming engine API requests.
-    incoming: Receiver<FromEngine<EngineApiRequest>>,
+    incoming: Receiver<FromEngine>,
     /// Outgoing events that are emitted to the handler.
     outgoing: UnboundedSender<EngineApiEvent>,
     /// Channels to the persistence layer.
@@ -500,7 +500,7 @@ where
         kind: EngineApiKind,
         evm_config: BaseEvmConfig,
         runtime: reth_tasks::Runtime,
-    ) -> (Sender<FromEngine<EngineApiRequest>>, UnboundedReceiver<EngineApiEvent>) {
+    ) -> (Sender<FromEngine>, UnboundedReceiver<EngineApiEvent>) {
         let best_block_number = provider.best_block_number().unwrap_or(0);
         let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();
 
@@ -552,7 +552,7 @@ where
     }
 
     /// Returns a new [`Sender`] to send messages to this type.
-    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest>> {
+    pub fn sender(&self) -> Sender<FromEngine> {
         self.incoming_tx.clone()
     }
 
@@ -1702,7 +1702,7 @@ where
     /// Returns `ControlFlow::Break(())` if the engine should terminate.
     fn on_engine_message(
         &mut self,
-        msg: FromEngine<EngineApiRequest>,
+        msg: FromEngine,
     ) -> Result<ops::ControlFlow<()>, InsertBlockFatalError> {
         match msg {
             FromEngine::Event(event) => match event {
@@ -3466,7 +3466,7 @@ where
 #[derive(Debug)]
 enum LoopEvent {
     /// An engine API message was received.
-    EngineMessage(FromEngine<EngineApiRequest>),
+    EngineMessage(FromEngine),
     /// A persistence task completed.
     PersistenceComplete {
         /// The unified result of the persistence operation.

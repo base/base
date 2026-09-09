@@ -7,7 +7,7 @@ use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_engine_tree::{
     chain::{ChainEvent, FromOrchestrator},
-    engine::{EngineApiKind, EngineApiRequest, EngineRequestHandler},
+    engine::{EngineApiKind, EngineApiRequest},
     launch::build_engine_orchestrator,
 };
 use reth_engine_util::EngineMessageStreamExt;
@@ -297,13 +297,13 @@ impl crate::NodeLaunch {
                     payload = built_payloads.select_next_some(), if !built_payloads.is_terminated() => {
                         if let Some(executed_block) = payload.executed_block() {
                             debug!(target: "reth::cli", block=?executed_block.recovered_block.num_hash(),  "inserting built payload");
-                            orchestrator.handler_mut().handler_mut().on_event(EngineApiRequest::InsertExecutedBlock(executed_block).into());
+                            orchestrator.handler_mut().on_event(EngineApiRequest::InsertExecutedBlock(executed_block).into());
                         }
                     }
                     shutdown_req = &mut shutdown_rx => {
                         if let Ok(req) = shutdown_req {
                             debug!(target: "reth::cli", "received engine shutdown request");
-                            orchestrator.handler_mut().handler_mut().on_event(
+                            orchestrator.handler_mut().on_event(
                                 FromOrchestrator::Terminate { tx: req.done_tx }.into()
                             );
                         }
@@ -314,7 +314,7 @@ impl crate::NodeLaunch {
                         // drop the orchestrator.
                         debug!(target: "reth::cli", "shutdown signal received, terminating engine");
                         let (done_tx, done_rx) = oneshot::channel();
-                        orchestrator.handler_mut().handler_mut().on_event(
+                        orchestrator.handler_mut().on_event(
                             FromOrchestrator::Terminate { tx: done_tx }.into()
                         );
                         let _ = done_rx.await;

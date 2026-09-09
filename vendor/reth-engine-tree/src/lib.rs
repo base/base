@@ -49,7 +49,7 @@
 //! Consensus message handling is performed by three main components:
 //! 1. The [`EngineHandler`](engine::EngineHandler), which takes incoming consensus messages and
 //!    manages any requested backfill or download work.
-//! 2. The [`EngineApiRequestHandler`](engine::EngineApiRequestHandler), which processes messages
+//! 2. The [`EngineHandler`](engine::EngineHandler), which processes messages
 //!    from the [`EngineHandler`](engine::EngineHandler) and delegates them to the
 //!    [`EngineApiTreeHandler`](tree::EngineApiTreeHandler).
 //! 3. The [`EngineApiTreeHandler`](tree::EngineApiTreeHandler), which processes incoming tree

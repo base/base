@@ -5,6 +5,9 @@ use std::{
 };
 
 use futures::Stream;
+use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
+
+use crate::{download::BlockDownloader, engine::EngineHandler};
 use reth_stages_api::{ControlFlow, PipelineTarget};
 use tracing::*;
 
@@ -27,37 +30,36 @@ use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};
 ///    (e.g. if pruning is required), but will not do so until the handler has acknowledged the
 ///    request for write access.
 ///
-/// The [`ChainOrchestrator`] polls the [`ChainHandler`] to advance the chain and handles the
-/// emitted events. Requests and events are passed to the [`ChainHandler`] via
-/// [`ChainHandler::on_event`].
+/// The [`ChainOrchestrator`] polls the [`EngineHandler`] to advance the chain and handles the
+/// emitted events. Requests and events are passed to the [`EngineHandler`] via
+/// [`EngineHandler::on_event`].
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct ChainOrchestrator<T>
-where
-    T: ChainHandler,
+pub struct ChainOrchestrator<S, D>
 {
     /// The handler for advancing the chain.
-    handler: T,
+    handler: EngineHandler<S, D>,
     /// Controls backfill sync.
     backfill_sync: PipelineSync,
 }
 
-impl<T> ChainOrchestrator<T>
+impl<S, D> ChainOrchestrator<S, D>
 where
-    T: ChainHandler + Unpin,
+    S: Stream<Item = BeaconEngineMessage> + Unpin,
+    D: BlockDownloader + Unpin,
 {
     /// Creates a new [`ChainOrchestrator`] with the given handler and backfill sync.
-    pub const fn new(handler: T, backfill_sync: PipelineSync) -> Self {
+    pub const fn new(handler: EngineHandler<S, D>, backfill_sync: PipelineSync) -> Self {
         Self { handler, backfill_sync }
     }
 
     /// Returns the handler
-    pub const fn handler(&self) -> &T {
+    pub const fn handler(&self) -> &EngineHandler<S, D> {
         &self.handler
     }
 
     /// Returns a mutable reference to the handler
-    pub const fn handler_mut(&mut self) -> &mut T {
+    pub const fn handler_mut(&mut self) -> &mut EngineHandler<S, D> {
         &mut self.handler
     }
 
@@ -72,7 +74,7 @@ where
     ///
     /// Polls the `ChainOrchestrator` for the next event.
     #[tracing::instrument(level = "debug", target = "engine::tree::chain_orchestrator", skip_all)]
-    fn poll_next_event(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<ChainEvent<T::Event>> {
+    fn poll_next_event(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<ChainEvent> {
         let this = self.get_mut();
 
         // This loop polls the components
@@ -85,7 +87,7 @@ where
                 Poll::Ready(backfill_sync_event) => match backfill_sync_event {
                     BackfillEvent::Started(_) => {
                         // notify handler that backfill sync started
-                        this.handler.on_event(FromOrchestrator::BackfillSyncStarted);
+                        this.handler.on_event(FromOrchestrator::BackfillSyncStarted.into());
                         return Poll::Ready(ChainEvent::BackfillSyncStarted);
                     }
                     BackfillEvent::Finished(res) => {
@@ -93,7 +95,7 @@ where
                             Ok(ctrl) => {
                                 tracing::debug!(?ctrl, "backfill sync finished");
                                 // notify handler that backfill sync finished
-                                this.handler.on_event(FromOrchestrator::BackfillSyncFinished(ctrl));
+                                this.handler.on_event(FromOrchestrator::BackfillSyncFinished(ctrl).into());
                                 Poll::Ready(ChainEvent::BackfillSyncFinished)
                             }
                             Err(err) => {
@@ -139,11 +141,12 @@ where
     }
 }
 
-impl<T> Stream for ChainOrchestrator<T>
+impl<S, D> Stream for ChainOrchestrator<S, D>
 where
-    T: ChainHandler + Unpin,
+    S: Stream<Item = BeaconEngineMessage> + Unpin,
+    D: BlockDownloader + Unpin,
 {
-    type Item = ChainEvent<T::Event>;
+    type Item = ChainEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.as_mut().poll_next_event(cx).map(Some)
@@ -154,7 +157,7 @@ where
 ///
 /// These are meant to be used for observability and debugging purposes.
 #[derive(Debug)]
-pub enum ChainEvent<T> {
+pub enum ChainEvent {
     /// Backfill sync started
     BackfillSyncStarted,
     /// Backfill sync finished
@@ -162,10 +165,10 @@ pub enum ChainEvent<T> {
     /// Fatal error
     FatalError,
     /// Event emitted by the handler
-    Handler(T),
+    Handler(ConsensusEngineEvent),
 }
 
-impl<T: Display> Display for ChainEvent<T> {
+impl Display for ChainEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             Self::BackfillSyncStarted => {
@@ -184,35 +187,13 @@ impl<T: Display> Display for ChainEvent<T> {
     }
 }
 
-/// A trait that advances the chain by handling actions.
-///
-/// This is intended to be implement the chain consensus logic, for example `engine` API.
-///
-/// ## Control flow
-///
-/// The [`ChainOrchestrator`] is responsible for advancing this handler through
-/// [`ChainHandler::poll`] and handling the emitted events, for example
-/// [`HandlerEvent::BackfillAction`] to start a backfill sync. Events from the [`ChainOrchestrator`]
-/// are passed to the handler via [`ChainHandler::on_event`], e.g.
-/// [`FromOrchestrator::BackfillSyncStarted`] once the backfill sync started or finished.
-pub trait ChainHandler: Send + Sync {
-    /// Event generated by this handler that orchestrator can bubble up;
-    type Event: Send;
-
-    /// Informs the handler about an event from the [`ChainOrchestrator`].
-    fn on_event(&mut self, event: FromOrchestrator);
-
-    /// Polls for actions that [`ChainOrchestrator`] should handle.
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<HandlerEvent<Self::Event>>;
-}
-
-/// Events/Requests that the [`ChainHandler`] can emit to the [`ChainOrchestrator`].
+/// Events/Requests that the [`EngineHandler`] can emit to the [`ChainOrchestrator`].
 #[derive(Clone, Debug)]
-pub enum HandlerEvent<T> {
+pub enum HandlerEvent {
     /// Request an action to backfill sync
     BackfillAction(BackfillAction),
     /// Other event emitted by the handler
-    Event(T),
+    Event(ConsensusEngineEvent),
     /// Fatal error
     FatalError,
 }

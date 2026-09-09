@@ -101,7 +101,7 @@ impl TestChannelHandle {
 
 struct TestHarness {
     tree: EngineApiTreeHandler<MockEthProvider, BasicEngineValidator<MockEthProvider>>,
-    to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest>>,
+    to_tree_tx: crossbeam_channel::Sender<FromEngine>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
     payload_command_rx: UnboundedReceiver<PayloadServiceCommand>,
     blocks: Vec<ExecutedBlock>,
