@@ -3373,11 +3373,11 @@ dependencies = [
  "alloy-sol-types",
  "base-common-precompiles",
  "base-common-types-chain",
- "base-evm-handler",
  "base-precompile-macros",
  "base64 0.22.1",
  "k256",
  "p256",
+ "revm-interpreter",
  "sha2 0.10.9",
  "thiserror 2.0.19",
 ]

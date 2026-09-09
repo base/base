@@ -32,7 +32,7 @@ use base_common_types_chain::{
     AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
     InitialActor, SignedChange,
 };
-use base_evm_handler::state::Bytecode;
+use base_common_precompiles::Bytecode;
 
 use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
@@ -1082,7 +1082,7 @@ mod tests {
     use alloy_primitives::{LogData, address, b256};
     use alloy_sol_types::SolEvent;
     use base_common_precompiles::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
-    use base_evm_handler::state::Bytecode;
+    use base_common_precompiles::Bytecode;
 
     use super::*;
     use crate::{AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied};
