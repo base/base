@@ -8,8 +8,7 @@ use alloc::boxed::Box;
 
 use async_trait::async_trait;
 use base_consensus_derive::{
-    ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal,
-    SignalReceiver, StepResult,
+    Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, SignalReceiver, StepResult,
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
@@ -59,18 +58,14 @@ where
                         PipelineErrorKind::Reset(e) => {
                             warn!(target: "client_derivation_driver", error = ?e, "Failed to step derivation pipeline due to reset");
 
-                            if matches!(e, ResetError::HoloceneActivation) {
-                                self.signal(ActivationSignal { l2_safe_head }.signal()).await?;
-                            } else {
-                                // Flushes cache if a reorg is detected.
-                                if matches!(e, ResetError::ReorgDetected(_, _)) {
-                                    self.flush();
-                                }
-
-                                // Reset the pipeline to the initial L2 safe head and L1 origin,
-                                // and try again.
-                                self.signal(ResetSignal { l2_safe_head }.signal()).await?;
+                            // Flushes cache if a reorg is detected.
+                            if matches!(e, ResetError::ReorgDetected(_, _)) {
+                                self.flush();
                             }
+
+                            // Reset the pipeline to the initial L2 safe head and L1 origin,
+                            // and try again.
+                            self.signal(ResetSignal { l2_safe_head }.signal()).await?;
                         }
                         PipelineErrorKind::Critical(_) => {
                             warn!(target: "client_derivation_driver", error = ?e, "Failed to step derivation pipeline");

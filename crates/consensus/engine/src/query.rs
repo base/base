@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use base_common_consensus::Predeploys;
 use base_common_genesis::RollupConfig;
 use base_protocol::{L2BlockInfo, OutputRoot};
 use tokio::sync::oneshot::Sender;
@@ -93,25 +92,12 @@ impl EngineQueries {
 
                 let state_root = output_block.header.state_root;
 
-                let message_passer_storage_root =
-                    if rollup_config.is_isthmus_active(output_block.header.timestamp) {
-                        output_block
-                            .header
-                            .withdrawals_root
-                            .ok_or(EngineQueriesError::NoWithdrawalsRoot)?
-                    } else {
-                        trace!(
-                            target: "engine",
-                            block = ?block,
-                            "Querying message passer storage proof"
-                        );
-                        // Fetch the storage root for the L2 head block.
-                        let l2_to_l1_message_passer = client
-                            .storage_root(Predeploys::L2_TO_L1_MESSAGE_PASSER, block_hash.into())
-                            .await?;
-
-                        l2_to_l1_message_passer
-                    };
+                let message_passer_storage_root = {
+                    output_block
+                        .header
+                        .withdrawals_root
+                        .ok_or(EngineQueriesError::NoWithdrawalsRoot)?
+                };
 
                 let output_response_v0 =
                     OutputRoot::from_parts(state_root, message_passer_storage_root, block_hash);

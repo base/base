@@ -11,9 +11,9 @@ use base_protocol::{AttributesWithParent, L2BlockInfo, SingleBatch};
 
 use crate::PipelineResult;
 
-/// [`AttributesProvider`] is a trait abstraction that generalizes the [`BatchQueue`] stage.
+/// [`AttributesProvider`] is a trait abstraction that generalizes the [`BatchValidator`] stage.
 ///
-/// [`BatchQueue`]: crate::stages::BatchQueue
+/// [`BatchValidator`]: crate::stages::BatchValidator
 #[async_trait]
 pub trait AttributesProvider {
     /// Returns the next valid batch upon the given safe head.

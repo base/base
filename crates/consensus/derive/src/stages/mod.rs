@@ -3,7 +3,7 @@
 //! It offers a high-level API to functionally apply each stage's output as an input to the next
 //! stage, until finally arriving at the produced execution payloads.
 //!
-//! The [`ChannelProvider`] and [`BatchProvider`] stages are multiplexers whose active inner
+//! The [`ChannelAssembler`] and [`BatchValidator`] stages are multiplexers whose active inner
 //! stages depend on Holocene activation. [`BatchStream`] is always present in the composed stack,
 //! but it only performs span-batch streaming after Holocene; before Holocene it passes batches
 //! through unchanged.
@@ -40,15 +40,10 @@ mod frame_queue;
 pub use frame_queue::{FrameQueue, FrameQueueProvider};
 
 mod channel;
-pub use channel::{
-    ChannelAssembler, ChannelBank, ChannelProvider, ChannelReader, ChannelReaderProvider,
-    FJORD_MAX_CHANNEL_BANK_SIZE, MAX_CHANNEL_BANK_SIZE, NextFrameProvider,
-};
+pub use channel::{ChannelAssembler, ChannelReader, ChannelReaderProvider, NextFrameProvider};
 
 mod batch;
-pub use batch::{
-    BatchProvider, BatchQueue, BatchStream, BatchStreamProvider, BatchValidator, NextBatchProvider,
-};
+pub use batch::{BatchStream, BatchStreamProvider, BatchValidator, NextBatchProvider};
 
 mod attributes_queue;
 pub use attributes_queue::AttributesQueue;

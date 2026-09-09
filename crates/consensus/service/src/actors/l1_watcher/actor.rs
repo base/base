@@ -289,7 +289,7 @@ where
                             return Ok(());
                         };
                         let ecotone_active =
-                            self.rollup_config.is_ecotone_active(derivation_block.timestamp);
+                            true;
                         for log in logs {
                             let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
                             if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate { unsafe_block_signer })) = sys_cfg_log.build() {

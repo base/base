@@ -243,17 +243,7 @@ const UPGRADE_ACTIVATION_GRACE_SECONDS: u64 = 15 * 60;
 // activation grace window instead of alerting on an unscheduled sentinel.
 const NO_UPCOMING_UPGRADE_SECONDS: f64 = 4_294_967_295.0;
 
-const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANTS.len()] = [
-    (BaseUpgrade::Regolith, "Regolith"),
-    (BaseUpgrade::Canyon, "Canyon"),
-    (BaseUpgrade::Delta, "Delta"),
-    (BaseUpgrade::Ecotone, "Ecotone"),
-    (BaseUpgrade::Fjord, "Fjord"),
-    (BaseUpgrade::Granite, "Granite"),
-    (BaseUpgrade::Holocene, "Holocene"),
-    (BaseUpgrade::PectraBlobSchedule, "Pectra Blob Schedule"),
-    (BaseUpgrade::Isthmus, "Isthmus"),
-    (BaseUpgrade::Jovian, "Jovian"),
+const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); 4] = [
     (BaseUpgrade::Azul, "Azul"),
     (BaseUpgrade::Beryl, "Beryl"),
     (BaseUpgrade::Cobalt, "Cobalt"),
@@ -271,8 +261,9 @@ fn current_unix_timestamp() -> u64 {
 }
 
 fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static str, u64)> {
-    let next_activation = BaseUpgrade::CONTRACT_VARIANTS
+    let next_activation = UPGRADE_METRIC_LABELS
         .into_iter()
+        .map(|(upgrade, _)| upgrade)
         .filter_map(|upgrade| {
             config
                 .upgrade_activation_timestamp(upgrade)
@@ -287,8 +278,9 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
         return Vec::new();
     };
 
-    BaseUpgrade::CONTRACT_VARIANTS
+    UPGRADE_METRIC_LABELS
         .into_iter()
+        .map(|(upgrade, _)| upgrade)
         .filter_map(|upgrade| {
             config
                 .upgrade_activation_timestamp(upgrade)
@@ -399,20 +391,6 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
-    fn upgrade_metric_labels() -> Vec<(BaseUpgrade, &'static str)> {
-        UPGRADE_METRIC_LABELS.to_vec()
-    }
-
-    #[test]
-    fn upgrade_metric_label_matches_upgrade_activation_time_labels() {
-        let labels = upgrade_metric_labels();
-        assert_eq!(labels.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
-
-        for (upgrade, label) in &labels {
-            assert_eq!(Some(*label), upgrade_metric_label(*upgrade));
-        }
-    }
-
     #[test]
     fn record_seconds_until_next_upgrade_drains_stale_upgrades() {
         let config = RollupConfig {
@@ -436,5 +414,21 @@ mod tests {
             &mut observed_upgrades,
         );
         assert!(observed_upgrades.is_empty());
+    }
+    #[test]
+    fn retired_upgrade_schedules_do_not_hide_azul_countdown() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                canyon_time: Some(900),
+                base: base_common_genesis::BaseUpgradeConfig {
+                    azul: Some(1000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(seconds_until_next_upgrades(&config, 800), vec![("Azul", 200)]);
+        assert_eq!(upgrade_metric_label(BaseUpgrade::Canyon), None);
     }
 }

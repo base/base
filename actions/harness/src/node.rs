@@ -8,7 +8,7 @@ use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
-    PipelineErrorKind, PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,
+    PipelineErrorKind, PolledAttributesQueueStage, ResetSignal, SignalReceiver,
     StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_engine::EngineClient;
@@ -478,13 +478,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                 PipelineErrorKind::Temporary(PipelineError::Eof | PipelineError::Provider(_)) => {
                     NodeStepResult::Idle
                 }
-                PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
-                    self.pipeline
-                        .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
-                        .await
-                        .expect("TestRollupNode: Holocene activation signal failed");
-                    NodeStepResult::AdvancedOrigin
-                }
+
                 err => panic!("TestRollupNode: origin advance error: {err}"),
             },
         }
@@ -585,13 +579,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                     ) => {
                         return Ok((steps, false));
                     }
-                    PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
-                        self.pipeline
-                            .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
-                            .await
-                            .expect("TestRollupNode: Holocene activation signal failed");
-                        no_progress = 0;
-                    }
+
                     err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
             }

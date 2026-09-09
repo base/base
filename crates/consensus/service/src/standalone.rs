@@ -83,7 +83,7 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
         let (next_l2_time, next_l2_timestamp_millis_part) =
             self.rollup_config.l2_block_timestamp_parts(next_l2_block_number);
         let l1_info = self.l1_info.with_sequence_number(l2_parent.seq_num.saturating_add(1));
-        let l1_info_deposit = l1_info.into_deposit_tx(&self.rollup_config, next_l2_time);
+        let l1_info_deposit = l1_info.into_deposit_tx();
         let mut encoded_l1_info = Vec::new();
         l1_info_deposit.encode_2718(&mut encoded_l1_info);
 
@@ -126,11 +126,8 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                 timestamp: next_l2_time,
                 prev_randao: B256::ZERO,
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
-                withdrawals: self.rollup_config.is_canyon_active(next_l2_time).then(Vec::new),
-                parent_beacon_block_root: self
-                    .rollup_config
-                    .is_ecotone_active(next_l2_time)
-                    .then_some(B256::ZERO),
+                withdrawals: true.then(Vec::new),
+                parent_beacon_block_root: true.then_some(B256::ZERO),
                 slot_number: None,
                 target_gas_limit: None,
             },
@@ -142,10 +139,7 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
                 l2_parent.block_info.timestamp,
                 next_l2_time,
             ),
-            min_base_fee: self
-                .rollup_config
-                .is_jovian_active(next_l2_time)
-                .then(|| self.system_config.min_base_fee.unwrap_or_default()),
+            min_base_fee: true.then(|| self.system_config.min_base_fee.unwrap_or_default()),
         })
     }
 }

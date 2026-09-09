@@ -89,11 +89,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 error!(target: "engine", error = ?e, "Critical: Deposit-only payload import failed");
                 return Err(SealTaskError::DepositOnlyPayloadFailed);
             }
-            Err(InsertTaskError::UnexpectedPayloadStatus(e))
-                if self.cfg.is_holocene_active(
-                    self.attributes.attributes().payload_attributes.timestamp,
-                ) =>
-            {
+            Err(InsertTaskError::UnexpectedPayloadStatus(e)) if true => {
                 warn!(target: "engine", error = ?e, "Re-attempting payload import with deposits only.");
 
                 // HOLOCENE: Re-attempt payload import with deposits only

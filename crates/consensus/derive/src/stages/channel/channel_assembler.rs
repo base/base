@@ -50,9 +50,7 @@ where
         let is_timed_out = self
             .channel
             .as_ref()
-            .map(|c| {
-                c.open_block_number() + self.cfg.channel_timeout(origin.timestamp) < origin.number
-            })
+            .map(|c| c.open_block_number() + self.cfg.granite_channel_timeout < origin.number)
             .unwrap_or_default();
 
         Ok(is_timed_out)
@@ -100,7 +98,7 @@ where
 
         if let Some(channel) = self.channel.as_mut() {
             // Track the number of blocks until the channel times out.
-            let timeout = channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp);
+            let timeout = channel.open_block_number() + self.cfg.granite_channel_timeout;
             let margin = timeout.saturating_sub(origin.number) as f64;
             Metrics::pipeline_channel_timeout().set(margin);
 
@@ -139,11 +137,7 @@ where
             let size = channel.size() as f64;
             Metrics::pipeline_channel_mem().set(size);
 
-            let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
-                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
-            } else {
-                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
-            };
+            let max_rlp_bytes_per_channel = { RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD };
             Metrics::pipeline_max_rlp_bytes().set(max_rlp_bytes_per_channel as f64);
             if channel.size() > max_rlp_bytes_per_channel as usize {
                 warn!(
@@ -260,8 +254,10 @@ mod tests {
         assert!(assembler.channel.is_some());
 
         // Push the origin forward past channel timeout.
-        assembler.prev.block_info =
-            Some(BlockInfo { number: assembler.cfg.channel_timeout(0) + 1, ..Default::default() });
+        assembler.prev.block_info = Some(BlockInfo {
+            number: assembler.cfg.granite_channel_timeout + 1,
+            ..Default::default()
+        });
 
         // Assert that the assembler has timed out the channel.
         assert!(assembler.is_timed_out().unwrap());
@@ -359,38 +355,6 @@ mod tests {
         let channel = assembler.channel.as_ref().unwrap();
         assert_eq!(channel.len(), 2);
         assert!(!channel.is_ready());
-    }
-
-    #[tokio::test]
-    async fn test_assembler_size_limit_exceeded_bedrock() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
-
-        let mut frames = [
-            crate::frame!(0xFF, 0, vec![0xDD; 50], false),
-            crate::frame!(0xFF, 1, vec![0xDD; 50], true),
-        ];
-        frames[1].data = vec![0; RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize];
-        let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
-        let cfg = Arc::new(RollupConfig::default());
-
-        let mut assembler = ChannelAssembler::new(cfg, mock);
-
-        // Send in the first frame. This should result in a channel being created.
-        assert!(assembler.channel.is_none());
-        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
-        assert!(assembler.channel.is_some());
-
-        // Send in the second frame. This should result in the channel being dropped due to the size
-        // limit being reached.
-        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
-        assert!(assembler.channel.is_none());
-
-        let trace_store_lock = trace_store.lock();
-        assert_eq!(trace_store_lock.iter().filter(|(l, _)| matches!(l, &Level::WARN)).count(), 1);
-
-        let (_, message) =
-            trace_store_lock.iter().find(|(l, _)| matches!(l, &Level::WARN)).unwrap();
-        assert!(message.contains("Compressed channel size exceeded max RLP bytes per channel"));
     }
 
     #[tokio::test]

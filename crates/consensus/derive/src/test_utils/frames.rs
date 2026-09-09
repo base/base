@@ -1,13 +1,12 @@
 //! Frames
 
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{vec, vec::Vec};
 
 use alloy_primitives::Bytes;
-use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, DERIVATION_VERSION_0, Frame};
 
 use crate::{
-    FrameQueue, NextFrameProvider, OriginProvider, PipelineError, PipelineErrorKind,
+    FrameQueue, NextFrameProvider, PipelineError, PipelineErrorKind,
     test_utils::TestFrameQueueProvider,
 };
 
@@ -15,7 +14,6 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct FrameQueueBuilder {
     origin: Option<BlockInfo>,
-    config: Option<RollupConfig>,
     mock: Option<TestFrameQueueProvider>,
     expected_frames: Vec<Frame>,
     expected_err: Option<PipelineErrorKind>,
@@ -33,13 +31,7 @@ fn encode_frames(frames: &[Frame]) -> Bytes {
 impl FrameQueueBuilder {
     /// Create a new [`FrameQueueBuilder`] instance.
     pub const fn new() -> Self {
-        Self { origin: None, config: None, mock: None, expected_frames: vec![], expected_err: None }
-    }
-
-    /// Sets the rollup config.
-    pub fn with_rollup_config(mut self, config: &RollupConfig) -> Self {
-        self.config = Some(config.clone());
-        self
+        Self { origin: None, mock: None, expected_frames: vec![], expected_err: None }
     }
 
     /// Set the origin block.
@@ -81,10 +73,8 @@ impl FrameQueueBuilder {
         if let Some(origin) = self.origin {
             mock.set_origin(origin);
         }
-        let config = self.config.unwrap_or_default();
-        let config = Arc::new(config);
         let err = self.expected_err.unwrap_or_else(|| PipelineError::Eof.temp());
-        FrameQueueAsserter::new(FrameQueue::new(mock, config), self.expected_frames, err)
+        FrameQueueAsserter::new(FrameQueue::new(mock), self.expected_frames, err)
     }
 }
 
@@ -104,16 +94,6 @@ impl FrameQueueAsserter {
         expected_err: PipelineErrorKind,
     ) -> Self {
         Self { inner, expected_frames, expected_err }
-    }
-
-    /// Asserts that holocene is active.
-    pub fn holocene_active(&self, active: bool) {
-        let holocene = self.inner.is_holocene_active(self.inner.origin().unwrap_or_default());
-        if !active {
-            assert!(!holocene);
-        } else {
-            assert!(holocene);
-        }
     }
 
     /// Asserts that the frame queue returns with a missing origin error.

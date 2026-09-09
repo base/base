@@ -62,6 +62,17 @@ fn matching_rpc_block(
     attributes: &AttributesWithParent,
 ) -> RpcBlock<BaseTransaction> {
     let mut block = RpcBlock::<BaseTransaction>::default();
+    block.withdrawals = Some(Default::default());
+    block.header.withdrawals_root = Some(base_common_consensus::EMPTY_ROOT_HASH);
+    block.header.extra_data = base_common_consensus::JovianExtraData::encode(
+        attributes.attributes().eip_1559_params.unwrap(),
+        alloy_eips::eip1559::BaseFeeParams {
+            max_change_denominator: 250,
+            elasticity_multiplier: 6,
+        },
+        attributes.attributes().min_base_fee.unwrap(),
+    )
+    .unwrap();
     block.header.hash = block_info.block_info.hash;
     block.header.inner.number = block_info.block_info.number;
     block.header.inner.parent_hash = attributes.parent.block_info.hash;

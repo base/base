@@ -3,7 +3,7 @@
 use alloy_eips::{Encodable2718, eip1559::BaseFeeParams, eip4895::Withdrawals};
 use alloy_primitives::{Address, B256, Bytes};
 use base_common_consensus::{
-    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
+    BaseTxEnvelope, EIP1559ParamError, JovianExtraData, decode_2718_canonical,
 };
 use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
@@ -50,7 +50,7 @@ impl AttributesMatch {
 
     /// Checks that withdrawals for a block and attributes match.
     pub fn check_withdrawals(
-        config: &RollupConfig,
+        _config: &RollupConfig,
         attributes: &AttributesWithParent,
         block: &SealedBlock,
     ) -> Self {
@@ -58,33 +58,17 @@ impl AttributesMatch {
         let attr_withdrawals = attr_withdrawals.map(|w| Withdrawals::new(w.clone()));
         let block_withdrawals = block.body().withdrawals.as_ref();
 
-        if config.is_canyon_active(block.header().timestamp) {
-            // In canyon, the withdrawals list should be some and empty
-            if attr_withdrawals.is_none_or(|w| !w.is_empty()) {
-                return Self::Mismatch(AttributesMismatch::CanyonWithdrawalsNotEmpty);
-            }
-            if block_withdrawals.is_none_or(|w| !w.is_empty()) {
-                return Self::Mismatch(AttributesMismatch::CanyonWithdrawalsNotEmpty);
-            }
-            if !config.is_isthmus_active(block.header().timestamp) {
-                // In canyon, the withdrawals root should be set to the empty value
-                let empty_hash = base_common_consensus::EMPTY_ROOT_HASH;
-                if block.header().withdrawals_root != Some(empty_hash) {
-                    return Self::Mismatch(AttributesMismatch::CanyonNotEmptyHash);
-                }
-            }
-        } else {
-            // In bedrock, the withdrawals list should be None
-            if attr_withdrawals.is_some() {
-                return Self::Mismatch(AttributesMismatch::BedrockWithdrawals);
-            }
+        // In canyon, the withdrawals list should be some and empty
+        if attr_withdrawals.is_none_or(|w| !w.is_empty()) {
+            return Self::Mismatch(AttributesMismatch::CanyonWithdrawalsNotEmpty);
+        }
+        if block_withdrawals.is_none_or(|w| !w.is_empty()) {
+            return Self::Mismatch(AttributesMismatch::CanyonWithdrawalsNotEmpty);
         }
 
-        if config.is_isthmus_active(block.header().timestamp) {
-            // In isthmus, the withdrawals root must be set
-            if block.header().withdrawals_root.is_none() {
-                return Self::Mismatch(AttributesMismatch::IsthmusMissingWithdrawalsRoot);
-            }
+        // In isthmus, the withdrawals root must be set
+        if block.header().withdrawals_root.is_none() {
+            return Self::Mismatch(AttributesMismatch::IsthmusMissingWithdrawalsRoot);
         }
 
         Self::Match
@@ -147,15 +131,11 @@ impl AttributesMatch {
                 // Holocene is active but the eip1559 are not set. This is a bug!
                 // Note: we checked the timestamp match above, so we can assume that both the
                 // attributes and the block have the same stamps
-                if config.is_holocene_active(block.header().timestamp) {
-                    error!(
-                        "EIP1559 parameters for attributes not set while holocene is active. This is a bug"
-                    );
-                    return AttributesMismatch::MissingAttributesEIP1559.into();
-                }
 
-                // If the attributes are not specified, that means we can just early return.
-                return Self::Match;
+                error!(
+                    "EIP1559 parameters for attributes not set while holocene is active. This is a bug"
+                );
+                return AttributesMismatch::MissingAttributesEIP1559.into();
             }
             Some((0, e)) if e != 0 => {
                 error!(
@@ -177,15 +157,10 @@ impl AttributesMatch {
 
         // The Jovian extra_data carries an additional `min_base_fee`. The `Option` doubles as
         // a fork signal: `Some` iff Jovian is active.
-        let extra_data_decoded: Result<(u32, u32, Option<u64>), EIP1559ParamError> =
-            if config.is_jovian_active(block.header().timestamp) {
-                JovianExtraData::decode(&block.header().extra_data)
-                    .map(|(be, bd, mbf)| (be, bd, Some(mbf)))
-            } else if config.is_holocene_active(block.header().timestamp) {
-                HoloceneExtraData::decode(&block.header().extra_data).map(|(be, bd)| (be, bd, None))
-            } else {
-                return AttributesMismatch::MissingBlockEIP1559.into();
-            };
+        let extra_data_decoded: Result<(u32, u32, Option<u64>), EIP1559ParamError> = {
+            JovianExtraData::decode(&block.header().extra_data)
+                .map(|(be, bd, mbf)| (be, bd, Some(mbf)))
+        };
 
         let (be, bd, jovian_block_mbf): (u128, u128, Option<u64>) = match extra_data_decoded {
             Ok((be, bd, mbf)) => (be.into(), bd.into(), mbf),
@@ -364,10 +339,7 @@ pub enum AttributesMismatch {
     ParentBeaconBlockRoot(Option<B256>, Option<B256>),
     /// After the canyon upgrade, withdrawals cannot be empty.
     CanyonWithdrawalsNotEmpty,
-    /// After the canyon upgrade, the withdrawals root must be the empty hash.
-    CanyonNotEmptyHash,
-    /// In the bedrock upgrade, the attributes must has empty withdrawals.
-    BedrockWithdrawals,
+
     /// In the isthmus upgrade, the withdrawals root must be set.
     IsthmusMissingWithdrawalsRoot,
 }
@@ -401,9 +373,40 @@ mod tests {
         )
     }
 
+    fn azul_extra_data(mut bytes: Bytes) -> Bytes {
+        let mut data = bytes.to_vec();
+        if data[0] == 0 {
+            data[0] = 1;
+        }
+        data.extend_from_slice(&0u64.to_be_bytes());
+        bytes = data.into();
+        bytes
+    }
+
+    fn azul_block() -> Block<Transaction> {
+        let mut block = Block::<Transaction>::default();
+        block.withdrawals = Some(Withdrawals::default());
+        block.header.withdrawals_root = Some(EMPTY_ROOT_HASH);
+        block.header.extra_data = JovianExtraData::encode(
+            Default::default(),
+            BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },
+            0,
+        )
+        .unwrap();
+        block
+    }
+
     fn default_attributes() -> AttributesWithParent {
         AttributesWithParent {
-            attributes: BasePayloadAttributes::default(),
+            attributes: BasePayloadAttributes {
+                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                    withdrawals: Some(vec![]),
+                    ..Default::default()
+                },
+                eip_1559_params: Some(Default::default()),
+                min_base_fee: Some(0),
+                ..Default::default()
+            },
             parent: L2BlockInfo::default(),
             derived_from: Some(BlockInfo::default()),
             is_last_in_span: true,
@@ -414,7 +417,7 @@ mod tests {
     fn test_attributes_match_parent_hash_mismatch() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let attributes = default_attributes();
-        let mut block = Block::<Transaction>::default();
+        let mut block = azul_block();
         block.header.inner.parent_hash =
             b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
@@ -431,7 +434,7 @@ mod tests {
     fn test_attributes_match_check_timestamp() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let attributes = default_attributes();
-        let mut block = Block::<Transaction>::default();
+        let mut block = azul_block();
         block.header.inner.timestamp = 1234567890;
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::Timestamp(
@@ -447,7 +450,7 @@ mod tests {
     fn test_attributes_match_check_prev_randao() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let attributes = default_attributes();
-        let mut block = Block::<Transaction>::default();
+        let mut block = azul_block();
         block.header.inner.mix_hash =
             b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
@@ -464,7 +467,7 @@ mod tests {
     fn test_attributes_match_missing_gas_limit() {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let attributes = default_attributes();
-        let mut block = Block::<Transaction>::default();
+        let mut block = azul_block();
         block.header.inner.gas_limit = 123456;
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::MissingAttributesGasLimit.into();
@@ -477,7 +480,7 @@ mod tests {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(123457);
-        let mut block = Block::<Transaction>::default();
+        let mut block = azul_block();
         block.header.inner.gas_limit = 123456;
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::GasLimit(
@@ -496,7 +499,7 @@ mod tests {
         attributes.attributes.gas_limit = Some(0);
         attributes.attributes.payload_attributes.parent_beacon_block_root =
             Some(b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"));
-        let block = Block::<Transaction>::default();
+        let block = azul_block();
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::ParentBeaconBlockRoot(
             attributes.attributes().payload_attributes.parent_beacon_block_root,
@@ -512,7 +515,7 @@ mod tests {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
-        let mut block = Block::<Transaction>::default();
+        let mut block = azul_block();
         block.header.inner.beneficiary = address!("1234567890abcdef1234567890abcdef12345678");
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         let expected: AttributesMatch = AttributesMismatch::FeeRecipient(
@@ -561,7 +564,7 @@ mod tests {
 
         let block = Block::<Transaction> {
             transactions: BlockTransactions::Full(transactions),
-            ..Default::default()
+            ..azul_block()
         };
 
         (attributes, block)
@@ -732,6 +735,7 @@ mod tests {
         cfg.upgrades.holocene_time = Some(0);
 
         let mut attributes = default_attributes();
+        attributes.attributes.eip_1559_params = None;
         attributes.attributes.gas_limit = Some(0);
         // For canyon and above we need to specify the withdrawals
         attributes.attributes.payload_attributes.withdrawals = Some(vec![]);
@@ -786,7 +790,7 @@ mod tests {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
 
         attributes.attributes.eip_1559_params = Some(Default::default());
-        block.header.extra_data = vec![0; 9].into();
+        block.header.extra_data = [vec![1], vec![0; 16]].concat().into();
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
@@ -809,6 +813,7 @@ mod tests {
             BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },
         )
         .unwrap();
+        block.header.extra_data = azul_extra_data(block.header.extra_data.clone());
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
@@ -828,7 +833,7 @@ mod tests {
             eip1559_extra_params.clone().split_off(1).as_ref().try_into().unwrap();
 
         attributes.attributes.eip_1559_params = Some(eip1559_params);
-        block.header.extra_data = eip1559_extra_params;
+        block.header.extra_data = azul_extra_data(eip1559_extra_params);
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
@@ -856,7 +861,7 @@ mod tests {
         .unwrap();
 
         attributes.attributes.eip_1559_params = Some(eip1559_params);
-        block.header.extra_data = eip1559_extra_params;
+        block.header.extra_data = azul_extra_data(eip1559_extra_params);
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
@@ -883,7 +888,7 @@ mod tests {
             eip1559_extra_params.clone().split_off(1).as_ref().try_into().unwrap();
 
         attributes.attributes.eip_1559_params = Some(eip1559_params);
-        block.header.extra_data = eip1559_extra_params;
+        block.header.extra_data = azul_extra_data(eip1559_extra_params);
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(
@@ -910,7 +915,7 @@ mod tests {
         raw_extra_params_bytes[0] = 10;
 
         attributes.attributes.eip_1559_params = Some(eip1559_params);
-        block.header.extra_data = raw_extra_params_bytes.into();
+        block.header.extra_data = azul_extra_data(raw_extra_params_bytes.into());
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Mismatch(AttributesMismatch::InvalidExtraDataVersion));
@@ -955,7 +960,7 @@ mod tests {
         cfg.chain_op_config.eip1559_elasticity = u64::MAX;
 
         attributes.attributes.eip_1559_params = Some(Default::default());
-        block.header.extra_data = vec![0; 9].into();
+        block.header.extra_data = [vec![1], vec![0; 16]].concat().into();
 
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
 
@@ -979,7 +984,7 @@ mod tests {
         let cfg = rollup_config!(ChainConfig::MAINNET);
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
-        let block = Block::<Transaction>::default();
+        let block = azul_block();
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
         assert!(check.is_match());

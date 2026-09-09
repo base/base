@@ -185,7 +185,6 @@ base-consensus-derive = { path = "crates/consensus/derive", default-features = f
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
 base-consensus-gossip = { path = "crates/consensus/gossip", default-features = false }
 base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
-base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features = false }
 base-consensus-providers = { path = "crates/consensus/providers", default-features = false }
 
 # Execution

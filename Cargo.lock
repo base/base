@@ -3168,11 +3168,8 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-rpc-types-engine",
- "base-consensus-upgrades",
  "base-metrics",
  "base-protocol",
- "criterion",
- "iai-callgrind",
  "metrics",
  "proptest",
  "serde",
@@ -3493,19 +3490,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-consensus-upgrades"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-consensus",
- "base-common-evm",
- "base-evm-context",
- "revm",
- "rstest",
 ]
 
 [[package]]

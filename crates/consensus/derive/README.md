@@ -8,7 +8,9 @@ A `no_std` compatible implementation of Base's [derivation pipeline][derive].
 
 ## Overview
 
-Implements the full L2 chain derivation pipeline as specified by the Base protocol. The
+Implements L2 chain derivation with Azul as the minimum supported rule set. Earlier upgrade
+transitions and pre-Azul replay are not supported. Azul and subsequent scheduled upgrades remain
+configurable. The
 `DerivationPipeline` steps through L1 data to produce `BasePayloadAttributes` for each L2 block.
 `EthereumDataSource` fetches batch data from calldata or blobs, `StatefulAttributesBuilder`
 constructs payload attributes with deposits and sequencer configuration, and `PipelineBuilder`

@@ -1,8 +1,8 @@
 //! Contains stages pertaining to the processing of [Batch]es.
 //!
-//! Sitting after the [`ChannelReader`] stage, the [`BatchStream`] and [`BatchProvider`] stages are
+//! Sitting after the [`ChannelReader`] stage, the [`BatchStream`] and [`BatchValidator`] stages are
 //! responsible for validating and ordering the [Batch]es. The [`BatchStream`] stage is
-//! responsible for streaming [`SingleBatch`]es from [`SpanBatch`]es, while the [`BatchProvider`]
+//! responsible for streaming [`SingleBatch`]es from [`SpanBatch`]es, while the [`BatchValidator`]
 //! stage is responsible for ordering and validating the [Batch]es for the [`AttributesQueue`]
 //! stage.
 //!
@@ -22,16 +22,10 @@ use crate::types::PipelineResult;
 mod batch_stream;
 pub use batch_stream::{BatchStream, BatchStreamProvider};
 
-mod batch_queue;
-pub use batch_queue::BatchQueue;
-
 mod batch_validator;
 pub use batch_validator::BatchValidator;
 
-mod batch_provider;
-pub use batch_provider::BatchProvider;
-
-/// Provides [`Batch`]es for the [`BatchQueue`] and [`BatchValidator`] stages.
+/// Provides [`Batch`]es for the [`BatchValidator`] and [`BatchValidator`] stages.
 #[async_trait]
 pub trait NextBatchProvider {
     /// Returns the next [`Batch`] in the [`ChannelReader`] stage, if the stage is not complete.

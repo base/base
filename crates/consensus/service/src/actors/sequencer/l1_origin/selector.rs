@@ -168,7 +168,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             return Ok(next.clone());
         }
 
-        let max_seq_drift = self.cfg.max_sequencer_drift(current.header.timestamp);
+        let max_seq_drift = base_common_genesis::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT;
         let past_seq_drift =
             next_l2_timestamp.saturating_sub(current.header.timestamp) > max_seq_drift;
 
@@ -565,7 +565,7 @@ mod tests {
         // of 600 seconds.
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
 
@@ -623,7 +623,7 @@ mod tests {
     async fn test_next_l1_origin_not_found() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
 
@@ -652,7 +652,7 @@ mod tests {
     async fn test_next_l1_origin_refreshes_after_same_parent_reorg() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -702,7 +702,7 @@ mod tests {
     async fn test_next_l1_origin_waits_for_chain_view() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -752,7 +752,7 @@ mod tests {
 
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -812,7 +812,7 @@ mod tests {
         // of 600 seconds.
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
 
@@ -951,7 +951,7 @@ mod tests {
         // of 600 seconds.
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
 
@@ -1022,7 +1022,7 @@ mod tests {
     async fn test_next_origin_lookup_does_not_block_selection() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -1061,7 +1061,7 @@ mod tests {
     async fn test_chain_view_change_replaces_inflight_fetch() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -1104,7 +1104,7 @@ mod tests {
     async fn test_adopts_completed_fetch() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -1138,7 +1138,7 @@ mod tests {
     async fn test_selected_origin_is_published() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -1173,7 +1173,7 @@ mod tests {
 
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
@@ -1216,7 +1216,7 @@ mod tests {
     async fn test_wrong_parent_without_receipts_still_reports_orphan() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
@@ -1255,7 +1255,7 @@ mod tests {
     async fn test_same_height_current_origin_reorg_is_detected_by_canonical_successor() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
@@ -1305,7 +1305,7 @@ mod tests {
     async fn test_successor_without_receipts_is_not_adopted() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo { hash: B256::with_last_byte(1), number: 4, ..Default::default() };
@@ -1341,7 +1341,7 @@ mod tests {
     async fn test_reuses_prepared_current_when_provider_loses_current() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -1369,7 +1369,7 @@ mod tests {
     async fn test_accepted_head_promotes_ready_origin_after_chain_view_advances() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {
@@ -1415,7 +1415,7 @@ mod tests {
     async fn test_completed_fetch_retries_with_latest_chain_view() {
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
-            max_sequencer_drift: 600,
+            max_sequencer_drift: RollupConfig::FJORD_MAX_SEQUENCER_DRIFT,
             ..Default::default()
         });
         let current = BlockInfo {

@@ -21,7 +21,6 @@ alloy-genesis = { workspace = true }
 base-common-genesis = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 serde = { workspace = true, optional = true }
-base-consensus-upgrades = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-rpc-types-engine = { workspace = true }
 alloy-rlp = { workspace = true, features = ["derive"] }
@@ -34,23 +33,13 @@ serde_json = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 spin = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
-criterion = { workspace = true, features = ["default"] }
-iai-callgrind = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["test-utils"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitrary"] }
-[[bench]]
-name = "batch_queue"
-harness = false
-required-features = ["test-utils"]
 
-[[bench]]
-name = "batch_queue_iai"
-harness = false
-required-features = ["test-utils"]
 
 [features]
 default = []

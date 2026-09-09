@@ -70,9 +70,9 @@ where
         <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
     {
         let l2_safe_head_ts = l2_safe_head.block_info.timestamp;
-        let l1_origin_ts_lower_bound =
-            l2_safe_head_ts.saturating_sub(self.rollup_config.max_sequencer_drift(l2_safe_head_ts));
-        let channel_timeout = self.rollup_config.channel_timeout(l1_origin_ts_lower_bound);
+        let _l1_origin_ts_lower_bound = l2_safe_head_ts
+            .saturating_sub(base_common_genesis::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
+        let channel_timeout = self.rollup_config.granite_channel_timeout;
         let l1_origin_number = l2_safe_head.l1_origin.number;
         let mut current = l2_safe_head;
 
@@ -438,7 +438,7 @@ mod tests {
     /// returning the older (and correct) `SystemConfig` for any batcher-address rotation in
     /// that window.
     #[tokio::test]
-    async fn test_derivation_pipeline_initial_reset_granite_straddle() {
+    async fn test_initial_reset_uses_azul_timeout_across_historical_granite_boundary() {
         const GRANITE_TIME: u64 = 1_000_000;
         const L2_SAFE_HEAD_TIMESTAMP: u64 = GRANITE_TIME + 100;
         const L1_HEAD: u64 = 1_000;
@@ -505,13 +505,7 @@ mod tests {
         };
 
         let (l1_origin, system_config) = pipeline.initial_reset(safe_head).await.unwrap();
-        assert_eq!(
-            l1_origin.number, SPEC_STOP_L1_ORIGIN,
-            "spec walk-back must stop at L1 origin {SPEC_STOP_L1_ORIGIN} (pre-Granite=300), not at {CODE_STOP_L1_ORIGIN} (Granite=50)"
-        );
-        assert_eq!(
-            system_config.batcher_address, BATCHER_AT_SPEC_STOP,
-            "spec walk-back must return the SystemConfig pinned at L2 block {SPEC_STOP_L1_ORIGIN}, not the one at {CODE_STOP_L1_ORIGIN}"
-        );
+        assert_eq!(l1_origin.number, CODE_STOP_L1_ORIGIN);
+        assert_eq!(system_config.batcher_address, BATCHER_AT_CODE_STOP);
     }
 }
