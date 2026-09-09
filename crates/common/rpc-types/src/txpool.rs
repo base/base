@@ -1,14 +1,20 @@
 //! Types for the `txpool` namespace: <https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-txpool>
 
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use alloc::{
+    collections::BTreeMap,
+    format,
+    string::{String, ToString},
+};
+use core::{fmt, str::FromStr};
 
 use alloy_primitives::{Address, U256};
-use base_common_rpc_types::{Transaction, TransactionTrait};
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Deserializer, Visitor},
     ser::SerializeMap,
 };
+
+use crate::{Transaction, TransactionTrait};
 
 /// Transaction summary as found in the txpool inspection response.
 ///

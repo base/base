@@ -410,7 +410,6 @@ dependencies = [
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
  "alloy-rpc-types-trace",
- "alloy-rpc-types-txpool",
  "alloy-serde",
  "alloy-signer",
  "alloy-sol-types",
@@ -527,7 +526,6 @@ dependencies = [
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
  "alloy-rpc-types-trace",
- "alloy-rpc-types-txpool",
  "alloy-serde",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
@@ -588,18 +586,6 @@ dependencies = [
  "serde_json",
  "similar-asserts",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "alloy-rpc-types-txpool"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-serde",
- "base-common-rpc-types",
- "serde",
- "serde_json",
- "similar-asserts",
 ]
 
 [[package]]
@@ -3753,7 +3739,6 @@ dependencies = [
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
  "alloy-rpc-types-trace",
- "alloy-rpc-types-txpool",
  "alloy-serde",
  "alloy-signer",
  "alloy-transport",
@@ -5535,7 +5520,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-client",
- "alloy-rpc-types-txpool",
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
@@ -15168,7 +15152,6 @@ dependencies = [
  "alloy-rpc-types-debug",
  "alloy-rpc-types-mev",
  "alloy-rpc-types-trace",
- "alloy-rpc-types-txpool",
  "base-common-rpc-types",
  "jsonrpsee",
  "reth-chain-state",

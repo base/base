@@ -38,14 +38,13 @@ alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
-alloy-rpc-types-txpool = { workspace = true, optional = true }
 serde = { workspace = true, features = [
     "derive",
     "alloc",
     "derive",
     "std",
 ] }
-base-common-rpc-types = { workspace = true, features = ["serde"], optional = true }
+base-common-rpc-types = {workspace = true, features = ["serde"], optional = true}
 base-common-rpc-types-engine = { workspace = true, features = ["serde"], optional = true }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }
@@ -79,4 +78,4 @@ ssz = [
     "base-common-rpc-types-engine?/ssz",
 ]
 trace = ["dep:alloy-rpc-types-trace"]
-txpool = ["dep:alloy-rpc-types-txpool"]
+txpool = ["dep:base-common-rpc-types"]

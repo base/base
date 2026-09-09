@@ -87,3 +87,8 @@ pub use erc4337::{
 pub mod simulate;
 
 mod base_transactions;
+
+mod txpool;
+pub use txpool::{
+    TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
+};

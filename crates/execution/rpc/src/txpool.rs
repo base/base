@@ -2,11 +2,11 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use alloy_primitives::Address;
-use alloy_rpc_types_txpool::{
-    TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
-};
 use async_trait::async_trait;
 use base_common_consensus::Transaction;
+use base_common_rpc_types::{
+    TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
+};
 use base_execution_txpool::{AllPoolTransactions, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TxPoolApiServer;

@@ -48,7 +48,6 @@ reth-rpc-server-types = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 reth-engine-primitives = { workspace = true }
-alloy-rpc-types-txpool = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
 base-observability-events = { workspace = true }

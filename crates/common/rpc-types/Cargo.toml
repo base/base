@@ -44,6 +44,7 @@ alloy-eips = { workspace = true, features = [
     "arbitrary",
     "k256",
 ] }
+serde_json = { workspace = true, features = ["alloc"] }
 
 [features]
 default = ["std", "serde"]

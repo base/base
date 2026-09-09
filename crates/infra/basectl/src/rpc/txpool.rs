@@ -7,11 +7,11 @@ use alloy_provider::{
     Network, Provider, ProviderBuilder, ext::TxPoolApi, network::TransactionResponse,
 };
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_txpool::{TxpoolContent, TxpoolContentFrom};
 use alloy_transport::TransportError;
 use alloy_transport_http::Http;
 use base_common_consensus::Transaction as ConsensusTransaction;
 use base_common_network::Base;
+use base_common_rpc_types::{TxpoolContent, TxpoolContentFrom};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
     http_client::HttpClientBuilder,
@@ -485,8 +485,8 @@ mod tests {
 
     use alloy_primitives::{Address, B256, address};
     use alloy_provider::Network;
-    use alloy_rpc_types_txpool::{TxpoolContent, TxpoolContentFrom};
     use base_common_network::Base;
+    use base_common_rpc_types::{TxpoolContent, TxpoolContentFrom};
     use serde_json::json;
 
     use super::{TxpoolReport, TxpoolScope, TxpoolTransactionPool};

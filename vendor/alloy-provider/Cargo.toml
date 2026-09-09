@@ -62,7 +62,6 @@ alloy-transport-http = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
-alloy-rpc-types-txpool = { workspace = true, optional = true }
 futures-utils-wasm = { workspace = true, features = ["default"] }
 url = { workspace = true, optional = true, features = ["default"] }
 http = { workspace = true, optional = true, features = ["default"] }
@@ -73,7 +72,7 @@ serde = { workspace = true, features = [
 ] }
 base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
-base-common-rpc-types = { workspace = true, features = ["serde"] }
+base-common-rpc-types = {workspace = true, features = ["serde"]}
 [dev-dependencies]
 reqwest = { workspace = true }
 ci_info = { workspace = true }
@@ -131,7 +130,7 @@ rpc-api = ["dep:alloy-rpc-types"]
 tenderly-admin-api = []
 throttle = ["alloy-transport/throttle"]
 trace-api = ["dep:alloy-rpc-types-trace"]
-txpool-api = ["dep:alloy-rpc-types-txpool"]
+txpool-api = []
 ws = ["ws-base", "alloy-rpc-client/ws", "alloy-transport-ws/aws-lc-rs"]
 ws-base = ["pubsub", "dep:alloy-transport-ws", "alloy-rpc-client/ws-base"]
 ws-native-tls = ["ws-base", "alloy-rpc-client/ws-native-tls", "alloy-transport-ws/native-tls"]

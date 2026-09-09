@@ -18,7 +18,6 @@ base-consensus-peers = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-proof-submission = { workspace = true }
-alloy-rpc-types-txpool = { workspace = true }
 base-common-precompiles = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 base-prover-service-client = { workspace = true }
