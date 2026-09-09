@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use base_common_types_chain::{CoinbaseTip, Transaction};
-use base_execution_eip8130::FeeCheck;
+use base_execution_evm_precompiles::FeeCheck;
 use base_execution_evm_runtime::Database;
 use base_execution_txpool::BasePooledTransaction;
 

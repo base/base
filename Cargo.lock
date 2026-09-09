@@ -2472,8 +2472,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-execution-eip8130",
  "base-execution-evm-blocks",
+ "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
  "base-execution-payload-types",
@@ -3284,23 +3284,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-eip8130"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "base-common-types-chain",
- "base-execution-evm-macros",
- "base-execution-evm-precompiles",
- "base64 0.22.1",
- "k256",
- "p256",
- "revm-interpreter",
- "sha2 0.10.9",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "base-execution-eip8130-rpc"
 version = "0.0.0"
 dependencies = [
@@ -3394,15 +3377,18 @@ dependencies = [
  "base-evm-context",
  "base-execution-evm-macros",
  "base-state",
+ "base64 0.22.1",
  "criterion",
  "derive_more",
  "k256",
+ "p256",
  "proptest",
  "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
  "revm-state",
  "rstest",
+ "sha2 0.10.9",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -3424,7 +3410,6 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-evm-context",
- "base-execution-eip8130",
  "base-execution-evm-precompiles",
  "base-metrics",
  "base-state",
@@ -3482,8 +3467,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-evm-context",
- "base-execution-eip8130",
  "base-execution-evm-blocks",
+ "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-payload-types",
  "base-execution-trie",
@@ -3698,7 +3683,6 @@ dependencies = [
  "base-common-network",
  "base-common-types-chain",
  "base-evm-context",
- "base-execution-eip8130",
  "base-execution-evm-blocks",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",

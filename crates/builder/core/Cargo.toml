@@ -42,7 +42,6 @@ reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-cache = { workspace = true }
-base-execution-eip8130 = { workspace = true }
 reth-primitives-traits = { workspace = true }
 nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
@@ -93,6 +92,7 @@ tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
+base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
@@ -151,7 +151,7 @@ min-trace-logs = ["tracing/release_max_level_trace"]
 test-utils = [
     "base-bundles/test-utils",
     "base-common-chain-config/test-utils",
-    "base-execution-eip8130/test-utils",
+    "base-execution-evm-precompiles/test-utils",
     "base-execution-rpc/client",
     "base-node-core/test-utils",
     "base-node-runner/test-utils",

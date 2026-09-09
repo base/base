@@ -67,7 +67,6 @@ members = [
   "crates/consensus/service",
   "crates/consensus/sources",
   "crates/execution/cli",
-  "crates/execution/eip8130",
   "crates/execution/eip8130-rpc",
   "crates/execution/evm/blocks",
   "crates/execution/exex",
@@ -381,7 +380,6 @@ base-execution-exex = { path = "crates/execution/exex", default-features = false
 base-execution-trie = { path = "crates/execution/trie", default-features = false }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc", default-features = false }
 base-execution-txpool = { path = "crates/execution/txpool", default-features = false }
-base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
 base-shadow-indexer = { path = "crates/execution/shadow-indexer", default-features = false }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }

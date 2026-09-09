@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+//! EIP-8130 account authorization, state transitions, and fee validation.
 
 mod error;
 pub use error::AuthError;

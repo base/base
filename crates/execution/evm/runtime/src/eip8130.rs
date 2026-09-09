@@ -55,7 +55,7 @@ use base_evm_context::{
     Block, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
     LocalContextTr, Output, ResultGas, SuccessReason, take_error,
 };
-use base_execution_eip8130::{
+use base_execution_evm_precompiles::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
     TransactionAuthorizer,
@@ -1729,7 +1729,7 @@ mod tests {
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
     use base_evm_context::{BlockEnv, CfgEnv, Context};
-    use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
+    use base_execution_evm_precompiles::{AccountChangeApplier, DelegationApplied};
     use base_execution_evm_runtime::{
         Database, bytecode::Bytecode, database::DBErrorMarker, database::InMemoryDB,
         state::AccountInfo,
@@ -2153,7 +2153,7 @@ mod tests {
         // COLD_SLOAD and by nothing else.
         assert_eq!(
             sim_gas,
-            exec_gas + base_execution_eip8130::Eip8130GasSchedule::COLD_SLOAD,
+            exec_gas + base_execution_evm_precompiles::Eip8130GasSchedule::COLD_SLOAD,
             "estimate must be the execution charge plus exactly the pinned policy-gate SLOAD",
         );
 

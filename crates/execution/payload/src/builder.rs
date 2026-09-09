@@ -15,7 +15,7 @@ use base_common_types_chain::{
 };
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_evm_context::{Block, BlockEnv};
-use base_execution_eip8130::IntrinsicGas;
+use base_execution_evm_precompiles::IntrinsicGas;
 use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
     BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,

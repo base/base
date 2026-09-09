@@ -14,22 +14,27 @@ workspace = true
 
 [dependencies]
 auto_impl = {workspace = true}
+thiserror = {workspace = true}
 tracing = { workspace = true }
 base-state = {workspace = true}
 revm-state = {workspace = true}
-thiserror = { workspace = true }
 alloy-sol-types = {workspace = true}
 revm-precompile = {workspace = true}
 revm-primitives = {workspace = true}
 alloy-primitives = {workspace = true}
 base-evm-context = {workspace = true}
 revm-interpreter = {workspace = true}
-base-execution-evm-macros = {workspace = true}
+sha2 = { workspace = true, optional = true}
 base-common-types-chain = {workspace = true}
+base-execution-evm-macros = {workspace = true}
 base-common-chain-config = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
+base64 = { workspace = true, features = ["default"], optional = true}
+k256 = { workspace = true, features = ["default", "ecdsa"], optional = true}
+p256 = { workspace = true, features = ["default", "ecdsa"], optional = true}
 
 [dev-dependencies]
+revm-interpreter = { workspace = true }
 rstest = {features = ["default"], workspace = true}
 proptest = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default"] }
@@ -95,6 +100,11 @@ std = [
     "derive_more/std",
     "thiserror/std",
     "tracing/std",
+    "dep:sha2",
+    "dep:base64",
+    "dep:k256",
+    "dep:p256",
+    "base-common-types-chain/k256",
 ]
 bn = ["revm-precompile/bn"]
 blst = ["revm-precompile/blst"]

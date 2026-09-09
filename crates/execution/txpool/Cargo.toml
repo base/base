@@ -31,8 +31,6 @@ alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
 base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
-base-execution-evm-precompiles = {workspace = true}
-base-execution-eip8130 = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
@@ -54,6 +52,7 @@ reth-execution-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
+base-execution-evm-precompiles = {workspace = true, features = ["std"]}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }

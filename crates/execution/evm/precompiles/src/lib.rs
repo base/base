@@ -153,3 +153,17 @@ mod internals;
 pub use internals::{ErasedError, EvmInternals, EvmInternalsError, TransactionTr};
 
 pub use revm_state::Bytecode;
+
+#[cfg(feature = "std")]
+mod eip8130;
+#[cfg(feature = "std")]
+pub use eip8130::{
+    AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, AccountCreated,
+    AccountState, ActorAuthorized, ActorAuthorizer, ActorConfig, ActorRevoked, ActorTxVerifier,
+    AppliedAccountChanges, AppliedTransaction, ApplyError, AuthError, AuthWireForm,
+    AuthenticatorDispatch, AuthorizeError, AuthorizedActor, ConfigChangeAuthorizer, CreatedAccount,
+    DelegationApplied, DelegationEffect, DispatchOutcome, Eip8130GasSchedule, FeeCheck, FeeError,
+    IntrinsicGas, IntrinsicGasError, IntrinsicGasInput, LockStatus, NonceError, NonceMode,
+    NonceStatus, NonceValidator, Operation, RecoveredActorId, ResolvedActor, SignatureError,
+    SignatureType, SignatureVerifier, TransactionAuthorizer, TxActors, TxAuthError,
+};

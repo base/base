@@ -30,11 +30,10 @@ revm-primitives = { workspace = true }
 revm-interpreter = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-types-rpc = { workspace = true}
-base-execution-evm-precompiles = {workspace = true}
 metrics = { workspace = true, optional = true }
+base-execution-evm-precompiles = {workspace = true }
 base-metrics = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
-base-execution-eip8130 = { workspace = true, optional = true }
 base-common-types-chain = {features = ["k256"], workspace = true}
 base-common-chain-config = {workspace = true, features = ["default"]}
 serde = {features = ["derive", "rc"], optional = true, workspace = true}
@@ -77,7 +76,6 @@ std = [
     "base-evm-context/std",
     "base-metrics?/std",
     "base-state/std",
-    "dep:base-execution-eip8130",
     "derive_more/std",
     "either/std",
     "revm-bytecode/std",

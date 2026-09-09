@@ -30,25 +30,6 @@ DISALLOWED_DEPS=(
   "proof:infra"
 )
 
-# Allowed exceptions: "dep_name" entries here are excluded from all rules.
-# These are foundational protocol crates that are intentionally shared across
-# layers via local path deps:
-#   - base-consensus-engine: consensus protocol crate under crates/consensus/.
-#   - base-execution-eip8130: EIP-8130 account-abstraction protocol logic
-#     (authorize / nonce / intrinsic-gas / account-change apply) consumed both by
-#     the enshrined EVM executor in base-execution-evm-runtime and by the execution-layer
-#     txpool/builder. The crate is foundational rather than execution-specific;
-#     this exception unblocks the common-layer dependency until it is relocated
-#     under crates/common/.
-ALLOWED_DEPS=(
-  "base-consensus-engine"
-  "base-execution-eip8130"
-)
-
-# Build a jq filter string for allowed deps
-ALLOWED_FILTER=$(printf '"%s",' "${ALLOWED_DEPS[@]}")
-ALLOWED_FILTER="[${ALLOWED_FILTER%,}]"
-
 # Fetch cargo metadata once, ensuring Cargo.lock is in sync
 METADATA=$(cargo metadata --format-version 1 --no-deps --locked)
 
@@ -58,14 +39,13 @@ for rule in "${DISALLOWED_DEPS[@]}"; do
   SOURCE="${rule%%:*}"
   TARGET="${rule##*:}"
 
-  VIOLATIONS=$(echo "$METADATA" | jq -r --argjson allowed "$ALLOWED_FILTER" "
+  VIOLATIONS=$(echo "$METADATA" | jq -r "
     [.packages[]
      | select(.manifest_path | contains(\"/crates/$SOURCE/\"))
      | . as \$pkg
      | .dependencies[]
      | select(.path)
      | select(.path | contains(\"/crates/$TARGET/\"))
-     | select(.name as \$n | \$allowed | index(\$n) | not)
      | \"\(\$pkg.name) -> \(.name)\"
     ]
     | .[]

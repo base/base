@@ -24,7 +24,7 @@ use base_common_types_chain::{
     constants::KECCAK_EMPTY,
 };
 use base_evm_context::JournalCheckpoint;
-use base_execution_eip8130::{
+use base_execution_evm_precompiles::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
     TxAuthError,
@@ -2172,7 +2172,7 @@ mod tests {
         SignableTransaction, SignedAccountChanges, SignedChange, TxDeposit, TxEip1559, TxEip8130,
         transaction::SignerRecoverable,
     };
-    use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
+    use base_execution_evm_precompiles::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_txpool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,

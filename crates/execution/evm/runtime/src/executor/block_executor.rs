@@ -11,7 +11,7 @@ use base_common_types_chain::{
 };
 use base_evm_context::{Block, ResultAndState};
 #[cfg(feature = "std")]
-use base_execution_eip8130::IntrinsicGas;
+use base_execution_evm_precompiles::IntrinsicGas;
 use base_execution_evm_runtime::{
     BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError, Database,
     EthTxResult, Evm, ExecutableTx, GasOutput, RecoveredTx, StateDB, SystemCaller,
