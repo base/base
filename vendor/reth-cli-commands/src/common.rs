@@ -16,7 +16,6 @@ use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
 };
-pub use reth_primitives_traits::header::HeaderMut;
 use reth_provider::{
     BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
     StorageSettings,

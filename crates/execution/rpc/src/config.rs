@@ -18,7 +18,6 @@ use base_execution_evm_runtime::database::EmptyDB;
 use base_execution_state_api::BlockReaderIdExt;
 use base_execution_state_types::ProviderError;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_types::EthApiError;
 
 /// RPC endpoint support for [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910)
@@ -89,7 +88,7 @@ where
         if let Some(next_fork_timestamp) = fork_timestamps.get(current_fork_idx + 1).copied() {
             let fake_header = {
                 let mut header = latest.clone();
-                header.set_timestamp(next_fork_timestamp);
+                header.timestamp = next_fork_timestamp;
                 header
             };
             let next_precompiles = Self::evm_to_precompiles_map(
@@ -108,7 +107,7 @@ where
         let last_fork_timestamp = fork_timestamps.last().copied().unwrap();
         let fake_header = {
             let mut header = latest;
-            header.set_timestamp(last_fork_timestamp);
+            header.timestamp = last_fork_timestamp;
             header
         };
         let last_precompiles = Self::evm_to_precompiles_map(

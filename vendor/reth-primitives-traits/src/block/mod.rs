@@ -265,31 +265,31 @@ pub trait TestBlock: Block {
     /// Updates the parent block hash.
     #[inline]
     fn set_parent_hash(&mut self, hash: alloy_primitives::BlockHash) {
-        crate::header::test_utils::TestHeader::set_parent_hash(self.header_mut(), hash);
+        self.header_mut().parent_hash = hash;
     }
 
     /// Updates the block number.
     #[inline]
     fn set_block_number(&mut self, number: alloy_primitives::BlockNumber) {
-        crate::header::test_utils::TestHeader::set_block_number(self.header_mut(), number);
+        self.header_mut().number = number;
     }
 
     /// Updates the block timestamp.
     #[inline]
     fn set_timestamp(&mut self, timestamp: u64) {
-        crate::header::test_utils::TestHeader::set_timestamp(self.header_mut(), timestamp);
+        self.header_mut().timestamp = timestamp;
     }
 
     /// Updates the block state root.
     #[inline]
     fn set_state_root(&mut self, state_root: alloy_primitives::B256) {
-        crate::header::test_utils::TestHeader::set_state_root(self.header_mut(), state_root);
+        self.header_mut().state_root = state_root;
     }
 
     /// Updates the block difficulty.
     #[inline]
     fn set_difficulty(&mut self, difficulty: alloy_primitives::U256) {
-        crate::header::test_utils::TestHeader::set_difficulty(self.header_mut(), difficulty);
+        self.header_mut().difficulty = difficulty;
     }
 }
 

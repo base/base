@@ -8,7 +8,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use clap::Parser;
 use reth_db_common::init::init_from_state_dump;
-use reth_primitives_traits::{SealedHeader, header::HeaderMut};
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
     StaticFileWriter,
@@ -92,7 +92,7 @@ impl<C: ChainSpecParser> InitStateCommand<C> {
                     SealedHeader::new(header, header_hash),
                     |number| {
                         let mut header = <base_common_types_chain::Header>::default();
-                        header.set_number(number);
+                        header.number = number;
                         header
                     },
                 )?;

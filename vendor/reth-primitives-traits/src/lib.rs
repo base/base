@@ -189,7 +189,7 @@ impl<T> MaybeSerde for T {}
 pub mod test_utils {
     pub use crate::header::test_utils::{generate_valid_header, valid_header_strategy};
     #[cfg(any(test, feature = "test-utils"))]
-    pub use crate::{block::TestBlock, header::test_utils::TestHeader};
+    pub use crate::block::TestBlock;
 }
 
 /// Re-exports of `dashmap` types with [`alloy_primitives::map::DefaultHashBuilder`] as the hasher.
