@@ -293,6 +293,7 @@ alloy-json-abi = { version = "=1.6.1", default-features = false }
 alloy-sol-macro = { version = "=1.6.1", default-features = false }
 alloy-sol-types = { version = "=1.6.1", default-features = false }
 alloy-tx-macros = { version = "=2.4.1", default-features = false }
+alloy-hardforks = { version = "=0.4.7", default-features = false }
 alloy-primitives = { version = "=1.6.1", default-features = false }
 alloy-trie = { path = "vendor/alloy-trie", default-features = false }
 alloy-eips = { path = "vendor/alloy-eips", default-features = false }
@@ -308,7 +309,6 @@ alloy-contract = { path = "vendor/alloy-contract", default-features = false }
 alloy-json-rpc = { path = "vendor/alloy-json-rpc", default-features = false }
 alloy-transport = { path = "vendor/alloy-transport", default-features = false }
 alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
-alloy-hardforks = { path = "vendor/alloy-hardforks", default-features = false }
 alloy-rpc-client = { path = "vendor/alloy-rpc-client", default-features = false }
 alloy-transport-ws = { path = "vendor/alloy-transport-ws", default-features = false }
 alloy-node-bindings = { path = "vendor/alloy-node-bindings", default-features = false }
