@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_execution_payload_builder::SharedMeteringProvider;
+use base_execution_payload_builder::SharedMeteringStore;
 use base_execution_txpool::BuilderApiServer;
 use base_metering::{
     BaseApiExtServer, MeteringApiImpl, MeteringApiServer, MeteringConfig, MeteringStoreExt,
@@ -28,7 +28,7 @@ pub struct BaseRpcServices {
     /// Bundle execution metering settings.
     pub metering: Option<MeteringConfig>,
     /// Shared resource metering store, when resource metering is enabled.
-    pub metering_store: Option<SharedMeteringProvider>,
+    pub metering_store: Option<SharedMeteringStore>,
 }
 
 impl BaseRpcServices {

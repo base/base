@@ -2,7 +2,7 @@
 
 use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
-use base_execution_payload_builder::SharedMeteringProvider;
+use base_execution_payload_builder::SharedMeteringStore;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -30,15 +30,15 @@ pub trait BaseApiExt {
     async fn clear_metering_information(&self) -> RpcResult<()>;
 }
 
-/// RPC extension wrapper around a [`SharedMeteringProvider`].
+/// RPC extension wrapper around a [`SharedMeteringStore`].
 #[derive(Debug)]
 pub struct MeteringStoreExt {
-    store: SharedMeteringProvider,
+    store: SharedMeteringStore,
 }
 
 impl MeteringStoreExt {
     /// Creates a new [`MeteringStoreExt`] with the given metering provider.
-    pub fn new(store: SharedMeteringProvider) -> Self {
+    pub fn new(store: SharedMeteringStore) -> Self {
         Self { store }
     }
 }

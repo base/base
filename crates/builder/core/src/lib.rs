@@ -9,15 +9,12 @@
 
 mod config;
 pub use base_execution_payload_builder::{
-    MeteringProvider, NoopMeteringProvider, ResourceMeteringConfig, SharedMeteringProvider,
+    MeteringStore, ResourceMeteringConfig, SharedMeteringStore,
 };
 pub use config::BuilderConfig;
 
 mod traits;
 pub use traits::{ClientBounds, PayloadTxsBounds, PoolBounds};
-
-mod metrics;
-pub use metrics::BuilderMetrics;
 
 mod service;
 pub use base_txpool_rpc::{

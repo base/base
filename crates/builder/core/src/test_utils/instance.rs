@@ -26,7 +26,7 @@ use reth_node_core::{
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 
 use crate::{
-    BuilderConfig, SharedMeteringProvider,
+    BuilderConfig, SharedMeteringStore,
     test_utils::{EngineApi, TransactionPoolObserver, create_test_db_env, driver::ChainDriver},
 };
 
@@ -64,7 +64,7 @@ pub struct LocalInstance {
     node_handle: Option<Box<dyn Any + Send>>,
     pool_handle: Option<Arc<dyn ExternalTransactionPool>>,
     pool_observer: TransactionPoolObserver,
-    metering_provider: SharedMeteringProvider,
+    metering_provider: SharedMeteringStore,
     /// Temporary directory backing the node's database, removed on drop.
     db_dir: PathBuf,
 }
@@ -255,7 +255,7 @@ impl LocalInstance {
     }
 
     /// Returns a reference to the shared metering provider.
-    pub fn metering_provider(&self) -> &SharedMeteringProvider {
+    pub fn metering_provider(&self) -> &SharedMeteringStore {
         &self.metering_provider
     }
 

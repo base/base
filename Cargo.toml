@@ -171,7 +171,6 @@ base-observability-events = { path = "crates/common/observability-events", defau
 # Builder
 base-builder-cli = { path = "crates/builder/cli", default-features = false }
 base-builder-core = { path = "crates/builder/core", default-features = false }
-base-builder-metering = { path = "crates/builder/metering", default-features = false }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli", default-features = false }

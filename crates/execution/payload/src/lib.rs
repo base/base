@@ -17,7 +17,10 @@ pub mod config;
 pub use config::ResourceMeteringConfig;
 pub mod error;
 mod metering;
-pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
+pub use metering::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+    SharedMeteringStore,
+};
 mod rejection_cache;
 pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 

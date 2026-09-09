@@ -5,10 +5,10 @@ use std::path::PathBuf;
 
 use base_builder_core::{
     BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig,
-    SharedMeteringProvider,
+    SharedMeteringStore,
 };
-use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
+use base_builder_core::MeteringStore;
 use base_node_core::RollupArgs;
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -267,7 +267,7 @@ impl Args {
     /// building loop and the `base_setMeteringInformation` handler share a single store.
     pub fn into_builder_config(
         self,
-        metering_provider: SharedMeteringProvider,
+        metering_provider: SharedMeteringStore,
     ) -> eyre::Result<BuilderConfig> {
         if self.block_state_root_gas_limit.is_some()
             || self.state_root_gas_coefficient.is_some()
@@ -299,7 +299,6 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{B256, TxHash, U256};
-    use base_builder_core::{MeteringProvider, NoopMeteringProvider};
     use base_bundles::MeterBundleResponse;
     use clap::Parser;
     use rstest::rstest;
@@ -313,7 +312,7 @@ mod tests {
     }
 
     fn convert(args: Args) -> BuilderConfig {
-        let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
+        let metering_provider: SharedMeteringStore = Arc::new(MeteringStore::default());
         args.into_builder_config(metering_provider).expect("conversion should succeed")
     }
 
@@ -417,7 +416,7 @@ mod tests {
 
     #[test]
     fn metering_data_written_to_provider_is_readable_from_config() {
-        let metering_provider: SharedMeteringProvider =
+        let metering_provider: SharedMeteringStore =
             Arc::new(MeteringStore::new(true, 100, Duration::from_secs(30)));
         let args = Args { enable_resource_metering: true, ..Default::default() };
         let config = args

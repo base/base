@@ -11,9 +11,9 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
-    ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
-    ResourceThrottlingDecision, SharedMeteringProvider,
+    MeteringStore, RejectionCache, ResourceMeteringError, ResourceMeteringMetrics,
+    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
+    SharedMeteringStore,
 };
 
 /// Settings for the Base payload builder.
@@ -100,7 +100,7 @@ pub struct ResourceMeteringConfig {
     /// Startup schedule held by the builder.
     pub schedule: Arc<ResourceMeteringSchedule>,
     /// `meterBundle` results used to evaluate the schedule.
-    pub provider: SharedMeteringProvider,
+    pub provider: SharedMeteringStore,
 }
 
 impl std::fmt::Debug for ResourceMeteringConfig {
@@ -108,7 +108,7 @@ impl std::fmt::Debug for ResourceMeteringConfig {
         f.debug_struct("ResourceMeteringConfig")
             .field("enabled", &self.enabled)
             .field("schedule_empty", &self.schedule.is_empty())
-            .field("provider_enabled", &crate::MeteringProvider::is_enabled(self.provider.as_ref()))
+            .field("provider_enabled", &self.provider.is_enabled())
             .finish()
     }
 }
@@ -118,7 +118,7 @@ impl Default for ResourceMeteringConfig {
         Self {
             enabled: false,
             schedule: Arc::new(ResourceMeteringSchedule::default()),
-            provider: Arc::new(NoopMeteringProvider),
+            provider: Arc::new(MeteringStore::default()),
         }
     }
 }
@@ -132,7 +132,7 @@ impl ResourceMeteringConfig {
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
-        provider: SharedMeteringProvider,
+        provider: SharedMeteringStore,
     ) -> Result<Self, ResourceMeteringError> {
         let schedule = if enabled {
             let Some(path) = schedule_path else {
@@ -165,8 +165,7 @@ impl ResourceMeteringConfig {
         if !self.is_active() {
             return None;
         }
-        MeteringProvider::get(self.provider.as_ref(), tx_hash)
-            .and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
+        self.provider.get(tx_hash).and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
     }
 
     /// Checks simulated `meterBundle` usage against the schedule.
@@ -462,7 +461,7 @@ mod tests {
         let config = ResourceMeteringConfig::from_parts(
             false,
             Some(missing),
-            Arc::new(NoopMeteringProvider),
+            Arc::new(MeteringStore::default()),
         )
         .expect("disabled metering must not read the schedule file");
         assert!(!config.enabled);
@@ -472,8 +471,9 @@ mod tests {
 
     #[test]
     fn enabled_metering_without_schedule_fails_closed() {
-        let err = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
-            .expect_err("enable-metering without a schedule must fail");
+        let err =
+            ResourceMeteringConfig::from_parts(true, None, Arc::new(MeteringStore::default()))
+                .expect_err("enable-metering without a schedule must fail");
         assert!(matches!(err, ResourceMeteringError::MissingSchedule));
     }
 
@@ -486,7 +486,7 @@ mod tests {
         let err = ResourceMeteringConfig::from_parts(
             true,
             Some(path.as_path()),
-            Arc::new(NoopMeteringProvider),
+            Arc::new(MeteringStore::default()),
         );
         let _ = std::fs::remove_file(&path);
         assert!(matches!(err, Err(ResourceMeteringError::EmptySchedule)));
@@ -514,20 +514,20 @@ mod tests {
         let config = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(compiled_cpu_schedule()),
-            provider: Arc::new(NoopMeteringProvider),
+            provider: Arc::new(MeteringStore::default()),
         };
         let (simulated, decision) = config.check_simulated_usage(&TxHash::ZERO, &[]);
         assert!(simulated.is_none());
         assert!(!decision.should_exclude());
     }
 
-    #[derive(Debug)]
-    struct MapProvider(std::sync::Mutex<std::collections::HashMap<TxHash, MeterBundleResponse>>);
-
-    impl MeteringProvider for MapProvider {
-        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
-            self.0.lock().unwrap().get(tx_hash).cloned()
+    fn metering_store(values: HashMap<TxHash, MeterBundleResponse>) -> MeteringStore {
+        let store = MeteringStore::default();
+        store.set_enabled(true);
+        for (hash, value) in values {
+            store.insert(hash, value);
         }
+        store
     }
 
     #[test]
@@ -557,9 +557,7 @@ mod tests {
         let config = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(compiled_cpu_schedule()),
-            provider: Arc::new(MapProvider(std::sync::Mutex::new(HashMap::from([(
-                tx_hash, meter,
-            )])))),
+            provider: Arc::new(metering_store(HashMap::from([(tx_hash, meter)]))),
         };
         let usage = config
             .unthrottled_usage(&tx_hash, 21_000, &EvmState::default())
@@ -586,8 +584,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(std::sync::Mutex::new(HashMap::from([(tx_hash, meter)]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, meter)])));
         let enforce = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(compiled_cpu_schedule()),
@@ -660,9 +658,7 @@ mod tests {
         let config = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(overflowing_schedule()),
-            provider: Arc::new(MapProvider(std::sync::Mutex::new(HashMap::from([(
-                tx_hash, meter,
-            )])))),
+            provider: Arc::new(metering_store(HashMap::from([(tx_hash, meter)]))),
         };
         assert!(config.unthrottled_usage(&tx_hash, u64::MAX, &EvmState::default()).is_none());
     }
@@ -672,7 +668,7 @@ mod tests {
         let config = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(compiled_cpu_schedule()),
-            provider: Arc::new(NoopMeteringProvider),
+            provider: Arc::new(MeteringStore::default()),
         };
         let mut cumulative = vec![u128::MAX];
         config.account_unthrottled(&TxHash::ZERO, 21_000, &EvmState::default(), &mut cumulative);
@@ -706,9 +702,7 @@ mod tests {
         let config = ResourceMeteringConfig {
             enabled: true,
             schedule: Arc::new(overflowing_schedule()),
-            provider: Arc::new(MapProvider(std::sync::Mutex::new(HashMap::from([(
-                tx_hash, meter,
-            )])))),
+            provider: Arc::new(metering_store(HashMap::from([(tx_hash, meter)]))),
         };
         let (_, decision) = config.check_simulated_usage(&tx_hash, &[]);
         assert_eq!(decision, ResourceThrottlingDecision::CalculationFailed);

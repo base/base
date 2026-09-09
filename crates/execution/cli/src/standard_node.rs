@@ -2,12 +2,12 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
-use base_builder_metering::{
+use base_execution_payload_builder::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
 };
 use base_execution_payload_builder::{
-    NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
-    ResourceMeteringConfig, SharedMeteringProvider,
+    REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache, ResourceMeteringConfig,
+    SharedMeteringStore,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig};
 use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
@@ -547,9 +547,9 @@ impl StandardBaseRethNode {
         launch.base = BaseNode::new(rollup_args.clone());
         let resource_metering_enabled = args.metering.enable_metering
             && args.metering.resource_metering.resource_metering_schedule.is_some();
-        let provider: SharedMeteringProvider = if resource_metering_enabled {
+        let provider: SharedMeteringStore = if resource_metering_enabled {
             // Shared defaults with the Flashblocks builder CLI.
-            let store: SharedMeteringProvider = Arc::new(MeteringStore::new(
+            let store: SharedMeteringStore = Arc::new(MeteringStore::new(
                 true,
                 DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
                 Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
@@ -557,7 +557,7 @@ impl StandardBaseRethNode {
             launch.rpc.metering_store = Some(Arc::clone(&store));
             store
         } else {
-            Arc::new(NoopMeteringProvider)
+            Arc::new(MeteringStore::default())
         };
         let resource_metering = ResourceMeteringConfig::from_parts(
             resource_metering_enabled,

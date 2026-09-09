@@ -2455,7 +2455,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "base-builder-core",
- "base-builder-metering",
  "base-bundles",
  "base-execution-cli",
  "base-node-core",
@@ -2577,17 +2576,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "base-builder-metering"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-builder-core",
- "base-bundles",
- "base-metering",
- "moka",
 ]
 
 [[package]]
@@ -3389,7 +3377,6 @@ dependencies = [
  "alloy-primitives",
  "axum",
  "backon",
- "base-builder-metering",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",

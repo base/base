@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
-use crate::{NoopMeteringProvider, SharedMeteringProvider};
+use crate::{MeteringStore, SharedMeteringStore};
 
 /// Configuration values for the full-block builder.
 #[derive(Clone)]
@@ -37,7 +37,7 @@ pub struct BuilderConfig {
     pub predicate_eval_hard_cutoff: Duration,
 
     /// Resource metering provider
-    pub metering_provider: SharedMeteringProvider,
+    pub metering_provider: SharedMeteringStore,
 
     /// Whether to drop EIP-8130 transactions whose captured authorization
     /// predicates are positively stale before executing them.
@@ -70,7 +70,7 @@ impl Default for BuilderConfig {
             max_gas_per_txn: None,
             max_uncompressed_block_size: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
-            metering_provider: Arc::new(NoopMeteringProvider),
+            metering_provider: Arc::new(MeteringStore::default()),
             manifest_precheck_enabled: true,
         }
     }

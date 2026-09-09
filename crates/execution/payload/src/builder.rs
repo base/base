@@ -43,7 +43,7 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
     BasePayloadBuilderAttributes, BuildArguments, BuildOutcome, BuildOutcomeKind, BuilderMetrics,
-    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
+    CoinbaseTipAffordability, InclusionTracker, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadConfig, PredicateLoadTracker,
     PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
     ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
@@ -242,7 +242,11 @@ where
 {
     pub fn try_build(&self, args: BuildArguments) -> Result<BuildOutcome, PayloadBuilderError> {
         let pool = self.pool.clone();
-        self.build_payload(args, |attrs| ParkableBestPayloadTransactions::new(pool.best_transactions_with_attributes_and_parking(attrs)))
+        self.build_payload(args, |attrs| {
+            ParkableBestPayloadTransactions::new(
+                pool.best_transactions_with_attributes_and_parking(attrs),
+            )
+        })
     }
 
     /// Builds a payload with the sequencer transactions and no pool transactions.
@@ -353,10 +357,7 @@ impl<Txs> Builder<'_, Txs> {
                 RejectionCacheMetrics::insertions().increment(count as u64);
                 RejectionCacheMetrics::size()
                     .set(ctx.builder_config.rejection_cache.entry_count() as f64);
-                MeteringProvider::remove(
-                    ctx.builder_config.resource_metering.provider.as_ref(),
-                    &rejected,
-                );
+                ctx.builder_config.resource_metering.provider.remove(&rejected);
                 evict_permanently_rejected(rejected);
                 info!(
                     target: "payload_builder",
@@ -1384,11 +1385,11 @@ mod tests {
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, BuildOutcomeKind, MeteringProvider,
-        NonParkablePayloadTransactions, NoopMeteringProvider, ParkablePayloadTransactions,
-        PayloadConfig, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, BuildOutcomeKind, MeteringStore,
+        NonParkablePayloadTransactions, ParkablePayloadTransactions, PayloadConfig,
+        ResourceMeteringConfig, ResourceMeteringDimension, ResourceMeteringOperation,
+        ResourceMeteringSchedule, SharedMeteringStore, config::BaseBuilderConfig,
+        payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1885,13 +1886,13 @@ mod tests {
         ));
     }
 
-    #[derive(Debug)]
-    struct MapProvider(Mutex<HashMap<TxHash, MeterBundleResponse>>);
-
-    impl MeteringProvider for MapProvider {
-        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
-            self.0.lock().unwrap().get(tx_hash).cloned()
+    fn metering_store(values: HashMap<TxHash, MeterBundleResponse>) -> MeteringStore {
+        let store = MeteringStore::default();
+        store.set_enabled(true);
+        for (hash, value) in values {
+            store.insert(hash, value);
         }
+        store
     }
 
     struct RecordingTransactions {
@@ -1928,7 +1929,7 @@ mod tests {
 
     fn metering_config(
         schedule: ResourceMeteringSchedule,
-        provider: SharedMeteringProvider,
+        provider: SharedMeteringStore,
     ) -> ResourceMeteringConfig {
         ResourceMeteringConfig {
             enabled: true,
@@ -2031,11 +2032,8 @@ mod tests {
     fn predicted_transaction_scope_exclude_evicts_from_pool() {
         let tx = pool_transaction(0);
         let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                meter_for(tx_hash, 21_000),
-            )]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, meter_for(tx_hash, 21_000))])));
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
         let outcome = pool_scan_outcome(
@@ -2059,7 +2057,7 @@ mod tests {
         let outcome = pool_scan_outcome(
             metering_config(
                 cpu_schedule(1_000_000, Some(100), false),
-                Arc::new(NoopMeteringProvider),
+                Arc::new(MeteringStore::default()),
             ),
             tx,
             Arc::clone(&evicted),
@@ -2080,7 +2078,7 @@ mod tests {
         // Own cost (~21_000) is ≤ block_limit so an omitted transaction limit still
         // classifies the second tx as block-scope after the first fills the budget.
         let outcome = pool_scan_outcomes(
-            metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider)),
+            metering_config(cpu_schedule(30_000, None, false), Arc::new(MeteringStore::default())),
             vec![first, second],
             Arc::clone(&evicted),
             Arc::clone(&invalid),
@@ -2097,10 +2095,10 @@ mod tests {
         let second = pool_transaction(1);
         let first_hash = *first.hash();
         let second_hash = *second.hash();
-        let provider: SharedMeteringProvider = Arc::new(MapProvider(Mutex::new(HashMap::from([
+        let provider: SharedMeteringStore = Arc::new(metering_store(HashMap::from([
             (first_hash, meter_for(first_hash, 21_000)),
             (second_hash, meter_for(second_hash, 21_000)),
-        ]))));
+        ])));
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
         let outcome = pool_scan_outcomes(
@@ -2119,11 +2117,8 @@ mod tests {
     fn dry_run_transaction_scope_does_not_evict() {
         let tx = pool_transaction(0);
         let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                meter_for(tx_hash, 21_000),
-            )]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, meter_for(tx_hash, 21_000))])));
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
         let outcome = pool_scan_outcome(
@@ -2142,11 +2137,8 @@ mod tests {
     fn calculation_failure_does_not_evict() {
         let tx = pool_transaction(0);
         let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                overflowing_meter(tx_hash),
-            )]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, overflowing_meter(tx_hash))])));
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
         let outcome = pool_scan_outcome(
@@ -2177,11 +2169,8 @@ mod tests {
     fn rejected_hash_skipped_on_subsequent_job_even_if_in_pool() {
         let tx = pool_transaction(0);
         let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                meter_for(tx_hash, 21_000),
-            )]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, meter_for(tx_hash, 21_000))])));
         let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
             metering_config(cpu_schedule(1_000_000, Some(100), false), provider);
@@ -2202,7 +2191,7 @@ mod tests {
         ctx.builder_config.rejection_cache = cache;
         ctx.builder_config.resource_metering = metering_config(
             cpu_schedule(1_000_000, Some(100), false),
-            Arc::new(NoopMeteringProvider),
+            Arc::new(MeteringStore::default()),
         );
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
@@ -2220,7 +2209,7 @@ mod tests {
         let second_hash = *second.hash();
         let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
-            metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider));
+            metering_config(cpu_schedule(30_000, None, false), Arc::new(MeteringStore::default()));
         let cache = ctx.builder_config.rejection_cache.clone();
 
         let evicted = Arc::new(Mutex::new(Vec::new()));
@@ -2243,11 +2232,8 @@ mod tests {
     fn dry_run_transaction_scope_is_not_cached() {
         let tx = pool_transaction(0);
         let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                meter_for(tx_hash, 21_000),
-            )]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, meter_for(tx_hash, 21_000))])));
         let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
             metering_config(cpu_schedule(1_000_000, Some(100), true), provider);
@@ -2266,11 +2252,8 @@ mod tests {
     fn calculation_failure_is_not_cached() {
         let tx = pool_transaction(0);
         let tx_hash = *tx.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                tx_hash,
-                overflowing_meter(tx_hash),
-            )]))));
+        let provider: SharedMeteringStore =
+            Arc::new(metering_store(HashMap::from([(tx_hash, overflowing_meter(tx_hash))])));
         let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = metering_config(overflowing_schedule(), provider);
         let cache = ctx.builder_config.rejection_cache.clone();
@@ -2360,11 +2343,10 @@ mod tests {
         let sequencer = pool_transaction(0);
         let mempool = pool_transaction(1);
         let sequencer_hash = *sequencer.hash();
-        let provider: SharedMeteringProvider =
-            Arc::new(MapProvider(Mutex::new(HashMap::from([(
-                sequencer_hash,
-                meter_with_sstore(sequencer_hash, 21_000, 3),
-            )]))));
+        let provider: SharedMeteringStore = Arc::new(metering_store(HashMap::from([(
+            sequencer_hash,
+            meter_with_sstore(sequencer_hash, 21_000, 3),
+        )])));
         let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&sequencer)];
         // Sequencer cost is 21_000 + 3 * 10_000 = 51_000, which exceeds block_limit.
@@ -2403,7 +2385,7 @@ mod tests {
         let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = metering_config(
             cpu_schedule(1_000_000, Some(100), false),
-            Arc::new(NoopMeteringProvider),
+            Arc::new(MeteringStore::default()),
         );
         let provider = test_state_provider();
         let mut db = State::builder().with_database(&provider).with_bundle_update().build();
@@ -2452,7 +2434,7 @@ mod tests {
         let outcome = pool_scan_outcome(
             metering_config(
                 cpu_schedule(1_000_000, Some(1_000_000), false),
-                Arc::new(NoopMeteringProvider),
+                Arc::new(MeteringStore::default()),
             ),
             tx,
             Arc::clone(&evicted),
