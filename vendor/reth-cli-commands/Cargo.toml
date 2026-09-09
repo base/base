@@ -82,7 +82,7 @@ base-execution-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }
@@ -105,14 +105,14 @@ arbitrary = [
     "reth-db/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
-    "base-common-consensus/test-utils",
+    "base-common-types-chain/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
     "reth-trie-common?/test-utils",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "reth-prune-types/arbitrary",
     "reth-stages-types/arbitrary",
     "reth-trie-common?/arbitrary",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "reth-primitives-traits/arbitrary",
 ]

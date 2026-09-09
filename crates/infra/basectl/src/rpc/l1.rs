@@ -6,7 +6,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use base_common_genesis::SystemConfig;
 use base_common_rpc_types::BlockNumberOrTag;
 use futures::StreamExt;

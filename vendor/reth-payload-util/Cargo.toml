@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 base-execution-txpool = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 base-execution-txpool = { workspace = true, features = ["test-utils"] }

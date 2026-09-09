@@ -53,7 +53,7 @@ moka = { workspace = true, features = ["default", "sync"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-execution-trie = { workspace = true, features = ["default"] }

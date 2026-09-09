@@ -45,7 +45,7 @@ tokio = { workspace = true, features = ["default", "rt", "sync", "net", "time", 
 [dev-dependencies]
 hex-literal = { workspace = true }
 async-trait = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 base-common-rpc-types = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["default", "rt", "macros", "test-util"] }

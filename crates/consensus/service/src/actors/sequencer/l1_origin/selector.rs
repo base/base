@@ -541,7 +541,7 @@ mod tests {
     fn prepared(block: BlockInfo) -> PreparedL1Origin {
         PreparedL1Origin {
             hash: block.hash,
-            header: base_common_consensus::Header {
+            header: base_common_types_chain::Header {
                 parent_hash: block.parent_hash,
                 number: block.number,
                 timestamp: block.timestamp,

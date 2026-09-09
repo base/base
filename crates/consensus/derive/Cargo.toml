@@ -23,7 +23,7 @@ serde = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-common-rpc-types-engine = {workspace = true}
 alloy-rlp = { workspace = true, features = ["derive"] }
-base-common-consensus = { workspace = true, features = ["k256"] }
+base-common-types-chain = { workspace = true, features = ["k256"] }
 spin = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"], optional = true }
@@ -44,7 +44,7 @@ alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitr
 default = []
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-rpc-types-engine/serde",

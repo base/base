@@ -13,7 +13,7 @@ use alloy_transport::{
     TransportError, TransportFut,
     layers::{RetryBackoffLayer, RetryPolicy},
 };
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_network::BlockResponse as _;
 use base_common_rpc_types::{Block, Filter, Log};
 

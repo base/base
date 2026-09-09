@@ -4,7 +4,7 @@ use std::{fmt, fmt::Debug, future::Future, time::Instant};
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, B256, TxHash, U256};
-use base_common_consensus::{Transaction, Typed2718};
+use base_common_types_chain::{Transaction, Typed2718};
 use futures_util::future::Either;
 use reth_primitives_traits::{Block, InMemorySize, Recovered, SealedBlock};
 
@@ -456,7 +456,7 @@ impl ValidPoolTransaction {
     /// Converts to this type into the consensus transaction of the pooled transaction.
     ///
     /// Note: this takes `&self` since indented usage is via `Arc<Self>`.
-    pub fn to_consensus(&self) -> Recovered<base_common_consensus::BaseTxEnvelope> {
+    pub fn to_consensus(&self) -> Recovered<base_common_types_chain::BaseTxEnvelope> {
         self.transaction.clone_into_consensus()
     }
 

@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_sol_types::{SolCall, SolValue};
-use base_common_consensus::SignableTransaction;
+use base_common_types_chain::SignableTransaction;
 use base_common_network::{Base, PrivateKeySigner, ReceiptResponse};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,

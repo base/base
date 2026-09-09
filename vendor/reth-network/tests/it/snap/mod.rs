@@ -12,7 +12,7 @@ use alloy_eip7928::{
 use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, Header,
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };

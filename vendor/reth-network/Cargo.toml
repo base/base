@@ -63,7 +63,7 @@ reth-eth-wire-types = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
 
@@ -82,7 +82,7 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-tracing = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-network-types = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-discv4 = { workspace = true, features = ["default", "test-utils"] }
@@ -97,7 +97,7 @@ serde = [
     "reth-dns-discovery/serde",
     "reth-eth-wire/serde",
     "reth-eth-wire-types/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "alloy-trie/serde",

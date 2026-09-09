@@ -3,7 +3,7 @@ use std::{borrow::Cow, sync::OnceLock};
 use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_evm_handler::database::BundleState;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{

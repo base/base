@@ -75,7 +75,7 @@ pub enum BaseInvalidTransactionError {
     /// decoding/serialization purposes, but RPC admission is rejected until the
     /// Zenith fork is active. The txpool validator enforces the same fork gate for
     /// transactions arriving over devp2p.
-    #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
+    #[error("{}", base_common_types_chain::EIP8130_REJECTION_MSG)]
     Eip8130NotAccepted,
     /// An EIP-8130 (account-abstraction) transaction was rejected during its
     /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee, or

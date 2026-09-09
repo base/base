@@ -5,7 +5,7 @@ use alloy_eips::{
 };
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_evm_context::Block;
 use base_evm_handler::DatabaseCommit;
 

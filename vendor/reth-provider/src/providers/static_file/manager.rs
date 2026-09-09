@@ -9,7 +9,7 @@ use std::{
 use alloy_chains::NamedChain;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, Header,
     transaction::{TransactionMeta, TxHashRef},
 };
@@ -1539,7 +1539,7 @@ impl StaticFileProvider {
     {
         match segment {
             StaticFileSegment::Headers => self
-                .ensure_invariants::<_, tables::Headers<base_common_consensus::Header>>(
+                .ensure_invariants::<_, tables::Headers<base_common_types_chain::Header>>(
                     provider,
                     segment,
                     highest_block,
@@ -2544,11 +2544,11 @@ impl HeaderProvider for StaticFileProvider {
     fn header(
         &self,
         block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.find_static_file(StaticFileSegment::Headers, |jar_provider| {
             Ok(jar_provider
                 .cursor()?
-                .get_two::<HeaderWithHashMask<base_common_consensus::Header>>((&block_hash).into())?
+                .get_two::<HeaderWithHashMask<base_common_types_chain::Header>>((&block_hash).into())?
                 .and_then(|(header, hash)| {
                     if hash == block_hash {
                         return Some(header);
@@ -2561,7 +2561,7 @@ impl HeaderProvider for StaticFileProvider {
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.get_segment_provider_for_block(StaticFileSegment::Headers, num, None)
             .and_then(|provider| provider.header_by_number(num))
             .or_else(|err| {
@@ -2576,12 +2576,12 @@ impl HeaderProvider for StaticFileProvider {
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Headers,
             to_range(range),
             |cursor, number| {
-                cursor.get_one::<HeaderMask<base_common_consensus::Header>>(number.into())
+                cursor.get_one::<HeaderMask<base_common_types_chain::Header>>(number.into())
             },
             |_| true,
         )
@@ -2609,7 +2609,7 @@ impl HeaderProvider for StaticFileProvider {
             to_range(range),
             |cursor, number| {
                 Ok(cursor
-                    .get_two::<HeaderWithHashMask<base_common_consensus::Header>>(number.into())?
+                    .get_two::<HeaderWithHashMask<base_common_types_chain::Header>>(number.into())?
                     .map(|(header, hash)| SealedHeader::new(header, hash)))
             },
             predicate,

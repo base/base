@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, Signature};
 use anyhow::Result;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, Header, SignableTransaction, TxDeposit, TxEip1559,
 };
 use base_shadow_indexer_db::{

@@ -13,7 +13,7 @@ use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::B256;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_network::{BlockResponse as _, Network};
 use base_common_rpc_types::{Filter, Log};
 use futures::{Stream, ready};

@@ -4,7 +4,7 @@
 use alloc::string::String;
 
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::Header;
+use base_common_types_chain::Header;
 use base_proof_mpt::{TrieNode, TrieProvider};
 
 /// The [`TrieDBProvider`] trait defines the synchronous interface for fetching EVM bytecode hash

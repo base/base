@@ -153,7 +153,7 @@ where
 mod tests {
     use alloc::vec::Vec;
 
-    use base_common_consensus::BaseBlock as TestBlock;
+    use base_common_types_chain::BaseBlock as TestBlock;
 
     use super::*;
 

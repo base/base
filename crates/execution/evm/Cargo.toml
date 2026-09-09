@@ -34,7 +34,7 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 base-common-chains = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
@@ -48,13 +48,13 @@ alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-genesis = { workspace = true }
 base-execution-chainspec = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["arbitrary", "serde"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 
 [features]
 default = ["metrics", "std"]
 metrics = ["base-common-evm/metrics", "std", "dep:metrics", "dep:reth-metrics"]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "base-common-chains/std",
@@ -90,7 +90,7 @@ witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
 serde = [
     "base-evm-handler/serde",
     "alloy-primitives/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "reth-trie?/serde",
     "reth-primitives-traits/serde",
     "reth-storage-api/serde",

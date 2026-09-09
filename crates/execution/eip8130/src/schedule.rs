@@ -1,7 +1,7 @@
 //! Gas schedule for EIP-8130 intrinsic-gas accounting.
 
 use alloy_primitives::Address;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 
 /// Per-component gas costs for EIP-8130 intrinsic gas.
 ///

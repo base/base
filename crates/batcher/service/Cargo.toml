@@ -32,7 +32,7 @@ derive_more = { workspace = true, features = ["debug"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }

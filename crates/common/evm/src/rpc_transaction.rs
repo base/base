@@ -22,7 +22,7 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for Base
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, address};
-    use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
+    use base_common_types_chain::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
     use base_common_rpc_types::Eip8130AuthScheme;
     use serde_json::json;
 

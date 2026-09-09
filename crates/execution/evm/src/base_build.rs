@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
     constants::EMPTY_WITHDRAWALS, proofs,
 };

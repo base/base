@@ -2,7 +2,7 @@
 //! produced by a verified signature recovery.
 
 use alloy_primitives::{Address, B256, keccak256};
-use base_common_consensus::Eip8130Signed;
+use base_common_types_chain::Eip8130Signed;
 use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey as K256VerifyingKey};
 
 use crate::AuthError;

@@ -86,7 +86,7 @@ mod tests {
 
     use alloy_primitives::{B256, Bytes, U256, address, b256, bloom, bytes, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use base_common_consensus::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH, Header};
+    use base_common_types_chain::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH, Header};
 
     use super::*;
 

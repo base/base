@@ -4,7 +4,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, U256,
     map::{AddressHashMap, HashMap},
 };
-use base_common_consensus::conditional::BlockConditionalAttributes;
+use base_common_types_chain::conditional::BlockConditionalAttributes;
 
 use crate::{Log, TransactionReceipt};
 

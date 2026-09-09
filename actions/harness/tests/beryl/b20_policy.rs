@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::SolCall;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{
     B20PolicyType, B20TokenRole, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };

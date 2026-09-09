@@ -238,7 +238,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_eips::{NumHash, eip1898::BlockWithParent};
-    use base_common_consensus::private::alloy_primitives::B256;
+    use base_common_types_chain::private::alloy_primitives::B256;
     use reth_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
     };

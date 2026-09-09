@@ -1,6 +1,6 @@
 //! Fetch data from the network.
 
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 mod client;
 
 use std::{
@@ -52,10 +52,10 @@ type InflightSnapRequest = Request<(), PeerRequestResult<SnapResponse>>;
 pub struct StateFetcher {
     /// Currently active [`GetBlockHeaders`] requests
     inflight_headers_requests:
-        HashMap<PeerId, InflightHeadersRequest<base_common_consensus::Header>>,
+        HashMap<PeerId, InflightHeadersRequest<base_common_types_chain::Header>>,
     /// Currently active [`GetBlockBodies`] requests
     inflight_bodies_requests:
-        HashMap<PeerId, InflightBodiesRequest<base_common_consensus::BaseBlockBody>>,
+        HashMap<PeerId, InflightBodiesRequest<base_common_types_chain::BaseBlockBody>>,
     /// Currently active [`GetBlockAccessLists`] requests
     inflight_bals_requests: HashMap<PeerId, InflightBlockAccessListsRequest>,
     /// Currently active `GetReceipts` requests
@@ -384,7 +384,7 @@ impl StateFetcher {
     pub(crate) fn on_block_headers_response(
         &mut self,
         peer_id: PeerId,
-        res: RequestResult<Vec<base_common_consensus::Header>>,
+        res: RequestResult<Vec<base_common_types_chain::Header>>,
     ) -> Option<BlockResponseOutcome> {
         let is_error = res.is_err();
         let maybe_reputation_change = res.reputation_change_err();
@@ -420,7 +420,7 @@ impl StateFetcher {
     pub(crate) fn on_block_bodies_response(
         &mut self,
         peer_id: PeerId,
-        res: RequestResult<Vec<base_common_consensus::BaseBlockBody>>,
+        res: RequestResult<Vec<base_common_types_chain::BaseBlockBody>>,
     ) -> Option<BlockResponseOutcome> {
         let is_likely_bad_response = res.as_ref().map_or(true, |bodies| bodies.is_empty());
 
@@ -712,13 +712,13 @@ pub(crate) enum DownloadRequest {
     /// Download the requested headers and send response through channel
     GetBlockHeaders {
         request: HeadersRequest,
-        response: oneshot::Sender<PeerRequestResult<Vec<base_common_consensus::Header>>>,
+        response: oneshot::Sender<PeerRequestResult<Vec<base_common_types_chain::Header>>>,
         priority: Priority,
     },
     /// Download the requested bodies and send response through channel
     GetBlockBodies {
         request: Vec<B256>,
-        response: oneshot::Sender<PeerRequestResult<Vec<base_common_consensus::BaseBlockBody>>>,
+        response: oneshot::Sender<PeerRequestResult<Vec<base_common_types_chain::BaseBlockBody>>>,
         priority: Priority,
         range_hint: Option<RangeInclusive<u64>>,
     },
@@ -853,7 +853,7 @@ mod tests {
     use std::future::poll_fn;
 
     use alloy_primitives::B512;
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use reth_eth_wire::Capability;
     use reth_eth_wire_types::snap::{AccountRangeMessage, GetAccountRangeMessage};
 
@@ -1527,7 +1527,7 @@ mod tests {
     fn insert_inflight_receipts(
         fetcher: &mut StateFetcher,
         peer_id: PeerId,
-    ) -> oneshot::Receiver<PeerRequestResult<ReceiptsResponse<base_common_consensus::BaseReceipt>>>
+    ) -> oneshot::Receiver<PeerRequestResult<ReceiptsResponse<base_common_types_chain::BaseReceipt>>>
     {
         let (tx, rx) = oneshot::channel();
         fetcher.inflight_receipts_requests.insert(peer_id, Request { request: (), response: tx });

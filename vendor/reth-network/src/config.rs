@@ -4,7 +4,7 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;

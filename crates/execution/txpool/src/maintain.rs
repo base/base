@@ -11,7 +11,7 @@ use alloy_primitives::{
     Address, BlockHash, BlockNumber, Bytes,
     map::{AddressSet, HashSet},
 };
-use base_common_consensus::{BaseBlock, BlockHeader, transaction::TxHashRef};
+use base_common_types_chain::{BaseBlock, BlockHeader, transaction::TxHashRef};
 use base_execution_chainspec::ChainSpecProvider;
 use futures_util::{
     FutureExt, Stream, StreamExt,
@@ -602,7 +602,7 @@ where
             tx_backups
                 .into_iter()
                 .filter_map(|backup| {
-                    let tx_signed = base_common_consensus::BaseTxEnvelope::decode_2718_exact(
+                    let tx_signed = base_common_types_chain::BaseTxEnvelope::decode_2718_exact(
                         backup.rlp.as_ref(),
                     )
                     .ok()?;
@@ -614,7 +614,7 @@ where
                 })
                 .collect()
         } else {
-            let txs_signed: Vec<base_common_consensus::BaseTxEnvelope> =
+            let txs_signed: Vec<base_common_types_chain::BaseTxEnvelope> =
                 alloy_rlp::Decodable::decode(&mut data.as_slice())?;
 
             txs_signed
@@ -768,7 +768,7 @@ mod tests {
             "02f87201830655c2808505ef61f08482565f94388c818ca8b9251b393131c08a736a67ccb192978801049e39c4b5b1f580c001a01764ace353514e8abdfb92446de356b260e3c1225b73fc4c8876a6258d12a129a04f02294aa61ca7676061cd99f29275491218b4754b46a0248e5e42bc5091f507"
         );
         let tx =
-            base_common_consensus::BasePooledTransaction::decode_2718(&mut &tx_bytes[..]).unwrap();
+            base_common_types_chain::BasePooledTransaction::decode_2718(&mut &tx_bytes[..]).unwrap();
         let provider = MockEthProvider::default().with_genesis_block();
         let transaction: BasePooledTransaction =
             BasePooledTransaction::from_pooled(tx.try_into_recovered().unwrap());

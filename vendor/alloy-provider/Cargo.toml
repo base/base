@@ -67,7 +67,7 @@ serde = { workspace = true, features = [
     "alloc",
 ] }
 base-common-network = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 base-common-rpc-types = {workspace = true, features = ["serde"]}
 [dev-dependencies]
 reqwest = { workspace = true }
@@ -90,7 +90,7 @@ alloy-transport-http = { workspace = true, features = [
 ] }
 base-common-network = { workspace = true }
 tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }
-base-common-consensus = { workspace = true, features = [
+base-common-types-chain = { workspace = true, features = [
     "kzg",
     "k256",
 ] }

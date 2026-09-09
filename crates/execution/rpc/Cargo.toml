@@ -67,7 +67,7 @@ revm-inspectors = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 reth-execution-types = { workspace = true, features = ["serde"] }
@@ -98,7 +98,7 @@ base-common-rpc-types = { workspace = true, features = [] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-consensus = {workspace = true, features = ["serde"]}
+base-common-types-chain = {workspace = true, features = ["serde"]}
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
 base-execution-chainspec = { workspace = true, features = ["default"] }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
-use base_common_consensus::{TxReceipt, transaction::TxHashRef};
+use base_common_types_chain::{TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{
     BaseBlockResponse, BaseTransactionReceipt, Block, BlockTransactions, Index,
 };
@@ -22,7 +22,7 @@ use crate::BaseEthApi;
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
 /// Result type of the fetched block and its receipts.
 pub type BlockAndReceiptsResult = Result<
-    Option<(Arc<RecoveredBlock>, Arc<Vec<base_common_consensus::BaseReceipt>>)>,
+    Option<(Arc<RecoveredBlock>, Arc<Vec<base_common_types_chain::BaseReceipt>>)>,
     BaseEthApiError,
 >;
 
@@ -180,7 +180,7 @@ impl BaseEthApi {
                 .nth(index.into())
                 .map(|header| {
                     let block =
-                        base_common_consensus::Block::<base_common_consensus::TxEnvelope, _>::uncle(
+                        base_common_types_chain::Block::<base_common_types_chain::TxEnvelope, _>::uncle(
                             header,
                         );
                     let size = block.length();

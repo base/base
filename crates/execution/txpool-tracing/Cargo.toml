@@ -34,7 +34,7 @@ alloy-eips = { workspace = true, features = ["std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types-engine = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["reth", "std"] }
+base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 
 [features]
 default = [ "metrics" ]

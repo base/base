@@ -40,14 +40,14 @@ impl UnsafeBlockSource for ChannelBlockSource {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_common_consensus::BaseBlock;
+    use base_common_types_chain::BaseBlock;
 
     use super::*;
 
     /// Helper to build a minimal [`BaseBlock`] with a given number.
     fn make_block(number: u64) -> BaseBlock {
         BaseBlock {
-            header: base_common_consensus::Header {
+            header: base_common_types_chain::Header {
                 number,
                 parent_hash: B256::ZERO,
                 ..Default::default()

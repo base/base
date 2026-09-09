@@ -7,7 +7,7 @@ use std::{
 
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_rpc_types_engine::ForkchoiceState;
@@ -426,21 +426,21 @@ impl HeaderProvider for BlockchainProvider {
     fn header(
         &self,
         block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.consistent_provider()?.header(block_hash)
     }
 
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.consistent_provider()?.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         self.consistent_provider()?.headers_range(range)
     }
 
@@ -853,7 +853,7 @@ impl StateProviderFactory for BlockchainProvider {
 }
 
 impl CanonChainTracker for BlockchainProvider {
-    type Header = base_common_consensus::Header;
+    type Header = base_common_types_chain::Header;
 
     fn on_forkchoice_update_received(&self, _update: &ForkchoiceState) {
         // update timestamp
@@ -888,7 +888,7 @@ where
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.consistent_provider()?.header_by_number_or_tag(id)
     }
 
@@ -903,7 +903,7 @@ where
         self.consistent_provider()?.sealed_header_by_id(id)
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.consistent_provider()?.header_by_id(id)
     }
 }
@@ -1007,7 +1007,7 @@ mod tests {
 
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
-    use base_common_consensus::{BaseReceipt, constants::EMPTY_ROOT_HASH};
+    use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
     use base_evm_handler::database::{BundleState, OriginalValuesKnown};
     use base_execution_chainspec::BaseChainSpec;
     use itertools::Itertools;

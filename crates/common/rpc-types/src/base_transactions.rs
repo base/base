@@ -1,4 +1,4 @@
-use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
+use base_common_types_chain::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
 
 impl From<BaseTxEnvelope> for crate::TransactionRequest {
     fn from(value: BaseTxEnvelope) -> Self {

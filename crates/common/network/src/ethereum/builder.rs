@@ -1,4 +1,4 @@
-use base_common_consensus::{TxType, TypedTransaction};
+use base_common_types_chain::{TxType, TypedTransaction};
 use base_common_rpc_types::request::TransactionRequest;
 
 use crate::{
@@ -89,7 +89,7 @@ mod tests {
 
     use alloy_eips::eip7702::Authorization;
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U160, U256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BlobTransactionSidecar, SignableTransaction, TxEip1559, TxEnvelope, TxType,
         TypedTransaction, transaction::Recovered,
     };

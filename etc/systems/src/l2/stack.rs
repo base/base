@@ -13,7 +13,7 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
-use base_common_consensus::SignableTransaction;
+use base_common_types_chain::SignableTransaction;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, Ethereum, PrivateKeySigner, TransactionBuilder};
 use base_common_rpc_types::BaseTransactionRequest;

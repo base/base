@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use async_trait::async_trait;
-use base_common_consensus::{Predeploys, TxDeposit};
+use base_common_types_chain::{Predeploys, TxDeposit};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
 use base_consensus_derive::{
@@ -323,7 +323,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
 mod tests {
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, U256};
-    use base_common_consensus::{BaseTxEnvelope, Transaction as _};
+    use base_common_types_chain::{BaseTxEnvelope, Transaction as _};
     use base_common_genesis::{RollupConfig, SystemConfig};
     use base_consensus_derive::AttributesBuilder;
     use base_protocol::{

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use alloy_primitives::B256;
 use alloy_primitives::{Address, B64, Log, U256};
-use base_common_consensus::{Eip658Value, Receipt};
+use base_common_types_chain::{Eip658Value, Receipt};
 
 use crate::{
     RollupConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,

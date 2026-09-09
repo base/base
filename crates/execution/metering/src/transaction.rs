@@ -1,6 +1,6 @@
 use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
-use base_common_consensus::{Transaction, transaction::Recovered};
+use base_common_types_chain::{Transaction, transaction::Recovered};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use derive_more::Display;
 use reth_primitives_traits::Account;
@@ -55,7 +55,7 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, bytes};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTxEnvelope, SignableTransaction, Transaction, TxEip1559, transaction::SignerRecoverable,
     };
     use base_common_evm::BaseUpgrade;

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use base_common_consensus::Header;
+use base_common_types_chain::Header;
 use futures::Stream;
 use reth_storage_api::CanonChainTracker;
 use tokio::time::{Instant, Interval};

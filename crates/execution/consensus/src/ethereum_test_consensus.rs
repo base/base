@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bloom};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, TxReceipt, proofs::calculate_receipt_root,
 };
 use base_execution_chainspec::BaseChainSpec;
@@ -58,7 +58,7 @@ impl EthereumTestConsensus {
 impl EthereumTestConsensus {
     pub fn validate_body_against_header(
         &self,
-        body: &base_common_consensus::BaseBlockBody,
+        body: &base_common_types_chain::BaseBlockBody,
         header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validate_body_against_header(body, header.header())

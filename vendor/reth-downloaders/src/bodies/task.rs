@@ -36,7 +36,7 @@ impl TaskDownloader {
     /// that's connected to that task.
     pub fn spawn_with<T>(downloader: T, runtime: &Runtime) -> Self
     where
-        T: BodyDownloader<Block = base_common_consensus::BaseBlock> + 'static,
+        T: BodyDownloader<Block = base_common_types_chain::BaseBlock> + 'static,
     {
         let (bodies_tx, bodies_rx) = mpsc::channel(BODIES_TASK_BUFFER_SIZE);
         let (to_downloader, updates_rx) = mpsc::unbounded_channel();
@@ -54,7 +54,7 @@ impl TaskDownloader {
 }
 
 impl BodyDownloader for TaskDownloader {
-    type Block = base_common_consensus::BaseBlock;
+    type Block = base_common_types_chain::BaseBlock;
 
     fn set_download_range(&mut self, range: RangeInclusive<BlockNumber>) -> DownloadResult<()> {
         let _ = self.to_downloader.send(range);

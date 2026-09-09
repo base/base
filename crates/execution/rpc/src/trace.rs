@@ -7,7 +7,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use async_trait::async_trait;
-use base_common_consensus::BlockHeader as _;
+use base_common_types_chain::BlockHeader as _;
 use base_common_rpc_types::{
     BaseTransactionRequest, BlockOpcodeGas, BlockOverrides, Index, LocalizedTransactionTrace,
     TraceCallRequest, TraceFilter, TraceResults, TraceResultsWithTransactionHash, TraceType,

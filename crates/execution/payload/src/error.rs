@@ -4,7 +4,7 @@
 #[derive(Debug, thiserror::Error)]
 pub enum BasePayloadBuilderError {
     /// Thrown when a transaction fails to convert to a
-    /// [`base_common_consensus::transaction::Recovered`].
+    /// [`base_common_types_chain::transaction::Recovered`].
     #[error("failed to convert deposit transaction to RecoveredTx")]
     TransactionEcRecoverFailed,
     /// Thrown when the L1 block info could not be parsed from the calldata of the

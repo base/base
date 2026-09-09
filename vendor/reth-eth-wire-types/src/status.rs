@@ -477,7 +477,7 @@ mod tests {
     use alloy_hardforks::{ForkCondition, ForkHash, ForkId, Head};
     use alloy_primitives::{B256, U256, b256, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use base_common_consensus::constants::MAINNET_GENESIS_HASH;
+    use base_common_types_chain::constants::MAINNET_GENESIS_HASH;
     use rand::Rng;
 
     use crate::{BlockRangeUpdate, EthVersion, Status, StatusEth69, StatusMessage, UnifiedStatus};

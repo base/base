@@ -5,7 +5,7 @@ use alloy_primitives::{
     map::AddressHashMap,
 };
 // re-export account type for `eth_getAccount`
-pub use base_common_consensus::TrieAccount as Account;
+pub use base_common_types_chain::TrieAccount as Account;
 
 /// Account information.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -90,12 +90,12 @@ pub struct EIP1186AccountProofResponse {
 
 impl EIP1186AccountProofResponse {
     /// After `SpuriousDragon` empty account is defined as account with nonce == 0 && balance == 0
-    /// && bytecode = None (or hash is [`KECCAK_EMPTY`](base_common_consensus::constants::KECCAK_EMPTY)).
+    /// && bytecode = None (or hash is [`KECCAK_EMPTY`](base_common_types_chain::constants::KECCAK_EMPTY)).
     pub fn is_empty(&self) -> bool {
         self.nonce == 0
             && self.balance.is_zero()
-            && self.storage_hash == base_common_consensus::constants::EMPTY_ROOT_HASH
-            && self.code_hash == base_common_consensus::constants::KECCAK_EMPTY
+            && self.storage_hash == base_common_types_chain::constants::EMPTY_ROOT_HASH
+            && self.code_hash == base_common_types_chain::constants::KECCAK_EMPTY
     }
 }
 

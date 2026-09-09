@@ -847,7 +847,7 @@ impl Filter {
         removed: bool,
     ) where
         I: IntoIterator<Item = (B256, &'a R)>,
-        R: base_common_consensus::TxReceipt<Log = alloy_primitives::Log> + 'a,
+        R: base_common_types_chain::TxReceipt<Log = alloy_primitives::Log> + 'a,
     {
         // Early return if block doesn't match filter
         if !self.matches_block(&block_num_hash) {
@@ -898,7 +898,7 @@ impl Filter {
     ) -> Vec<crate::Log>
     where
         I: IntoIterator<Item = (B256, &'a R)>,
-        R: base_common_consensus::TxReceipt<Log = alloy_primitives::Log> + 'a,
+        R: base_common_types_chain::TxReceipt<Log = alloy_primitives::Log> + 'a,
     {
         let mut logs = Vec::new();
         self.append_matching_block_logs(
@@ -920,7 +920,7 @@ impl Filter {
     ///
     /// ```no_run
     /// # use base_common_rpc_types::Filter;
-    /// # use base_common_consensus::Receipt;
+    /// # use base_common_types_chain::Receipt;
     /// # use alloy_primitives::{Address, Log, B256};
     /// # fn example(receipts: Vec<Vec<Receipt>>) {
     /// let filter = Filter::new()
@@ -934,7 +934,7 @@ impl Filter {
     where
         I: IntoIterator,
         I::Item: IntoIterator<Item = R>,
-        R: base_common_consensus::TxReceipt<Log = alloy_primitives::Log>,
+        R: base_common_types_chain::TxReceipt<Log = alloy_primitives::Log>,
     {
         FilterReceiptsIter {
             filter: self,
@@ -1525,7 +1525,7 @@ pub struct FilterReceiptsIter<'a, I, R>
 where
     I: Iterator,
     I::Item: IntoIterator<Item = R>,
-    R: base_common_consensus::TxReceipt<Log = alloy_primitives::Log>,
+    R: base_common_types_chain::TxReceipt<Log = alloy_primitives::Log>,
 {
     filter: &'a Filter,
     blocks_iter: I,
@@ -1537,7 +1537,7 @@ impl<'a, I, R> core::fmt::Debug for FilterReceiptsIter<'a, I, R>
 where
     I: Iterator,
     I::Item: IntoIterator<Item = R>,
-    R: base_common_consensus::TxReceipt<Log = alloy_primitives::Log>,
+    R: base_common_types_chain::TxReceipt<Log = alloy_primitives::Log>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FilterReceiptsIter")
@@ -1552,7 +1552,7 @@ impl<'a, I, R> Iterator for FilterReceiptsIter<'a, I, R>
 where
     I: Iterator,
     I::Item: IntoIterator<Item = R>,
-    R: base_common_consensus::TxReceipt<Log = alloy_primitives::Log>,
+    R: base_common_types_chain::TxReceipt<Log = alloy_primitives::Log>,
 {
     type Item = alloy_primitives::Log;
 
@@ -2217,7 +2217,7 @@ mod tests {
     #[test]
     fn test_append_matching_block_logs() {
         use alloy_primitives::Bytes;
-        use base_common_consensus::Receipt;
+        use base_common_types_chain::Receipt;
 
         // Create test addresses and topics
         let addr1 = Address::from([0x11; 20]);
@@ -2227,7 +2227,7 @@ mod tests {
 
         // Create test receipts with logs
         let receipt1 = Receipt {
-            status: base_common_consensus::Eip658Value::Eip658(true),
+            status: base_common_types_chain::Eip658Value::Eip658(true),
             cumulative_gas_used: 100000,
             logs: vec![
                 alloy_primitives::Log {
@@ -2242,7 +2242,7 @@ mod tests {
         };
 
         let receipt2 = Receipt {
-            status: base_common_consensus::Eip658Value::Eip658(true),
+            status: base_common_types_chain::Eip658Value::Eip658(true),
             cumulative_gas_used: 200000,
             logs: vec![alloy_primitives::Log {
                 address: addr1,
@@ -2368,7 +2368,7 @@ mod tests {
     #[test]
     fn test_filter_receipts_iterator() {
         use alloy_primitives::Bytes;
-        use base_common_consensus::Receipt;
+        use base_common_types_chain::Receipt;
 
         // Create test addresses and topics
         let addr1 = Address::from([0x11; 20]);
@@ -2379,7 +2379,7 @@ mod tests {
         // Create test receipts for block 1
         let block1_receipts = vec![
             Receipt {
-                status: base_common_consensus::Eip658Value::Eip658(true),
+                status: base_common_types_chain::Eip658Value::Eip658(true),
                 cumulative_gas_used: 100000,
                 logs: vec![
                     alloy_primitives::Log {
@@ -2393,7 +2393,7 @@ mod tests {
                 ],
             },
             Receipt {
-                status: base_common_consensus::Eip658Value::Eip658(true),
+                status: base_common_types_chain::Eip658Value::Eip658(true),
                 cumulative_gas_used: 200000,
                 logs: vec![alloy_primitives::Log {
                     address: addr1,
@@ -2404,7 +2404,7 @@ mod tests {
 
         // Create test receipts for block 2
         let block2_receipts = vec![Receipt {
-            status: base_common_consensus::Eip658Value::Eip658(true),
+            status: base_common_types_chain::Eip658Value::Eip658(true),
             cumulative_gas_used: 300000,
             logs: vec![
                 alloy_primitives::Log {

@@ -226,7 +226,7 @@ mod tests {
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use futures::poll;
     use reth_network_p2p::test_utils::TestFullBlockClient;

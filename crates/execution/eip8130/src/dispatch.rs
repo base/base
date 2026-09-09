@@ -3,7 +3,7 @@
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_sol_types::{SolValue, sol};
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use p256::ecdsa::{
     Signature as P256Signature, VerifyingKey as P256VerifyingKey,

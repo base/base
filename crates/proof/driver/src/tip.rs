@@ -4,7 +4,7 @@
 //! including block information, header, and output root for a specific derivation tip.
 
 use alloy_primitives::B256;
-use base_common_consensus::{Header, Sealed};
+use base_common_types_chain::{Header, Sealed};
 use base_protocol::L2BlockInfo;
 
 /// A cursor that encapsulates the L2 safe head state at a specific derivation tip.

@@ -39,7 +39,7 @@ serde = { workspace = true, features = [
     "derive",
     "alloc",
 ], optional = true }
-base-common-consensus = { workspace = true, features = ["serde"] }
+base-common-types-chain = { workspace = true, features = ["serde"] }
 [lints]
 workspace = true
 
@@ -47,13 +47,13 @@ workspace = true
 default = ["std"]
 serde = [
     "dep:serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
 ]
 std = [
     "alloy-primitives/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-serde/std",
     "serde/std",

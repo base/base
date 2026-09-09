@@ -1,4 +1,4 @@
-use base_common_consensus::{BaseReceipt, TxReceipt};
+use base_common_types_chain::{BaseReceipt, TxReceipt};
 use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider};
 use reth_prune_types::{
@@ -229,7 +229,7 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
-    use base_common_consensus::BaseReceipt;
+    use base_common_types_chain::BaseReceipt;
     use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
     use reth_primitives_traits::InMemorySize;
     use reth_provider::{BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
@@ -290,13 +290,13 @@ mod tests {
         db.insert_receipts(receipts).expect("insert receipts");
 
         assert_eq!(
-            db.table::<tables::Transactions<base_common_consensus::BaseTxEnvelope>>()
+            db.table::<tables::Transactions<base_common_types_chain::BaseTxEnvelope>>()
                 .unwrap()
                 .len(),
             blocks.iter().map(|block| block.transaction_count()).sum::<usize>()
         );
         assert_eq!(
-            db.table::<tables::Transactions<base_common_consensus::BaseTxEnvelope>>()
+            db.table::<tables::Transactions<base_common_types_chain::BaseTxEnvelope>>()
                 .unwrap()
                 .len(),
             db.table::<tables::Receipts<BaseReceipt>>().unwrap().len()

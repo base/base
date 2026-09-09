@@ -148,7 +148,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
     use alloy_primitives::{B256, Signature};
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit, proofs::calculate_transaction_root};
+    use base_common_types_chain::{BaseTxEnvelope, TxDeposit, proofs::calculate_transaction_root};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV2, ExecutionPayloadV3,

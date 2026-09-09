@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_eips::{eip2718::WithEncoded, eip7685::Requests};
-use base_common_consensus::transaction::Recovered;
+use base_common_types_chain::transaction::Recovered;
 use base_evm_context::{ResultAndState, either::Either};
 use base_evm_handler::Inspector;
 use base_evm_handler::NoOpInspector;
@@ -202,7 +202,7 @@ pub trait BlockExecutor {
     ///
     /// This represents the consensus transaction type that the block executor operates on.
     /// It's typically a type from the consensus layer (e.g.,
-    /// [`EthereumTxEnvelope`](base_common_consensus::EthereumTxEnvelope)) that contains
+    /// [`EthereumTxEnvelope`](base_common_types_chain::EthereumTxEnvelope)) that contains
     /// the raw transaction data, signature, and other consensus-level information.
     ///
     /// This type is used in several contexts:
@@ -213,14 +213,14 @@ pub trait BlockExecutor {
     ///
     /// The transaction flow is:
     /// 1. `Self::Transaction` (consensus tx) →
-    ///    [`Recovered<Self::Transaction>`](base_common_consensus::transaction::Recovered) (with sender)
-    /// 2. [`Recovered<Self::Transaction>`](base_common_consensus::transaction::Recovered) →
+    ///    [`Recovered<Self::Transaction>`](base_common_types_chain::transaction::Recovered) (with sender)
+    /// 2. [`Recovered<Self::Transaction>`](base_common_types_chain::transaction::Recovered) →
     ///    [`TxEnv`](base_evm_context::TxEnv) (via [`FromRecoveredTx`])
     /// 3. [`TxEnv`](base_evm_context::TxEnv) → EVM execution → [`Self::Result`](BlockExecutor::Result)
     /// 4. [`Self::Result`](BlockExecutor::Result) + `Self::Transaction` → `Self::Receipt`
     ///
     /// Common examples:
-    /// - [`EthereumTxEnvelope`](base_common_consensus::EthereumTxEnvelope) for all Ethereum transaction
+    /// - [`EthereumTxEnvelope`](base_common_types_chain::EthereumTxEnvelope) for all Ethereum transaction
     ///   variants
     /// - `OpTxEnvelope` for opstack transaction variants
     type Transaction;

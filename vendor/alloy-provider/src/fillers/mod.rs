@@ -371,7 +371,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// # use base_common_consensus::{TypedTransaction, SignableTransaction};
+    /// # use base_common_types_chain::{TypedTransaction, SignableTransaction};
     /// # use alloy_primitives::{Address, U256};
     /// # use alloy_provider::{Provider, ProviderBuilder};
     /// # use base_common_rpc_types::TransactionRequest;
@@ -510,7 +510,7 @@ where
     fn get_account(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, base_common_consensus::TrieAccount> {
+    ) -> RpcWithBlock<Address, base_common_types_chain::TrieAccount> {
         self.inner.get_account(address)
     }
 

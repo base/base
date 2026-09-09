@@ -5,7 +5,7 @@ use core::fmt::Debug;
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
+use base_common_types_chain::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
 };
@@ -173,7 +173,7 @@ impl BaseEvmConfig {
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
             let tx =
-                base_common_consensus::decode_2718_canonical::<BaseTxEnvelope>(encoded.as_ref())
+                base_common_types_chain::decode_2718_canonical::<BaseTxEnvelope>(encoded.as_ref())
                     .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
@@ -210,7 +210,7 @@ impl BaseEvmConfig {
     pub fn evm_for_block<DB: Database>(
         &self,
         db: DB,
-        header: &base_common_consensus::Header,
+        header: &base_common_types_chain::Header,
     ) -> Result<EvmFor<DB>, EIP1559ParamError> {
         let evm_env = self.evm_env(header)?;
         Ok(self.evm_with_env(db, evm_env))
@@ -391,7 +391,7 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_consensus::{BaseBlock, BaseReceipt, Header, Receipt};
+    use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::{BlockEnv, CfgEnv};

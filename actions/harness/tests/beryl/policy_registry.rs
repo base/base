@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use alloy_sol_types::{SolCall, SolEvent};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxReceipt};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxReceipt};
 use base_common_precompiles::{IPolicyRegistry, PolicyRegistryStorage};
 
 use crate::env::BerylTestEnv;

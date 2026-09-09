@@ -38,7 +38,7 @@ base-common-rpc-types = { workspace = true, features = []}
 base-proof-client = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["std"]}
+base-common-types-chain = { workspace = true, features = ["std"]}
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }

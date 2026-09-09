@@ -12,7 +12,7 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
     map::{AddressSet, B256Map, HashMap, hash_map},
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, TxReceipt,
     transaction::{SignerRecoverable, TransactionMeta},
 };
@@ -1045,11 +1045,11 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         construct_block: BF,
     ) -> ProviderResult<Option<B>>
     where
-        H: AsRef<base_common_consensus::Header>,
+        H: AsRef<base_common_types_chain::Header>,
         HF: FnOnce(BlockNumber) -> ProviderResult<Option<H>>,
         BF: FnOnce(
             H,
-            base_common_consensus::BlockBody<BaseTxEnvelope>,
+            base_common_types_chain::BlockBody<BaseTxEnvelope>,
             Vec<Address>,
         ) -> ProviderResult<Option<B>>,
     {
@@ -1124,11 +1124,11 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         mut assemble_block: F,
     ) -> ProviderResult<Vec<R>>
     where
-        H: AsRef<base_common_consensus::Header>,
+        H: AsRef<base_common_types_chain::Header>,
         HF: FnOnce(RangeInclusive<BlockNumber>) -> ProviderResult<Vec<H>>,
         F: FnMut(
             H,
-            base_common_consensus::BlockBody<BaseTxEnvelope>,
+            base_common_types_chain::BlockBody<BaseTxEnvelope>,
             Range<TxNumber>,
         ) -> ProviderResult<R>,
     {
@@ -1190,11 +1190,11 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         assemble_block: BF,
     ) -> ProviderResult<Vec<B>>
     where
-        H: AsRef<base_common_consensus::Header>,
+        H: AsRef<base_common_types_chain::Header>,
         HF: Fn(RangeInclusive<BlockNumber>) -> ProviderResult<Vec<H>>,
         BF: Fn(
             H,
-            base_common_consensus::BlockBody<BaseTxEnvelope>,
+            base_common_types_chain::BlockBody<BaseTxEnvelope>,
             Vec<Address>,
         ) -> ProviderResult<B>,
     {
@@ -1497,7 +1497,7 @@ impl<Tx: DbTx + 'static> StateReader for DatabaseProvider<Tx> {
 }
 
 impl<TX: DbTx + 'static> HeaderSyncGapProvider for DatabaseProvider<TX> {
-    type Header = base_common_consensus::Header;
+    type Header = base_common_types_chain::Header;
 
     fn local_tip_header(
         &self,
@@ -1543,7 +1543,7 @@ impl<TX: DbTx + 'static> HeaderProvider for DatabaseProvider<TX> {
     fn header(
         &self,
         block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         if let Some(num) = self.block_number(block_hash)? {
             Ok(self.header_by_number(num)?)
         } else {
@@ -1554,14 +1554,14 @@ impl<TX: DbTx + 'static> HeaderProvider for DatabaseProvider<TX> {
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.static_file_provider.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         self.static_file_provider.headers_range(range)
     }
 
@@ -3091,7 +3091,7 @@ impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
 
     fn append_block_bodies(
         &self,
-        bodies: Vec<(BlockNumber, Option<&base_common_consensus::BlockBody<BaseTxEnvelope>>)>,
+        bodies: Vec<(BlockNumber, Option<&base_common_types_chain::BlockBody<BaseTxEnvelope>>)>,
     ) -> ProviderResult<()> {
         let Some(from_block) = bodies.first().map(|(block, _)| *block) else { return Ok(()) };
 
@@ -3520,7 +3520,7 @@ mod tests {
 
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use base_evm_handler::{database::BundleState, state::AccountInfo};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_chain_state::ExecutedBlock;
@@ -3604,7 +3604,7 @@ mod tests {
         let start = 10u64;
         let end = 9u64;
         let result = provider.receipts_by_block_range(start..=end).unwrap();
-        assert_eq!(result, Vec::<Vec<base_common_consensus::BaseReceipt>>::new());
+        assert_eq!(result, Vec::<Vec<base_common_types_chain::BaseReceipt>>::new());
     }
 
     #[test]
@@ -4450,9 +4450,9 @@ mod tests {
         {
             let sf = factory.static_file_provider();
             let mut hw = sf.latest_writer(StaticFileSegment::Headers).unwrap();
-            let h0 = base_common_consensus::Header { number: 0, ..Default::default() };
+            let h0 = base_common_types_chain::Header { number: 0, ..Default::default() };
             hw.append_header(&h0, &B256::ZERO).unwrap();
-            let h1 = base_common_consensus::Header { number: 1, ..Default::default() };
+            let h1 = base_common_types_chain::Header { number: 1, ..Default::default() };
             hw.append_header(&h1, &B256::ZERO).unwrap();
             hw.commit().unwrap();
 
@@ -4773,9 +4773,9 @@ mod tests {
         {
             let sf = factory.static_file_provider();
             let mut hw = sf.latest_writer(StaticFileSegment::Headers).unwrap();
-            let h0 = base_common_consensus::Header { number: 0, ..Default::default() };
+            let h0 = base_common_types_chain::Header { number: 0, ..Default::default() };
             hw.append_header(&h0, &B256::ZERO).unwrap();
-            let h1 = base_common_consensus::Header { number: 1, ..Default::default() };
+            let h1 = base_common_types_chain::Header { number: 1, ..Default::default() };
             hw.append_header(&h1, &B256::ZERO).unwrap();
             hw.commit().unwrap();
 

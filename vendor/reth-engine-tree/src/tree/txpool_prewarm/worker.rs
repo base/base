@@ -317,7 +317,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, Signature, TxKind, U256};
-    use base_common_consensus::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
+    use base_common_types_chain::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
     use reth_provider::test_utils::MockEthProvider;

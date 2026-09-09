@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::{BlockInfo, ChannelId, Frame};
 
 use crate::{

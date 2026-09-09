@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
 use async_trait::async_trait;
-use base_common_consensus::{SignableTransaction, TxEnvelope};
+use base_common_types_chain::{SignableTransaction, TxEnvelope};
 use base_common_rpc_types::TransactionRequest;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
@@ -179,7 +179,7 @@ mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::U256;
     use alloy_signer::SignerSync;
-    use base_common_consensus::{TxEip1559, TxLegacy};
+    use base_common_types_chain::{TxEip1559, TxLegacy};
 
     use super::*;
     use crate::{EthereumWallet, PrivateKeySigner};

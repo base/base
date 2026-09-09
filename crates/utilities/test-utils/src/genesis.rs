@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, U256, utils::parse_ether};
-use base_common_consensus::Predeploys;
+use base_common_types_chain::Predeploys;
 use base_common_evm::BaseTime;
 
 use crate::Account;

@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, EthereumTxEnvelope, ReceiptWithBloom,
     TxEip4844,
 };
@@ -34,7 +34,7 @@ use crate::types::{BlockAccessLists, Receipts69, Receipts70};
 /// Internal form of a `NewBlock` message
 #[derive(Debug, Clone)]
 pub struct NewBlockMessage<
-    P = NewBlock<base_common_consensus::Block<EthereumTxEnvelope<TxEip4844>>>,
+    P = NewBlock<base_common_types_chain::Block<EthereumTxEnvelope<TxEip4844>>>,
 > {
     /// Hash of the block
     pub hash: B256,
@@ -156,19 +156,19 @@ pub enum PeerResponse {
     /// Represents a response to a request for block headers.
     BlockHeaders {
         /// The receiver channel for the response to a block headers request.
-        response: oneshot::Receiver<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
+        response: oneshot::Receiver<RequestResult<BlockHeaders<base_common_types_chain::Header>>>,
     },
     /// Represents a response to a request for block bodies.
     BlockBodies {
         /// The receiver channel for the response to a block bodies request.
         response:
-            oneshot::Receiver<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
+            oneshot::Receiver<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
     },
     /// Represents a response to a request for pooled transactions.
     PooledTransactions {
         /// The receiver channel for the response to a pooled transactions request.
         response: oneshot::Receiver<
-            RequestResult<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+            RequestResult<PooledTransactions<base_common_types_chain::BasePooledTransaction>>,
         >,
     },
     /// Represents a response to a request for `NodeData`.
@@ -271,11 +271,11 @@ impl PeerResponse {
 #[derive(Debug)]
 pub enum PeerResponseResult {
     /// Represents a result containing block headers or an error.
-    BlockHeaders(RequestResult<Vec<base_common_consensus::Header>>),
+    BlockHeaders(RequestResult<Vec<base_common_types_chain::Header>>),
     /// Represents a result containing block bodies or an error.
-    BlockBodies(RequestResult<Vec<base_common_consensus::BaseBlockBody>>),
+    BlockBodies(RequestResult<Vec<base_common_types_chain::BaseBlockBody>>),
     /// Represents a result containing pooled transactions or an error.
-    PooledTransactions(RequestResult<Vec<base_common_consensus::BasePooledTransaction>>),
+    PooledTransactions(RequestResult<Vec<base_common_types_chain::BasePooledTransaction>>),
     /// Represents a result containing node data or an error.
     NodeData(RequestResult<Vec<Bytes>>),
     /// Represents a result containing receipts or an error.

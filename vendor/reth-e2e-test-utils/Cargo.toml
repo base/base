@@ -57,4 +57,4 @@ alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["reth", "kzg", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "kzg", "serde"] }

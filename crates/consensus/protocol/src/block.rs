@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, Block, Transaction};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope, Block, Transaction};
 use base_common_genesis::ChainGenesis;
 use base_common_rpc_types::Block as RpcBlock;
 use base_common_rpc_types_engine::{
@@ -244,7 +244,7 @@ mod tests {
     use alloc::{string::ToString, vec};
 
     use alloy_primitives::b256;
-    use base_common_consensus::{BaseBlock, Header, TxEnvelope};
+    use base_common_types_chain::{BaseBlock, Header, TxEnvelope};
 
     use super::*;
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
@@ -254,7 +254,7 @@ mod tests {
         let block: base_common_rpc_types::Block<BaseTxEnvelope> = base_common_rpc_types::Block {
             header: base_common_rpc_types::Header {
                 hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
-                inner: base_common_consensus::Header {
+                inner: base_common_types_chain::Header {
                     number: 1,
                     parent_hash: b256!(
                         "0202020202020202020202020202020202020202020202020202020202020202"
@@ -284,9 +284,9 @@ mod tests {
             ..Default::default()
         };
         let tx_env = base_common_rpc_types::Transaction {
-            inner: base_common_consensus::transaction::Recovered::new_unchecked(
-                base_common_consensus::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
-                    base_common_consensus::TxDeposit {
+            inner: base_common_types_chain::transaction::Recovered::new_unchecked(
+                base_common_types_chain::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    base_common_types_chain::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
                         ..Default::default()
                     },
@@ -303,7 +303,7 @@ mod tests {
             base_common_rpc_types::Block {
                 header: base_common_rpc_types::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
-                    inner: base_common_consensus::Header {
+                    inner: base_common_types_chain::Header {
                         number: 3,
                         parent_hash: b256!(
                             "0202020202020202020202020202020202020202020202020202020202020202"

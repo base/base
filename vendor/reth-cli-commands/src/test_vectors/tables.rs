@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use alloy_primitives::{B256, hex};
 use arbitrary::Arbitrary;
-use base_common_consensus::{EthereumTxEnvelope, Header, TxEip4844};
+use base_common_types_chain::{EthereumTxEnvelope, Header, TxEip4844};
 use eyre::Result;
 use proptest::{
     prelude::ProptestConfig,

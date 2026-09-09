@@ -20,7 +20,7 @@ The split is now internal module structure instead of independent workspace crat
 
 The canonical authenticators (P-256, `WebAuthn`, Delegate; native secp256k1 ecrecover for
 k1) are **enshrined** here as native Rust implementations keyed by their canonical
-CREATE2 addresses (from `base-common-consensus::Eip8130Contracts`). This is the
+CREATE2 addresses (from `base-common-types-chain::Eip8130Contracts`). This is the
 protocol's own fast-path for authenticating AA transactions during validation and block
 execution; the EIP explicitly permits enshrining canonical authenticators at a fixed gas
 cost provided results are identical to the deployed contract.

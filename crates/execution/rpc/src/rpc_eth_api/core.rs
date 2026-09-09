@@ -6,7 +6,7 @@ use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2930::AccessListResult};
 use alloy_primitives::{Address, B64, B256, Bytes, U64, U256};
 use alloy_serde::JsonStorageKey;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_types_chain::BaseTxEnvelope;
 use base_common_rpc_types::{
     BaseBlockResponse, BaseTransactionReceipt, BaseTransactionRequest, BlockOverrides, Bundle,
     EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext,

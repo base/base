@@ -3,7 +3,7 @@ use std::{fs::File, io::BufReader};
 use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{B256, Signature, TxKind, hex};
 use arbitrary::Arbitrary;
-use base_common_consensus::{
+use base_common_types_chain::{
     EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, TxEip4844, TxType,
     alloy::{
         authorization_list::Authorization,
@@ -74,13 +74,13 @@ macro_rules! compact_types {
 }
 
 // The type that **actually** implements `Compact` should go here. If it's an alloy type, import the
-// auxiliary type from base_common_consensus::alloy instead.
+// auxiliary type from base_common_types_chain::alloy instead.
 compact_types!(
     regular: [
         // reth-primitives
         Account,
         Receipt,
-        // base_common_consensus::alloy
+        // base_common_types_chain::alloy
         Authorization,
         GenesisAccount,
         Header,
@@ -194,7 +194,7 @@ pub fn read_vectors_with(read: &[fn() -> eyre::Result<()>]) -> Result<()> {
 /// Generates test vectors for a specific type `T`.
 pub fn generate_vector<T>(runner: &mut TestRunner) -> Result<()>
 where
-    T: for<'a> Arbitrary<'a> + base_common_consensus::Compact,
+    T: for<'a> Arbitrary<'a> + base_common_types_chain::Compact,
 {
     let type_name = type_name::<T>();
     print!("{}", type_name);
@@ -247,7 +247,7 @@ where
 /// using `T::from_compact`.
 pub fn read_vector<T>() -> Result<()>
 where
-    T: base_common_consensus::Compact,
+    T: base_common_types_chain::Compact,
 {
     let type_name = type_name::<T>();
     print!("{}", type_name);
@@ -286,10 +286,10 @@ pub fn type_name<T>() -> String {
     // With alloy type transition <https://github.com/paradigmxyz/reth/pull/15768> the types are renamed, we map them here to the original name so that test vector files remain consistent
     let name = std::any::type_name::<T>();
     match name {
-        "base_common_consensus::transaction::envelope::EthereumTypedTransaction<base_common_consensus::transaction::eip4844::TxEip4844>" => {
+        "base_common_types_chain::transaction::envelope::EthereumTypedTransaction<base_common_types_chain::transaction::eip4844::TxEip4844>" => {
             "EthereumTypedTransaction::<TxEip4844>".to_string()
         }
-        "base_common_consensus::transaction::envelope::EthereumTxEnvelope<base_common_consensus::transaction::eip4844::TxEip4844>" => {
+        "base_common_types_chain::transaction::envelope::EthereumTxEnvelope<base_common_types_chain::transaction::eip4844::TxEip4844>" => {
             "EthereumTxEnvelope::<TxEip4844>".to_string()
         }
         name => name.split("::").last().unwrap_or(std::any::type_name::<T>()).to_string(),

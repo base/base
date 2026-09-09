@@ -11,7 +11,7 @@ use std::{
 };
 
 use alloy_primitives::{TxHash, U256};
-use base_common_consensus::{CoinbaseTip, Transaction};
+use base_common_types_chain::{CoinbaseTip, Transaction};
 use base_execution_txpool::{Priority, ValidPoolTransaction};
 
 /// Complete priority key used when merging best-transaction sources.
@@ -198,7 +198,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_sol_types::SolCall;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
         Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
     };

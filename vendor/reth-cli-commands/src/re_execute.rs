@@ -11,7 +11,7 @@ use std::{
 
 use crate::ChainSpecParser;
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::{BlockHeader, TxReceipt};
+use base_common_types_chain::{BlockHeader, TxReceipt};
 use base_evm_handler::database::{AccountInfoRevert, BundleState, RevertToSlot};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::Executor;

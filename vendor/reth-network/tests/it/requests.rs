@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
-use base_common_consensus::{BaseBlock as Block, Header};
+use base_common_types_chain::{BaseBlock as Block, Header};
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDirection};
@@ -326,12 +326,12 @@ async fn test_eth68_get_receipts() {
 
         // Create some test receipts
         let receipts = vec![
-            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 cumulative_gas_used: 21000,
                 status: true.into(),
                 ..Default::default()
             }),
-            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 cumulative_gas_used: 42000,
                 status: false.into(),
                 ..Default::default()
@@ -500,12 +500,12 @@ async fn test_eth69_get_receipts() {
 
         // Create some test receipts
         let receipts = vec![
-            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 cumulative_gas_used: 21000,
                 status: true.into(),
                 ..Default::default()
             }),
-            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 cumulative_gas_used: 42000,
                 status: false.into(),
                 ..Default::default()

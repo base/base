@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use base_builder_core::BuilderApiConfig;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
 };
 use base_common_network::TransactionBuilder;

@@ -110,7 +110,7 @@ system-config updates, gas updates, and operator-fee updates; those helpers
 wrap each log in a signed transaction and attach the log to that
 transaction's receipt.
 
-The block header uses `base_common_consensus::Header` and calls `hash_slow()` to
+The block header uses `base_common_types_chain::Header` and calls `hash_slow()` to
 compute parent hashes, so the in-memory chain has a realistic hash structure
 that the derivation pipeline can traverse.
 

@@ -7,7 +7,7 @@
 use alloc::{string::ToString, vec::Vec};
 use core::fmt::Debug;
 
-use base_common_consensus::{BaseReceipt, Header, Sealed, crypto::RecoveryError};
+use base_common_types_chain::{BaseReceipt, Header, Sealed, crypto::RecoveryError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTransaction,
 };

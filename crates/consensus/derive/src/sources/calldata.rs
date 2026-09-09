@@ -4,7 +4,7 @@ use alloc::{boxed::Box, collections::VecDeque};
 
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
-use base_common_consensus::{
+use base_common_types_chain::{
     Transaction, TxEip4844Variant, TxEnvelope, transaction::SignerRecoverable,
 };
 use base_protocol::BlockInfo;
@@ -114,7 +114,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use alloy_primitives::{Address, Signature, TxKind, address};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         Signed, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy,
     };
 

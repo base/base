@@ -24,14 +24,14 @@ serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
-base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 [dev-dependencies]
 arbitrary = { workspace = true }
 bincode_1_3_3 = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-common-consensus = { workspace = true, features = ["arbitrary", "serde"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand", "arbitrary"] }
 
@@ -44,7 +44,7 @@ serde = [
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "reth-primitives-traits/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "reth-trie-common/serde",
 ]
 serde-bincode-compat = [
@@ -52,7 +52,7 @@ serde-bincode-compat = [
     "alloy-rlp",
     "reth-trie-common/serde-bincode-compat",
     "serde_with",
-    "base-common-consensus/serde-bincode-compat",
+    "base-common-types-chain/serde-bincode-compat",
     "alloy-eips/serde-bincode-compat",
 ]
 std = [
@@ -61,7 +61,7 @@ std = [
     "base-evm-handler/std",
     "serde?/std",
     "reth-primitives-traits/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "serde_with?/std",
     "derive_more/std",
     "reth-trie-common/std",

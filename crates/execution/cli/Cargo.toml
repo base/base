@@ -50,7 +50,7 @@ reth-network-p2p = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-txpool-tracing = { workspace = true, features = ["default"] }
 base-shadow-indexer = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
@@ -94,7 +94,7 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
 
 dev = [
-	"base-common-consensus/arbitrary",
+	"base-common-types-chain/arbitrary",
 	"dep:proptest",
 	"reth-cli-commands/arbitrary",
 ]
@@ -102,7 +102,7 @@ dev = [
 serde = [
     "alloy-eips/serde",
     "base-common-chains/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "base-execution-chainspec/serde",
     "reth-network/serde",
     "secp256k1/serde",

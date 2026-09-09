@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_sol_types::SolValue;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 
 use crate::env::BerylTestEnv;
 

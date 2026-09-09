@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use base_common_consensus::{BaseTxEnvelope, Transaction, TxReceipt, Typed2718};
+use base_common_types_chain::{BaseTxEnvelope, Transaction, TxReceipt, Typed2718};
 use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow, ShadowSummaryRow};
 use serde::{Deserialize, Serialize};
 
@@ -403,7 +403,7 @@ fn tx_type_str(tx: &BaseTxEnvelope) -> &'static str {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, TxKind, U256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseReceipt, Block, BlockBody, Header, Receipt, Sealable, TxDeposit,
     };
     use base_shadow_indexer_db::ShadowBlockPayload;
@@ -438,7 +438,7 @@ mod tests {
         };
         let env = BaseTxEnvelope::Deposit(deposit.seal_slow());
         let body = BlockBody { transactions: vec![env], ommers: vec![], withdrawals: None };
-        let block: base_common_consensus::BaseBlock =
+        let block: base_common_types_chain::BaseBlock =
             Block { header: Header { gas_used, ..Default::default() }, body };
         let recovered = RecoveredBlock::new_unhashed(block, vec![SENDER]);
 

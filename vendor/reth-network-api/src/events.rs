@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_eip2124::ForkId;
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 use reth_eth_wire_types::{
     BlockAccessLists, BlockBodies, BlockHeaders, Capabilities, Cells, DisconnectReason, EthMessage,
     EthVersion, GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetCells, GetNodeData,
@@ -198,7 +198,7 @@ pub enum PeerRequest {
         /// The request for block headers.
         request: GetBlockHeaders,
         /// The channel to send the response for block headers.
-        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_types_chain::Header>>>,
     },
     /// Requests block bodies from the peer.
     ///
@@ -207,7 +207,7 @@ pub enum PeerRequest {
         /// The request for block bodies.
         request: GetBlockBodies,
         /// The channel to send the response for block bodies.
-        response: oneshot::Sender<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
+        response: oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
     },
     /// Requests pooled transactions from the peer.
     ///
@@ -217,7 +217,7 @@ pub enum PeerRequest {
         request: GetPooledTransactions,
         /// The channel to send the response for pooled transactions.
         response: oneshot::Sender<
-            RequestResult<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+            RequestResult<PooledTransactions<base_common_types_chain::BasePooledTransaction>>,
         >,
     },
     /// Requests `NodeData` from the peer.

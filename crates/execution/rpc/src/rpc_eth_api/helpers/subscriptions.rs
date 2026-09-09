@@ -1,6 +1,6 @@
 //! Streams subscriptions providers for `eth_subscribe`.
 
-use base_common_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
+use base_common_types_chain::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{
     BaseTransactionReceipt, Filter, Log, pubsub::TransactionReceiptsParams,
 };

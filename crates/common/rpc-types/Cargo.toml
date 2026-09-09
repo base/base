@@ -21,7 +21,7 @@ alloy-sol-types = { workspace = true }
 alloy-eips = {workspace = true, features = ["serde"]}
 serde_json = {workspace = true, features = ["alloc"]}
 serde = {workspace = true, features = ["derive", "alloc"]}
-base-common-consensus = {workspace = true, features = ["serde"]}
+base-common-types-chain = {workspace = true, features = ["serde"]}
 alloy-network-primitives = {workspace = true,features = ["serde"]}
 arbitrary = {workspace = true, features = ["derive"], optional = true}
 alloy-primitives = {workspace = true, features = ["map", "rlp", "serde"]}
@@ -38,7 +38,7 @@ arbitrary = {workspace = true, features = ["derive"]}
 similar-asserts = {workspace = true, features = ["default"]}
 rand_08 = { workspace = true, features = ["default", "serde"] }
 bincode = { workspace = true, features = ["default", "serde"] }
-base-common-consensus = {workspace = true, features = ["arbitrary", "std"]}
+base-common-types-chain = {workspace = true, features = ["arbitrary", "std"]}
 alloy-primitives = {workspace = true, features = ["arbitrary", "rand", "rlp", "serde"]}
 alloy-eips = { workspace = true, features = [
     "arbitrary",
@@ -49,7 +49,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 [features]
 default = ["std", "serde"]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-network-primitives/std",
     "alloy-primitives/std",
@@ -63,7 +63,7 @@ std = [
     "thiserror/std",
 ]
 arbitrary = [
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-serde/arbitrary",
@@ -71,9 +71,9 @@ arbitrary = [
     "std",
     "alloy-sol-types/arbitrary",
 ]
-k256 = ["base-common-consensus/k256", "alloy-eips/k256", "alloy-primitives/k256"]
+k256 = ["base-common-types-chain/k256", "alloy-eips/k256", "alloy-primitives/k256"]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-network-primitives/serde",
     "alloy-primitives/serde",
@@ -83,5 +83,5 @@ serde-bincode-compat = [
     "serde",
     "dep:serde_with",
     "alloy-eips/serde-bincode-compat",
-    "base-common-consensus/serde-bincode-compat",
+    "base-common-types-chain/serde-bincode-compat",
 ]

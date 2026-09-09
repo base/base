@@ -6,7 +6,7 @@
 
 use alloc::string::String;
 
-use base_common_consensus::EIP1559ParamError;
+use base_common_types_chain::EIP1559ParamError;
 use base_evm_context::DBErrorMarker;
 use base_evm_handler::BlockExecutionError;
 use base_proof_mpt::TrieNodeError;
@@ -176,7 +176,7 @@ pub enum ExecutorError {
     /// - Unsupported signature algorithms
     /// - Chain ID mismatches
     #[error("sender recovery error: {0}")]
-    Recovery(#[from] base_common_consensus::crypto::RecoveryError),
+    Recovery(#[from] base_common_types_chain::crypto::RecoveryError),
     /// RLP encoding or decoding error.
     ///
     /// This error occurs when RLP (Recursive Length Prefix) serialization

@@ -9,7 +9,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, Bytes, U256, address, bytes};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
-use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
+use base_common_types_chain::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_common_network::ReceiptResponse;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};

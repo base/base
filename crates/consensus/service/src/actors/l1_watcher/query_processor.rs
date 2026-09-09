@@ -258,7 +258,7 @@ mod tests {
 
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Bloom, U256};
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use base_common_rpc_types::{Block, Header as RpcHeader, Log};
     use tokio::{sync::oneshot, time::Instant};
 

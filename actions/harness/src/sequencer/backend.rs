@@ -6,7 +6,7 @@
 //! the same production `SequencerActor` seam.
 
 use async_trait::async_trait;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_types_chain::BaseTxEnvelope;
 use base_consensus_node::EngineClientResult;
 
 use crate::SharedBlockHashRegistry;

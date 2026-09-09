@@ -1,7 +1,7 @@
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::TrieAccount;
-use base_common_consensus::{InMemorySize, constants::KECCAK_EMPTY};
+use base_common_types_chain::{InMemorySize, constants::KECCAK_EMPTY};
 #[cfg(feature = "reth-codec")]
 use bytes::Buf;
 use derive_more::Deref;
@@ -21,8 +21,8 @@ pub const EIP7702_BYTECODE_ID: u8 = 4;
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "reth-codec", derive(base_common_consensus::Compact))]
-#[cfg_attr(feature = "reth-codec", base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "reth-codec", derive(base_common_types_chain::Compact))]
+#[cfg_attr(feature = "reth-codec", base_common_types_chain::add_arbitrary_tests(compact))]
 pub struct Account {
     /// Account nonce.
     pub nonce: u64,
@@ -107,7 +107,7 @@ impl InMemorySize for Account {
 }
 
 #[cfg(feature = "reth-codec")]
-base_common_consensus::impl_compression_for_compact!(Account);
+base_common_types_chain::impl_compression_for_compact!(Account);
 
 /// Bytecode for an account.
 ///
@@ -139,7 +139,7 @@ impl Bytecode {
 }
 
 #[cfg(feature = "reth-codec")]
-impl base_common_consensus::Compact for Bytecode {
+impl base_common_types_chain::Compact for Bytecode {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -211,7 +211,7 @@ impl base_common_consensus::Compact for Bytecode {
 }
 
 #[cfg(feature = "reth-codec")]
-base_common_consensus::impl_compression_for_compact!(Bytecode);
+base_common_types_chain::impl_compression_for_compact!(Bytecode);
 
 impl From<&GenesisAccount> for Account {
     fn from(value: &GenesisAccount) -> Self {
@@ -258,7 +258,7 @@ impl From<Account> for AccountInfo {
 #[cfg(all(test, feature = "std", feature = "reth-codec"))]
 mod tests {
     use alloy_primitives::{B256, U256, hex_literal::hex};
-    use base_common_consensus::Compact;
+    use base_common_types_chain::Compact;
     use revm_bytecode::JumpTable;
 
     use super::*;

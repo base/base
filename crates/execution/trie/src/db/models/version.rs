@@ -1,4 +1,4 @@
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 use bytes::{Buf, BufMut};
 use reth_db::{
     DatabaseError,

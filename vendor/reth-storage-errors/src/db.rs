@@ -11,7 +11,7 @@ use core::{
     str::FromStr,
 };
 
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 
 /// Database error type.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -84,7 +84,7 @@ impl From<DatabaseWriteError> for DatabaseError {
     }
 }
 
-impl From<base_common_consensus::DecompressError> for DatabaseError {
+impl From<base_common_types_chain::DecompressError> for DatabaseError {
     #[inline]
     fn from(_: DecompressError) -> Self {
         Self::Decode

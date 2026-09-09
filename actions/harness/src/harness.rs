@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
 use base_common_network::PrivateKeySigner;
 use base_consensus_derive::{
@@ -356,7 +356,7 @@ impl ActionTestHarness {
     /// production engine. If you need a sync source builder, construct the
     /// sequencer manually and drive it with an async runtime.
     ///
-    /// [`BaseBlock`]: base_common_consensus::BaseBlock
+    /// [`BaseBlock`]: base_common_types_chain::BaseBlock
     pub async fn create_l2_source(&self, n: u64) -> ActionL2Source {
         let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
         let mut sequencer = self.create_l2_sequencer(chain);

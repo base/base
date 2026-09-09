@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_chains::Upgrades;
-use base_common_consensus::Predeploys;
+use base_common_types_chain::Predeploys;
 use base_evm_handler::{
     DatabaseCommit,
     database::Database,

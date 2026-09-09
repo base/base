@@ -1,7 +1,7 @@
 use alloy_eips::{eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
 use alloy_signer::SignerSync;
-use base_common_consensus::{
+use base_common_types_chain::{
     EnvKzgSettings, EthereumTxEnvelope, SidecarBuilder, SimpleCoder, TxEip4844Variant, TxEnvelope,
 };
 use base_common_network::{
@@ -117,7 +117,7 @@ impl TransactionTestContext {
 
         let mut builder = SidecarBuilder::<SimpleCoder>::new();
         builder.ingest(b"dummy blob");
-        let sidecar: base_common_consensus::BlobTransactionSidecar = builder.build()?;
+        let sidecar: base_common_types_chain::BlobTransactionSidecar = builder.build()?;
         tx.set_blob_sidecar(alloy_eips::eip7594::BlobTransactionSidecarVariant::Eip4844(sidecar));
         tx.set_max_fee_per_blob_gas(15e9 as u128);
 

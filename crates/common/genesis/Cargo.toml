@@ -21,7 +21,7 @@ alloy-chains = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 serde = { workspace = true, optional = true }
 spin = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -39,7 +39,7 @@ default = []
 test-utils = []
 std = [
     "alloy-chains/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "alloy-sol-types/std",
@@ -51,7 +51,7 @@ std = [
 ]
 arbitrary = [
     "alloy-chains/arbitrary",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-primitives/rand",
@@ -61,7 +61,7 @@ arbitrary = [
 ]
 serde = [
     "alloy-chains/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-hardforks/serde",
     "alloy-primitives/serde",

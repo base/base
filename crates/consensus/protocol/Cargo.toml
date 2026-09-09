@@ -21,7 +21,7 @@ async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
 alloc-no-stdlib = { workspace = true }
 base-common-genesis = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 base-common-rpc-types = { workspace = true }
 serde = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
@@ -73,7 +73,7 @@ test-utils = [
 	"dep:tracing-subscriber",
 ]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
@@ -90,7 +90,7 @@ std = [
     "tracing?/std",
 ]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-rpc-types-engine/serde",
@@ -101,7 +101,7 @@ serde = [
     "tracing-subscriber?/serde",
 ]
 arbitrary = [
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-primitives/rand",

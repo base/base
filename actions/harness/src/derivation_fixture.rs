@@ -5,7 +5,7 @@
 
 use alloy_rlp::Encodable;
 use base_batcher_encoder::{BatchComposer, FrameEncoder, test_utils::ChannelFramer};
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::SingleBatch;
 use miniz_oxide::deflate::compress_to_vec_zlib;
 

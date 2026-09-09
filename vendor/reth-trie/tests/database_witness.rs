@@ -5,7 +5,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_rlp::EMPTY_STRING_CODE;
-use base_common_consensus::EMPTY_ROOT_HASH;
+use base_common_types_chain::EMPTY_ROOT_HASH;
 use reth_db::{cursor::DbCursorRW, tables};
 use reth_db_api::transaction::DbTxMut;
 use reth_primitives_traits::{Account, StorageEntry};

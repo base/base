@@ -2,7 +2,7 @@
 
 use alloy_eips::{Encodable2718, eip1559::BaseFeeParams, eip4895::Withdrawals};
 use alloy_primitives::{Address, B256, Bytes};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, JovianExtraData, decode_2718_canonical,
 };
 use base_common_genesis::RollupConfig;
@@ -356,7 +356,7 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_chains::{ChainConfig, rollup_config};
-    use base_common_consensus::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
+    use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_network::TransactionResponse;
     use base_common_rpc_types::{BaseTransaction as Transaction, Block, BlockTransactions};
     use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -742,7 +742,7 @@ mod tests {
         let block = Block {
             withdrawals: Some(Withdrawals(vec![])),
             header: base_common_rpc_types::Header {
-                inner: base_common_consensus::Header {
+                inner: base_common_types_chain::Header {
                     withdrawals_root: Some(EMPTY_ROOT_HASH),
                     ..Default::default()
                 },

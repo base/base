@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction, BlockHeader, Header, SignableTransaction, TxEip2930,
     constants::ETH_TO_WEI,

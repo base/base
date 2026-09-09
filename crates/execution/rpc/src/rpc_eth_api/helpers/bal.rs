@@ -1,7 +1,7 @@
 //! Helpers for `eth_blockAccessList` RPC method.
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_rpc_types::BlockId;
 use base_evm_handler::database::State;
 use base_execution_evm::{BlockExecutor, Evm};

@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::Stream;
 use futures_util::StreamExt;
@@ -36,7 +36,7 @@ use crate::{bodies::task::TaskDownloader, metrics::BodyDownloaderMetrics};
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
 pub struct BodiesDownloader<
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody>,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>,
     Provider: HeaderProvider,
 > {
     /// The bodies client
@@ -71,7 +71,7 @@ pub struct BodiesDownloader<
 
 impl<C, Provider> BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     /// Returns the next contiguous request.
@@ -281,7 +281,7 @@ where
 
 impl<C, Provider> BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     /// Convert the downloader into a [`TaskDownloader`] by spawning it via the given [`Runtime`].
@@ -292,10 +292,10 @@ where
 
 impl<C, Provider> BodyDownloader for BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
-    type Block = base_common_consensus::BaseBlock;
+    type Block = base_common_types_chain::BaseBlock;
 
     /// Set a new download range (inclusive).
     ///
@@ -350,7 +350,7 @@ where
 
 impl<C, Provider> Stream for BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     type Item = BodyDownloaderResult;
@@ -572,7 +572,7 @@ impl BodiesDownloaderBuilder {
         provider: Provider,
     ) -> BodiesDownloader<C, Provider>
     where
-        C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+        C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
         Provider: HeaderProvider,
     {
         let Self {

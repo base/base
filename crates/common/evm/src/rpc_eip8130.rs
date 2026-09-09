@@ -3,7 +3,7 @@
 use alloc::vec;
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
 };
 use base_common_rpc_types::{BaseTransactionRequest, Eip8130AuthScheme};
@@ -136,7 +136,7 @@ impl BaseRevm {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use base_common_consensus::{Eip8130Constants, Eip8130Signed};
+    use base_common_types_chain::{Eip8130Constants, Eip8130Signed};
     use base_common_rpc_types::{Eip8130Nonce, state::AccountOverride};
     use serde_json::json;
 

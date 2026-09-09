@@ -15,9 +15,9 @@ pub fn generate_from_to(
 ) -> TokenStream2 {
     let flags = format_ident!("{ident}Flags");
 
-    let base_common_consensus = parse_reth_codecs_path(attrs).unwrap();
+    let base_common_types_chain = parse_reth_codecs_path(attrs).unwrap();
 
-    let to_compact = generate_to_compact(fields, ident, zstd.clone(), &base_common_consensus);
+    let to_compact = generate_to_compact(fields, ident, zstd.clone(), &base_common_types_chain);
     let from_compact = generate_from_compact(fields, ident, zstd);
 
     let lifetime = if has_lifetime {
@@ -28,11 +28,11 @@ pub fn generate_from_to(
 
     let impl_compact = if has_lifetime {
         quote! {
-           impl<#lifetime> #base_common_consensus::Compact for #ident<#lifetime>
+           impl<#lifetime> #base_common_types_chain::Compact for #ident<#lifetime>
         }
     } else {
         quote! {
-           impl #base_common_consensus::Compact for #ident
+           impl #base_common_types_chain::Compact for #ident
         }
     };
 
@@ -52,7 +52,7 @@ pub fn generate_from_to(
     // Build function
     quote! {
         #impl_compact {
-            fn to_compact<B>(&self, buf: &mut B) -> usize where B: #base_common_consensus::__private::bytes::BufMut + AsMut<[u8]> {
+            fn to_compact<B>(&self, buf: &mut B) -> usize where B: #base_common_types_chain::__private::bytes::BufMut + AsMut<[u8]> {
                 let mut flags = #flags::default();
                 let mut total_length = 0;
                 #(#to_compact)*
@@ -156,10 +156,10 @@ fn generate_to_compact(
     fields: &FieldList,
     ident: &Ident,
     zstd: Option<ZstdConfig>,
-    base_common_consensus: &syn::Path,
+    base_common_types_chain: &syn::Path,
 ) -> Vec<TokenStream2> {
     let mut lines = vec![quote! {
-        let mut buffer = #base_common_consensus::__private::bytes::BytesMut::new();
+        let mut buffer = #base_common_types_chain::__private::bytes::BytesMut::new();
     }];
 
     let is_enum = fields.iter().any(|field| matches!(field, FieldTypes::EnumVariant(_)));
@@ -219,7 +219,7 @@ fn generate_to_compact(
 /// Function to extract the crate path from `reth_codecs(crate = "...")` attribute.
 pub(crate) fn parse_reth_codecs_path(attrs: &[Attribute]) -> syn::Result<syn::Path> {
     // let default_crate_path: syn::Path = syn::parse_str("reth-codecs").unwrap();
-    let mut reth_codecs_path: syn::Path = syn::parse_quote!(base_common_consensus);
+    let mut reth_codecs_path: syn::Path = syn::parse_quote!(base_common_types_chain);
     for attr in attrs {
         if attr.path().is_ident("reth_codecs") {
             attr.parse_nested_meta(|meta| {

@@ -17,10 +17,10 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-primitives-traits = { workspace = true, features = ["serde"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 [dev-dependencies]
 serde_json = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }

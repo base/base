@@ -50,7 +50,7 @@ macro_rules! fuzz_type_and_name {
 #[expect(missing_docs)]
 pub mod fuzz_rlp {
     use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
-    use base_common_consensus::add_arbitrary_tests;
+    use base_common_types_chain::add_arbitrary_tests;
     use reth_eth_wire::{
         BlockBodies, BlockHeaders, DisconnectReason, GetBlockBodies, GetBlockHeaders, GetNodeData,
         GetPooledTransactions, GetReceipts, HelloMessage, NewBlock, NewBlockHashes,

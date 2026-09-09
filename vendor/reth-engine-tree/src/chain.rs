@@ -5,7 +5,7 @@ use std::{
 };
 
 use futures::Stream;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use reth_network_p2p::BlockClient;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
 

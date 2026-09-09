@@ -21,13 +21,13 @@
 //! (the enshrined path has no EVM LOG opcodes of its own).
 //!
 //! [`ConfigChangeAuthorizer`]: crate::ConfigChangeAuthorizer
-//! [`SignedChange`]: base_common_consensus::SignedChange
+//! [`SignedChange`]: base_common_types_chain::SignedChange
 //! [`AccountConfigurationEvents`]: crate::AccountConfigurationEvents
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::{SolValue, sol};
-use base_common_consensus::{
+use base_common_types_chain::{
     AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
     InitialActor, SignedChange,
 };

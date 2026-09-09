@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use futures::{
     StreamExt,
@@ -232,7 +232,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, TxKind, U256, b256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
     };
     use base_execution_chainspec::BaseChainSpec;

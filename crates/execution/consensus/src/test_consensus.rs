@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
@@ -65,7 +65,7 @@ impl TestConsensus {
 impl TestConsensus {
     pub fn validate_body_against_header(
         &self,
-        _body: &base_common_consensus::BaseBlockBody,
+        _body: &base_common_types_chain::BaseBlockBody,
         _header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         if self.fail_body_against_header() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }

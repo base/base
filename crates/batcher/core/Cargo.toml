@@ -27,13 +27,13 @@ serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "sync", "macros", "rt"] }
 derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
-base-common-consensus = { workspace = true, features = ["std"], optional = false}
+base-common-types-chain = { workspace = true, features = ["std"], optional = false}
 base-common-rpc-types = { workspace = true, features = ["std"], optional = true }
 [dev-dependencies]
 async-trait = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
 [[test]]

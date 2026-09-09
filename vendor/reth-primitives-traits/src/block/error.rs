@@ -12,8 +12,8 @@ use crate::transaction::signed::RecoveryError;
 /// # Example
 ///
 /// ```rust
-/// use base_common_consensus::{Header, Signed, TxLegacy};
-/// use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTxEnvelope};
+/// use base_common_types_chain::{Header, Signed, TxLegacy};
+/// use base_common_types_chain::{BaseBlock, BaseBlockBody, BaseTxEnvelope};
 /// use alloy_primitives::{Signature, B256};
 /// use reth_primitives_traits::{block::error::SealedBlockRecoveryError, SealedBlock};
 ///

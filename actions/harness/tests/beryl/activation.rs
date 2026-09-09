@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use base_common_consensus::TxReceipt;
+use base_common_types_chain::TxReceipt;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 
 use crate::env::BerylTestEnv;
@@ -188,7 +188,7 @@ async fn cobalt_enables_state_backed_activation_admin_rotation() {
 
 fn assert_activation_log(
     env: &BerylTestEnv,
-    block: &base_common_consensus::BaseBlock,
+    block: &base_common_types_chain::BaseBlock,
     active: bool,
 ) {
     assert_activation_log_from(env, block, active, BerylTestEnv::alice());
@@ -196,7 +196,7 @@ fn assert_activation_log(
 
 fn assert_activation_log_from(
     env: &BerylTestEnv,
-    block: &base_common_consensus::BaseBlock,
+    block: &base_common_types_chain::BaseBlock,
     active: bool,
     caller: Address,
 ) {
@@ -214,7 +214,7 @@ fn assert_activation_log_from(
     );
 }
 
-fn assert_admin_changed_log(env: &BerylTestEnv, block: &base_common_consensus::BaseBlock) {
+fn assert_admin_changed_log(env: &BerylTestEnv, block: &base_common_types_chain::BaseBlock) {
     let expected = IActivationRegistry::AdminChanged {
         previousAdmin: BerylTestEnv::alice(),
         newAdmin: BerylTestEnv::bob(),

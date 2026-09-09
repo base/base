@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
-use base_common_consensus::{
+use base_common_types_chain::{
     EthereumReceipt as Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
     TxReceipt,
 };
@@ -198,7 +198,7 @@ impl<T: TxReceipt> From<Receipts70<T>> for Receipts<T> {
 mod tests {
     use alloy_primitives::{Log, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use base_common_consensus::TxType;
+    use base_common_types_chain::TxType;
 
     use super::*;
     use crate::{GetReceipts, Receipts, message::RequestPair};

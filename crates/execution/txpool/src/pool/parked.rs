@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -519,7 +519,7 @@ mod tests {
     use std::collections::HashSet;
 
     use alloy_primitives::address;
-    use base_common_consensus::{Transaction, TxType};
+    use base_common_types_chain::{Transaction, TxType};
 
     use super::*;
     use crate::test_utils::{MockTransaction, MockTransactionFactory, MockTransactionSet};

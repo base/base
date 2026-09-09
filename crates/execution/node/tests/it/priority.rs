@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, TxKind};
-use base_common_consensus::{SignableTransaction, Transaction, TxEip1559};
+use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_common_network::TxSignerSync;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_node_core::NodeConfig;
@@ -61,7 +61,7 @@ async fn test_queued_transaction_included_after_nonce_gap_closes() {
         ..Default::default()
     };
     let signature = sender.sign_transaction_sync(&mut transfer).unwrap();
-    let transfer = base_common_consensus::BaseTxEnvelope::Eip1559(transfer.into_signed(signature));
+    let transfer = base_common_types_chain::BaseTxEnvelope::Eip1559(transfer.into_signed(signature));
     let mut node = NodeTestContext::new(node_handle.node, BaseNodeTestUtils::payload_attributes)
         .await
         .unwrap();

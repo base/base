@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
 use alloy_rlp::{Encodable, Header, RlpDecodable, RlpEncodable};
-use base_common_consensus::OpTxType;
+use base_common_types_chain::OpTxType;
 use base_common_genesis::RollupConfig;
 
 use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
@@ -182,7 +182,7 @@ mod tests {
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Address, Bytes, Sealed, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTxEnvelope, SignableTransaction, TxDeposit, TxEip1559, TxEip7702, TxEnvelope,
     };
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};

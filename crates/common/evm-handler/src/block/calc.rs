@@ -2,7 +2,7 @@
 
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::constants::ETH_TO_WEI;
+use base_common_types_chain::constants::ETH_TO_WEI;
 
 /// Calculates the base block reward.
 ///
@@ -57,7 +57,7 @@ pub fn base_block_reward_pre_merge(
 /// ```
 /// # use alloy_hardforks::EthereumChainHardforks;
 /// # use base_evm_handler::::{base_block_reward, block_reward};
-/// # use base_common_consensus::constants::ETH_TO_WEI;
+/// # use base_common_types_chain::constants::ETH_TO_WEI;
 /// # use alloy_primitives::U256;
 /// #
 /// // This is block 126 on mainnet.

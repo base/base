@@ -36,7 +36,7 @@ base-common-network = { workspace = true, optional = true }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros"] }
 base-execution-chainspec = { workspace = true, optional = true}
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "std"] }
@@ -50,7 +50,7 @@ reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 [features]
 serde = [
     "dep:serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "parking_lot/serde",

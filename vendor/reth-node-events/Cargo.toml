@@ -22,7 +22,7 @@ reth-stages = { workspace = true }
 pin-project = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-network-api = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 reth-static-file-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }

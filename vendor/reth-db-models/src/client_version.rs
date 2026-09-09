@@ -5,7 +5,7 @@ use alloc::string::String;
 /// Client version that accessed the database.
 #[derive(Clone, Eq, PartialEq, Debug, Default)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClientVersion {
     /// Client version
@@ -24,7 +24,7 @@ impl ClientVersion {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl base_common_consensus::Compact for ClientVersion {
+impl base_common_types_chain::Compact for ClientVersion {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -45,4 +45,4 @@ impl base_common_consensus::Compact for ClientVersion {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-base_common_consensus::impl_compression_for_compact!(ClientVersion);
+base_common_types_chain::impl_compression_for_compact!(ClientVersion);

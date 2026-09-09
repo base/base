@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::ForkchoiceState;
 use base_consensus_derive::{

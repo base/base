@@ -147,7 +147,7 @@ impl AccountConfigurationEvents {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_common_consensus::Eip8130Constants;
+    use base_common_types_chain::Eip8130Constants;
 
     use super::*;
 

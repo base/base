@@ -5,7 +5,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bloom, Log, U256, logs_bloom,
     map::{AddressMap, B256Map, HashMap},
 };
-use base_common_consensus::{BaseReceipt, TxReceipt};
+use base_common_types_chain::{BaseReceipt, TxReceipt};
 use base_evm_handler::{
     database::{BundleAccount, BundleState},
     state::AccountInfo,
@@ -415,7 +415,7 @@ pub(super) mod serde_bincode_compat {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{BlockNumber, Bytes};
     use alloy_rlp::Decodable;
-    use base_common_consensus::BaseReceipt;
+    use base_common_types_chain::BaseReceipt;
     use base_evm_handler::database::BundleState;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
@@ -506,7 +506,7 @@ pub(super) mod serde_bincode_compat {
 
     #[cfg(test)]
     mod tests {
-        use base_common_consensus::{BaseReceipt, DepositReceipt, Receipt};
+        use base_common_types_chain::{BaseReceipt, DepositReceipt, Receipt};
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
@@ -568,7 +568,7 @@ mod tests {
         );
 
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipts = vec![vec![BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn test_block_number_to_index() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipts = vec![vec![BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -657,7 +657,7 @@ mod tests {
     #[test]
     fn test_get_logs() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipts = vec![vec![BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
             status: true.into(),
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn test_receipts_by_block() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipts = vec![vec![BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
             status: true.into(),
@@ -709,7 +709,7 @@ mod tests {
         // Assert that the receipts for block number 123 match the expected receipts
         assert_eq!(
             receipts_by_block,
-            vec![&BaseReceipt::Legacy(base_common_consensus::Receipt {
+            vec![&BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 cumulative_gas_used: 46913,
                 logs: vec![Log::<LogData>::default()],
                 status: true.into(),
@@ -720,7 +720,7 @@ mod tests {
     #[test]
     fn test_receipts_len() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipts = vec![vec![BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
             status: true.into(),
@@ -765,7 +765,7 @@ mod tests {
     #[test]
     fn test_revert_to() {
         // Create a random receipt object
-        let receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipt = BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -810,7 +810,7 @@ mod tests {
     #[test]
     fn test_extend_execution_outcome() {
         // Create a Receipt object with specific attributes.
-        let receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipt = BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -850,7 +850,7 @@ mod tests {
     #[test]
     fn test_split_at_execution_outcome() {
         // Create a random receipt object
-        let receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipt = BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),

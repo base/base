@@ -9,7 +9,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
 use base_common_evm::L1BlockInfo;
@@ -1362,7 +1362,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTxEnvelope, Header, Predeploys, SignableTransaction, TxEip1559,
     };
     use base_common_evm::BaseTime;

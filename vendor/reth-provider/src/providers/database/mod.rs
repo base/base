@@ -13,7 +13,7 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
 use base_execution_chainspec::BaseChainSpec;
@@ -635,7 +635,7 @@ impl StaticFileProviderFactory for ProviderFactory {
 }
 
 impl HeaderSyncGapProvider for ProviderFactory {
-    type Header = base_common_consensus::Header;
+    type Header = base_common_types_chain::Header;
     fn local_tip_header(
         &self,
         highest_uninterrupted_block: BlockNumber,
@@ -648,21 +648,21 @@ impl HeaderProvider for ProviderFactory {
     fn header(
         &self,
         block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.provider()?.header(block_hash)
     }
 
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.caught_up_static_file_provider()?.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         self.caught_up_static_file_provider()?.headers_range(range)
     }
 

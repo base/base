@@ -9,7 +9,7 @@ use core::error::Error;
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_common_consensus::{Header, Sealed};
+use base_common_types_chain::{Header, Sealed};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_executor::BlockBuildingOutcome;
 

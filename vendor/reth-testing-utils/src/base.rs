@@ -3,7 +3,7 @@
 use std::ops::RangeInclusive;
 
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType, SignableTransaction,
     Transaction as _,
 };
@@ -26,7 +26,7 @@ impl BaseTestData {
 
     /// Generates a signed legacy transaction supported by Base.
     pub fn random_signed_tx<R: Rng>(rng: &mut R) -> BaseTxEnvelope {
-        BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(
+        BaseTxEnvelope::try_from(base_common_types_chain::TxEnvelope::from(
             generators::random_signed_tx(rng),
         ))
         .unwrap()
@@ -98,7 +98,7 @@ impl BaseTestData {
     ) -> BaseReceipt {
         let success = rng.random::<bool>();
         let logs_count = logs_count.unwrap_or_else(|| rng.random());
-        let receipt = base_common_consensus::Receipt {
+        let receipt = base_common_types_chain::Receipt {
             status: success.into(),
             cumulative_gas_used: rng.random_range(0..=transaction.gas_limit()),
             logs: if success {
@@ -112,12 +112,12 @@ impl BaseTestData {
             OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
             OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
             OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
-            OpTxType::Deposit => BaseReceipt::Deposit(base_common_consensus::DepositReceipt {
+            OpTxType::Deposit => BaseReceipt::Deposit(base_common_types_chain::DepositReceipt {
                 inner: receipt,
                 deposit_nonce: None,
                 deposit_receipt_version: None,
             }),
-            OpTxType::Eip8130 => BaseReceipt::Eip8130(base_common_consensus::Eip8130Receipt {
+            OpTxType::Eip8130 => BaseReceipt::Eip8130(base_common_types_chain::Eip8130Receipt {
                 inner: receipt,
                 ..Default::default()
             }),

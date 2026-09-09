@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
     Sealed, SignableTransaction, Signed, TxDeposit, TxEip1559, TxEip4844, TypedTransaction,
 };
@@ -21,7 +21,7 @@ use crate::{AccessList, BaseTransaction, TransactionInput, TransactionRequest};
 ///
 /// This does **not** enumerate every authenticator selector a `sender_auth` /
 /// `payer_auth` blob's prefix may recognize — see
-/// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`], a
+/// [`base_common_types_chain::Eip8130Contracts::DELEGATE_AUTHENTICATOR`], a
 /// recognized selector that is a structured 3-segment blob (delegate
 /// account + a nested leaf authenticator) rather than a flat leaf, so it
 /// can't be a variant here. Prefix recognition (`is_prefixed_auth` in
@@ -73,7 +73,7 @@ impl Eip8130AuthScheme {
     ///
     /// This is *not* the full set of authenticator selectors a `sender_auth`
     /// / `payer_auth` blob's prefix may recognize — see
-    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`],
+    /// [`base_common_types_chain::Eip8130Contracts::DELEGATE_AUTHENTICATOR`],
     /// which prefix recognition (`is_prefixed_auth` in `crate::reth`) checks
     /// for separately since it isn't a flat leaf scheme.
     pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
@@ -142,7 +142,7 @@ pub struct Eip8130RequestFields {
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
     /// - `authenticator(20) || data` prefixed with a recognized enshrined
     ///   authenticator (k1, [`Eip8130AuthScheme::P256`] / `WebAuthn`, or
-    ///   [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`])
+    ///   [`base_common_types_chain::Eip8130Contracts::DELEGATE_AUTHENTICATOR`])
     ///   prices the configured-account path.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
@@ -163,7 +163,7 @@ pub struct Eip8130RequestFields {
     /// always the prefixed form and its leading 20 bytes must be a recognized
     /// enshrined authenticator selector (k1, [`Eip8130AuthScheme::P256`] /
     /// `WebAuthn`, or
-    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`]); an
+    /// [`base_common_types_chain::Eip8130Contracts::DELEGATE_AUTHENTICATOR`]); an
     /// unrecognized selector is rejected as `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,

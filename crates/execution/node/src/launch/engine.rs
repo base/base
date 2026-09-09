@@ -1,6 +1,6 @@
 //! Engine node related functionality.
 
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_payload_builder::{BaseEngineValidator, BaseExecutionHandle};
 use base_node_context::AddOnsContext;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};

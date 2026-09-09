@@ -1,4 +1,4 @@
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 
 /// A discrete step that a test actor can perform.
 ///

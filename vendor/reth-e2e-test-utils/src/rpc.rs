@@ -1,6 +1,6 @@
 use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844Variant};
+use base_common_types_chain::{EthereumTxEnvelope, TxEip4844Variant};
 use base_common_network::eip2718::Decodable2718;
 use base_execution_rpc::BaseEthApiError;
 use base_execution_rpc::DebugApiServer;

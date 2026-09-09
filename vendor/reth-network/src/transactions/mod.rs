@@ -1,6 +1,6 @@
 //! Transactions management for the p2p network.
 
-use base_common_consensus::{BaseTxEnvelope, transaction::TxHashRef};
+use base_common_types_chain::{BaseTxEnvelope, transaction::TxHashRef};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use smallvec::SmallVec;
 
@@ -30,7 +30,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set, FbBuildHasher, HashMap, HashSet, hash_map::Entry},
 };
 use alloy_rlp::Encodable;
-use base_common_consensus::TxType;
+use base_common_types_chain::TxType;
 use base_execution_evm::SenderRecoveryCache;
 use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
@@ -211,7 +211,7 @@ impl TransactionsHandle {
         &self,
         peer_id: PeerId,
         hashes: Vec<B256>,
-    ) -> Result<Option<Vec<base_common_consensus::BasePooledTransaction>>, RequestError> {
+    ) -> Result<Option<Vec<base_common_types_chain::BasePooledTransaction>>, RequestError> {
         let Some(peer) = self.peer_handle(peer_id).await? else { return Ok(None) };
 
         let (tx, rx) = oneshot::channel();
@@ -1155,7 +1155,7 @@ where
         peer_id: PeerId,
         request: GetPooledTransactions,
         response: oneshot::Sender<
-            RequestResult<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+            RequestResult<PooledTransactions<base_common_types_chain::BasePooledTransaction>>,
         >,
     ) {
         // fast exit if gossip is disabled
@@ -1331,7 +1331,7 @@ where
 
                 let non_blob_txs = msg
                     .into_iter()
-                    .map(base_common_consensus::BasePooledTransaction::try_from)
+                    .map(base_common_types_chain::BasePooledTransaction::try_from)
                     .filter_map(Result::ok)
                     .collect();
 
@@ -1362,7 +1362,7 @@ where
     fn import_transactions(
         &mut self,
         peer_id: PeerId,
-        transactions: PooledTransactions<base_common_consensus::BasePooledTransaction>,
+        transactions: PooledTransactions<base_common_types_chain::BasePooledTransaction>,
         source: TransactionSource,
     ) {
         // If the node is pipeline syncing, ignore transactions
@@ -1534,7 +1534,7 @@ where
     /// Processes a [`FetchEvent`].
     fn on_fetch_event(
         &mut self,
-        fetch_event: FetchEvent<base_common_consensus::BasePooledTransaction>,
+        fetch_event: FetchEvent<base_common_types_chain::BasePooledTransaction>,
     ) {
         match fetch_event {
             FetchEvent::TransactionsFetched { peer_id, transactions, report_peer } => {
@@ -2258,7 +2258,7 @@ pub enum NetworkTransactionEvent {
         request: GetPooledTransactions,
         /// The sender for responding to the request with a result of `PooledTransactions`.
         response: oneshot::Sender<
-            RequestResult<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+            RequestResult<PooledTransactions<base_common_types_chain::BasePooledTransaction>>,
         >,
     },
     /// Represents the event of receiving a `GetTransactionsHandle` request.
@@ -2337,7 +2337,7 @@ mod tests {
     use alloy_eips::{eip2718::Encodable2718, eip4844::BlobTransactionValidationError};
     use alloy_primitives::{B256, Signature, TxKind, U256, hex};
     use alloy_rlp::Decodable;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
         BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
     };

@@ -14,7 +14,7 @@ use alloy_primitives::{
     bytes::{Buf, BufMut},
 };
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 
 use super::{
     BlockAccessLists, BlockBodies, BlockHeaders, GetBlockAccessLists, GetBlockBodies,
@@ -328,16 +328,16 @@ pub enum EthMessage {
     /// Represents a `GetBlockHeaders` request-response pair.
     GetBlockHeaders(RequestPair<GetBlockHeaders>),
     /// Represents a `BlockHeaders` request-response pair.
-    BlockHeaders(RequestPair<BlockHeaders<base_common_consensus::Header>>),
+    BlockHeaders(RequestPair<BlockHeaders<base_common_types_chain::Header>>),
     /// Represents a `GetBlockBodies` request-response pair.
     GetBlockBodies(RequestPair<GetBlockBodies>),
     /// Represents a `BlockBodies` request-response pair.
-    BlockBodies(RequestPair<BlockBodies<base_common_consensus::BaseBlockBody>>),
+    BlockBodies(RequestPair<BlockBodies<base_common_types_chain::BaseBlockBody>>),
     /// Represents a `GetPooledTransactions` request-response pair.
     GetPooledTransactions(RequestPair<GetPooledTransactions>),
     /// Represents a `PooledTransactions` request-response pair.
     PooledTransactions(
-        RequestPair<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+        RequestPair<PooledTransactions<base_common_types_chain::BasePooledTransaction>>,
     ),
     /// Represents a `GetNodeData` request-response pair.
     GetNodeData(RequestPair<GetNodeData>),
@@ -856,7 +856,7 @@ where
 mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable, Error};
-    use base_common_consensus::BaseBlockBody as BlockBody;
+    use base_common_types_chain::BaseBlockBody as BlockBody;
 
     use super::MessageError;
     use crate::{

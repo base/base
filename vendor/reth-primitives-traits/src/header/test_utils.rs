@@ -1,7 +1,7 @@
 //! Test utilities for the block header.
 
 use alloy_primitives::B256;
-use base_common_consensus::Header;
+use base_common_types_chain::Header;
 use proptest::{arbitrary::any, prop_compose};
 use proptest_arbitrary_interop::arb;
 

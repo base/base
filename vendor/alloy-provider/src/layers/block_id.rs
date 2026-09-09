@@ -109,7 +109,7 @@ impl<P: Provider<N>, N: Network> Provider<N> for BlockIdProvider<P, N> {
     fn get_account(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, base_common_consensus::TrieAccount> {
+    ) -> RpcWithBlock<Address, base_common_types_chain::TrieAccount> {
         self.inner.get_account(address).block_id(self.block_id)
     }
 

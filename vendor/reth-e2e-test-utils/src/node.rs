@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_rpc_types::BlockNumberOrTag;
 use base_common_rpc_types_engine::ForkchoiceState;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};

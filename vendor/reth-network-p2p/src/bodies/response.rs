@@ -1,5 +1,5 @@
 use alloy_primitives::{BlockNumber, U256};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use reth_primitives_traits::{InMemorySize, SealedBlock, SealedHeader};
 /// The block response
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -28,7 +28,7 @@ impl BlockResponse {
     }
 
     /// Return the reference to the response body
-    pub fn into_body(self) -> Option<base_common_consensus::BaseBlockBody> {
+    pub fn into_body(self) -> Option<base_common_types_chain::BaseBlockBody> {
         match self {
             Self::Full(block) => Some(block.into_body()),
             Self::Empty(_) => None,
@@ -36,7 +36,7 @@ impl BlockResponse {
     }
 
     /// Return the reference to the response body
-    pub const fn body(&self) -> Option<&base_common_consensus::BaseBlockBody> {
+    pub const fn body(&self) -> Option<&base_common_types_chain::BaseBlockBody> {
         match self {
             Self::Full(block) => Some(block.body()),
             Self::Empty(_) => None,

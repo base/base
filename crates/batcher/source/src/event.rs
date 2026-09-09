@@ -1,6 +1,6 @@
 //! Events emitted by an [`UnsafeBlockSource`][crate::UnsafeBlockSource].
 
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use tokio::sync::oneshot;
 
 /// Events emitted by an [`UnsafeBlockSource`][crate::UnsafeBlockSource].

@@ -10,7 +10,7 @@ use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber,
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
@@ -185,7 +185,7 @@ impl BlockReaderIdExt for NoopProvider {
         Ok(None)
     }
 
-    fn header_by_id(&self, _id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>> {
+    fn header_by_id(&self, _id: BlockId) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(None)
     }
 }
@@ -355,18 +355,18 @@ impl HeaderProvider for NoopProvider {
     fn header(
         &self,
         _block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(None)
     }
 
-    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<base_common_consensus::Header>> {
+    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(None)
     }
 
     fn headers_range(
         &self,
         _range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         Ok(Vec::new())
     }
 

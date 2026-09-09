@@ -4,7 +4,7 @@ use alloc::{fmt, vec::Vec};
 
 use alloy_eips::{eip2718::Encodable2718, eip4895::Withdrawals};
 use alloy_primitives::{Address, B256, Bytes};
-use base_common_consensus::{
+use base_common_types_chain::{
     Transaction, Typed2718,
     transaction::{Recovered, TxHashRef},
 };
@@ -49,11 +49,11 @@ pub trait BlockBody:
     /// - Ommers
     ///
     /// Note: This conversion can be incomplete. It is not expected that this `Body` is the same as
-    /// [`base_common_consensus::BlockBody`] only that it can be converted into it which is useful for
+    /// [`base_common_types_chain::BlockBody`] only that it can be converted into it which is useful for
     /// the `eth_` RPC namespace (e.g. RPC block).
     fn into_ethereum_body(
         self,
-    ) -> base_common_consensus::BlockBody<Self::Transaction, Self::OmmerHeader>;
+    ) -> base_common_types_chain::BlockBody<Self::Transaction, Self::OmmerHeader>;
 
     /// Returns an iterator over the transactions in the block.
     #[inline]
@@ -104,7 +104,7 @@ pub trait BlockBody:
 
     /// Calculate the transaction root for the block body.
     fn calculate_tx_root(&self) -> B256 {
-        base_common_consensus::proofs::calculate_transaction_root(self.transactions())
+        base_common_types_chain::proofs::calculate_transaction_root(self.transactions())
     }
 
     /// Returns block withdrawals if any.
@@ -115,7 +115,7 @@ pub trait BlockBody:
     /// Returns `Some(root)` if withdrawals are present, otherwise `None`.
     fn calculate_withdrawals_root(&self) -> Option<B256> {
         self.withdrawals().map(|withdrawals| {
-            base_common_consensus::proofs::calculate_withdrawals_root(withdrawals.as_slice())
+            base_common_types_chain::proofs::calculate_withdrawals_root(withdrawals.as_slice())
         })
     }
 
@@ -126,7 +126,7 @@ pub trait BlockBody:
     ///
     /// Returns `Some(root)` if ommers are present, otherwise `None`.
     fn calculate_ommers_root(&self) -> Option<B256> {
-        self.ommers().map(base_common_consensus::proofs::calculate_ommers_root)
+        self.ommers().map(base_common_types_chain::proofs::calculate_ommers_root)
     }
 
     /// Calculates the total blob gas used by _all_ EIP-4844 transactions in the block.
@@ -243,7 +243,7 @@ pub trait BlockBody:
     }
 }
 
-impl<T, H> BlockBody for base_common_consensus::BlockBody<T, H>
+impl<T, H> BlockBody for base_common_types_chain::BlockBody<T, H>
 where
     T: SignedTransaction,
     H: BlockHeader,

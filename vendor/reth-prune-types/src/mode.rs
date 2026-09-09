@@ -5,8 +5,8 @@ use crate::{PruneSegment, PruneSegmentError, segment::PrunePurpose};
 /// Prune mode.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_types_chain::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(any(test, feature = "serde"), serde(rename_all = "lowercase"))]
 pub enum PruneMode {

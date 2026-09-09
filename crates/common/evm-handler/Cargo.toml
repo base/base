@@ -41,7 +41,7 @@ serde_json = { workspace = true, features = [
 ], optional = true }
 derive_more = { workspace = true, features = ["full"] }
 base-common-rpc-types = { workspace = true, optional = true }
-base-common-consensus = {workspace = true, features = ["k256"]}
+base-common-types-chain = {workspace = true, features = ["k256"]}
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 [dev-dependencies]
@@ -79,7 +79,7 @@ std = [
     "serde_json?/preserve_order",
     "either/std",
     "alloy-primitives/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "derive_more/std",
     "thiserror/std",

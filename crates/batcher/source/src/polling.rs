@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::Clock;
 
@@ -113,7 +113,7 @@ mod tests {
 
     fn block(number: u64, parent_hash: B256, marker: u8) -> BaseBlock {
         BaseBlock {
-            header: base_common_consensus::Header {
+            header: base_common_types_chain::Header {
                 number,
                 parent_hash,
                 extra_data: vec![marker].into(),

@@ -7,7 +7,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned, Eip8130Constants,
     Eip8130Signed, Transaction, Typed2718, transaction::Recovered,
 };
@@ -168,7 +168,7 @@ impl BasePooledTransaction {
 
     /// Hash of the transaction.
     pub fn hash(&self) -> &TxHash {
-        base_common_consensus::transaction::TxHashRef::tx_hash(self.transaction.inner())
+        base_common_types_chain::transaction::TxHashRef::tx_hash(self.transaction.inner())
     }
 
     /// The Sender of the transaction.
@@ -322,7 +322,7 @@ impl InMemorySize for BasePooledTransaction {
     }
 }
 
-impl base_common_consensus::Transaction for BasePooledTransaction {
+impl base_common_types_chain::Transaction for BasePooledTransaction {
     fn chain_id(&self) -> Option<u64> {
         self.transaction.chain_id()
     }
@@ -471,7 +471,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, EthereumTxEnvelope, SignableTransaction, TxDeposit,
         TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxEip8130, TxLegacy, transaction::Recovered,

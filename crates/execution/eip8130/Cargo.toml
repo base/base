@@ -25,7 +25,7 @@ base-common-precompiles = { workspace = true }
 base64 = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 p256 = { workspace = true, features = ["default", "ecdsa"] }
-base-common-consensus = { workspace = true, features = ["k256"] }
+base-common-types-chain = { workspace = true, features = ["k256"] }
 [dev-dependencies]
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 [features]

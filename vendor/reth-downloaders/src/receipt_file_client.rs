@@ -219,7 +219,7 @@ mod test {
         hex,
     };
     use alloy_rlp::{Decodable, RlpDecodable};
-    use base_common_consensus::{EthereumReceipt as Receipt, TxType};
+    use base_common_types_chain::{EthereumReceipt as Receipt, TxType};
     use reth_tracing::init_test_tracing;
     use tokio_util::codec::Decoder;
 

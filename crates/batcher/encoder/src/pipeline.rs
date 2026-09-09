@@ -1,7 +1,7 @@
 //! Batcher pipeline trait and the types that drive it.
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
 
 use crate::{BatchComposeError, BatchSubmission, ChannelError, ChannelLimit, SubmissionId};

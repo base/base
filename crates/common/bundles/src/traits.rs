@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, TxHash, keccak256};
 use alloy_provider::network::eip2718::Encodable2718;
-use base_common_consensus::{BaseTxEnvelope, Transaction, transaction::Recovered};
+use base_common_types_chain::{BaseTxEnvelope, Transaction, transaction::Recovered};
 use base_common_flz::tx_estimated_size_fjord_bytes;
 
 use crate::{AcceptedBundle, ParsedBundle};

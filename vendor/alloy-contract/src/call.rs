@@ -13,7 +13,7 @@ use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_sol_types::SolCall;
 use alloy_transport::{BoxFuture, TransportResult};
-use base_common_consensus::SignableTransaction;
+use base_common_types_chain::SignableTransaction;
 use base_common_network::{
     Ethereum, IntoWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
     TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
@@ -782,7 +782,7 @@ mod tests {
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
     use alloy_provider::{Provider, ProviderBuilder, WalletProvider};
     use alloy_sol_types::sol;
-    use base_common_consensus::Transaction;
+    use base_common_types_chain::Transaction;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_common_rpc_types::{AccessListItem, Authorization};
     use futures::Future;
@@ -1112,7 +1112,7 @@ mod tests {
 
     #[test]
     fn change_sidecar_7594() {
-        use base_common_consensus::Blob;
+        use base_common_types_chain::Blob;
 
         let sidecar =
             BlobTransactionSidecarEip7594::new(vec![Blob::repeat_byte(0xAB)], vec![], vec![]);

@@ -1,7 +1,7 @@
 //! Block related models and types.
 
 use alloy_primitives::B256;
-use base_common_consensus::{Compact, Header, add_arbitrary_tests};
+use base_common_types_chain::{Compact, Header, add_arbitrary_tests};
 use serde::{Deserialize, Serialize};
 
 /// The storage representation of a block's ommers.
@@ -56,7 +56,7 @@ mod tests {
 
     #[test_fuzz::test_fuzz]
     fn fuzz_test_stored_block_ommers(obj: StoredBlockOmmers) {
-        use base_common_consensus::Compact;
+        use base_common_types_chain::Compact;
         let mut buf = vec![];
         let len = obj.to_compact(&mut buf);
         let (same_obj, _) = StoredBlockOmmers::from_compact(buf.as_ref(), len);

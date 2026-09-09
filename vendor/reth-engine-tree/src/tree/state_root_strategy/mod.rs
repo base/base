@@ -132,7 +132,7 @@ pub struct PayloadStateRootJobContext<'a, P> {
     executor: &'a reth_tasks::Runtime,
     overlay_manager: &'a OverlayManager,
     parent_hash: B256,
-    parent_header: &'a base_common_consensus::Header,
+    parent_header: &'a base_common_types_chain::Header,
     timestamp: u64,
     state: &'a mut EngineApiTreeState,
     provider_builder: StateProviderBuilder<P>,
@@ -158,7 +158,7 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
         executor: &'a reth_tasks::Runtime,
         overlay_manager: &'a OverlayManager,
         parent_hash: B256,
-        parent_header: &'a base_common_consensus::Header,
+        parent_header: &'a base_common_types_chain::Header,
         timestamp: u64,
         state: &'a mut EngineApiTreeState,
         provider_builder: StateProviderBuilder<P>,
@@ -187,7 +187,7 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
     ///
     /// This is the chain's concrete header type, so chain-specific strategies can read
     /// chain-specific fields, and number-activated forks can dispatch on the parent number.
-    pub const fn parent_header(&self) -> &base_common_consensus::Header {
+    pub const fn parent_header(&self) -> &base_common_types_chain::Header {
         self.parent_header
     }
 
@@ -1298,7 +1298,7 @@ fn write_trie_debug_recorders(block_number: u64, recorders: &[(Option<B256>, Tri
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, map::HashMap};
-    use base_common_consensus::constants::KECCAK_EMPTY;
+    use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_evm_handler::state::{
         AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
     };

@@ -3,7 +3,7 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_serde::WithOtherFields;
-use base_common_consensus::{
+use base_common_types_chain::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 

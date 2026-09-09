@@ -45,7 +45,7 @@ alloy-provider = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }

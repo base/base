@@ -1,7 +1,7 @@
 //! Mutable header utilities.
 
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
-use base_common_consensus::Header;
+use base_common_types_chain::Header;
 
 use crate::BlockHeader;
 

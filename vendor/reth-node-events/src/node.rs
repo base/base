@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::{
+use base_common_types_chain::{
     BlockHeader,
     constants::{GWEI_TO_WEI, MGAS_TO_GAS},
 };

@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use base_common_chains::Upgrades;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
     ReceiptWithBloom, TxReceipt,
 };
@@ -338,7 +338,7 @@ impl BaseReceiptBuilder {
         };
 
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
-            let map_logs = move |receipt: base_common_consensus::Receipt| {
+            let map_logs = move |receipt: base_common_types_chain::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
                 let logs = Log::collect_for_receipt(next_log_index, meta, logs);
                 Receipt { status, cumulative_gas_used, logs }
@@ -392,7 +392,7 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, Block, BlockBody, Eip658Value, TxEip7702,
         transaction::TransactionMeta,
     };
@@ -585,7 +585,7 @@ mod tests {
         );
         let tx_0 = BaseTransactionSigned::decode_2718(&mut &system[..]).unwrap();
 
-        let block: base_common_consensus::Block<BaseTransactionSigned> = Block {
+        let block: base_common_types_chain::Block<BaseTransactionSigned> = Block {
             body: BlockBody { transactions: vec![tx_0], ..Default::default() },
             ..Default::default()
         };

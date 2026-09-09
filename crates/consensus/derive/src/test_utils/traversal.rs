@@ -3,7 +3,7 @@
 use alloc::{sync::Arc, vec};
 
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, hex};
-use base_common_consensus::Receipt;
+use base_common_types_chain::Receipt;
 use base_common_genesis::{RollupConfig, SystemConfigUpdate};
 use base_protocol::BlockInfo;
 
@@ -35,7 +35,7 @@ impl TraversalTestHelper {
     /// Creates a new [`Receipt`] with the update batcher log and a bad log.
     pub fn new_receipts() -> alloc::vec::Vec<Receipt> {
         let mut receipt = Receipt {
-            status: base_common_consensus::Eip658Value::Eip658(true),
+            status: base_common_types_chain::Eip658Value::Eip658(true),
             ..Receipt::default()
         };
         let bad = Log::new(

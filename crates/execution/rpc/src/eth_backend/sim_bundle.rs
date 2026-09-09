@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use crate::MevSimApiServer;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
-use base_common_consensus::{BlockHeader, transaction::TxHashRef};
+use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_common_rpc_types::{
     BlockId, BundleItem, Inclusion, Log, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
     SimBundleRequest, SimBundleResponse, Validity,

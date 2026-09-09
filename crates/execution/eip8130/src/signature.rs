@@ -33,7 +33,7 @@ const SIGNED_MESSAGE_TYPEHASH: B256 =
 /// `SignedAccountChanges` batch and uses different byte values
 /// (`Local = 0x00`, `Multichain = 0x01`).
 ///
-/// [`AccountChangeChannel`]: base_common_consensus::AccountChangeChannel
+/// [`AccountChangeChannel`]: base_common_types_chain::AccountChangeChannel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SignatureType {
@@ -155,7 +155,7 @@ impl SignatureVerifier {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, U256, address, keccak256};
-    use base_common_consensus::Eip8130Constants;
+    use base_common_types_chain::Eip8130Constants;
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 

@@ -1,5 +1,5 @@
 //! EIP-8130 transaction tests across the Base Zenith boundary.
-use base_common_consensus::{BaseReceipt, TxReceipt};
+use base_common_types_chain::{BaseReceipt, TxReceipt};
 
 use crate::env::ZenithTestEnv;
 

@@ -99,7 +99,7 @@ base-common-rpc-types-engine = {workspace = true, features = ["std"]}
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth", "std"] }
+base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-rpc-types = {workspace = true, features = ["default", "std"]}
 hyper-util = { workspace = true, optional = true, features = ["default"] }

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_config::{PruneConfig, config::StageConfig};

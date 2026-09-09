@@ -13,7 +13,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     EthereumTxEnvelope, EthereumTypedTransaction, Signed, Transaction, TxEip1559, TxEip2930,
     TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType, Typed2718,
     constants::{
@@ -769,7 +769,7 @@ impl Typed2718 for MockTransaction {
     }
 }
 
-impl base_common_consensus::Transaction for MockTransaction {
+impl base_common_types_chain::Transaction for MockTransaction {
     fn chain_id(&self) -> Option<u64> {
         match self {
             Self::Legacy { chain_id, .. } => *chain_id,
@@ -1303,10 +1303,10 @@ impl TryFrom<MockTransaction> for crate::BasePooledTransaction {
         let encoded_length = transaction.encoded_length();
         let (tx, sender) = transaction.into_consensus().into_parts();
         let tx = match tx {
-            EthereumTxEnvelope::Legacy(tx) => base_common_consensus::BaseTxEnvelope::Legacy(tx),
-            EthereumTxEnvelope::Eip2930(tx) => base_common_consensus::BaseTxEnvelope::Eip2930(tx),
-            EthereumTxEnvelope::Eip1559(tx) => base_common_consensus::BaseTxEnvelope::Eip1559(tx),
-            EthereumTxEnvelope::Eip7702(tx) => base_common_consensus::BaseTxEnvelope::Eip7702(tx),
+            EthereumTxEnvelope::Legacy(tx) => base_common_types_chain::BaseTxEnvelope::Legacy(tx),
+            EthereumTxEnvelope::Eip2930(tx) => base_common_types_chain::BaseTxEnvelope::Eip2930(tx),
+            EthereumTxEnvelope::Eip1559(tx) => base_common_types_chain::BaseTxEnvelope::Eip1559(tx),
+            EthereumTxEnvelope::Eip7702(tx) => base_common_types_chain::BaseTxEnvelope::Eip7702(tx),
             EthereumTxEnvelope::Eip4844(_) => {
                 return Err("Base does not support blob transactions");
             }
@@ -1918,7 +1918,7 @@ fn test_mock_priority() {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use base_common_consensus::Transaction;
+    use base_common_types_chain::Transaction;
 
     use super::*;
 

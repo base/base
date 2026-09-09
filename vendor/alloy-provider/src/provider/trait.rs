@@ -13,7 +13,7 @@ use alloy_primitives::{
 };
 use alloy_rpc_client::{ClientRef, NoParams, PollerBuilder, WeakClient};
 use alloy_transport::TransportResult;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
 use base_common_rpc_types::pubsub::{Params, SubscriptionKind};
@@ -349,12 +349,12 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
         self.client().request("eth_getAccountInfo", address).into()
     }
 
-    /// Retrieves account information ([`TrieAccount`](base_common_consensus::TrieAccount)) for the given
+    /// Retrieves account information ([`TrieAccount`](base_common_types_chain::TrieAccount)) for the given
     /// [`Address`] at the particular [`BlockId`].
     fn get_account(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, base_common_consensus::TrieAccount> {
+    ) -> RpcWithBlock<Address, base_common_types_chain::TrieAccount> {
         self.client().request("eth_getAccount", address).into()
     }
 
@@ -1162,9 +1162,9 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     ///
     /// If the transaction is an [EIP-4844] transaction that is still in the pool (pending) it will
     /// include the sidecar, otherwise it will the consensus variant without the sidecar:
-    /// [`TxEip4844`](base_common_consensus::transaction::eip4844::TxEip4844).
+    /// [`TxEip4844`](base_common_types_chain::transaction::eip4844::TxEip4844).
     ///
-    /// This can be decoded into [`TxEnvelope`](base_common_consensus::transaction::TxEnvelope).
+    /// This can be decoded into [`TxEnvelope`](base_common_types_chain::transaction::TxEnvelope).
     ///
     /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
@@ -1897,8 +1897,8 @@ mod tests {
         },
     };
     // For layer transport tests
-    use base_common_consensus::transaction::SignerRecoverable;
-    use base_common_consensus::{Transaction, TxEnvelope};
+    use base_common_types_chain::transaction::SignerRecoverable;
+    use base_common_types_chain::{Transaction, TxEnvelope};
     use base_common_network::{
         Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };

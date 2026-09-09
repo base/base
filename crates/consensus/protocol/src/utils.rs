@@ -3,7 +3,7 @@
 use alloc::string::ToString;
 
 use alloy_primitives::{B256, Bytes, U256};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, JovianExtraData, Transaction, Typed2718};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope, JovianExtraData, Transaction, Typed2718};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BaseExecutionPayload;
 
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn test_to_system_config_empty_txs() {
         let block = BaseBlock {
-            header: base_common_consensus::Header { number: 1, ..Default::default() },
+            header: base_common_types_chain::Header { number: 1, ..Default::default() },
             ..Default::default()
         };
         let block_hash = block.header.hash_slow();
@@ -224,11 +224,11 @@ mod tests {
     #[test]
     fn test_to_system_config_non_deposit() {
         let block = BaseBlock {
-            header: base_common_consensus::Header { number: 1, ..Default::default() },
-            body: base_common_consensus::BlockBody {
-                transactions: vec![base_common_consensus::BaseTxEnvelope::Legacy(
-                    base_common_consensus::Signed::new_unchecked(
-                        base_common_consensus::TxLegacy {
+            header: base_common_types_chain::Header { number: 1, ..Default::default() },
+            body: base_common_types_chain::BlockBody {
+                transactions: vec![base_common_types_chain::BaseTxEnvelope::Legacy(
+                    base_common_types_chain::Signed::new_unchecked(
+                        base_common_types_chain::TxLegacy {
                             chain_id: Some(1),
                             nonce: 1,
                             gas_price: 1,
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn test_to_system_config_malformed_payload_transaction() {
         let block = BaseBlock {
-            header: base_common_consensus::Header { number: 1, ..Default::default() },
+            header: base_common_types_chain::Header { number: 1, ..Default::default() },
             ..Default::default()
         };
         let (mut payload, _) = BaseExecutionPayload::from_block_slow(&block);
@@ -279,14 +279,14 @@ mod tests {
     #[test]
     fn test_constructs_jovian_system_config_from_payload() {
         let block = BaseBlock {
-            header: base_common_consensus::Header {
+            header: base_common_types_chain::Header {
                 number: 1,
                 extra_data: bytes!("010000beef0000babe0000000000000123"),
                 ..Default::default()
             },
-            body: base_common_consensus::BlockBody {
+            body: base_common_types_chain::BlockBody {
                 transactions: vec![BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
-                    base_common_consensus::TxDeposit {
+                    base_common_types_chain::TxDeposit {
                         input: L1BlockInfoJovian::new(
                             1,
                             2,

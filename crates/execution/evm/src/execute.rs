@@ -5,7 +5,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BlockHeader};
+use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader};
 pub use base_evm_handler::{
     BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
     InternalBlockExecutionError,
@@ -642,7 +642,7 @@ impl<TxEnv, T: RecoveredTx<Tx>, Tx> ExecutableTxParts<TxEnv, Tx> for WithTxEnv<T
 mod tests {
     use core::marker::PhantomData;
 
-    use base_common_consensus::BaseReceipt;
+    use base_common_types_chain::BaseReceipt;
     use base_evm_handler::database::{CacheDB, EmptyDB};
 
     use super::*;

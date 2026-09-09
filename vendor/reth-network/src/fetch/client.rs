@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_types_chain::{BaseBlock, BaseReceipt};
 use futures::{future, future::Either};
 use reth_eth_wire::BlockAccessLists;
 use reth_eth_wire_types::snap::{
@@ -83,7 +83,7 @@ impl FetchClient {
 type HeadersClientFuture<T> = Either<FlattenedResponse<T>, future::Ready<T>>;
 
 impl HeadersClient for FetchClient {
-    type Output = HeadersClientFuture<PeerRequestResult<Vec<base_common_consensus::Header>>>;
+    type Output = HeadersClientFuture<PeerRequestResult<Vec<base_common_types_chain::Header>>>;
 
     /// Sends a `GetBlockHeaders` request to an available peer.
     fn get_headers_with_priority(
@@ -105,8 +105,8 @@ impl HeadersClient for FetchClient {
 }
 
 impl BodiesClient for FetchClient {
-    type Body = base_common_consensus::BaseBlockBody;
-    type Output = BodiesFut<base_common_consensus::BaseBlockBody>;
+    type Body = base_common_types_chain::BaseBlockBody;
+    type Output = BodiesFut<base_common_types_chain::BaseBlockBody>;
 
     /// Sends a `GetBlockBodies` request to an available peer.
     fn get_block_bodies_with_priority_and_range_hint(

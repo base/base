@@ -14,7 +14,7 @@ use alloy_primitives::{
     map::{B256HashMap, B256HashSet},
 };
 use alloy_transport::{TransportError, utils::Spawnable};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_network::{BlockResponse, Network};
 use futures::{FutureExt, Stream, future::pending, stream::StreamExt};
 use tokio::{

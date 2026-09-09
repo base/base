@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_consensus::{BlockHeader, Predeploys};
+use base_common_types_chain::{BlockHeader, Predeploys};
 use base_evm_handler::database::BundleState;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
 use reth_trie_common::HashedStorage;
@@ -130,7 +130,7 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_primitives::{B256, U256, keccak256};
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use base_evm_handler::database::BundleState;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_db_common::init::init_genesis;

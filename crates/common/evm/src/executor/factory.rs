@@ -1,7 +1,7 @@
 //! Contains the factory.
 
 use base_common_chains::{ChainUpgrades, Upgrades};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
+use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, OpTxType};
 use base_evm_handler::Inspector;
 use base_evm_handler::{BlockExecutorFactory, EvmFactory, StateDB};
 

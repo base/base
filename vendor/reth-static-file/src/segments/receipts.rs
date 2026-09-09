@@ -1,7 +1,7 @@
 use std::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
 use reth_static_file_types::StaticFileSegment;

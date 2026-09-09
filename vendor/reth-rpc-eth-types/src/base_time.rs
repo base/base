@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::BlockHash;
-use base_common_consensus::BaseTransaction;
+use base_common_types_chain::BaseTransaction;
 use base_protocol::BaseTimeUpdateTx;
 use lru::LruCache;
 use reth_storage_api::{TransactionsProvider, errors::ProviderError};
@@ -83,7 +83,7 @@ impl BaseTimeCache {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, Header, Sealable, TxDeposit,
     };
     use base_protocol::BaseTimeUpdateTx;

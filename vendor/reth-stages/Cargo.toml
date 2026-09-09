@@ -48,7 +48,7 @@ num-traits = { workspace = true, features = ["default"] }
 reth-testing-utils = { workspace = true, optional = true }
 reth-libmdbx = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-evm = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
@@ -90,7 +90,7 @@ test-utils = [
     "reth-downloaders/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-evm/test-utils",
-    "base-common-consensus/test-utils",
+    "base-common-types-chain/test-utils",
     "reth-db-api/test-utils",
     "reth-trie/test-utils",
     "reth-trie/test-utils",

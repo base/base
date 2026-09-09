@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use alloy_primitives::map::B256Map;
-use base_common_consensus::{BaseBlockBody as BlockBody, BlockHeader};
+use base_common_types_chain::{BaseBlockBody as BlockBody, BlockHeader};
 use reth_network_p2p::bodies::response::BlockResponse;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
@@ -12,7 +12,7 @@ use reth_provider::{
 
 pub(crate) fn zip_blocks<'a>(
     headers: impl Iterator<Item = &'a SealedHeader>,
-    bodies: &mut B256Map<base_common_consensus::BaseBlockBody>,
+    bodies: &mut B256Map<base_common_types_chain::BaseBlockBody>,
 ) -> Vec<BlockResponse> {
     headers
         .into_iter()
@@ -30,7 +30,7 @@ pub(crate) fn zip_blocks<'a>(
 pub(crate) fn create_raw_bodies(
     headers: impl IntoIterator<Item = SealedHeader>,
     bodies: &mut B256Map<BlockBody>,
-) -> Vec<base_common_consensus::BaseBlock> {
+) -> Vec<base_common_types_chain::BaseBlock> {
     headers
         .into_iter()
         .map(|header| {

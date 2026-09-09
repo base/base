@@ -14,7 +14,7 @@ use alloy_eips::{
     eip4895::{Withdrawal, Withdrawals},
 };
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bytes, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
     SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
 };
@@ -123,7 +123,7 @@ pub fn random_block_with_parent<R: Rng>(
 ///
 /// The header is assumed not to be correct if validated.
 pub fn random_header<R: Rng>(rng: &mut R, number: u64, parent: Option<B256>) -> SealedHeader {
-    let header = base_common_consensus::Header {
+    let header = base_common_types_chain::Header {
         number,
         nonce: B64::random(),
         difficulty: U256::from(rng.random::<u32>()),
@@ -213,7 +213,7 @@ pub fn generate_keys<R: Rng>(_rng: &mut R, count: usize) -> Vec<Keypair> {
 pub fn random_block<R: Rng>(rng: &mut R, number: u64, block_params: BlockParams) -> SealedBlock {
     // Generate transactions
     let tx_count = block_params.tx_count.unwrap_or_else(|| rng.random::<u8>());
-    let transactions: Vec<base_common_consensus::BaseTxEnvelope> =
+    let transactions: Vec<base_common_types_chain::BaseTxEnvelope> =
         (0..tx_count).map(|_| crate::BaseTestData::random_signed_tx(rng)).collect();
     let total_gas = transactions.iter().fold(0, |sum, tx| sum + tx.gas_limit());
 
@@ -253,9 +253,9 @@ pub fn random_block<R: Rng>(rng: &mut R, number: u64, block_params: BlockParams)
         ..Default::default()
     };
 
-    base_common_consensus::BaseBlock {
+    base_common_types_chain::BaseBlock {
         header,
-        body: base_common_consensus::BaseBlockBody {
+        body: base_common_types_chain::BaseBlockBody {
             transactions,
             ommers,
             withdrawals: withdrawals.map(Withdrawals::new),
@@ -496,7 +496,7 @@ mod tests {
 
     use alloy_eips::eip2930::AccessList;
     use alloy_primitives::{Signature, hex};
-    use base_common_consensus::TxEip1559;
+    use base_common_types_chain::TxEip1559;
     use reth_primitives_traits::{
         SignerRecoverable,
         crypto::secp256k1::{public_key_to_address, sign_message},

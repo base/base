@@ -1,6 +1,6 @@
 //! Accepted bundle type that has been validated and metered.
 
-use base_common_consensus::{BaseTxEnvelope, transaction::Recovered};
+use base_common_types_chain::{BaseTxEnvelope, transaction::Recovered};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

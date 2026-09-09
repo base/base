@@ -4,7 +4,7 @@
 //! Native mirror of `AccountConfiguration.authenticateActor` / `_authenticate`.
 
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 
 use crate::{
     AccountConfigurationStorage, AccountState, AuthError, AuthenticatorDispatch, AuthorizeError,

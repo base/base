@@ -701,7 +701,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use alloy_primitives::{Address, B256, U256, address};
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use reth_db_api::{
         cursor::{DbDupCursorRO, DbDupCursorRW, ReverseWalker, Walker},
         models::{AccountBeforeTx, IntegerList, ShardedKey},

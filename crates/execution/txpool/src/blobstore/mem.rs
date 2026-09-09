@@ -300,7 +300,7 @@ mod tests {
             BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant, CELLS_PER_EXT_BLOB,
         },
     };
-    use base_common_consensus::BlobTransactionSidecar;
+    use base_common_types_chain::BlobTransactionSidecar;
 
     use super::*;
 

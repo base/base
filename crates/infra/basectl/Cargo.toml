@@ -45,7 +45,7 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-base-common-consensus = { workspace = true, features = ["k256", "std"] }
+base-common-types-chain = { workspace = true, features = ["k256", "std"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 tokio = { workspace = true, features = ["default", "macros", "net", "process", "time"] }

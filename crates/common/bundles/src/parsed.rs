@@ -1,7 +1,7 @@
 //! Parsed bundle type with decoded transactions.
 
 use alloy_provider::network::eip2718::Decodable2718;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope,
     transaction::{Recovered, SignerRecoverable},
 };

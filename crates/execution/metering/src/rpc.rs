@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_common_evm::L1BlockInfo;
 use base_execution_evm::extract_l1_info_from_tx;
 use jsonrpsee::core::{RpcResult, async_trait};
@@ -314,7 +314,7 @@ mod tests {
     use alloy_primitives::{Bytes, address};
     use alloy_rpc_client::RpcClient;
     use base_bundles::{Bundle, MeterBundleResponse};
-    use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
+    use base_common_types_chain::{BaseTransactionSigned, BaseTxEnvelope};
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
     use base_test_utils::Account;

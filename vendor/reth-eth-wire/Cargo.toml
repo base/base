@@ -25,7 +25,7 @@ alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-network-peers = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
@@ -43,7 +43,7 @@ serde = { workspace = true }
 test-fuzz = { workspace = true }
 alloy-eips = { workspace = true }
 async-stream = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
@@ -65,10 +65,10 @@ arbitrary = [
     "dep:arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-chains/arbitrary",
     "reth-primitives-traits/arbitrary",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
 ]
 serde = [
     "dep:serde",
@@ -78,9 +78,9 @@ serde = [
     "bytes/serde",
     "rand/serde",
     "secp256k1/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-chains/serde",
     "reth-primitives-traits/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "rand_08/serde",
 ]

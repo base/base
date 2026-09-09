@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{Block, BlockHeader, Transaction};
+use base_common_types_chain::{Block, BlockHeader, Transaction};
 
 use crate::{
     BogotaPayloadFields, CancunPayloadFields, MaybeBogotaPayloadFields, MaybeCancunPayloadFields,
@@ -33,7 +33,7 @@ pub struct ExecutionPayloadSidecar {
 }
 
 impl ExecutionPayloadSidecar {
-    /// Extracts the [`ExecutionPayloadSidecar`] from the given [`base_common_consensus::Block`].
+    /// Extracts the [`ExecutionPayloadSidecar`] from the given [`base_common_types_chain::Block`].
     ///
     /// Returns [`ExecutionPayloadSidecar::none`] if the block does not contain any sidecar fields
     /// (pre-cancun): `requests_hash`, `parent_beacon_block_root`, `blob_versioned_hashes`.
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn with_inclusion_list() {
-        use base_common_consensus::{BlockBody, Header, TxEnvelope};
+        use base_common_types_chain::{BlockBody, Header, TxEnvelope};
 
         let block: Block<TxEnvelope> = Block::new(Header::default(), BlockBody::default());
         let transactions = vec![Bytes::from_static(&[0x01, 0x02])];

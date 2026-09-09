@@ -3,7 +3,7 @@ use std::{collections::HashMap, io, ops::RangeInclusive, path::Path, sync::Arc};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use futures::Future;
 use itertools::{Either, Itertools};
@@ -48,13 +48,13 @@ pub const DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE: u64 = 1_000_000_000;
 #[derive(Debug, Clone)]
 pub struct FileClient {
     /// The buffered headers retrieved when fetching new bodies.
-    headers: HashMap<BlockNumber, base_common_consensus::Header>,
+    headers: HashMap<BlockNumber, base_common_types_chain::Header>,
 
     /// A mapping between block hash and number.
     hash_to_number: HashMap<BlockHash, BlockNumber>,
 
     /// The buffered bodies retrieved when fetching new headers.
-    bodies: HashMap<BlockHash, base_common_consensus::BaseBlockBody>,
+    bodies: HashMap<BlockHash, base_common_types_chain::BaseBlockBody>,
 }
 
 /// An error that can occur when constructing and using a [`FileClient`].
@@ -172,7 +172,7 @@ impl FileClient {
     /// Use the provided bodies as the file client's block body buffer.
     pub fn with_bodies(
         mut self,
-        bodies: HashMap<BlockHash, base_common_consensus::BaseBlockBody>,
+        bodies: HashMap<BlockHash, base_common_types_chain::BaseBlockBody>,
     ) -> Self {
         self.bodies = bodies;
         self
@@ -181,7 +181,7 @@ impl FileClient {
     /// Use the provided headers as the file client's block body buffer.
     pub fn with_headers(
         mut self,
-        headers: HashMap<BlockNumber, base_common_consensus::Header>,
+        headers: HashMap<BlockNumber, base_common_types_chain::Header>,
     ) -> Self {
         self.headers = headers;
         for (number, header) in &self.headers {
@@ -201,7 +201,7 @@ impl FileClient {
     }
 
     /// Returns an iterator over headers in the client.
-    pub fn headers_iter(&self) -> impl Iterator<Item = &base_common_consensus::Header> {
+    pub fn headers_iter(&self) -> impl Iterator<Item = &base_common_types_chain::Header> {
         self.headers.values()
     }
 
@@ -210,7 +210,7 @@ impl FileClient {
     /// Panics, if file client headers and bodies are not mapping 1-1.
     pub fn bodies_iter_mut(
         &mut self,
-    ) -> impl Iterator<Item = (u64, &mut base_common_consensus::BaseBlockBody)> {
+    ) -> impl Iterator<Item = (u64, &mut base_common_types_chain::BaseBlockBody)> {
         let bodies = &mut self.bodies;
         let numbers = &self.hash_to_number;
         bodies.iter_mut().map(|(hash, body)| (numbers[hash], body))
@@ -248,7 +248,7 @@ impl FromReader for FileClientBuilder {
         // use with_capacity to make sure the internal buffer contains the entire chunk
         let mut stream = FramedRead::with_capacity(
             reader,
-            BlockFileCodec::<base_common_consensus::BaseBlock>::default(),
+            BlockFileCodec::<base_common_types_chain::BaseBlock>::default(),
             num_bytes as usize,
         );
 
@@ -397,8 +397,8 @@ impl HeadersClient for FileClient {
 }
 
 impl BodiesClient for FileClient {
-    type Body = base_common_consensus::BaseBlockBody;
-    type Output = BodiesFut<base_common_consensus::BaseBlockBody>;
+    type Body = base_common_types_chain::BaseBlockBody;
+    type Output = BodiesFut<base_common_types_chain::BaseBlockBody>;
 
     fn get_block_bodies_with_priority_and_range_hint(
         &self,
@@ -435,7 +435,7 @@ impl DownloadClient for FileClient {
 }
 
 impl BlockClient for FileClient {
-    type Block = base_common_consensus::BaseBlock;
+    type Block = base_common_types_chain::BaseBlock;
 }
 
 /// File reader type for handling different compression formats.

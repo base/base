@@ -90,7 +90,7 @@ mod tests {
     use std::{collections::BTreeMap, fmt::Debug, fs, ops::Range, path::Path};
 
     use alloy_primitives::{Address, B256, BlockHash, Signature, TxNumber, U160, U256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, Header, SignableTransaction, Transaction, TxLegacy,
     };
     use rand::seq::SliceRandom;

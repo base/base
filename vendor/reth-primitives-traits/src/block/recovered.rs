@@ -6,7 +6,7 @@ use alloy_eips::{BlockNumHash, Encodable2718, eip1898::BlockWithParent};
 use alloy_primitives::{
     Address, B64, B256, BlockHash, BlockNumber, Bloom, Bytes, Sealed, TxHash, U256,
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseBlockBody, BaseTxEnvelope, BlockHeader, Header,
     transaction::{Recovered, TransactionMeta},
 };
@@ -525,11 +525,11 @@ impl From<RecoveredBlock> for Sealed<BaseBlock> {
 
 /// Converts a block with recovered transactions into a [`RecoveredBlock`].
 ///
-/// This implementation takes an `base_common_consensus::Block` where transactions are of type
+/// This implementation takes an `base_common_types_chain::Block` where transactions are of type
 /// `Recovered<T>` (transactions with their recovered senders) and converts it into a
 /// [`RecoveredBlock`] which stores transactions and senders separately for efficiency.
-impl From<base_common_consensus::Block<Recovered<BaseTxEnvelope>>> for RecoveredBlock {
-    fn from(block: base_common_consensus::Block<Recovered<BaseTxEnvelope>>) -> Self {
+impl From<base_common_types_chain::Block<Recovered<BaseTxEnvelope>>> for RecoveredBlock {
+    fn from(block: base_common_types_chain::Block<Recovered<BaseTxEnvelope>>) -> Self {
         let header = block.header;
 
         // Split the recovered transactions into transactions and senders
@@ -544,13 +544,13 @@ impl From<base_common_consensus::Block<Recovered<BaseTxEnvelope>>> for Recovered
             .unzip();
 
         // Reconstruct the block with regular transactions
-        let body = base_common_consensus::BlockBody {
+        let body = base_common_types_chain::BlockBody {
             transactions,
             ommers: block.body.ommers,
             withdrawals: block.body.withdrawals,
         };
 
-        let block = base_common_consensus::Block::new(header, body);
+        let block = base_common_types_chain::Block::new(header, body);
 
         Self::new_unhashed(block, senders)
     }
@@ -704,7 +704,7 @@ impl<'a> IndexedTx<'a> {
 mod rpc_compat {
     use alloc::vec::Vec;
 
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, BlockHeader, transaction::Recovered,
     };
     use base_common_rpc_types::{Block, BlockTransactions, BlockTransactionsKind, TransactionInfo};
@@ -896,7 +896,7 @@ mod rpc_compat {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Signature, TxKind, bytes};
-    use base_common_consensus::{BaseTxEnvelope, Header, TxLegacy};
+    use base_common_types_chain::{BaseTxEnvelope, Header, TxLegacy};
 
     use super::*;
 
@@ -915,7 +915,7 @@ mod tests {
         let signature = Signature::new(U256::from(1), U256::from(2), false);
         let sender = Address::from([0x01; 20]);
 
-        let signed_tx = BaseTxEnvelope::Legacy(base_common_consensus::Signed::new_unchecked(
+        let signed_tx = BaseTxEnvelope::Legacy(base_common_types_chain::Signed::new_unchecked(
             tx,
             signature,
             B256::ZERO,
@@ -924,12 +924,12 @@ mod tests {
         let recovered_tx = Recovered::new_unchecked(signed_tx, sender);
 
         let header = Header::default();
-        let body = base_common_consensus::BlockBody {
+        let body = base_common_types_chain::BlockBody {
             transactions: vec![recovered_tx],
             ommers: vec![],
             withdrawals: None,
         };
-        let block_with_recovered = base_common_consensus::Block::new(header, body);
+        let block_with_recovered = base_common_types_chain::Block::new(header, body);
 
         let recovered_block: RecoveredBlock = block_with_recovered.into();
 

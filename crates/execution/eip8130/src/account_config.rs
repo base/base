@@ -2,7 +2,7 @@
 //! contract's storage layout and its storage-view functions.
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 use base_precompile_macros::contract;
 use base_precompile_storage::{ContractStorage, Handler, Mapping, Result, Slot, StorageKey};
 

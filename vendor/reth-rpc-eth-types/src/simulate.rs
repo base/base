@@ -2,7 +2,7 @@
 
 use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader, Transaction as _};
+use base_common_types_chain::{BaseTxEnvelope, BlockHeader, Transaction as _};
 use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
 use base_common_rpc_types::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, BlockOverrides, BlockTransactionsKind,
@@ -305,9 +305,9 @@ pub fn execute_transactions<S, T>(
 where
     S: BlockBuilder<Executor: BlockExecutor<Evm: Evm<DB: Database<Error: Into<EthApiError>>>>>,
     T: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send
@@ -421,9 +421,9 @@ pub fn resolve_transaction<DB: Database, T>(
 where
     DB::Error: Into<EthApiError>,
     T: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send
@@ -502,9 +502,9 @@ pub fn build_simulated_block<T>(
 ) -> Result<SimulatedBlock<BaseBlockResponse>, crate::BaseEthApiError>
 where
     T: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send
@@ -587,7 +587,7 @@ where
 mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{U256, address};
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use base_common_rpc_types::{
         BlockOverrides, TransactionRequest,
         simulate::SimBlock,

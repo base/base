@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base_common_consensus::{Header, Receipt};
+use base_common_types_chain::{Header, Receipt};
 use base_protocol::BlockInfo;
 
 /// A hash-addressed L1 origin and any receipts available during preparation.

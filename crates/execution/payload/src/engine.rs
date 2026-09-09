@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{B256, keccak256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BlockHeader, Predeploys};
+use base_common_types_chain::{BlockHeader, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
@@ -229,7 +229,7 @@ impl BaseEngineValidator {
     pub fn validate_payload_attributes_against_header(
         &self,
         attributes: &BasePayloadBuilderAttributes,
-        header: &base_common_consensus::Header,
+        header: &base_common_types_chain::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
         if !self.chain_spec().is_cobalt_active_at_timestamp(timestamp) {
@@ -265,7 +265,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B64, B256, U256, b64};
     use base_common_chains::{BaseUpgrade, ChainConfig};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, EMPTY_ROOT_HASH, Header, Sealable, TxDeposit,
     };
     use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};

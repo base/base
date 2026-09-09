@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use alloy_rlp::{Decodable, Encodable};
-use base_common_consensus::{
+use base_common_types_chain::{
     Eip2718EncodableReceipt, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
 };
 

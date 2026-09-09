@@ -1,6 +1,6 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use reth_chain_state::ExecutedBlock;
 
 /// Input for advancing the engine's two persistence frontiers.

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::ChainSpecParser;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
 use reth_provider::BlockHashReader;

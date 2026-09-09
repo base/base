@@ -12,7 +12,7 @@ mod utils;
 
 use alloy_primitives::B256;
 pub use apis::*;
-use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+use base_common_types_chain::{BaseTransactionSigned, BaseTypedTransaction};
 use base_common_network::{PrivateKeySigner, TxSignerSync};
 use base_node_core::NodeConfig;
 pub use driver::*;

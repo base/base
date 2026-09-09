@@ -27,7 +27,7 @@ base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 base-tx-forwarding = { workspace = true, optional = true }
 base-common-chains = { workspace = true, optional = true }
-base-common-consensus = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, optional = true}
@@ -60,7 +60,7 @@ test-utils = [
     "dep:base-txpool-rpc",
     "dep:base-metering",
     "dep:base-common-chains",
-    "dep:base-common-consensus",
+    "dep:base-common-types-chain",
     "dep:base-common-evm",
     "dep:base-protocol",
     "dep:base-execution-chainspec",

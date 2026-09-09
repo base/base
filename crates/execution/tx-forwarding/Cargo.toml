@@ -33,7 +33,7 @@ alloy-signer = { workspace = true }
 base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
 base-common-network = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }

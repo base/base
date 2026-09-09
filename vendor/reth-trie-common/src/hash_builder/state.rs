@@ -12,7 +12,7 @@ use crate::TrieMask;
 #[cfg_attr(
     feature = "arbitrary",
     derive(arbitrary::Arbitrary),
-    base_common_consensus::add_arbitrary_tests(compact)
+    base_common_types_chain::add_arbitrary_tests(compact)
 )]
 pub struct HashBuilderState {
     /// The current key.
@@ -65,7 +65,7 @@ impl From<HashBuilder> for HashBuilderState {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl base_common_consensus::Compact for HashBuilderState {
+impl base_common_types_chain::Compact for HashBuilderState {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -153,7 +153,7 @@ impl base_common_consensus::Compact for HashBuilderState {
 
 #[cfg(test)]
 mod tests {
-    use base_common_consensus::Compact;
+    use base_common_types_chain::Compact;
 
     use super::*;
 

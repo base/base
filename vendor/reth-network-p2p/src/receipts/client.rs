@@ -1,14 +1,14 @@
 use std::pin::Pin;
 
 use alloy_primitives::B256;
-use base_common_consensus::TxReceipt;
+use base_common_types_chain::TxReceipt;
 use futures::Future;
 use reth_eth_wire_types::Receipts70;
 
 use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
 
 /// The receipts future type
-pub type ReceiptsFut<R = base_common_consensus::EthereumReceipt> =
+pub type ReceiptsFut<R = base_common_types_chain::EthereumReceipt> =
     Pin<Box<dyn Future<Output = PeerRequestResult<ReceiptsResponse<R>>> + Send + Sync>>;
 
 /// Response from a receipts request.

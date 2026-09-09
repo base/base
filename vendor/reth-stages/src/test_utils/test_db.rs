@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fmt::Debug, path::Path};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
-use base_common_consensus::{BaseReceipt as Receipt, BaseTxEnvelope};
+use base_common_types_chain::{BaseReceipt as Receipt, BaseTxEnvelope};
 use reth_db::{
     DatabaseEnv,
     test_utils::{

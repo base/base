@@ -9,7 +9,7 @@ use std::{
 use alloy_eip2124::Head;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber, U256};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::TransactionPool;
 use eyre::eyre;

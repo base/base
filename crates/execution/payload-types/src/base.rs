@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::{eip1559::BaseFeeParams, eip4895::Withdrawals, eip7685::Requests};
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
 /// Re-export for use in downstream arguments.
@@ -150,7 +150,7 @@ impl BasePayloadBuilderAttributes {
             .unwrap_or_default()
             .into_iter()
             .map(|data| {
-                base_common_consensus::decode_2718_canonical(data.as_ref())
+                base_common_types_chain::decode_2718_canonical(data.as_ref())
                     .map(|tx| WithEncoded::new(data, tx))
             })
             .collect::<Result<_, _>>()?;

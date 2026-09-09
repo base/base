@@ -1,4 +1,4 @@
-use base_common_consensus::{BaseTxEnvelope, transaction::Either};
+use base_common_types_chain::{BaseTxEnvelope, transaction::Either};
 use base_evm_handler::{ExecutableTxParts, RecoveredTx};
 use rayon::prelude::*;
 

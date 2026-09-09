@@ -3,7 +3,7 @@
 use alloc::vec;
 
 use alloy_eips::Encodable2718;
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
 use base_evm_context::{Transaction, TxEnv};
 use base_evm_handler::primitives::{Address, B256, Bytes, TxKind, U256};
 use base_evm_handler::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, SystemCallTx};
@@ -364,7 +364,7 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction {
 #[cfg(test)]
 mod tests {
     use alloy_eips::Encodable2718;
-    use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
+    use base_common_types_chain::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
     use base_evm_context::Transaction;
     use base_evm_handler::primitives::{Address, B256, Bytes};
 

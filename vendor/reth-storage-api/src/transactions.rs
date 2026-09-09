@@ -3,7 +3,7 @@ use core::ops::{Range, RangeBounds, RangeInclusive};
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::transaction::TransactionMeta;
+use base_common_types_chain::transaction::TransactionMeta;
 use reth_primitives_traits::SignedTransaction;
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
 

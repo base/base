@@ -152,7 +152,7 @@ impl<N: Network> Provider<N> for DynProvider<N> {
     fn get_account(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, base_common_consensus::TrieAccount> {
+    ) -> RpcWithBlock<Address, base_common_types_chain::TrieAccount> {
         self.0.get_account(address)
     }
 

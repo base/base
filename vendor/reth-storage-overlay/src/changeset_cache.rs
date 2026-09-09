@@ -617,7 +617,7 @@ mod tests {
         Address, U256, keccak256,
         map::{B256Map, HashMap},
     };
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use reth_db::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,

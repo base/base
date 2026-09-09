@@ -349,7 +349,7 @@ mod tests {
     struct NoopValidator;
 
     impl TransactionValidator for NoopValidator {
-        type Block = base_common_consensus::BaseBlock;
+        type Block = base_common_types_chain::BaseBlock;
 
         async fn validate_transaction(
             &self,
@@ -405,7 +405,7 @@ mod tests {
     struct SameOriginBatchValidator;
 
     impl TransactionValidator for SameOriginBatchValidator {
-        type Block = base_common_consensus::BaseBlock;
+        type Block = base_common_types_chain::BaseBlock;
 
         async fn validate_transaction(
             &self,

@@ -12,7 +12,7 @@ use alloy_primitives::{
     Address, U256,
     map::{AddressMap, AddressSet},
 };
-use base_common_consensus::transaction::Either;
+use base_common_types_chain::transaction::Either;
 use base_evm_context::ContextTr;
 use base_evm_handler::{
     Context,

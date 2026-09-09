@@ -9,7 +9,7 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;

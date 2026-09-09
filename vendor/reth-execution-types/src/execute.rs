@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 pub use base_evm_handler::BlockExecutionResult;
 use base_evm_handler::database::{BundleAccount, BundleState};
 use reth_primitives_traits::{Account, Bytecode};

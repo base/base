@@ -3,7 +3,7 @@
 use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::B256;
-use base_common_consensus::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
+use base_common_types_chain::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
 use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::{
     BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
@@ -56,7 +56,7 @@ pub fn validate_header_base_fee<H: BlockHeader>(
 #[inline]
 pub fn validate_shanghai_withdrawals(block: &SealedBlock) -> Result<(), ConsensusError> {
     let withdrawals = block.body().withdrawals().ok_or(ConsensusError::BodyWithdrawalsMissing)?;
-    let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(withdrawals);
+    let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(withdrawals);
     let header_withdrawals_root =
         block.withdrawals_root().ok_or(ConsensusError::WithdrawalsRootMissing)?;
     if withdrawals_root != *header_withdrawals_root {
@@ -303,8 +303,8 @@ pub fn validate_against_parent_hash_number<H: BlockHeader>(
 /// Validates the base fee against the parent and EIP-1559 rules.
 #[inline]
 pub fn validate_against_parent_eip1559_base_fee(
-    header: &base_common_consensus::Header,
-    parent: &base_common_consensus::Header,
+    header: &base_common_types_chain::Header,
+    parent: &base_common_types_chain::Header,
     chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError> {
     if chain_spec.is_london_active_at_block(header.number()) {
@@ -435,15 +435,15 @@ pub fn validate_against_parent_4844<H: BlockHeader>(
 mod tests {
     use alloy_eips::eip4895::Withdrawals;
     use alloy_primitives::{Bytes, Signature, U256};
-    use base_common_consensus::{BlockBody, Header};
+    use base_common_types_chain::{BlockBody, Header};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_primitives_traits::proofs;
 
     use super::*;
 
-    fn mock_tx(nonce: u64) -> base_common_consensus::BaseTxEnvelope {
-        base_common_consensus::BaseTxEnvelope::Legacy(base_common_consensus::Signed::new_unhashed(
-            base_common_consensus::TxLegacy { nonce, ..Default::default() },
+    fn mock_tx(nonce: u64) -> base_common_types_chain::BaseTxEnvelope {
+        base_common_types_chain::BaseTxEnvelope::Legacy(base_common_types_chain::Signed::new_unhashed(
+            base_common_types_chain::TxLegacy { nonce, ..Default::default() },
             Signature::new(U256::ZERO, U256::ZERO, true),
         ))
     }
@@ -470,7 +470,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         let expected_blob_gas_used = 0;
 
@@ -520,7 +520,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         // Some(correct_root) should pass just like None
         assert!(
@@ -550,7 +550,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         let wrong_root = B256::repeat_byte(0xff);
         assert!(matches!(

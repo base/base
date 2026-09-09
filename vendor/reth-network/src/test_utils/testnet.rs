@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{

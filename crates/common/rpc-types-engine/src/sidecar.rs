@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::B256;
-use base_common_consensus::{Block, BlockHeader, Transaction};
+use base_common_types_chain::{Block, BlockHeader, Transaction};
 
 use crate::{
     CancunPayloadFields, MaybeCancunPayloadFields, MaybePraguePayloadFields, PraguePayloadFields,

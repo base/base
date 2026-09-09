@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 
 pub use crate::{ChannelBlockSource, ChannelL1HeadSource};
 use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
@@ -91,7 +91,7 @@ mod tests {
 
     fn make_block(number: u64, parent_hash: B256) -> BaseBlock {
         BaseBlock {
-            header: base_common_consensus::Header { number, parent_hash, ..Default::default() },
+            header: base_common_types_chain::Header { number, parent_hash, ..Default::default() },
             body: Default::default(),
         }
     }

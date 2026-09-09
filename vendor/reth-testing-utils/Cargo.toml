@@ -23,6 +23,6 @@ rand_08 = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "arbitrary"] }
-base-common-consensus = { workspace = true, features = ["reth", "arbitrary", "serde", "std"] }
+base-common-types-chain = { workspace = true, features = ["reth", "arbitrary", "serde", "std"] }
 [dev-dependencies]
 alloy-rlp = { workspace = true, features = ["core-net"] }

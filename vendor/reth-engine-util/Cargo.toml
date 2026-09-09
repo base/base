@@ -32,7 +32,7 @@ futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

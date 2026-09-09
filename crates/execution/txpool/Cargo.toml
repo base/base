@@ -62,7 +62,7 @@ rand = { workspace = true, optional = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
-base-common-consensus = { workspace = true, features = ["reth", "kzg", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "kzg", "serde"] }
 [dev-dependencies]
 paste = { workspace = true }
 reth-tasks = { workspace = true }
@@ -97,7 +97,7 @@ metrics = ["base-common-evm/metrics", "base-metrics/metrics", "base-observabilit
 serde = [
     "reth-execution-types/serde",
     "reth-eth-wire-types/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bitflags/serde",
@@ -126,7 +126,7 @@ arbitrary = [
     "proptest-arbitrary-interop",
     "imbl/arbitrary",
     "reth-eth-wire-types/arbitrary",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "bitflags/arbitrary",

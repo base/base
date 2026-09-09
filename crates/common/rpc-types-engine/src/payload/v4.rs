@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::Decodable2718;
 use alloy_primitives::{B256, Bytes, U256};
-use base_common_consensus::Block;
+use base_common_types_chain::Block;
 
 use crate::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 

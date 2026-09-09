@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, BlockHash, hex};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use clap::Parser;
 use reth_db::{
     RawDupSort,
@@ -174,7 +174,7 @@ impl Command {
                     StaticFileSegment::Headers => (
                         table_key::<tables::Headers>(&key)?,
                         None,
-                        <HeaderWithHashMask<base_common_consensus::Header>>::MASK,
+                        <HeaderWithHashMask<base_common_types_chain::Header>>::MASK,
                     ),
                     StaticFileSegment::Transactions => (
                         table_key::<tables::Transactions>(&key)?,
@@ -251,7 +251,7 @@ impl Command {
                         } else {
                             match segment {
                                 StaticFileSegment::Headers => {
-                                    let header = base_common_consensus::Header::decompress(
+                                    let header = base_common_types_chain::Header::decompress(
                                         content[0].as_slice(),
                                     )?;
                                     let block_hash = BlockHash::decompress(content[1].as_slice())?;

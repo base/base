@@ -1,6 +1,6 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 use bytes::BufMut;
 use derive_more::{From, Into};
 use reth_db::{

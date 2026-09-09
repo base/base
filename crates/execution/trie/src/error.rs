@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 use base_evm_handler::BlockExecutionError;
 use reth_db::DatabaseError;
 use reth_provider::ProviderError;

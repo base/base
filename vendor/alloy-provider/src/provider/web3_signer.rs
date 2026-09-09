@@ -73,7 +73,7 @@ impl<P: Provider<N> + Clone, N: Network> Web3Signer<P, N> {
 mod tests {
     use alloy_node_bindings::{Reth, utils::run_with_tempdir};
     use alloy_primitives::{Address, U256};
-    use base_common_consensus::{TxEnvelope, transaction::SignerRecoverable};
+    use base_common_types_chain::{TxEnvelope, transaction::SignerRecoverable};
 
     use super::*;
     use crate::{Provider, ProviderBuilder, ext::test::async_ci_only};

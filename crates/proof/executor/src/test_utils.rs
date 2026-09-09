@@ -7,7 +7,7 @@ use alloy_provider::{Provider, RootProvider, network::primitives::BlockTransacti
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};
-use base_common_consensus::Header;
+use base_common_types_chain::Header;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};

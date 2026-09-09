@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_common_consensus::{TxReceipt, transaction::TransactionMeta};
+use base_common_types_chain::{TxReceipt, transaction::TransactionMeta};
 use base_common_rpc_types::BaseTransactionReceipt;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};

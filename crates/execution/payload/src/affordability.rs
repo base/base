@@ -1,7 +1,7 @@
 //! Build-time check that a declared EIP-8130 coinbase tip is payable.
 
 use alloy_primitives::{Address, U256};
-use base_common_consensus::{CoinbaseTip, Transaction};
+use base_common_types_chain::{CoinbaseTip, Transaction};
 use base_evm_handler::Database;
 use base_execution_eip8130::FeeCheck;
 use base_execution_txpool::BasePooledTransaction;

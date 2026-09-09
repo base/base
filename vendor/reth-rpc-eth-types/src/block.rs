@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use base_common_consensus::{BaseReceipt, BlockHeader, TxReceipt, transaction::TransactionMeta};
+use base_common_types_chain::{BaseReceipt, BlockHeader, TxReceipt, transaction::TransactionMeta};
 use base_common_rpc_types::BaseTransactionReceipt;
 use reth_primitives_traits::{BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
@@ -34,7 +34,7 @@ impl<R> CachedTransaction<R> {
     /// Returns the `Recovered<&T>` transaction at the cached index.
     pub fn recovered_transaction(
         &self,
-    ) -> Option<Recovered<&<base_common_consensus::BaseBlockBody as BlockBody>::Transaction>> {
+    ) -> Option<Recovered<&<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction>> {
         self.block.recovered_transaction(self.tx_index)
     }
 
@@ -43,7 +43,7 @@ impl<R> CachedTransaction<R> {
     /// Returns `None` if the transaction index is out of bounds.
     pub fn to_transaction_source(
         &self,
-    ) -> Option<TransactionSource<<base_common_consensus::BaseBlockBody as BlockBody>::Transaction>>
+    ) -> Option<TransactionSource<<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction>>
     {
         let tx = self.recovered_transaction()?;
         Some(TransactionSource::Block {
@@ -64,7 +64,7 @@ impl<R> CachedTransaction<R> {
     /// Constructs a [`TransactionMeta`] for this cached transaction using the given tx hash.
     pub fn transaction_meta(&self, tx_hash: TxHash) -> TransactionMeta
     where
-        base_common_consensus::Header: BlockHeader,
+        base_common_types_chain::Header: BlockHeader,
     {
         TransactionMeta {
             tx_hash,
@@ -124,9 +124,9 @@ impl BlockAndReceipts {
     ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
     where
         C: reth_storage_api::BlockReader<
-                Block = base_common_consensus::BaseBlock,
-                Transaction = base_common_consensus::BaseTxEnvelope,
-                Receipt = base_common_consensus::BaseReceipt,
+                Block = base_common_types_chain::BaseBlock,
+                Transaction = base_common_types_chain::BaseTxEnvelope,
+                Receipt = base_common_types_chain::BaseReceipt,
             > + base_execution_chainspec::ChainSpecProvider
             + Clone
             + Send
@@ -155,9 +155,9 @@ pub fn convert_transaction_receipt<C>(
 ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
 where
     C: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send
@@ -194,9 +194,9 @@ impl CachedTransaction<BaseReceipt> {
     ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
     where
         C: reth_storage_api::BlockReader<
-                Block = base_common_consensus::BaseBlock,
-                Transaction = base_common_consensus::BaseTxEnvelope,
-                Receipt = base_common_consensus::BaseReceipt,
+                Block = base_common_types_chain::BaseBlock,
+                Transaction = base_common_types_chain::BaseTxEnvelope,
+                Receipt = base_common_types_chain::BaseReceipt,
             > + base_execution_chainspec::ChainSpecProvider
             + Clone
             + Send

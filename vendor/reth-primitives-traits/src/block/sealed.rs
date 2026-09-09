@@ -6,7 +6,7 @@ use core::ops::Deref;
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{Address, B256, BlockHash, Sealed};
 use alloy_rlp::{Decodable, Encodable};
-use base_common_consensus::{BaseBlock, BaseBlockBody, BlockHeader as _, Header};
+use base_common_types_chain::{BaseBlock, BaseBlockBody, BlockHeader as _, Header};
 use bytes::BufMut;
 
 use crate::{
@@ -501,11 +501,11 @@ impl<T> Deref for SealedBlockWith<T> {
 #[cfg(test)]
 mod tests {
     use alloy_rlp::{Decodable, Encodable};
-    use base_common_consensus::{BaseTxEnvelope, Header};
+    use base_common_types_chain::{BaseTxEnvelope, Header};
 
     use super::*;
 
-    fn sample_alloy_block() -> base_common_consensus::Block<BaseTxEnvelope> {
+    fn sample_alloy_block() -> base_common_types_chain::Block<BaseTxEnvelope> {
         let header = Header {
             number: 42,
             gas_limit: 30_000_000,
@@ -515,7 +515,7 @@ mod tests {
             ..Default::default()
         };
 
-        let tx = base_common_consensus::TxLegacy {
+        let tx = base_common_types_chain::TxLegacy {
             chain_id: Some(1),
             nonce: 0,
             gas_price: 21_000_000_000,
@@ -525,24 +525,24 @@ mod tests {
             input: alloy_primitives::Bytes::default(),
         };
 
-        let tx_signed = BaseTxEnvelope::Legacy(base_common_consensus::Signed::new_unchecked(
+        let tx_signed = BaseTxEnvelope::Legacy(base_common_types_chain::Signed::new_unchecked(
             tx,
             alloy_primitives::Signature::test_signature(),
             B256::ZERO,
         ));
 
-        let body = base_common_consensus::BlockBody {
+        let body = base_common_types_chain::BlockBody {
             transactions: vec![tx_signed],
             ommers: vec![],
             withdrawals: Some(Default::default()),
         };
 
-        base_common_consensus::Block::new(header, body)
+        base_common_types_chain::Block::new(header, body)
     }
 
     #[test]
     fn test_sealed_block_rlp_roundtrip() {
-        // Create a sample block using base_common_consensus::Block
+        // Create a sample block using base_common_types_chain::Block
         let header = Header {
             number: 42,
             gas_limit: 30_000_000,
@@ -553,7 +553,7 @@ mod tests {
         };
 
         // Create a simple transaction
-        let tx = base_common_consensus::TxLegacy {
+        let tx = base_common_types_chain::TxLegacy {
             chain_id: Some(1),
             nonce: 0,
             gas_price: 21_000_000_000,
@@ -563,21 +563,21 @@ mod tests {
             input: alloy_primitives::Bytes::default(),
         };
 
-        let tx_signed = BaseTxEnvelope::Legacy(base_common_consensus::Signed::new_unchecked(
+        let tx_signed = BaseTxEnvelope::Legacy(base_common_types_chain::Signed::new_unchecked(
             tx,
             alloy_primitives::Signature::test_signature(),
             B256::ZERO,
         ));
 
         // Create block body with the transaction
-        let body = base_common_consensus::BlockBody {
+        let body = base_common_types_chain::BlockBody {
             transactions: vec![tx_signed],
             ommers: vec![],
             withdrawals: Some(Default::default()),
         };
 
         // Create the block
-        let block = base_common_consensus::Block::new(header, body);
+        let block = base_common_types_chain::Block::new(header, body);
 
         // Create a sealed block
         let sealed_block = SealedBlock::seal_slow(block);
@@ -605,7 +605,7 @@ mod tests {
         block.encode(&mut block_encoded);
 
         let mut borrowed_encoded = Vec::new();
-        <base_common_consensus::Block<BaseTxEnvelope> as Block>::rlp_encode(
+        <base_common_types_chain::Block<BaseTxEnvelope> as Block>::rlp_encode(
             &block.header,
             &block.body,
             &mut borrowed_encoded,
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_decode_sealed_produces_correct_hash() {
-        // Create a sample block using base_common_consensus::Block
+        // Create a sample block using base_common_types_chain::Block
         let header = Header {
             number: 42,
             gas_limit: 30_000_000,
@@ -633,7 +633,7 @@ mod tests {
         };
 
         // Create a simple transaction
-        let tx = base_common_consensus::TxLegacy {
+        let tx = base_common_types_chain::TxLegacy {
             chain_id: Some(1),
             nonce: 0,
             gas_price: 21_000_000_000,
@@ -643,21 +643,21 @@ mod tests {
             input: alloy_primitives::Bytes::default(),
         };
 
-        let tx_signed = BaseTxEnvelope::Legacy(base_common_consensus::Signed::new_unchecked(
+        let tx_signed = BaseTxEnvelope::Legacy(base_common_types_chain::Signed::new_unchecked(
             tx,
             alloy_primitives::Signature::test_signature(),
             B256::ZERO,
         ));
 
         // Create block body with the transaction
-        let body = base_common_consensus::BlockBody {
+        let body = base_common_types_chain::BlockBody {
             transactions: vec![tx_signed],
             ommers: vec![],
             withdrawals: Some(Default::default()),
         };
 
         // Create the block
-        let block = base_common_consensus::Block::new(header, body);
+        let block = base_common_types_chain::Block::new(header, body);
         let expected_hash = block.header.hash_slow();
 
         // Encode the block
@@ -677,12 +677,12 @@ mod tests {
     #[test]
     fn test_sealed_block_from_sealed() {
         let header = Header::default();
-        let body = base_common_consensus::BlockBody::<BaseTxEnvelope>::default();
-        let block = base_common_consensus::Block::new(header, body);
+        let body = base_common_types_chain::BlockBody::<BaseTxEnvelope>::default();
+        let block = base_common_types_chain::Block::new(header, body);
         let hash = block.header.hash_slow();
 
         // Create Sealed<Block>
-        let sealed: Sealed<base_common_consensus::Block<BaseTxEnvelope>> =
+        let sealed: Sealed<base_common_types_chain::Block<BaseTxEnvelope>> =
             Sealed::new_unchecked(block.clone(), hash);
 
         // Convert to SealedBlock
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_sealed_block_with_data() {
-        let block = base_common_consensus::Block::<BaseTxEnvelope>::default();
+        let block = base_common_types_chain::Block::<BaseTxEnvelope>::default();
         let sealed_block = SealedBlock::seal_slow(block);
 
         let with_data = SealedBlockWith::new(sealed_block.clone(), Some(42u64));
@@ -711,7 +711,7 @@ mod tests {
 
     #[test]
     fn test_sealed_block_with_from_block() {
-        let block = base_common_consensus::Block::<BaseTxEnvelope>::default();
+        let block = base_common_types_chain::Block::<BaseTxEnvelope>::default();
         let sealed_block = SealedBlock::seal_slow(block);
 
         let with_data = SealedBlockWith::<Option<u64>>::from_block(sealed_block.clone());

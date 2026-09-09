@@ -18,7 +18,7 @@ base-common-rpc-types-engine = { workspace = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }
 [dev-dependencies]
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }

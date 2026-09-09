@@ -18,7 +18,7 @@ use alloy_primitives::{
     B256, TxHash, U256,
     map::{AddressSet, B256Map, B256Set},
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     Transaction, Typed2718,
     constants::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
@@ -2320,7 +2320,7 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_primitives::address;
-    use base_common_consensus::{Transaction, TxType};
+    use base_common_types_chain::{Transaction, TxType};
 
     use super::*;
     use crate::{

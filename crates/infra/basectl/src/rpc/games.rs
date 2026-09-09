@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_transport::{TransportError, TransportErrorKind};
-use base_common_consensus::Transaction as _;
+use base_common_types_chain::Transaction as _;
 pub use base_proof_contracts::GameStatus;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,

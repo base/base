@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use alloy_eips::BlockHashOrNumber;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use eyre::Result;
 use reth_network_p2p::{
@@ -58,7 +58,7 @@ pub async fn get_single_body<Client>(
     consensus: BaseBeaconConsensus,
 ) -> Result<SealedBlock>
 where
-    Client: BodiesClient<Body = base_common_consensus::BaseBlockBody>,
+    Client: BodiesClient<Body = base_common_types_chain::BaseBlockBody>,
 {
     let (peer_id, response) = client.get_block_body(header.hash()).await?.split();
 

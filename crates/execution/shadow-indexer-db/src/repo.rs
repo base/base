@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_types_chain::BaseTxEnvelope;
 use sqlx::{PgPool, Postgres, QueryBuilder, query, query_as, types::Json};
 
 use crate::{ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
@@ -31,7 +31,7 @@ pub struct ShadowBlockRepo {
 }
 
 /// Concrete block header type stored in the shadow payload.
-type BlockHeader = base_common_consensus::Header;
+type BlockHeader = base_common_types_chain::Header;
 
 /// Summary projection for a reorged-out shadow block.
 ///

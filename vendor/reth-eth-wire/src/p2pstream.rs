@@ -12,7 +12,7 @@ use alloy_primitives::{
     hex,
 };
 use alloy_rlp::{Decodable, EMPTY_LIST_CODE, Encodable, Error as RlpError};
-use base_common_consensus::add_arbitrary_tests;
+use base_common_types_chain::add_arbitrary_tests;
 use futures::{Sink, SinkExt, StreamExt};
 use pin_project::pin_project;
 use reth_metrics::metrics::counter;

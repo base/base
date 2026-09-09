@@ -29,7 +29,7 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 [dev-dependencies]
@@ -49,13 +49,13 @@ test-utils = [
     "alloy-primitives/rand",
 ]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "base-execution-consensus/std",
     "alloy-eip7928/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "reth-primitives-traits/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "derive_more/std",
     "reth-network-peers/std",
     "reth-storage-errors/std",

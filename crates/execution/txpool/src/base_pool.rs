@@ -7,7 +7,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, AllPoolTransactions, AllTransactionsEvents,
     BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
@@ -1005,7 +1005,7 @@ where
         &self,
         tx_hashes: Vec<TxHash>,
         limit: GetPooledTransactionLimit,
-    ) -> Vec<base_common_consensus::BasePooledTransaction> {
+    ) -> Vec<base_common_types_chain::BasePooledTransaction> {
         let mut pooled = Vec::new();
         self.append_pooled_transaction_elements(&tx_hashes, limit, &mut pooled);
         pooled
@@ -1015,7 +1015,7 @@ where
         &self,
         tx_hashes: &[TxHash],
         limit: GetPooledTransactionLimit,
-        out: &mut Vec<base_common_consensus::BasePooledTransaction>,
+        out: &mut Vec<base_common_types_chain::BasePooledTransaction>,
     ) {
         let mut current_size = 0;
         for hash in tx_hashes {
@@ -1036,7 +1036,7 @@ where
     fn get_pooled_transaction_element(
         &self,
         tx_hash: TxHash,
-    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
+    ) -> Option<Recovered<base_common_types_chain::BasePooledTransaction>> {
         self.protocol_pool.get_pooled_transaction_element(tx_hash).or_else(|| {
             self.nonce_pool
                 .read()
@@ -1709,7 +1709,7 @@ fn merge_receivers<T: Send + 'static>(
 
 fn pooled_element(
     transaction: &Arc<ValidPoolTransaction>,
-) -> Option<(base_common_consensus::BasePooledTransaction, usize)> {
+) -> Option<(base_common_types_chain::BasePooledTransaction, usize)> {
     transaction
         .transaction
         .clone()
@@ -1727,7 +1727,7 @@ mod tests {
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, SignableTransaction, Transaction, TxEip1559, TxEip8130,
         transaction::{Recovered, SignerRecoverable},
@@ -2284,7 +2284,7 @@ mod tests {
         assert!(pool.guard.read().contains(&hash));
 
         let block = SealedBlock::seal_slow(BaseBlock {
-            header: base_common_consensus::Header { timestamp: 1, ..Default::default() },
+            header: base_common_types_chain::Header { timestamp: 1, ..Default::default() },
             body: Default::default(),
         });
         pool.on_canonical_state_change(CanonicalStateUpdate {

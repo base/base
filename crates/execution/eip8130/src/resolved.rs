@@ -1,7 +1,7 @@
 //! The authorization surface returned by a successful authorize step.
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::Eip8130Constants;
+use base_common_types_chain::Eip8130Constants;
 
 /// A resolved and authorized actor: the output of
 /// [`ActorAuthorizer::authenticate_actor`](crate::ActorAuthorizer::authenticate_actor),

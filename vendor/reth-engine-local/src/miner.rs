@@ -156,7 +156,7 @@ pub struct LocalMiner<B, Pool: TransactionPool + Unpin> {
 
 impl<B, Pool> LocalMiner<B, Pool>
 where
-    B: PayloadAttributesBuilder<BasePayloadBuilderAttributes, base_common_consensus::Header>,
+    B: PayloadAttributesBuilder<BasePayloadBuilderAttributes, base_common_types_chain::Header>,
     Pool: TransactionPool + Unpin,
 {
     /// Spawns a new [`LocalMiner`] with the given parameters.

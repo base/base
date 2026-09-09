@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-pub use base_common_consensus::{Compress, Decompress};
+pub use base_common_types_chain::{Compress, Decompress};
 use serde::{Deserialize, Serialize};
 
 use crate::{

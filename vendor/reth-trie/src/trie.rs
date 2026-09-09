@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{BufMut, Encodable};
 use alloy_trie::proof::AddedRemovedKeys;
-use base_common_consensus::EMPTY_ROOT_HASH;
+use base_common_types_chain::EMPTY_ROOT_HASH;
 use reth_primitives_traits::Account;
 use reth_storage_errors::{StateRootError, StorageRootError};
 use tracing::{Span, debug, instrument, trace};

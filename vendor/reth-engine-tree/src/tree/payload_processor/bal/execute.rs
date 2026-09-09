@@ -22,7 +22,7 @@ use alloy_eip7928::{
     compute_block_access_list_hash,
 };
 use alloy_primitives::Address;
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult};
 use base_evm_handler::{
@@ -298,7 +298,7 @@ mod tests {
         eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_CODE},
     };
     use alloy_primitives::{B256, U256, keccak256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
         SystemAddresses, TxDeposit,
     };
@@ -403,7 +403,7 @@ mod tests {
             number: 1,
             gas_limit,
             parent_beacon_block_root: Some(B256::ZERO),
-            withdrawals_root: Some(base_common_consensus::EMPTY_ROOT_HASH),
+            withdrawals_root: Some(base_common_types_chain::EMPTY_ROOT_HASH),
             requests_hash: Some(alloy_eips::eip7685::EMPTY_REQUESTS_HASH),
             excess_blob_gas: Some(0),
             blob_gas_used: Some(0),
@@ -597,7 +597,7 @@ mod tests {
         //    `with_bal_builder`.
         // 4. Feed that BAL into `execute_block` and assert the deposit and user receipts.
         use alloy_primitives::TxKind;
-        use base_common_consensus::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
@@ -605,7 +605,7 @@ mod tests {
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
         ));
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
-        let sender_balance = U256::from(base_common_consensus::constants::ETH_TO_WEI);
+        let sender_balance = U256::from(base_common_types_chain::constants::ETH_TO_WEI);
 
         // Generate keypairs + derive sender addresses.
         let alice_kp = generate_key(&mut rng());
@@ -835,7 +835,7 @@ mod tests {
         // Two senders → same recipient. Byte-equal across paths means: worker-produced
         // diffs commit identically to a directly-executed serial path.
         use alloy_primitives::TxKind;
-        use base_common_consensus::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
@@ -843,7 +843,7 @@ mod tests {
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
         ));
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
-        let sender_balance = U256::from(base_common_consensus::constants::ETH_TO_WEI);
+        let sender_balance = U256::from(base_common_types_chain::constants::ETH_TO_WEI);
 
         let alice_kp = generate_key(&mut rng());
         let alice = public_key_to_address(alice_kp.public_key());
@@ -881,7 +881,7 @@ mod tests {
         // commit loop must still reject tx2 because tx1's committed gas leaves too little
         // block gas for tx2's gas limit.
         use alloy_primitives::TxKind;
-        use base_common_consensus::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_evm_handler::BlockValidationError;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
@@ -890,7 +890,7 @@ mod tests {
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
         ));
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
-        let sender_balance = U256::from(base_common_consensus::constants::ETH_TO_WEI);
+        let sender_balance = U256::from(base_common_types_chain::constants::ETH_TO_WEI);
         let block_gas_limit = 1_000_000;
         let tx_gas_limit = 990_000;
 
@@ -961,7 +961,7 @@ mod tests {
         // Deploys `0x60006000fd` (PUSH1 0 PUSH1 0 REVERT) at `revert_contract`. Sender calls
         // it; the call reverts; fees + nonce still apply.
         use alloy_primitives::{Bytes, TxKind, keccak256};
-        use base_common_consensus::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
@@ -970,7 +970,7 @@ mod tests {
         ));
         let revert_contract: alloy_primitives::Address =
             alloy_primitives::Address::from([0xDE; 20]);
-        let sender_balance = U256::from(base_common_consensus::constants::ETH_TO_WEI);
+        let sender_balance = U256::from(base_common_types_chain::constants::ETH_TO_WEI);
 
         let alice_kp = generate_key(&mut rng());
         let alice = public_key_to_address(alice_kp.public_key());
@@ -1018,7 +1018,7 @@ mod tests {
         //
         // Bytecode: PUSH1 0x42, PUSH1 0x00, SSTORE, STOP → `0x60 0x42 0x60 0x00 0x55 0x00`.
         use alloy_primitives::{Bytes, TxKind, keccak256};
-        use base_common_consensus::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
@@ -1027,7 +1027,7 @@ mod tests {
         ));
         let sstore_contract: alloy_primitives::Address =
             alloy_primitives::Address::from([0x55; 20]);
-        let sender_balance = U256::from(base_common_consensus::constants::ETH_TO_WEI);
+        let sender_balance = U256::from(base_common_types_chain::constants::ETH_TO_WEI);
 
         let alice_kp = generate_key(&mut rng());
         let alice = public_key_to_address(alice_kp.public_key());

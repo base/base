@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_eips::eip7594::Cell;
 use alloy_primitives::{B128, B256};
 use alloy_rlp::{Decodable, RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
-use base_common_consensus::transaction::{PooledTransaction, TxHashRef};
+use base_common_types_chain::transaction::{PooledTransaction, TxHashRef};
 use derive_more::{Constructor, Deref, IntoIterator};
 use reth_codecs_derive::add_arbitrary_tests;
 use reth_primitives_traits::InMemorySize;
@@ -153,7 +153,7 @@ mod tests {
 
     use alloy_primitives::{Signature, TxKind, U256, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         EthereumTxEnvelope, EthereumTypedTransaction, TxEip1559, TxEip4844, TxLegacy,
         transaction::PooledTransaction,
     };

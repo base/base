@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::ConsensusError;
 use derive_more::{Display, Error};
 use reth_network_peers::WithPeerId;
@@ -218,7 +218,7 @@ impl From<ProviderError> for DownloadError {
 
 #[cfg(test)]
 mod tests {
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
 
     use super::*;
 

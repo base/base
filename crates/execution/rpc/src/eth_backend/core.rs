@@ -6,7 +6,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
@@ -371,7 +371,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Signature, U64};
     use base_common_rpc_types::FeeHistory;
-    use base_common_consensus::{BaseTxEnvelope as TransactionSigned, Block, BlockBody, Header};
+    use base_common_types_chain::{BaseTxEnvelope as TransactionSigned, Block, BlockBody, Header};
     use base_common_rpc_types::{Bundle, StateContext, TransactionRequest};
     use base_execution_chainspec::ChainSpecProvider;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
@@ -428,8 +428,8 @@ mod tests {
 
                 if let Some(base_fee_per_gas) = header.base_fee_per_gas {
                     let transaction = TransactionSigned::new_unhashed(
-                        base_common_consensus::BaseTypedTransaction::Eip1559(
-                            base_common_consensus::TxEip1559 {
+                        base_common_types_chain::BaseTypedTransaction::Eip1559(
+                            base_common_types_chain::TxEip1559 {
                                 max_priority_fee_per_gas: random_fee,
                                 max_fee_per_gas: random_fee + base_fee_per_gas as u128,
                                 ..Default::default()
@@ -441,7 +441,7 @@ mod tests {
                     transactions.push(transaction);
                 } else {
                     let transaction = TransactionSigned::new_unhashed(
-                        base_common_consensus::BaseTypedTransaction::Legacy(Default::default()),
+                        base_common_types_chain::BaseTypedTransaction::Legacy(Default::default()),
                         Signature::test_signature(),
                     );
 

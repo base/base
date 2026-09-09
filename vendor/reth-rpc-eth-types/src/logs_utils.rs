@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
 use base_common_rpc_types::{Filter, Log};
@@ -29,9 +29,9 @@ pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
     C: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send
@@ -95,9 +95,9 @@ pub fn append_matching_block_logs<P, C>(
 where
     P: BlockReader<Transaction: SignedTransaction, Receipt = BaseReceipt>,
     C: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send

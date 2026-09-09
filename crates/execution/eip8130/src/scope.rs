@@ -1,7 +1,7 @@
 //! Per-operation scope gating for resolved actors, including admin-only config
 //! changes and policy-gated sender authorization.
 
-use base_common_consensus::Eip8130Constants;
+use base_common_types_chain::Eip8130Constants;
 
 use crate::ResolvedActor;
 

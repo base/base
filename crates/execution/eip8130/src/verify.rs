@@ -2,7 +2,7 @@
 //! payer actors of an [`Eip8130Signed`].
 
 use alloy_primitives::Address;
-use base_common_consensus::Eip8130Signed;
+use base_common_types_chain::Eip8130Signed;
 
 use crate::{
     AccountConfigurationStorage, ActorAuthorizer, Operation, RecoveredActorId, ResolvedActor,
@@ -180,7 +180,7 @@ impl ActorTxVerifier {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Bytes, U256, address, keccak256};
-    use base_common_consensus::{Eip8130Constants, TxEip8130};
+    use base_common_types_chain::{Eip8130Constants, TxEip8130};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 

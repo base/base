@@ -7,7 +7,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_storage_errors::provider::ProviderResult;
 
 /// A helper type alias to access [`Headeralloy_consensus::Header`].
-pub type ProviderHeader = base_common_consensus::Header;
+pub type ProviderHeader = base_common_types_chain::Header;
 
 /// Client trait for fetching `Header` related data.
 #[auto_impl::auto_impl(&, Arc)]
@@ -21,7 +21,7 @@ pub trait HeaderProvider: Send {
     fn header(
         &self,
         block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>>;
+    ) -> ProviderResult<Option<base_common_types_chain::Header>>;
 
     /// Retrieves the header sealed by the given block hash.
     fn sealed_header_by_hash(&self, block_hash: BlockHash) -> ProviderResult<Option<SealedHeader>> {
@@ -29,13 +29,13 @@ pub trait HeaderProvider: Send {
     }
 
     /// Get header by block number
-    fn header_by_number(&self, num: u64) -> ProviderResult<Option<base_common_consensus::Header>>;
+    fn header_by_number(&self, num: u64) -> ProviderResult<Option<base_common_types_chain::Header>>;
 
     /// Get header by block number or hash
     fn header_by_hash_or_number(
         &self,
         hash_or_num: BlockHashOrNumber,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         match hash_or_num {
             BlockHashOrNumber::Hash(hash) => self.header(hash),
             BlockHashOrNumber::Number(num) => self.header_by_number(num),
@@ -46,7 +46,7 @@ pub trait HeaderProvider: Send {
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>>;
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>>;
 
     /// Get a single sealed header by block number.
     fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>>;

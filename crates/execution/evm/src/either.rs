@@ -1,7 +1,7 @@
 //! Helper type that represents one of two possible executor types
 
 // re-export Either
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 pub use futures_util::future::Either;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
 use reth_primitives_traits::RecoveredBlock;

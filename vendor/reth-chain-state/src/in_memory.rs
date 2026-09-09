@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, TxHash, map::B256Map};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use parking_lot::RwLock;
@@ -487,7 +487,7 @@ impl CanonicalInMemoryState {
     }
 
     /// Returns the `Header` corresponding to the pending state.
-    pub fn pending_header(&self) -> Option<base_common_consensus::Header> {
+    pub fn pending_header(&self) -> Option<base_common_types_chain::Header> {
         self.pending_sealed_header().map(|sealed_header| sealed_header.unseal())
     }
 

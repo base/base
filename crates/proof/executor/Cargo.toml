@@ -30,7 +30,7 @@ serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 getrandom_0_2_17 = { workspace = true, features = ["custom"] }
-base-common-consensus = { workspace = true, features = ["k256"]}
+base-common-types-chain = { workspace = true, features = ["k256"]}
 serde = { workspace = true, features = ["derive"], optional = true }
 rand = { workspace = true, optional = true, features = ["default"] }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
@@ -44,7 +44,7 @@ alloy-provider = { workspace = true, features = ["default", "reqwest"], optional
 
 [features]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "base-evm-handler/std",
     "alloy-primitives/std",

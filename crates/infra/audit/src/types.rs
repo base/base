@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, TxHash, U256};
 use base_bundles::{AcceptedBundle, BundleExtensions};
-use base_common_consensus::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
+use base_common_types_chain::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

@@ -1,7 +1,7 @@
 //! Base transaction builders.
 
 use alloy_primitives::Bytes;
-use base_common_consensus::{BaseTypedTransaction, OpTxType, TxType};
+use base_common_types_chain::{BaseTypedTransaction, OpTxType, TxType};
 use base_common_rpc_types::{BaseTransactionRequest, TransactionRequest};
 
 use crate::{

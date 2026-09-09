@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use core::fmt::Display;
 
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 
 use crate::L2BlockInfo;
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::{Stream, stream::FuturesUnordered};
 use futures_util::StreamExt;
@@ -21,7 +21,7 @@ use crate::metrics::BodyDownloaderMetrics;
 /// The wrapper around [`FuturesUnordered`] that keeps information
 /// about the blocks currently being requested.
 #[derive(Debug)]
-pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_consensus::BaseBlockBody>> {
+pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>> {
     /// Inner body request queue.
     inner: FuturesUnordered<BodiesRequestFuture<C>>,
     /// The downloader metrics.
@@ -32,7 +32,7 @@ pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_consensu
 
 impl<C> BodiesRequestQueue<C>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
 {
     /// Create new instance of request queue.
     pub(crate) fn new(metrics: BodyDownloaderMetrics) -> Self {
@@ -81,7 +81,7 @@ where
 
 impl<C> Stream for BodiesRequestQueue<C>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
 {
     type Item = DownloadResult<Vec<BlockResponse>>;
 

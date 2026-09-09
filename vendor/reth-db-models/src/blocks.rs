@@ -12,8 +12,8 @@ pub type NumTransactions = u64;
 /// transaction in the block and the total number of transactions.
 #[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_types_chain::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StoredBlockBodyIndices {
     /// The number of the first transaction in this block
@@ -73,13 +73,13 @@ impl StoredBlockBodyIndices {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-base_common_consensus::impl_compression_for_compact!(StoredBlockBodyIndices);
+base_common_types_chain::impl_compression_for_compact!(StoredBlockBodyIndices);
 
 /// The storage representation of block withdrawals.
 #[derive(Debug, Default, Eq, PartialEq, Clone)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_types_chain::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StoredBlockWithdrawals {
     /// The block withdrawals.
@@ -87,13 +87,13 @@ pub struct StoredBlockWithdrawals {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-base_common_consensus::impl_compression_for_compact!(StoredBlockWithdrawals);
+base_common_types_chain::impl_compression_for_compact!(StoredBlockWithdrawals);
 
 /// A storage representation of block withdrawals that is static file friendly. An inner `None`
 /// represents a pre-merge block.
 #[derive(Debug, Default, Eq, PartialEq, Clone)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StaticFileBlockWithdrawals {
     /// The block withdrawals. A `None` value represents a pre-merge block.
@@ -101,7 +101,7 @@ pub struct StaticFileBlockWithdrawals {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl base_common_consensus::Compact for StaticFileBlockWithdrawals {
+impl base_common_types_chain::Compact for StaticFileBlockWithdrawals {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -124,7 +124,7 @@ impl base_common_consensus::Compact for StaticFileBlockWithdrawals {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-base_common_consensus::impl_compression_for_compact!(StaticFileBlockWithdrawals);
+base_common_types_chain::impl_compression_for_compact!(StaticFileBlockWithdrawals);
 
 #[cfg(test)]
 mod tests {

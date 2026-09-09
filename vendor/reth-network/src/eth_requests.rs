@@ -10,7 +10,7 @@ use std::{
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
 };
 use base_execution_txpool::{BlobStore, NoopBlobStore};
@@ -129,7 +129,7 @@ where
     C: BlockReader,
 {
     /// Returns the list of requested headers
-    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<base_common_consensus::Header> {
+    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<base_common_types_chain::Header> {
         let GetBlockHeaders { start_block, limit, skip, direction } = request;
 
         let mut headers = Vec::new();
@@ -196,7 +196,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetBlockHeaders,
-        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_types_chain::Header>>>,
     ) {
         self.metrics.eth_headers_requests_received_total.increment(1);
         let headers = self.get_headers_response(request);
@@ -207,7 +207,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetBlockBodies,
-        response: oneshot::Sender<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
+        response: oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
     ) {
         self.metrics.eth_bodies_requests_received_total.increment(1);
         let mut bodies = Vec::new();
@@ -717,7 +717,7 @@ pub enum IncomingEthRequest {
         /// The specific block headers requested.
         request: GetBlockHeaders,
         /// The channel sender for the response containing block headers.
-        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_types_chain::Header>>>,
     },
     /// Request Block bodies from the peer.
     ///
@@ -728,7 +728,7 @@ pub enum IncomingEthRequest {
         /// The specific block bodies requested.
         request: GetBlockBodies,
         /// The channel sender for the response containing block bodies.
-        response: oneshot::Sender<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
+        response: oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
     },
     /// Request Node Data from the peer.
     ///
@@ -821,7 +821,7 @@ mod tests {
         eip7594::{BlobTransactionSidecarVariant, Cell},
     };
     use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
-    use base_common_consensus::constants::EMPTY_ROOT_HASH;
+    use base_common_types_chain::constants::EMPTY_ROOT_HASH;
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
     use reth_primitives_traits::Account;

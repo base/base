@@ -46,7 +46,7 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
@@ -630,7 +630,7 @@ impl Eip8130Executor {
     /// [`CallsResult`] so the caller can read `reverted` / `call_gas_spent`.
     fn probe_calls<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         outcome: &Eip8130Outcome,
         pool: u64,
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
@@ -659,7 +659,7 @@ impl Eip8130Executor {
     /// succeeds.
     fn search_estimate_pool<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         outcome: &Eip8130Outcome,
         ceiling_spent: u64,
         ceiling_pool: u64,
@@ -727,7 +727,7 @@ impl Eip8130Executor {
     /// compatible).
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         encoded: &[u8],
         sender: Address,
         base_fee: u128,
@@ -883,7 +883,7 @@ impl Eip8130Executor {
     /// caller discards the transaction on error.
     fn authorize_and_apply<DB>(
         ctx: &mut BaseContext<DB>,
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         encoded: &[u8],
         chain_id: u64,
         now: u64,
@@ -1140,7 +1140,7 @@ impl Eip8130Executor {
     /// read from `outcome`.
     fn execute_calls<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         outcome: &Eip8130Outcome,
         pool: u64,
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
@@ -1567,7 +1567,7 @@ impl Eip8130Executor {
     /// [`TransactionAuthorizer::authorize_and_apply`], which interleaves the same
     /// application with authorization against the evolving state.
     fn apply_account_changes(
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         sctx: StorageCtx<'_>,
         sender: Address,
         now: u64,
@@ -1688,7 +1688,7 @@ impl Eip8130Executor {
     /// pipelines so intrinsic pricing is computed identically for execution and
     /// estimation. Errors when sender-intrinsic gas exceeds the gas limit.
     fn resolve_execution_gas(
-        signed: &base_common_consensus::Eip8130Signed,
+        signed: &base_common_types_chain::Eip8130Signed,
         encoded: &[u8],
         input: &IntrinsicGasInput,
         gas_limit: u64,
@@ -1722,7 +1722,7 @@ impl Eip8130Executor {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };

@@ -18,7 +18,7 @@ pub trait ValueWithSubKey {
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "reth-codec", base_common_consensus::add_arbitrary_tests(compact))]
+#[cfg_attr(feature = "reth-codec", base_common_types_chain::add_arbitrary_tests(compact))]
 pub struct StorageEntry {
     /// Storage key.
     pub key: B256,
@@ -54,7 +54,7 @@ impl From<(B256, U256)> for StorageEntry {
 // and compress second part of the value. If we have compression
 // over whole value (Even SubKey) that would mess up fetching of values with seek_by_key_subkey
 #[cfg(feature = "reth-codec")]
-impl base_common_consensus::Compact for StorageEntry {
+impl base_common_types_chain::Compact for StorageEntry {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -72,4 +72,4 @@ impl base_common_consensus::Compact for StorageEntry {
 }
 
 #[cfg(feature = "reth-codec")]
-base_common_consensus::impl_compression_for_compact!(StorageEntry);
+base_common_types_chain::impl_compression_for_compact!(StorageEntry);

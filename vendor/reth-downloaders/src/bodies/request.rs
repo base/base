@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::{Future, FutureExt};
 use reth_network_p2p::{
@@ -28,7 +28,7 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 /// It then proceeds to verify the downloaded bodies. In case of a validation error,
 /// the future will start over.
 ///
-/// The future will filter out any empty headers (see [`base_common_consensus::Header::is_empty`]) from
+/// The future will filter out any empty headers (see [`base_common_types_chain::Header::is_empty`]) from
 /// the request. If [`BodiesRequestFuture`] was initialized with all empty headers, no request will
 /// be dispatched and they will be immediately returned upon polling.
 ///
@@ -38,7 +38,7 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 /// All errors regarding the response cause the peer to get penalized, meaning that adversaries
 /// that try to give us bodies that do not match the requested order are going to be penalized
 /// and eventually disconnected.
-pub(crate) struct BodiesRequestFuture<C: BodiesClient<Body = base_common_consensus::BaseBlockBody>>
+pub(crate) struct BodiesRequestFuture<C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>>
 {
     client: Arc<C>,
     consensus: Arc<BaseBeaconConsensus>,
@@ -57,7 +57,7 @@ pub(crate) struct BodiesRequestFuture<C: BodiesClient<Body = base_common_consens
 
 impl<C> BodiesRequestFuture<C>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
 {
     /// Returns an empty future. Use [`BodiesRequestFuture::with_headers`] to set the request.
     pub(crate) fn new(
@@ -119,7 +119,7 @@ where
     /// Returns an error if the response is invalid.
     fn on_block_response(
         &mut self,
-        response: WithPeerId<Vec<base_common_consensus::BaseBlockBody>>,
+        response: WithPeerId<Vec<base_common_types_chain::BaseBlockBody>>,
     ) -> DownloadResult<()> {
         let (peer_id, bodies) = response.split();
         let request_len = self.last_request_len.unwrap_or_default();
@@ -213,7 +213,7 @@ where
 
 impl<C> Future for BodiesRequestFuture<C>
 where
-    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
+    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
 {
     type Output = DownloadResult<Vec<BlockResponse>>;
 

@@ -1,7 +1,7 @@
 //! Canyon consensus rule checks.
 
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use reth_primitives_traits::{BlockBody, GotExpected};
 
 use crate::{BaseConsensusError, ConsensusError};

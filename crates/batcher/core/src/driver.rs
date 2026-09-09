@@ -8,7 +8,7 @@ use base_batcher_encoder::{
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
@@ -631,7 +631,7 @@ mod tests {
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_common_rpc_types::TransactionReceipt;
     use base_protocol::{BlockInfo, Frame};
     use base_runtime::{

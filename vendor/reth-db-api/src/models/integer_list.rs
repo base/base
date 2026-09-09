@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 use bytes::BufMut;
 use derive_more::Deref;
 use roaring::RoaringTreemap;

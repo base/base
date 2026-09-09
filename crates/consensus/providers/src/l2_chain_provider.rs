@@ -12,7 +12,7 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};

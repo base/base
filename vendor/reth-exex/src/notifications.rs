@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_consensus::{BaseBlock, BlockHeader};
+use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm::BaseEvmConfig;
 use futures::{Stream, StreamExt};
 use reth_exex_types::ExExHead;
@@ -554,7 +554,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_eips::BlockNumHash;
-    use base_common_consensus::{BaseBlock, Header};
+    use base_common_types_chain::{BaseBlock, Header};
     use eyre::OptionExt;
     use futures::StreamExt;
     use reth_db_common::init::init_genesis;

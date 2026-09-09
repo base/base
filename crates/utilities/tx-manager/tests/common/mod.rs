@@ -10,7 +10,7 @@ use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_common_consensus::SignableTransaction;
+use base_common_types_chain::SignableTransaction;
 use base_common_network::{EthereumWallet, PrivateKeySigner, TxSigner};
 use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager, TxCandidate, TxManagerConfig};
 

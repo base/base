@@ -19,7 +19,7 @@ async-trait = { workspace = true }
 base-metrics = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
 base-observability-events = { workspace = true }
@@ -37,7 +37,7 @@ eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }

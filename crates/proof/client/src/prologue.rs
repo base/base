@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use core::fmt::Debug;
 
 use alloy_primitives::B256;
-use base_common_consensus::Sealed;
+use base_common_types_chain::Sealed;
 use base_common_evm::BaseEvmFactory;
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{

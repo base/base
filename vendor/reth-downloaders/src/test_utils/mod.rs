@@ -5,7 +5,7 @@
 use std::ops::RangeInclusive;
 
 use alloy_primitives::{B256, map::B256Map};
-use base_common_consensus::BaseBlockBody as BlockBody;
+use base_common_types_chain::BaseBlockBody as BlockBody;
 use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
 
 #[cfg(any(test, feature = "file-client"))]

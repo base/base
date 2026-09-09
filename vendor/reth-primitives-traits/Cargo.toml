@@ -38,7 +38,7 @@ quanta = { workspace = true, optional = true, features = ["default"] }
 dashmap = { workspace = true, features = ["inline"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-base-common-consensus = { workspace = true, features = ["k256"], optional = false}
+base-common-types-chain = { workspace = true, features = ["k256"], optional = false}
 alloy-primitives = { workspace = true, features = [
     "map-foldhash",
     "k256",
@@ -61,7 +61,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 byteorder = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["arbitrary", "serde"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = [
     "map-foldhash",
     "arbitrary",
@@ -79,15 +79,15 @@ workspace = true
 
 [features]
 arbitrary = [
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "std",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-primitives/arbitrary",
     "dep:arbitrary",
     "dep:proptest",
     "dep:proptest-arbitrary-interop",
     "alloy-eips/arbitrary",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "secp256k1?/global-context",
     "secp256k1?/rand",
     "alloy-trie/arbitrary",
@@ -99,18 +99,18 @@ dashmap = ["dep:dashmap"]
 default = ["std", "quanta"]
 quanta = ["std", "dep:quanta"]
 rayon = ["dep:rayon"]
-reth-codec = ["base-common-consensus/reth", "base-state/reth-codec"]
+reth-codec = ["base-common-types-chain/reth", "base-state/reth-codec"]
 rpc-compat = ["base-common-rpc-types"]
-secp256k1 = ["base-common-consensus/secp256k1"]
+secp256k1 = ["base-common-types-chain/secp256k1"]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "dep:serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bytes/serde",
     "rand/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "secp256k1?/serde",
     "alloy-trie/serde",
     "rand_08/serde",
@@ -119,8 +119,8 @@ serde = [
     "base-state/serde",
 ]
 std = [
-    "base-common-consensus/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "serde?/std",
@@ -135,4 +135,4 @@ std = [
     "base-common-rpc-types?/std",
     "base-state/std",
 ]
-test-utils = ["arbitrary", "base-common-consensus/test-utils", "base-state/test-utils"]
+test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-state/test-utils"]

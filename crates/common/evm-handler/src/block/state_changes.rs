@@ -3,7 +3,7 @@
 use alloy_eips::eip4895::Withdrawal;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::map::AddressMap;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_evm_context::Block;
 
 use super::calc;

@@ -22,7 +22,7 @@ ethereum_ssz = {workspace = true, optional = true}
 alloy-eips = {workspace = true, features = ["serde"]}
 ethereum_ssz_derive = {workspace = true, optional = true}
 derive_more = { workspace = true, features = ["display"] }
-base-common-consensus = {workspace = true, features = ["serde"]}
+base-common-types-chain = {workspace = true, features = ["serde"]}
 alloy-rlp = {workspace = true, features = ["arrayvec", "derive"]}
 alloy-primitives = {workspace = true, features = ["rlp", "serde"]}
 arbitrary = {workspace = true, features = ["derive"], optional = true}
@@ -38,14 +38,14 @@ base64 = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["arbitrary"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary"] }
 jsonwebtoken = { workspace = true, features = ["default", "aws_lc_rs"] }
 alloy-primitives = {workspace = true, features = ["arbitrary", "getrandom", "rand", "rlp", "serde"]}
 
 [features]
 default = ["serde", "std"]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
@@ -60,16 +60,16 @@ std = [
     "derive_more/std",
 ]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "dep:alloy-serde",
     "dep:serde",
     "rand_08?/serde",
 ]
-k256 = ["base-common-consensus/k256"]
+k256 = ["base-common-types-chain/k256"]
 arbitrary = [
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-primitives/rand",
@@ -80,5 +80,5 @@ arbitrary = [
 ]
 jwt = ["std", "dep:jsonwebtoken", "dep:rand_08"]
 jwt-aws-lc-rs = ["jwt", "jsonwebtoken/aws_lc_rs"]
-kzg = ["base-common-consensus/kzg", "alloy-eips/kzg"]
+kzg = ["base-common-types-chain/kzg", "alloy-eips/kzg"]
 ssz = ["std", "dep:ethereum_ssz", "dep:ethereum_ssz_derive", "alloy-eips/ssz"]

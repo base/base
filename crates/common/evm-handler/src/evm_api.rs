@@ -3,7 +3,7 @@
 use core::{fmt::Debug, hash::Hash};
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_common_consensus::transaction::TxHashRef;
+use base_common_types_chain::transaction::TxHashRef;
 use base_evm_context::{
     CfgEnv, ContextTr, DBErrorMarker, ExecutionResult, HaltReasonTr, ResultAndState,
 };
@@ -32,7 +32,7 @@ pub trait Evm {
     /// that while the EVM internally works with `Self::Tx` (usually `TxEnv`), users can pass
     /// various transaction formats to [`Evm::transact`], including:
     /// - Direct [`TxEnv`](base_evm_context::TxEnv) instances
-    /// - [`Recovered<T>`](base_common_consensus::transaction::Recovered) where `T` implements
+    /// - [`Recovered<T>`](base_common_types_chain::transaction::Recovered) where `T` implements
     ///   [`crate::FromRecoveredTx`]
     /// - [`WithEncoded<Recovered<T>>`](alloy_eips::eip2718::WithEncoded) where `T` implements
     ///   [`crate::FromTxWithEncoded`]
@@ -76,7 +76,7 @@ pub trait Evm {
     /// This is the primary method for executing transactions. It accepts flexible input types
     /// that can be converted to the EVM's transaction environment, including:
     /// - [`TxEnv`](base_evm_context::TxEnv) - Direct transaction environment
-    /// - [`Recovered<T>`](base_common_consensus::transaction::Recovered) - Consensus transaction with
+    /// - [`Recovered<T>`](base_common_types_chain::transaction::Recovered) - Consensus transaction with
     ///   recovered sender
     /// - [`WithEncoded<Recovered<T>>`](alloy_eips::eip2718::WithEncoded) - Transaction with sender
     ///   and encoded bytes

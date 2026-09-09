@@ -10,7 +10,7 @@ use core::{hash::Hash, str::FromStr};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::{TransactionBuilder4844, TransactionBuilder7702};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BlobTransactionSidecarVariant, SignableTransaction, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxEnvelope, TxLegacy, TxType, Typed2718,
     TypedTransaction, error::ValueError, transaction::Recovered,
@@ -718,7 +718,7 @@ impl TransactionRequest {
     /// # Examples
     ///
     /// ```rust
-    /// use base_common_consensus::TxType;
+    /// use base_common_types_chain::TxType;
     /// use alloy_eips::eip2930::AccessList;
     /// use base_common_rpc_types::TransactionRequest;
     ///
@@ -793,7 +793,7 @@ impl TransactionRequest {
     /// # Examples
     ///
     /// ```rust
-    /// use base_common_consensus::TxType;
+    /// use base_common_types_chain::TxType;
     /// use alloy_eips::eip2930::AccessList;
     /// use base_common_rpc_types::TransactionRequest;
     ///
@@ -831,7 +831,7 @@ impl TransactionRequest {
     /// # Key Differences from [`Self::minimal_tx_type`]
     ///
     /// ```rust
-    /// use base_common_consensus::TxType;
+    /// use base_common_types_chain::TxType;
     /// use alloy_eips::eip2930::AccessList;
     /// use base_common_rpc_types::TransactionRequest;
     ///
@@ -1020,7 +1020,7 @@ impl TransactionRequest {
     /// missing. See [`Self::buildable_type`] for more information.
     pub fn build_typed_simulate_transaction(
         self,
-    ) -> Result<base_common_consensus::EthereumTxEnvelope<TxEip4844>, ValueError<Self>> {
+    ) -> Result<base_common_types_chain::EthereumTxEnvelope<TxEip4844>, ValueError<Self>> {
         let tx = self
             .build_consensus_tx()
             .map_err(|err| ValueError::new(err.tx, "Transaction is not buildable"))?;
@@ -1743,7 +1743,7 @@ mod tests {
     use alloy_primitives::b256;
     use alloy_serde::WithOtherFields;
     use assert_matches_1_5::assert_matches;
-    use base_common_consensus::BlobTransactionSidecarEip7594;
+    use base_common_types_chain::BlobTransactionSidecarEip7594;
     use similar_asserts::assert_eq;
 
     use super::*;
@@ -2156,7 +2156,7 @@ mod tests {
 
         let envelope = request.build_typed_simulate_transaction().unwrap();
 
-        assert_matches!(envelope, base_common_consensus::EthereumTxEnvelope::Eip1559(_));
+        assert_matches!(envelope, base_common_types_chain::EthereumTxEnvelope::Eip1559(_));
     }
 
     #[test]
@@ -2177,7 +2177,7 @@ mod tests {
 
         assert_matches!(
             envelope,
-            base_common_consensus::EthereumTxEnvelope::Eip4844(signed)
+            base_common_types_chain::EthereumTxEnvelope::Eip4844(signed)
                 if signed.tx().blob_versioned_hashes == vec![blob_hash]
         );
     }
@@ -2191,7 +2191,7 @@ mod tests {
             nonce: Some(57),
             gas: Some(123456),
             max_fee_per_blob_gas: Some(13579),
-            sidecar: Some(base_common_consensus::BlobTransactionSidecar::default().into()),
+            sidecar: Some(base_common_types_chain::BlobTransactionSidecar::default().into()),
             ..Default::default()
         };
 
@@ -2199,7 +2199,7 @@ mod tests {
 
         assert_matches!(
             envelope,
-            base_common_consensus::EthereumTxEnvelope::Eip4844(signed)
+            base_common_types_chain::EthereumTxEnvelope::Eip4844(signed)
                 if signed.tx().blob_versioned_hashes.is_empty()
         );
     }

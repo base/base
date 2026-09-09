@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_common_consensus::BaseTxEnvelope;
+use base_common_types_chain::BaseTxEnvelope;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_db::DatabaseEnv;
@@ -71,7 +71,7 @@ fn import_tables_with_range(
         )
     })??;
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::Headers<base_common_consensus::Header>, _>(
+        tx.import_table_with_range::<tables::Headers<base_common_types_chain::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,
@@ -85,7 +85,7 @@ fn import_tables_with_range(
         )
     })??;
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::BlockOmmers<base_common_consensus::Header>, _>(
+        tx.import_table_with_range::<tables::BlockOmmers<base_common_types_chain::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,

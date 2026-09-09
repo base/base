@@ -29,7 +29,7 @@ tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["std"]}
+base-common-types-chain = { workspace = true, features = ["std"]}
 base-execution-evm = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 [dev-dependencies]
@@ -47,7 +47,7 @@ alloy-genesis = { workspace = true, features = ["std"] }
 base-node-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-test-utils = { workspace = true, features = ["contracts"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }

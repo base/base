@@ -2,7 +2,7 @@ use alloc::{boxed::Box, string::String};
 
 use alloy_eips::{BlockHashOrNumber, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxNumber};
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 use base_evm_handler::{
     database::{DBErrorMarker, EvmDatabaseError},
     state::bal::BalError,

@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, address, bytes};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::TestHarness;

@@ -23,7 +23,7 @@ reth-storage-api = { workspace = true }
 reth-network-api = { workspace = true }
 reth-chain-state = { workspace = true }
 base-execution-txpool = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["default"] }

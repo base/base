@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
-use base_common_consensus::SignableTransaction;
+use base_common_types_chain::SignableTransaction;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, Ethereum, PrivateKeySigner, ReceiptResponse, TransactionBuilder};
 use base_common_rpc_types::BaseTransactionRequest;

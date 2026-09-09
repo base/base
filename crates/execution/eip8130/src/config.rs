@@ -2,7 +2,7 @@
 //! EIP-8130 validation flow.
 
 use alloy_primitives::{Address, B256, Keccak256, b256, keccak256};
-use base_common_consensus::{AccountChangeChannel, Eip8130Constants, SignedAccountChanges};
+use base_common_types_chain::{AccountChangeChannel, Eip8130Constants, SignedAccountChanges};
 
 use crate::{
     AccountConfigurationStorage, AccountState, ActorAuthorizer, AuthorizeError, Operation,
@@ -184,7 +184,7 @@ impl ConfigChangeAuthorizer {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, U256, address};
-    use base_common_consensus::{AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange};
+    use base_common_types_chain::{AccountChangeChannel, ChangeType, Eip8130Constants, SignedChange};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 

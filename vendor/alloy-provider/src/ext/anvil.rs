@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, TxHash, U64, U128, U256};
 use alloy_transport::{TransportError, TransportResult};
-use base_common_consensus::Blob;
+use base_common_types_chain::Blob;
 use base_common_network::{Network, TransactionBuilder};
 use futures::try_join;
 
@@ -532,7 +532,7 @@ mod tests {
     use alloy_primitives::{B256, address};
     use alloy_sol_types::{SolCall, sol};
     use alloy_transport::mock::Asserter;
-    use base_common_consensus::{BlockHeader, SidecarBuilder, SimpleCoder};
+    use base_common_types_chain::{BlockHeader, SidecarBuilder, SimpleCoder};
     use base_common_network::{Ethereum, TransactionBuilder, TransactionBuilder4844};
     use base_common_rpc_types::TransactionRequest;
 

@@ -6,7 +6,7 @@ use alloy_eips::{
 };
 use alloy_json_rpc::RpcObject;
 use alloy_network_primitives::HeaderResponse;
-use base_common_consensus::{BlockHeader, Transaction, TxReceipt};
+use base_common_types_chain::{BlockHeader, Transaction, TxReceipt};
 
 use crate::{BlockResponse, NetworkTransactionBuilder, ReceiptResponse, TransactionResponse};
 

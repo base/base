@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::eip1559::INITIAL_BASE_FEE;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction, Header,
     TxEip1559, TxReceipt, constants::ETH_TO_WEI,
 };

@@ -8,12 +8,12 @@ use std::{
 
 use alloy_eips::eip7840::BlobParams;
 #[cfg(test)]
-use base_common_consensus::EthereumTxEnvelope;
+use base_common_types_chain::EthereumTxEnvelope;
 #[cfg(test)]
-use base_common_consensus::EthereumTypedTransaction;
+use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
-use base_common_consensus::TxEip4844;
-use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt};
+use base_common_types_chain::TxEip4844;
+use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt};
 use base_common_rpc_types::TxGasAndReward;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures::{
@@ -409,7 +409,7 @@ impl FeeHistoryEntry {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Signature;
-    use base_common_consensus::{EthereumReceipt as Receipt, TxEip1559, TxType};
+    use base_common_types_chain::{EthereumReceipt as Receipt, TxEip1559, TxType};
 
     use super::*;
 

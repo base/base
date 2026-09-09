@@ -78,7 +78,7 @@ fn pending_batch(
 
 /// Returns the sealed tip block used for canonical state updates.
 fn tip_block() -> SealedBlock {
-    let mut block = base_common_consensus::BaseBlock::default();
+    let mut block = base_common_types_chain::BaseBlock::default();
     block.header.gas_limit = 30_000_000;
     block.header.base_fee_per_gas = Some(BASE_FEE);
     SealedBlock::seal_slow(block)

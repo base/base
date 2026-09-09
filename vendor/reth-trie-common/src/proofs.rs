@@ -12,7 +12,7 @@ use alloy_trie::{
     nodes::TrieNode,
     proof::{DecodedProofNodes, ProofNodes, ProofVerificationError, verify_proof},
 };
-use base_common_consensus::constants::KECCAK_EMPTY;
+use base_common_types_chain::constants::KECCAK_EMPTY;
 use derive_more::{Deref, DerefMut, IntoIterator};
 use itertools::Itertools;
 use reth_primitives_traits::Account;

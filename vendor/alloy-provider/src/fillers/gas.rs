@@ -345,7 +345,7 @@ where
 mod tests {
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
     use alloy_primitives::{U256, address};
-    use base_common_consensus::{SidecarBuilder, SimpleCoder, Transaction};
+    use base_common_types_chain::{SidecarBuilder, SimpleCoder, Transaction};
     use base_common_network::Ethereum;
     use base_common_rpc_types::TransactionRequest;
 

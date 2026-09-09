@@ -1,7 +1,7 @@
 //! Concrete Base transaction, receipt, log, and header conversion.
 
 use alloy_primitives::{Signature, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
     transaction::Recovered,
 };

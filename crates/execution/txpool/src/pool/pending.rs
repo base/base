@@ -664,7 +664,7 @@ mod tests {
     use std::collections::HashSet;
 
     use alloy_primitives::address;
-    use base_common_consensus::{Transaction, TxType};
+    use base_common_types_chain::{Transaction, TxType};
 
     use super::*;
     use crate::test_utils::{

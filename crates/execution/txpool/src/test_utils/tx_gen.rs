@@ -1,6 +1,6 @@
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2930::AccessList};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, EthereumTxEnvelope, SignableTransaction, Signed, TxEip1559, TxEip4844, TxLegacy,
 };
 use rand::{Rng, RngCore};

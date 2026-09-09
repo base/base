@@ -9,7 +9,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt,
 };
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
@@ -246,7 +246,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, DepositReceipt, Header, Receipt, Sealable, TxDeposit,
         TxReceipt,
     };
@@ -600,7 +600,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let mut body = base_common_consensus::BlockBody::<BaseTxEnvelope> {
+        let mut body = base_common_types_chain::BlockBody::<BaseTxEnvelope> {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(Default::default()),

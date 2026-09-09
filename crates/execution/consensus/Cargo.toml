@@ -27,7 +27,7 @@ reth-trie-common = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-execution-chainspec = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"], optional = false}
+base-common-types-chain = { workspace = true, features = ["reth"], optional = false}
 reth-execution-types = { workspace = true, features = ["default"], optional = false}
 [dev-dependencies]
 reth-trie = { workspace = true }
@@ -38,19 +38,19 @@ base-common-genesis = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 
 [features]
 default = ["std"]
 std = [
     "alloy-chains/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "alloy-trie/std",
     "base-common-chains/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "base-execution-chainspec/std",
     "base-protocol/std",
     "reth-execution-types/std",

@@ -751,7 +751,7 @@ impl BalAccountStateFields {
             nonce: account_changes.nonce_changes.last().map(|change| change.new_nonce),
             code_hash: account_changes.code_changes.last().map(|code_change| {
                 if code_change.new_code.is_empty() {
-                    base_common_consensus::constants::KECCAK_EMPTY
+                    base_common_types_chain::constants::KECCAK_EMPTY
                 } else {
                     keccak256(&code_change.new_code)
                 }
@@ -781,7 +781,7 @@ impl BalAccountStateFields {
             bytecode_hash: self.code_hash.or_else(|| {
                 existing_account
                     .and_then(|account| account.bytecode_hash)
-                    .or(Some(base_common_consensus::constants::KECCAK_EMPTY))
+                    .or(Some(base_common_types_chain::constants::KECCAK_EMPTY))
             }),
         }
     }

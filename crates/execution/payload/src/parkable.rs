@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use base_execution_txpool::{
     BasePooledTransaction, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
     PoolTransactionError, ValidPoolTransaction,

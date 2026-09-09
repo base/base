@@ -2,7 +2,7 @@
 //! These structures define the data format used to report blockchain events to ethstats servers.
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::Header;
+use base_common_types_chain::Header;
 use serde::{Deserialize, Serialize};
 
 /// Collection of meta information about a node that is displayed on the monitoring page.

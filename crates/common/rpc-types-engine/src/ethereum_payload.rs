@@ -20,7 +20,7 @@ use alloy_eips::{
     eip7928::EMPTY_BLOCK_ACCESS_LIST_HASH,
 };
 use alloy_primitives::{Address, B64, B256, Bloom, Bytes, Sealable, U256, keccak256};
-use base_common_consensus::{
+use base_common_types_chain::{
     Blob, Block, BlockBody, BlockHeader, Bytes48, EMPTY_OMMER_ROOT_HASH, Header, HeaderInfo,
     Transaction, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
@@ -174,7 +174,7 @@ impl<'de> serde::Deserialize<'de> for ExecutionPayloadFieldV2 {
 }
 
 impl ExecutionPayloadFieldV2 {
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadFieldV2`].
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadFieldV2`].
     ///
     /// See also:
     ///  - [`ExecutionPayloadV1::from_block_unchecked`].
@@ -191,7 +191,7 @@ impl ExecutionPayloadFieldV2 {
         Self::from_block_unchecked(block.hash_slow(), block)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadFieldV2`] using the given block
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadFieldV2`] using the given block
     /// hash.
     ///
     /// See also:
@@ -820,7 +820,7 @@ impl ExecutionPayloadV1 {
         }
 
         let transactions_root = transactions_root.unwrap_or_else(|| {
-            base_common_consensus::proofs::ordered_trie_root_encoded(&self.transactions)
+            base_common_types_chain::proofs::ordered_trie_root_encoded(&self.transactions)
         });
 
         let header = Header {
@@ -864,7 +864,7 @@ impl ExecutionPayloadV1 {
         })
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV1`].
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV1`].
     ///
     /// Note: This re-calculates the block hash.
     pub fn from_block_slow<T, H>(block: &Block<T, H>) -> Self
@@ -875,7 +875,7 @@ impl ExecutionPayloadV1 {
         Self::from_block_unchecked(block.header.hash_slow(), block)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV1`] using the given block hash.
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV1`] using the given block hash.
     ///
     /// The supplied hash is stored verbatim without checking it against the block.
     pub fn from_block_unchecked<T, H>(block_hash: B256, block: &Block<T, H>) -> Self
@@ -995,7 +995,7 @@ impl<'de> serde::Deserialize<'de> for ExecutionPayloadV2 {
 }
 
 impl ExecutionPayloadV2 {
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV2`].
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV2`].
     ///
     /// See also [`ExecutionPayloadV1::from_block_unchecked`].
     ///
@@ -1010,7 +1010,7 @@ impl ExecutionPayloadV2 {
         Self::from_block_unchecked(block.header.hash_slow(), block)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV2`] using the given block hash.
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV2`] using the given block hash.
     ///
     /// See also [`ExecutionPayloadV1::from_block_unchecked`].
     ///
@@ -1105,7 +1105,7 @@ impl ExecutionPayloadV2 {
         let mut base_sealed_block =
             self.payload_inner.into_block_raw_with_transactions_root_opt(transactions_root)?;
         let withdrawals_root =
-            base_common_consensus::proofs::calculate_withdrawals_root(&self.withdrawals);
+            base_common_types_chain::proofs::calculate_withdrawals_root(&self.withdrawals);
         base_sealed_block.body.withdrawals = Some(self.withdrawals.into());
         base_sealed_block.header.withdrawals_root = Some(withdrawals_root);
         Ok(base_sealed_block)
@@ -1295,7 +1295,7 @@ impl<'de> serde::Deserialize<'de> for ExecutionPayloadV3 {
 }
 
 impl ExecutionPayloadV3 {
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV3`].
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV3`].
     ///
     /// See also [`ExecutionPayloadV2::from_block_unchecked`].
     ///
@@ -1308,7 +1308,7 @@ impl ExecutionPayloadV3 {
         Self::from_block_unchecked(block.hash_slow(), block)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV3`] using the given block hash.
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV3`] using the given block hash.
     ///
     /// See also [`ExecutionPayloadV2::from_block_unchecked`].
     pub fn from_block_unchecked<T, H>(block_hash: B256, block: &Block<T, H>) -> Self
@@ -1707,7 +1707,7 @@ impl ssz::Encode for ExecutionPayloadV4 {
 }
 
 impl ExecutionPayloadV4 {
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV4`].
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV4`].
     ///
     /// This uses the header's `block_access_list_hash` bytes as the `block_access_list` fallback
     /// when the full RLP-encoded block access list is not available on the block value. If the
@@ -1727,7 +1727,7 @@ impl ExecutionPayloadV4 {
         Self::from_block_unchecked(block.header.hash_slow(), block)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV4`] using the given block hash.
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV4`] using the given block hash.
     ///
     /// This uses the header's `block_access_list_hash` bytes as the `block_access_list` fallback
     /// because the full RLP-encoded block access list is not available on the block value. If the
@@ -1752,7 +1752,7 @@ impl ExecutionPayloadV4 {
         }
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayloadV4`] using the given block hash
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayloadV4`] using the given block hash
     /// and block access list.
     ///
     /// Unlike [`Self::from_block_unchecked`], this preserves the full RLP-encoded block access
@@ -1863,11 +1863,11 @@ impl<T: Decodable2718> TryFrom<ExecutionPayloadV4> for Block<T> {
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 pub struct BlobsBundleV1 {
     /// All commitments in the bundle.
-    pub commitments: Vec<base_common_consensus::Bytes48>,
+    pub commitments: Vec<base_common_types_chain::Bytes48>,
     /// All proofs in the bundle.
-    pub proofs: Vec<base_common_consensus::Bytes48>,
+    pub proofs: Vec<base_common_types_chain::Bytes48>,
     /// All blobs in the bundle.
-    pub blobs: Vec<base_common_consensus::Blob>,
+    pub blobs: Vec<base_common_types_chain::Blob>,
 }
 
 #[cfg(feature = "serde")]
@@ -1878,9 +1878,9 @@ impl<'de> serde::Deserialize<'de> for BlobsBundleV1 {
     {
         #[derive(serde::Deserialize)]
         struct BlobsBundleRaw {
-            commitments: Vec<base_common_consensus::Bytes48>,
-            proofs: Vec<base_common_consensus::Bytes48>,
-            blobs: Vec<base_common_consensus::Blob>,
+            commitments: Vec<base_common_types_chain::Bytes48>,
+            proofs: Vec<base_common_types_chain::Bytes48>,
+            blobs: Vec<base_common_types_chain::Blob>,
         }
         let raw = BlobsBundleRaw::deserialize(deserializer)?;
 
@@ -1960,10 +1960,10 @@ impl BlobsBundleV1 {
     #[cfg(feature = "kzg")]
     pub fn try_into_sidecar(
         self,
-    ) -> Result<BlobTransactionSidecar, base_common_consensus::error::ValueError<Self>> {
+    ) -> Result<BlobTransactionSidecar, base_common_types_chain::error::ValueError<Self>> {
         if self.commitments.len() != self.proofs.len() || self.commitments.len() != self.blobs.len()
         {
-            return Err(base_common_consensus::error::ValueError::new(self, "length mismatch"));
+            return Err(base_common_types_chain::error::ValueError::new(self, "length mismatch"));
         }
 
         let Self { commitments, proofs, blobs } = self;
@@ -2037,7 +2037,7 @@ impl FromIterator<BlobTransactionSidecar> for BlobsBundleV1 {
 
 #[cfg(feature = "kzg")]
 impl TryFrom<BlobsBundleV1> for BlobTransactionSidecar {
-    type Error = base_common_consensus::error::ValueError<BlobsBundleV1>;
+    type Error = base_common_types_chain::error::ValueError<BlobsBundleV1>;
 
     fn try_from(value: BlobsBundleV1) -> Result<Self, Self::Error> {
         value.try_into_sidecar()
@@ -2060,11 +2060,11 @@ impl TryFrom<BlobsBundleV1> for BlobsBundleV2 {
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 pub struct BlobsBundleV2 {
     /// All commitments in the bundle.
-    pub commitments: Vec<base_common_consensus::Bytes48>,
+    pub commitments: Vec<base_common_types_chain::Bytes48>,
     /// All cell proofs in the bundle.
-    pub proofs: Vec<base_common_consensus::Bytes48>,
+    pub proofs: Vec<base_common_types_chain::Bytes48>,
     /// All blobs in the bundle.
-    pub blobs: Vec<base_common_consensus::Blob>,
+    pub blobs: Vec<base_common_types_chain::Blob>,
 }
 
 #[cfg(feature = "serde")]
@@ -2075,9 +2075,9 @@ impl<'de> serde::Deserialize<'de> for BlobsBundleV2 {
     {
         #[derive(serde::Deserialize)]
         struct BlobsBundleRaw {
-            commitments: Vec<base_common_consensus::Bytes48>,
-            proofs: Vec<base_common_consensus::Bytes48>,
-            blobs: Vec<base_common_consensus::Blob>,
+            commitments: Vec<base_common_types_chain::Bytes48>,
+            proofs: Vec<base_common_types_chain::Bytes48>,
+            blobs: Vec<base_common_types_chain::Blob>,
         }
         let raw = BlobsBundleRaw::deserialize(deserializer)?;
 
@@ -2103,9 +2103,9 @@ impl ssz::Decode for BlobsBundleV2 {
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
         #[derive(ssz_derive::Decode)]
         struct BlobsBundleRaw {
-            commitments: Vec<base_common_consensus::Bytes48>,
-            proofs: Vec<base_common_consensus::Bytes48>,
-            blobs: Vec<base_common_consensus::Blob>,
+            commitments: Vec<base_common_types_chain::Bytes48>,
+            proofs: Vec<base_common_types_chain::Bytes48>,
+            blobs: Vec<base_common_types_chain::Blob>,
         }
 
         let raw = BlobsBundleRaw::from_ssz_bytes(bytes)?;
@@ -2195,14 +2195,14 @@ impl BlobsBundleV2 {
     #[cfg(feature = "kzg")]
     pub fn try_into_sidecar(
         self,
-    ) -> Result<BlobTransactionSidecarEip7594, base_common_consensus::error::ValueError<Self>> {
+    ) -> Result<BlobTransactionSidecarEip7594, base_common_types_chain::error::ValueError<Self>> {
         let expected_cell_proofs_len = self.blobs.len() * CELLS_PER_EXT_BLOB;
         if self.proofs.len() != expected_cell_proofs_len {
             let msg = format!(
                 "cell proofs length mismatch, expected {expected_cell_proofs_len}, has {}",
                 self.proofs.len()
             );
-            return Err(base_common_consensus::error::ValueError::new(self, msg));
+            return Err(base_common_types_chain::error::ValueError::new(self, msg));
         }
 
         if self.commitments.len() != self.blobs.len() {
@@ -2211,7 +2211,7 @@ impl BlobsBundleV2 {
                 self.commitments.len(),
                 self.blobs.len()
             );
-            return Err(base_common_consensus::error::ValueError::new(self, msg));
+            return Err(base_common_types_chain::error::ValueError::new(self, msg));
         }
 
         let Self { commitments, proofs, blobs } = self;
@@ -2274,7 +2274,7 @@ impl FromIterator<BlobTransactionSidecarEip7594> for BlobsBundleV2 {
 
 #[cfg(feature = "kzg")]
 impl TryFrom<BlobsBundleV2> for BlobTransactionSidecarEip7594 {
-    type Error = base_common_consensus::error::ValueError<BlobsBundleV2>;
+    type Error = base_common_types_chain::error::ValueError<BlobsBundleV2>;
 
     fn try_from(value: BlobsBundleV2) -> Result<Self, Self::Error> {
         value.try_into_sidecar()
@@ -2312,7 +2312,7 @@ pub enum ExecutionPayload {
 }
 
 impl ExecutionPayload {
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayload`] and also returns the
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayload`] and also returns the
     /// [`ExecutionPayloadSidecar`] extracted from the block.
     ///
     /// See also [`ExecutionPayloadV3::from_block_unchecked`].
@@ -2327,7 +2327,7 @@ impl ExecutionPayload {
         Self::from_block_unchecked(block.hash_slow(), block)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayload`] and also returns the
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayload`] and also returns the
     /// [`ExecutionPayloadSidecar`] extracted from the block along with block access list.
     ///
     /// This preserves the full RLP-encoded block access list for Amsterdam/V4 payloads.
@@ -2347,7 +2347,7 @@ impl ExecutionPayload {
         Self::from_block_slow_with_extras(block, block_access_list)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayload`] and also returns the
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayload`] and also returns the
     /// [`ExecutionPayloadSidecar`] extracted from the block along with payload extras.
     ///
     /// This preserves the full RLP-encoded block access list for Amsterdam/V4 payloads.
@@ -2372,7 +2372,7 @@ impl ExecutionPayload {
         }
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayload`] and also returns the
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayload`] and also returns the
     /// [`ExecutionPayloadSidecar`] extracted from the block.
     ///
     /// For Amsterdam/V4 payloads this uses the header's `block_access_list_hash` bytes as the
@@ -2414,7 +2414,7 @@ impl ExecutionPayload {
         (execution_payload, sidecar)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayload`] and also returns the
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayload`] and also returns the
     /// [`ExecutionPayloadSidecar`] extracted from the block along with block access list.
     ///
     /// This preserves the full RLP-encoded block access list for Amsterdam/V4 payloads.
@@ -2453,7 +2453,7 @@ impl ExecutionPayload {
         (execution_payload, sidecar)
     }
 
-    /// Converts [`base_common_consensus::Block`] to [`ExecutionPayload`] and also returns the
+    /// Converts [`base_common_types_chain::Block`] to [`ExecutionPayload`] and also returns the
     /// [`ExecutionPayloadSidecar`] extracted from the block along with optional extras.
     ///
     /// This preserves the full RLP-encoded block access list for Amsterdam/V4 payloads if provided.
@@ -2888,15 +2888,15 @@ impl ExecutionPayload {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            base_common_consensus::transaction::Recovered<T>,
-            base_common_consensus::crypto::RecoveryError,
+            base_common_types_chain::transaction::Recovered<T>,
+            base_common_types_chain::crypto::RecoveryError,
         >,
     > + '_
     where
-        T: Decodable2718 + base_common_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + base_common_types_chain::transaction::SignerRecoverable,
     {
         self.decoded_transactions::<T>().map(|res| {
-            res.map_err(base_common_consensus::crypto::RecoveryError::from_source)
+            res.map_err(base_common_types_chain::crypto::RecoveryError::from_source)
                 .and_then(|tx| tx.try_into_recovered())
         })
     }
@@ -2910,16 +2910,16 @@ impl ExecutionPayload {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            WithEncoded<base_common_consensus::transaction::Recovered<T>>,
-            base_common_consensus::crypto::RecoveryError,
+            WithEncoded<base_common_types_chain::transaction::Recovered<T>>,
+            base_common_types_chain::crypto::RecoveryError,
         >,
     > + '_
     where
-        T: Decodable2718 + base_common_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + base_common_types_chain::transaction::SignerRecoverable,
     {
         self.transactions().iter().map(|tx_bytes| {
             T::decode_2718_exact(tx_bytes.as_ref())
-                .map_err(base_common_consensus::crypto::RecoveryError::from_source)
+                .map_err(base_common_types_chain::crypto::RecoveryError::from_source)
                 .and_then(|tx| {
                     tx.try_into_recovered()
                         .map(|recovered| WithEncoded::new(tx_bytes.clone(), recovered))
@@ -3351,7 +3351,7 @@ impl ExecutionPayloadBodyV1 {
         }
     }
 
-    /// Converts a [`base_common_consensus::Block`] into an execution payload body.
+    /// Converts a [`base_common_types_chain::Block`] into an execution payload body.
     pub fn from_block<T: Encodable2718, H>(block: Block<T, H>) -> Self {
         let BlockBody { withdrawals, transactions, .. } = block.into_body();
         Self::new(withdrawals, transactions.iter())
@@ -3405,7 +3405,7 @@ impl ExecutionPayloadBodyV2 {
         }
     }
 
-    /// Converts a [`base_common_consensus::Block`] into an execution payload body, with an optional
+    /// Converts a [`base_common_types_chain::Block`] into an execution payload body, with an optional
     /// block access list.
     pub fn from_block<T: Encodable2718, H>(
         block: Block<T, H>,
@@ -4048,7 +4048,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{b256, hex};
-    use base_common_consensus::TxEnvelope;
+    use base_common_types_chain::TxEnvelope;
     use similar_asserts::assert_eq;
 
     use super::*;

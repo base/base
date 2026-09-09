@@ -19,11 +19,11 @@ thiserror = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "sync"] }
 [dev-dependencies]
 mockall = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 tokio = { workspace = true, features = ["default", "rt"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }

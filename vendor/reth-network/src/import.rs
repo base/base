@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
+use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
 use reth_eth_wire::NewBlock;
 use reth_eth_wire_types::broadcast::NewBlockHashes;
 use reth_network_peers::PeerId;
@@ -40,7 +40,7 @@ pub enum NewBlockEvent<B = NewBlock> {
 
 /// Represents different types of block import events
 #[derive(Debug)]
-pub enum BlockImportEvent<B = base_common_consensus::Block<EthereumTxEnvelope<TxEip4844>>> {
+pub enum BlockImportEvent<B = base_common_types_chain::Block<EthereumTxEnvelope<TxEip4844>>> {
     /// General block announcement and validation status
     Announcement(BlockValidation<B>),
     /// Result of a peer-specific block import
@@ -49,7 +49,7 @@ pub enum BlockImportEvent<B = base_common_consensus::Block<EthereumTxEnvelope<Tx
 
 /// Outcome of the [`BlockImport`]'s block handling.
 #[derive(Debug)]
-pub struct BlockImportOutcome<B = base_common_consensus::Block<EthereumTxEnvelope<TxEip4844>>> {
+pub struct BlockImportOutcome<B = base_common_types_chain::Block<EthereumTxEnvelope<TxEip4844>>> {
     /// Sender of the block announcement message.
     pub peer: PeerId,
     /// The result after validating the block

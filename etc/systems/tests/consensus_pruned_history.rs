@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
 use async_trait::async_trait;
-use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
+use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
 use base_common_rpc_types::{BaseTransaction, Block as RpcBlock, BlockTransactions};
 use base_common_rpc_types_engine::{

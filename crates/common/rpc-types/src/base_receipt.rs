@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Bytes};
 use alloy_serde::OtherFields;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom, Receipt,
     ReceiptWithBloom, TxReceipt,
 };

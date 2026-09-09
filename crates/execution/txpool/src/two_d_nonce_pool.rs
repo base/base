@@ -9,7 +9,7 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{B256Map, HashMap},
 };
-use base_common_consensus::Eip8130Constants;
+use base_common_types_chain::Eip8130Constants;
 use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, BestTransactions, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolResult, PriceBumpConfig, QueuedReason, SenderIdentifiers,
@@ -630,7 +630,7 @@ mod tests {
     use alloy_primitives::Bytes;
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, Transaction, TxEip8130,
         transaction::Recovered,
     };

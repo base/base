@@ -323,7 +323,7 @@ impl ValidatedTransactionExtensions for TransactionValidity {
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::TxKind;
-    use base_common_consensus::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
+    use base_common_types_chain::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
     use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
     use serde_json::json;
 

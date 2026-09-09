@@ -6,7 +6,7 @@ use std::{
 
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_evm_handler::database::PlainStorageRevert;
@@ -460,7 +460,7 @@ impl HeaderProvider for ConsistentProvider {
     fn header(
         &self,
         block_hash: BlockHash,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.get_in_memory_or_storage_by_block(
             block_hash.into(),
             |db_provider| db_provider.header(block_hash),
@@ -471,7 +471,7 @@ impl HeaderProvider for ConsistentProvider {
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         self.get_in_memory_or_storage_by_block(
             num.into(),
             |db_provider| db_provider.header_by_number(num),
@@ -482,7 +482,7 @@ impl HeaderProvider for ConsistentProvider {
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, _| db_provider.headers_range(range),
@@ -1076,7 +1076,7 @@ impl BlockReaderIdExt for ConsistentProvider {
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(match id {
             BlockNumberOrTag::Latest => {
                 Some(self.canonical_in_memory_state.get_canonical_head().unseal())
@@ -1125,7 +1125,7 @@ impl BlockReaderIdExt for ConsistentProvider {
         })
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_types_chain::Header>> {
         Ok(match id {
             BlockId::Number(num) => self.header_by_number_or_tag(num)?,
             BlockId::Hash(hash) => self.header(hash.block_hash)?,

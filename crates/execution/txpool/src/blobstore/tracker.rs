@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::{BlockHeader, Typed2718};
+use base_common_types_chain::{BlockHeader, Typed2718};
 use reth_primitives_traits::RecoveredBlock;
 
 /// The type that is used to track canonical blob transactions.
@@ -84,7 +84,7 @@ pub enum BlobStoreUpdates {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Signature;
-    use base_common_consensus::{Header, Signed};
+    use base_common_types_chain::{Header, Signed};
     use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
@@ -112,10 +112,10 @@ mod tests {
     fn test_add_new_chain_blocks() {
         let mut tracker = BlobStoreCanonTracker::default();
         let block1 = RecoveredBlock::new_unhashed(
-            base_common_consensus::BaseBlock {
+            base_common_types_chain::BaseBlock {
                 header: Header { number: 10, ..Default::default() },
-                body: base_common_consensus::BlockBody {
-                    transactions: vec![base_common_consensus::BaseTxEnvelope::Eip7702(
+                body: base_common_types_chain::BlockBody {
+                    transactions: vec![base_common_types_chain::BaseTxEnvelope::Eip7702(
                         Signed::new_unhashed(Default::default(), Signature::test_signature()),
                     )],
                     ..Default::default()
@@ -124,7 +124,7 @@ mod tests {
             Default::default(),
         );
         let block2 = RecoveredBlock::new_unhashed(
-            base_common_consensus::BaseBlock {
+            base_common_types_chain::BaseBlock {
                 header: Header { number: 11, ..Default::default() },
                 body: Default::default(),
             },

@@ -5,7 +5,7 @@ mod tests {
     use alloy_eips::eip2930::{AccessList, AccessListItem};
     use alloy_primitives::{Address, B256};
     use alloy_rlp::{RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
-    use base_common_consensus::{Compact, add_arbitrary_tests};
+    use base_common_types_chain::{Compact, add_arbitrary_tests};
     use proptest::proptest;
     use proptest_arbitrary_interop::arb;
 

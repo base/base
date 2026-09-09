@@ -32,7 +32,7 @@ alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"], optional = true }
-base-common-consensus = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
 [dev-dependencies]
 test-case = { workspace = true }
@@ -45,15 +45,15 @@ arbitrary = { workspace = true, features = ["derive"] }
 alloy-eips = { workspace = true, features = ["arbitrary"] }
 alloy-chains = { workspace = true, features = ["arbitrary"] }
 alloy-eip7928 = { workspace = true, features = ["rlp", "arbitrary"] }
-base-common-consensus = { workspace = true, features = ["arbitrary", "serde"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", "rand"] }
 
 [features]
 default = ["std"]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-chains/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eip7928?/std",
     "alloy-eips/std",
     "alloy-genesis/std",
@@ -67,24 +67,24 @@ std = [
     "alloy-trie/std",
 ]
 arbitrary = [
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-chains/arbitrary",
     "dep:alloy-eip7928",
     "alloy-eip7928/arbitrary",
     "dep:arbitrary",
     "dep:proptest",
     "dep:proptest-arbitrary-interop",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "reth-primitives-traits/arbitrary",
     "alloy-trie/arbitrary",
 ]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "dep:serde",
     "alloy-chains/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bytes/serde",

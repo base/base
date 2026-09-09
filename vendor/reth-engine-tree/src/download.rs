@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, map::B256Set};
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_network_p2p::{
@@ -77,7 +77,7 @@ impl<Client: BlockClient + 'static> std::fmt::Debug for BasicBlockDownloader<Cli
 
 impl<Client> BasicBlockDownloader<Client>
 where
-    Client: BlockClient<Block = base_common_consensus::BaseBlock> + 'static,
+    Client: BlockClient<Block = base_common_types_chain::BaseBlock> + 'static,
 {
     /// Create a new instance
     pub fn new(client: Client, consensus: Arc<BaseBeaconConsensus>) -> Self {
@@ -189,7 +189,7 @@ where
 
 impl<Client> BasicBlockDownloader<Client>
 where
-    Client: BlockClient<Block = base_common_consensus::BaseBlock>,
+    Client: BlockClient<Block = base_common_types_chain::BaseBlock>,
 {
     /// Handles incoming download actions.
     pub fn on_action(&mut self, action: DownloadAction) {
@@ -288,7 +288,7 @@ mod tests {
 
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;

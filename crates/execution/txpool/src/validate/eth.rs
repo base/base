@@ -12,7 +12,7 @@ use alloy_eips::{BlockId, eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip7840::BlobPa
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, U256};
 use alloy_rlp::Encodable;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BlockHeader, Transaction, Typed2718,
     constants::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
@@ -808,7 +808,7 @@ where
             .collect()
     }
 
-    fn on_new_head_block(&self, new_tip_block: &base_common_consensus::Header) {
+    fn on_new_head_block(&self, new_tip_block: &base_common_types_chain::Header) {
         // update all forks
         if self.chain_spec().is_shanghai_active_at_timestamp(new_tip_block.timestamp()) {
             self.fork_tracker.shanghai.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1395,7 +1395,7 @@ mod tests {
         eip2930::{AccessList, AccessListItem},
     };
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
-    use base_common_consensus::Transaction;
+    use base_common_types_chain::Transaction;
     use base_evm_handler::primitives::eip3860::MAX_INITCODE_SIZE;
     use reth_primitives_traits::SignedTransaction;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -1417,7 +1417,7 @@ mod tests {
 
         let data = hex::decode(raw).unwrap();
         let tx =
-            base_common_consensus::BasePooledTransaction::decode_2718(&mut data.as_ref()).unwrap();
+            base_common_types_chain::BasePooledTransaction::decode_2718(&mut data.as_ref()).unwrap();
 
         BasePooledTransaction::from_pooled(tx.try_into_recovered().unwrap())
     }
@@ -1428,7 +1428,7 @@ mod tests {
         value: u64,
         gas_limit: u64,
     ) -> BasePooledTransaction {
-        let tx = base_common_consensus::TxEip1559 {
+        let tx = base_common_types_chain::TxEip1559 {
             chain_id: 1,
             nonce: 0,
             gas_limit,
@@ -1438,12 +1438,12 @@ mod tests {
             value: U256::from(value),
             ..Default::default()
         };
-        let signed = base_common_consensus::BaseTxEnvelope::new_unhashed(
+        let signed = base_common_types_chain::BaseTxEnvelope::new_unhashed(
             tx.into(),
             alloy_primitives::Signature::test_signature(),
         );
         BasePooledTransaction::new(
-            base_common_consensus::transaction::Recovered::new_unchecked(signed, sender),
+            base_common_types_chain::transaction::Recovered::new_unchecked(signed, sender),
             200,
         )
     }

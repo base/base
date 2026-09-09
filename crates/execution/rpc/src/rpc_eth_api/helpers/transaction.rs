@@ -6,7 +6,7 @@ use std::sync::Arc;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, BlockHeader, Transaction,
     transaction::{SignerRecoverable, TransactionMeta},
 };
@@ -638,7 +638,7 @@ mod tests {
 
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-    use base_common_consensus::{Block, Header, Transaction};
+    use base_common_types_chain::{Block, Header, Transaction};
     use base_common_rpc_types::request::TransactionRequest;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_txpool::{

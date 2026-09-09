@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
 use alloy_provider::network::{TxSignerSync, eip2718::Encodable2718};
-use base_common_consensus::{BaseTxEnvelope, SignableTransaction};
+use base_common_types_chain::{BaseTxEnvelope, SignableTransaction};
 use base_common_network::PrivateKeySigner;
 use base_common_rpc_types::BaseTransactionRequest;
 
@@ -76,7 +76,7 @@ pub fn create_test_meter_bundle_response() -> MeterBundleResponse {
 
 #[cfg(test)]
 mod tests {
-    use base_common_consensus::Transaction;
+    use base_common_types_chain::Transaction;
 
     use super::*;
     use crate::traits::BundleExtensions;

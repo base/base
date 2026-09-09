@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, EMPTY_OMMER_ROOT_HASH, Header, Predeploys, Sealed, TxReceipt,
 };
 use base_common_genesis::RollupConfig;

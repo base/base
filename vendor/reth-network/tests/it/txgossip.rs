@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Signature, U256};
-use base_common_consensus::TxLegacy;
+use base_common_types_chain::TxLegacy;
 use base_execution_txpool::{
     AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
 };
@@ -258,7 +258,7 @@ async fn test_sending_invalid_transactions() {
             value: Default::default(),
             input: Default::default(),
         };
-        let tx = base_common_consensus::BaseTxEnvelope::new_unhashed(
+        let tx = base_common_types_chain::BaseTxEnvelope::new_unhashed(
             tx.into(),
             Signature::test_signature(),
         );

@@ -15,7 +15,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use assert_matches::assert_matches;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
     ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
@@ -2674,7 +2674,7 @@ mod forkchoice_updated_tests {
         let test_harness = TestHarness::new(chain_spec);
 
         let seal_header = |number: u64| {
-            SealedHeader::seal_slow(base_common_consensus::Header { number, ..Default::default() })
+            SealedHeader::seal_slow(base_common_types_chain::Header { number, ..Default::default() })
         };
 
         // Set finalized=30, safe=50 to test all three commitment levels

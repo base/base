@@ -3,7 +3,7 @@
 //! - [`crate::segments::user::Receipts`] is responsible for pruning receipts according to the
 //!   user-configured settings (for example, on a full node or with a custom prune config)
 
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointWriter, StaticFileProviderFactory,

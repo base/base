@@ -6,7 +6,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, Log, Signature, TxKind, U256, b256, hex_literal::hex,
     map::HashMap,
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header, TxLegacy,
 };
 use base_evm_handler::{database::BundleState, state::AccountInfo};
@@ -34,12 +34,12 @@ pub fn assert_genesis_block<DB: Database>(provider: &DatabaseProviderRW, g: Seal
     assert_eq!(tx.table::<tables::BlockOmmers>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::BlockWithdrawals>().unwrap(), vec![]);
     assert_eq!(
-        tx.table::<tables::Transactions<base_common_consensus::BaseTxEnvelope>>().unwrap(),
+        tx.table::<tables::Transactions<base_common_types_chain::BaseTxEnvelope>>().unwrap(),
         vec![]
     );
     assert_eq!(tx.table::<tables::TransactionBlocks>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::TransactionHashNumbers>().unwrap(), vec![]);
-    assert_eq!(tx.table::<tables::Receipts<base_common_consensus::BaseReceipt>>().unwrap(), vec![]);
+    assert_eq!(tx.table::<tables::Receipts<base_common_types_chain::BaseReceipt>>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::PlainAccountState>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::PlainStorageState>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::AccountsHistory>().unwrap(), vec![]);
@@ -199,7 +199,7 @@ fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome) {
             .revert_account_info(number, account2, Some(None))
             .state_storage(account1, HashMap::from_iter([(slot, (U256::ZERO, U256::from(10)))]))
             .build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip2930(base_common_consensus::Receipt {
+        vec![vec![base_common_types_chain::BaseReceipt::Eip2930(base_common_types_chain::Receipt {
             status: (true).into(),
             cumulative_gas_used: 300,
             logs: vec![Log::new_unchecked(
@@ -252,7 +252,7 @@ fn block2(
             )
             .revert_storage(number, account, Vec::from([(slot, U256::from(10))]))
             .build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
             status: (false).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(
@@ -314,7 +314,7 @@ fn block3(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
             status: (true).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(
@@ -396,7 +396,7 @@ fn block4(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
             status: (true).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(
@@ -475,7 +475,7 @@ fn block5(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
             status: (true).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(

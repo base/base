@@ -1,7 +1,7 @@
 //! Contains EIP-8130 account-abstraction transaction parts.
 use alloy_primitives::B256;
-pub use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
-use base_common_consensus::Eip8130Signed;
+pub use base_common_types_chain::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
+use base_common_types_chain::Eip8130Signed;
 
 /// Execution mode for an EIP-8130 transaction.
 ///

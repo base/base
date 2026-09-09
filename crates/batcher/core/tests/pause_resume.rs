@@ -19,7 +19,7 @@ use base_batcher_encoder::{
     SubmissionId,
 };
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,

@@ -1,7 +1,7 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
 
-use base_common_consensus::Predeploys;
+use base_common_types_chain::Predeploys;
 use base_common_genesis::BaseUpgrade;
 use base_evm_context::{
     Block, Cfg, ContextTr, Database, EVMError, ExecutionResult, InitialAndFloorGas,
@@ -381,7 +381,7 @@ where
 mod tests {
 
     use alloy_primitives::uint;
-    use base_common_consensus::Predeploys;
+    use base_common_types_chain::Predeploys;
     use base_evm_context::{BlockEnv, CfgEnv, Context, TxEnv};
     use base_evm_handler::{Handler, NoOpInspector};
     use base_evm_handler::{

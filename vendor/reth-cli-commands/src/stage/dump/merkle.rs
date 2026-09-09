@@ -39,7 +39,7 @@ pub(crate) async fn dump_merkle_stage(
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::Headers<base_common_consensus::Header>, _>(
+        tx.import_table_with_range::<tables::Headers<base_common_types_chain::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,

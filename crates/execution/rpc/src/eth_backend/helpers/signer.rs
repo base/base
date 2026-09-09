@@ -3,7 +3,7 @@
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, Signature, eip191_hash_message, map::AddressMap};
 use alloy_signer::SignerSync;
-use base_common_consensus::{BaseTxEnvelope, SignableTransaction};
+use base_common_types_chain::{BaseTxEnvelope, SignableTransaction};
 use base_common_network::{MnemonicBuilder, PrivateKeySigner, TxSigner, coins_bip39::English};
 use base_common_rpc_types::BaseTransactionRequest;
 use reth_rpc_eth_types::SignError;
@@ -119,7 +119,7 @@ impl EthSigner<BaseTxEnvelope, BaseTransactionRequest> for DevSigner {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, TxKind, U256};
-    use base_common_consensus::Transaction;
+    use base_common_types_chain::Transaction;
     use base_common_rpc_types::{TransactionInput, TransactionRequest};
 
     use super::*;

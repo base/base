@@ -10,7 +10,7 @@ use std::{
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
-use base_common_consensus::{BaseBlock, BlockHeader};
+use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_common_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
@@ -3367,7 +3367,7 @@ where
     fn process_payload_attributes(
         &mut self,
         attributes: BasePayloadBuilderAttributes,
-        head: &base_common_consensus::Header,
+        head: &base_common_types_chain::Header,
         state: ForkchoiceState,
     ) -> OnForkChoiceUpdated {
         if let Err(err) =

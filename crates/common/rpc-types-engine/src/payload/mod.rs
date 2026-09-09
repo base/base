@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, Sealable, U256};
-use base_common_consensus::{Block, BlockHeader, HeaderInfo, Transaction, decode_2718_canonical};
+use base_common_types_chain::{Block, BlockHeader, HeaderInfo, Transaction, decode_2718_canonical};
 pub use v5::BaseExecutionPayloadEnvelopeV5;
 
 use crate::{
@@ -299,7 +299,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
 }
 
 impl BaseExecutionPayload {
-    /// Conversion from [`base_common_consensus::Block`]. Also returns the
+    /// Conversion from [`base_common_types_chain::Block`]. Also returns the
     /// [`BaseExecutionPayloadSidecar`] extracted from the block.
     ///
     /// See also [`from_block_unchecked`](BaseExecutionPayload::from_block_unchecked).
@@ -313,7 +313,7 @@ impl BaseExecutionPayload {
         Self::from_block_unchecked(block.hash_slow(), block)
     }
 
-    /// Conversion from [`base_common_consensus::Block`]. Also returns the
+    /// Conversion from [`base_common_types_chain::Block`]. Also returns the
     /// [`BaseExecutionPayloadSidecar`] extracted from the block.
     ///
     /// See also [`ExecutionPayload::from_block_unchecked`].
@@ -725,15 +725,15 @@ impl BaseExecutionPayload {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            base_common_consensus::transaction::Recovered<T>,
-            base_common_consensus::crypto::RecoveryError,
+            base_common_types_chain::transaction::Recovered<T>,
+            base_common_types_chain::crypto::RecoveryError,
         >,
     > + '_
     where
-        T: Decodable2718 + Encodable2718 + base_common_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + Encodable2718 + base_common_types_chain::transaction::SignerRecoverable,
     {
         self.decoded_transactions::<T>().map(|res| {
-            res.map_err(base_common_consensus::crypto::RecoveryError::from_source)
+            res.map_err(base_common_types_chain::crypto::RecoveryError::from_source)
                 .and_then(|tx| tx.try_into_recovered())
         })
     }
@@ -747,12 +747,12 @@ impl BaseExecutionPayload {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            alloy_eips::eip2718::WithEncoded<base_common_consensus::transaction::Recovered<T>>,
-            base_common_consensus::crypto::RecoveryError,
+            alloy_eips::eip2718::WithEncoded<base_common_types_chain::transaction::Recovered<T>>,
+            base_common_types_chain::crypto::RecoveryError,
         >,
     > + '_
     where
-        T: Decodable2718 + Encodable2718 + base_common_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + Encodable2718 + base_common_types_chain::transaction::SignerRecoverable,
     {
         self.transactions().iter().cloned().zip(self.recovered_transactions()).map(
             |(tx_bytes, result)| {

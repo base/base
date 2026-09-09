@@ -64,7 +64,7 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
@@ -95,7 +95,7 @@ alloy-json-rpc = { workspace = true }
 base-txpool-rpc = { workspace = true }
 base-optimism-rpc = { workspace = true }
 base-consensus-derive = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 base-common-rpc-types-engine = { workspace = true }

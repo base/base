@@ -32,7 +32,7 @@ base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-consensus-derive = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 c-kzg = { workspace = true, optional = true }
 lru = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true }
@@ -51,7 +51,7 @@ tokio = { workspace = true, features = ["default", "full"] }
 
 [features]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/kzg",
     "alloy-eips/std",
     "base-evm-handler/std",

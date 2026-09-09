@@ -16,7 +16,7 @@ pub(crate) fn generate_flag_struct(
     let flags_ident = format_ident!("{ident}Flags");
     let mod_flags_ident = format_ident!("{ident}_flags");
 
-    let base_common_consensus = parse_reth_codecs_path(attrs).unwrap();
+    let base_common_types_chain = parse_reth_codecs_path(attrs).unwrap();
 
     let mut field_flags = vec![];
 
@@ -94,9 +94,9 @@ pub(crate) fn generate_flag_struct(
         pub use #mod_flags_ident::#flags_ident;
         #[expect(non_snake_case)]
         mod #mod_flags_ident {
-            use #base_common_consensus::__private::Buf;
-            use #base_common_consensus::__private::modular_bitfield;
-            use #base_common_consensus::__private::modular_bitfield::prelude::*;
+            use #base_common_types_chain::__private::Buf;
+            use #base_common_types_chain::__private::modular_bitfield;
+            use #base_common_types_chain::__private::modular_bitfield::prelude::*;
 
             #[doc = #docs]
             #[bitfield]

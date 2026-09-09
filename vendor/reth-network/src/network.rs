@@ -8,7 +8,7 @@ use std::{
 
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;

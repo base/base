@@ -3,7 +3,7 @@
 //! Transaction wrapper that labels transaction with its origin.
 
 use alloy_primitives::B256;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, EthereumTxEnvelope, TxEip4844, transaction::TxHashRef,
 };
 use base_common_rpc_types::TransactionInfo;
@@ -90,9 +90,9 @@ impl TransactionSource<BaseTxEnvelope> {
     ) -> Result<base_common_rpc_types::BaseTransaction, crate::BaseEthApiError>
     where
         Builder: reth_storage_api::BlockReader<
-                Block = base_common_consensus::BaseBlock,
-                Transaction = base_common_consensus::BaseTxEnvelope,
-                Receipt = base_common_consensus::BaseReceipt,
+                Block = base_common_types_chain::BaseBlock,
+                Transaction = base_common_types_chain::BaseTxEnvelope,
+                Receipt = base_common_types_chain::BaseReceipt,
             > + base_execution_chainspec::ChainSpecProvider
             + Clone
             + Send

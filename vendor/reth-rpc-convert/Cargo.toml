@@ -19,7 +19,7 @@ workspace = true
 thiserror = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-evm-handler = { workspace = true, features = ["rpc"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }
 

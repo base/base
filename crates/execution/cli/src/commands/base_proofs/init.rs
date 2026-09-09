@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use base_common_consensus::ChainInfo;
+use base_common_types_chain::ChainInfo;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,

@@ -19,7 +19,7 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }

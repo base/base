@@ -61,7 +61,7 @@ impl InclusionTracker {
     ///
     /// `is_validity` selects the [`Self::validity`] or [`Self::standard`] flow.
     /// `coinbase_tip` is the statically-decoded EIP-8130 phase-0 tip
-    /// (`base_common_consensus::CoinbaseTip::decode`), or [`U256::ZERO`] when
+    /// (`base_common_types_chain::CoinbaseTip::decode`), or [`U256::ZERO`] when
     /// the transaction does not carry one.
     pub fn record(
         &mut self,

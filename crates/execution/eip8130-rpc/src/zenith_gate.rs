@@ -2,7 +2,7 @@
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_rpc_types::EIP8130_PRE_ZENITH_RPC_ERROR;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_rpc::BaseEthApi;

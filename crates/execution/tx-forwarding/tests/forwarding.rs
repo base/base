@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Bytes;
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
-use base_common_consensus::SignableTransaction;
+use base_common_types_chain::SignableTransaction;
 use base_common_network::TransactionBuilder;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;

@@ -5,7 +5,7 @@ use core::{fmt, ops::RangeInclusive};
 
 use alloy_eips::{BlockNumHash, eip1898::ForkBlock};
 use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSet};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, TxReceipt, transaction::Recovered,
 };
 use reth_primitives_traits::{
@@ -421,7 +421,7 @@ impl ChainBlocks<'_> {
     #[inline]
     pub fn transactions(
         &self,
-    ) -> impl Iterator<Item = &<base_common_consensus::BaseBlockBody as BlockBody>::Transaction> + '_
+    ) -> impl Iterator<Item = &<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction> + '_
     {
         self.blocks.values().flat_map(|block| block.body().transactions_iter())
     }
@@ -431,7 +431,7 @@ impl ChainBlocks<'_> {
     pub fn transactions_with_sender(
         &self,
     ) -> impl Iterator<
-        Item = (&Address, &<base_common_consensus::BaseBlockBody as BlockBody>::Transaction),
+        Item = (&Address, &<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction),
     > + '_ {
         self.blocks.values().flat_map(|block| block.transactions_with_sender())
     }
@@ -443,7 +443,7 @@ impl ChainBlocks<'_> {
     pub fn transactions_ecrecovered(
         &self,
     ) -> impl Iterator<
-        Item = Recovered<<base_common_consensus::BaseBlockBody as BlockBody>::Transaction>,
+        Item = Recovered<<base_common_types_chain::BaseBlockBody as BlockBody>::Transaction>,
     > + '_ {
         self.transactions_with_sender().map(|(signer, tx)| tx.clone().with_signer(*signer))
     }
@@ -488,7 +488,7 @@ impl IntoIterator for ChainBlocks<'_> {
 
 /// Used to hold receipts and their attachment.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct BlockReceipts<T = base_common_consensus::EthereumReceipt> {
+pub struct BlockReceipts<T = base_common_types_chain::EthereumReceipt> {
     /// Block identifier
     pub block: BlockNumHash,
     /// Transaction identifier and receipt.
@@ -504,7 +504,7 @@ pub(super) mod serde_bincode_compat {
 
     use alloy_primitives::{Address, BlockNumber, Bytes};
     use alloy_rlp::Decodable;
-    use base_common_consensus::BaseBlock;
+    use base_common_types_chain::BaseBlock;
     use reth_primitives_traits::SealedBlock;
     use reth_trie_common::ComputedTrieData;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -639,7 +639,7 @@ pub(super) mod serde_bincode_compat {
 
         use alloy_primitives::Address;
         use arbitrary::Arbitrary;
-        use base_common_consensus::BaseBlock;
+        use base_common_types_chain::BaseBlock;
         use rand::Rng;
         use reth_primitives_traits::RecoveredBlock;
         use serde::{Deserialize, Serialize};
@@ -680,7 +680,7 @@ pub(super) mod serde_bincode_compat {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, map::HashMap};
-    use base_common_consensus::BaseReceipt;
+    use base_common_types_chain::BaseReceipt;
     use base_evm_handler::{database::BundleState, state::AccountInfo};
 
     use super::*;
@@ -800,14 +800,14 @@ mod tests {
         block2.set_hash(block2_hash);
 
         // Create a random receipt object, receipt1
-        let receipt1 = BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipt1 = BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
         });
 
         // Create another random receipt object, receipt2
-        let receipt2 = BaseReceipt::Legacy(base_common_consensus::Receipt {
+        let receipt2 = BaseReceipt::Legacy(base_common_types_chain::Receipt {
             cumulative_gas_used: 1325345,
             logs: vec![],
             status: true.into(),

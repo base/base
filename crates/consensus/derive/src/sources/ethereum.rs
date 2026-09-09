@@ -86,7 +86,7 @@ mod tests {
 
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
-    use base_common_consensus::TxEnvelope;
+    use base_common_types_chain::TxEnvelope;
     use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_protocol::BlockInfo;
 

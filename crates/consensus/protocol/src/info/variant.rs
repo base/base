@@ -4,7 +4,7 @@
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     DepositSourceDomain, Header, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
 };
 use base_common_genesis::SystemConfig;

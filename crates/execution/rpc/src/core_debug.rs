@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, U64, hex::decode, uint};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
-use base_common_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
+use base_common_types_chain::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use base_common_rpc_types::BlockTransactionsKind;
 use base_common_rpc_types::{
     Account, AccountInfo, BaseTransactionRequest, BlockError, BlockTraceResult, Bundle,

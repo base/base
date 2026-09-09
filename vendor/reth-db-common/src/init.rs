@@ -5,7 +5,7 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{AddressMap, B256Map, B256Set, HashMap},
 };
-use base_common_consensus::{BlockHeader, Compact};
+use base_common_types_chain::{BlockHeader, Compact};
 use base_execution_chainspec::BaseChainSpec;
 use reth_config::config::EtlConfig;
 use reth_db_api::{

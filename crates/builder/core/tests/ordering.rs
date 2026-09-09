@@ -8,7 +8,7 @@ use base_builder_core::{
     MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use base_common_network::TransactionResponse;
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,

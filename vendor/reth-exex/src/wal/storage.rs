@@ -173,7 +173,7 @@ mod tests {
         B256, U256,
         map::{HashMap, HashSet},
     };
-    use base_common_consensus::BlockHeader;
+    use base_common_types_chain::BlockHeader;
     use reth_exex_types::ExExNotification;
     use reth_primitives_traits::Account;
     use reth_provider::Chain;
@@ -251,7 +251,7 @@ mod tests {
 
     /// Helper function to generate deterministic test data for WAL tests
     fn get_test_notification_data() -> eyre::Result<ExExNotification> {
-        use base_common_consensus::BaseBlock as Block;
+        use base_common_types_chain::BaseBlock as Block;
         use reth_primitives_traits::Block as _;
 
         // Create a block with a transaction

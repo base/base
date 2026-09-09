@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, BlockHash, LogData, TxHash};
-use base_common_consensus::transaction::TransactionMeta;
+use base_common_types_chain::transaction::TransactionMeta;
 
 /// Ethereum Log emitted by a transaction
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -227,7 +227,7 @@ impl<L> From<Log<L>> for alloy_primitives::Log<L> {
 mod tests {
     use alloy_primitives::{Address, Bytes};
     use arbitrary::Arbitrary;
-    use base_common_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
+    use base_common_types_chain::{Receipt, ReceiptWithBloom, TxReceipt};
     use rand_08::Rng;
     use similar_asserts::assert_eq;
 

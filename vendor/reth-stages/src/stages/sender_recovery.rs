@@ -1,7 +1,7 @@
 use std::{fmt::Debug, ops::Range, sync::mpsc};
 
 use alloy_primitives::{Address, BlockNumber, TxNumber};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_types_chain::BaseTxEnvelope;
 use base_execution_consensus::ConsensusError;
 use reth_config::config::SenderRecoveryConfig;
 use reth_db::static_file::TransactionMask;
@@ -460,7 +460,7 @@ struct FailedSenderRecoveryError {
 mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
-    use base_common_consensus::BaseTxEnvelope as TransactionSigned;
+    use base_common_types_chain::BaseTxEnvelope as TransactionSigned;
     use reth_db_api::{cursor::DbCursorRO, models::StorageSettings};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{

@@ -41,7 +41,7 @@ itertools = { workspace = true, features = ["use_std"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
@@ -63,7 +63,7 @@ reth-trie-common = { workspace = true, features = ["serde-bincode-compat"] }
 serde = [
     "reth-exex-types/serde",
     "base-execution-evm/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "parking_lot/serde",

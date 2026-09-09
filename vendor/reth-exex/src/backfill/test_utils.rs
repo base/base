@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, TxKind, U256, b256};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseBlock, BaseBlockBody, BaseTypedTransaction, BlockHeader, Header, TxEip2930,
     constants::ETH_TO_WEI,
 };

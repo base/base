@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
@@ -365,7 +365,7 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ForkchoiceUpdated, PayloadStatus,

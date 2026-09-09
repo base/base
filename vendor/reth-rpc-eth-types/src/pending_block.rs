@@ -6,7 +6,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
-use base_common_consensus::{BaseReceipt, BlockHeader, EthereumReceipt as Receipt};
+use base_common_types_chain::{BaseReceipt, BlockHeader, EthereumReceipt as Receipt};
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_execution_evm::EvmEnvFor;
 use derive_more::Constructor;
@@ -77,7 +77,7 @@ impl<R> PendingBlockEnvOrigin<R> {
 }
 
 /// A type alias for a pair of an [`Arc`] wrapped [`RecoveredBlock`] and a vector of
-/// [`base_common_consensus::BaseReceipt`].
+/// [`base_common_types_chain::BaseReceipt`].
 pub type PendingBlockAndReceipts = BlockAndReceipts;
 
 /// Locally built pending block for `pending` tag.
@@ -108,12 +108,12 @@ impl PendingBlock {
     }
 
     /// Converts this [`PendingBlock`] into a pair of [`RecoveredBlock`] and a vector of
-    /// [`base_common_consensus::BaseReceipt`]s, taking self.
+    /// [`base_common_types_chain::BaseReceipt`]s, taking self.
     pub fn into_block_and_receipts(self) -> PendingBlockAndReceipts {
         BlockAndReceipts { block: self.executed_block.recovered_block, receipts: self.receipts }
     }
 
-    /// Returns a pair of [`RecoveredBlock`] and a vector of  [`base_common_consensus::BaseReceipt`]s by
+    /// Returns a pair of [`RecoveredBlock`] and a vector of  [`base_common_types_chain::BaseReceipt`]s by
     /// cloning from borrowed self.
     pub fn to_block_and_receipts(&self) -> PendingBlockAndReceipts {
         BlockAndReceipts {
@@ -150,9 +150,9 @@ impl PendingBlock {
     ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
     where
         C: reth_storage_api::BlockReader<
-                Block = base_common_consensus::BaseBlock,
-                Transaction = base_common_consensus::BaseTxEnvelope,
-                Receipt = base_common_consensus::BaseReceipt,
+                Block = base_common_types_chain::BaseBlock,
+                Transaction = base_common_types_chain::BaseTxEnvelope,
+                Receipt = base_common_types_chain::BaseReceipt,
             > + base_execution_chainspec::ChainSpecProvider
             + Clone
             + Send

@@ -10,7 +10,7 @@ use alloy_eips::{
 };
 use alloy_primitives::Address;
 use base_common_chains::Upgrades;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_evm_handler::Precompile;
 use base_evm_handler::database::EmptyDB;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};

@@ -6,7 +6,7 @@ use alloy_primitives::{
     Address, B256, U256, address, b256, hex_literal::hex, keccak256, map::HashMap,
 };
 use alloy_rlp::Encodable;
-use base_common_consensus::EMPTY_ROOT_HASH;
+use base_common_types_chain::EMPTY_ROOT_HASH;
 use proptest::{prelude::ProptestConfig, proptest};
 use proptest_arbitrary_interop::arb;
 use reth_db::tables;

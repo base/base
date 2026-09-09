@@ -36,10 +36,10 @@ use alloy_primitives::{
     map::{FbBuildHasher, HashMap},
 };
 #[cfg(test)]
-use base_common_consensus::EthereumTxEnvelope;
+use base_common_types_chain::EthereumTxEnvelope;
 #[cfg(test)]
-use base_common_consensus::TxEip4844;
-use base_common_consensus::transaction::PooledTransaction;
+use base_common_types_chain::TxEip4844;
+use base_common_types_chain::transaction::PooledTransaction;
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;
@@ -82,7 +82,7 @@ pub struct TransactionFetcher {
     /// be fetched.
     #[pin]
     pub inflight_requests:
-        FuturesUnordered<GetPooledTxRequestFut<base_common_consensus::BasePooledTransaction>>,
+        FuturesUnordered<GetPooledTxRequestFut<base_common_types_chain::BasePooledTransaction>>,
     /// Hashes that are awaiting an idle fallback peer so they can be fetched.
     ///
     /// This is a subset of all hashes in the fetcher, and is disjoint from the set of hashes for
@@ -862,8 +862,8 @@ impl TransactionFetcher {
     /// [`TransactionsManager`](super::TransactionsManager).
     pub fn on_resolved_get_pooled_transactions_request_fut(
         &mut self,
-        response: GetPooledTxResponse<base_common_consensus::BasePooledTransaction>,
-    ) -> FetchEvent<base_common_consensus::BasePooledTransaction> {
+        response: GetPooledTxResponse<base_common_types_chain::BasePooledTransaction>,
+    ) -> FetchEvent<base_common_types_chain::BasePooledTransaction> {
         // update peer activity, requests for buffered hashes can only be made to idle
         // fallback peers
         let GetPooledTxResponse { peer_id, mut requested_hashes, result } = response;
@@ -989,7 +989,7 @@ impl TransactionFetcher {
 }
 
 impl Stream for TransactionFetcher {
-    type Item = FetchEvent<base_common_consensus::BasePooledTransaction>;
+    type Item = FetchEvent<base_common_types_chain::BasePooledTransaction>;
 
     /// Advances all inflight requests and returns the next event.
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

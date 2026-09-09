@@ -109,7 +109,7 @@ use alloy_primitives::{
     Address, B256,
     map::{AddressMap, B256Set},
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, EIP1559ParamError,
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
@@ -1345,7 +1345,7 @@ where
     fn payload_state_root_handle_for(
         &self,
         parent_hash: B256,
-        parent_header: &base_common_consensus::Header,
+        parent_header: &base_common_types_chain::Header,
         timestamp: u64,
         state: &mut EngineApiTreeState,
     ) -> Option<PayloadStateRootHandle> {
@@ -1641,7 +1641,7 @@ where
     pub fn validate_payload_attributes_against_header(
         &self,
         attr: &BasePayloadBuilderAttributes,
-        header: &base_common_consensus::Header,
+        header: &base_common_types_chain::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         self.validator.validate_payload_attributes_against_header(attr, header)
     }
@@ -1756,7 +1756,7 @@ where
     pub fn payload_builder_resources(
         &self,
         parent_hash: B256,
-        parent_header: &base_common_consensus::Header,
+        parent_header: &base_common_types_chain::Header,
         timestamp: u64,
         state: &mut EngineApiTreeState,
     ) -> PayloadBuilderResources {

@@ -69,7 +69,7 @@ tokio-stream = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 reth-downloaders = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
@@ -117,7 +117,7 @@ criterion = { workspace = true, features = ["default", "html_reports"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default", "std", "test-utils"] }
-base-common-consensus = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }
+base-common-types-chain = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }
 [[bench]]
 name = "provider"
 harness = false
@@ -148,7 +148,7 @@ keccak-cache-global = ["alloy-primitives/keccak-cache-global", "reth-node-core/k
 js-tracer = ["reth-rpc-eth-types/js-tracer", "base-execution-rpc/js-tracer"]
 test-utils = [
     "base-common-chains/test-utils",
-    "base-common-consensus/arbitrary",
+    "base-common-types-chain/arbitrary",
     "base-execution-exex/test-utils",
     "reth-chain-state/test-utils",
     "reth-codec",

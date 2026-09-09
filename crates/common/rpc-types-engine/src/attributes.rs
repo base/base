@@ -8,7 +8,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
 };
 use sha2::Digest;
@@ -173,14 +173,14 @@ impl BasePayloadAttributes {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            base_common_consensus::transaction::Recovered<BaseTxEnvelope>,
-            base_common_consensus::crypto::RecoveryError,
+            base_common_types_chain::transaction::Recovered<BaseTxEnvelope>,
+            base_common_types_chain::crypto::RecoveryError,
         >,
     > + '_ {
-        use base_common_consensus::transaction::SignerRecoverable;
+        use base_common_types_chain::transaction::SignerRecoverable;
 
         self.decoded_transactions().map(|res| {
-            res.map_err(base_common_consensus::crypto::RecoveryError::from_source)
+            res.map_err(base_common_types_chain::crypto::RecoveryError::from_source)
                 .and_then(|tx| tx.try_into_recovered())
         })
     }
@@ -194,8 +194,8 @@ impl BasePayloadAttributes {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            WithEncoded<base_common_consensus::transaction::Recovered<BaseTxEnvelope>>,
-            base_common_consensus::crypto::RecoveryError,
+            WithEncoded<base_common_types_chain::transaction::Recovered<BaseTxEnvelope>>,
+            base_common_types_chain::crypto::RecoveryError,
         >,
     > + '_ {
         self.transactions
@@ -216,7 +216,7 @@ mod test {
     use alloy_primitives::{
         Address, B256, Bytes, FixedBytes, Signature, address, b64, b256, bytes,
     };
-    use base_common_consensus::{SignableTransaction, TxEip1559};
+    use base_common_types_chain::{SignableTransaction, TxEip1559};
 
     use super::*;
     use crate::PayloadAttributes;

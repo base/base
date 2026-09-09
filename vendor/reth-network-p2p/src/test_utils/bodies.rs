@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseBlockBody as BlockBody;
+use base_common_types_chain::BaseBlockBody as BlockBody;
 use futures::FutureExt;
 use reth_network_peers::PeerId;
 use tokio::sync::oneshot;

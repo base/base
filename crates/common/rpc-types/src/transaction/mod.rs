@@ -7,11 +7,11 @@ pub use alloy_eips::{
 };
 use alloy_network_primitives::TransactionResponse;
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
-pub use base_common_consensus::{
+pub use base_common_types_chain::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, Receipt, ReceiptEnvelope,
     ReceiptWithBloom, Transaction as TransactionTrait, transaction::TransactionInfo,
 };
-use base_common_consensus::{
+use base_common_types_chain::{
     EthereumTxEnvelope, EthereumTypedTransaction, Signed, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, Typed2718, transaction::Recovered,
 };
@@ -468,7 +468,7 @@ mod tx_serde {
     //! Helper module for serializing and deserializing OP [`Transaction`].
     //!
     //! This is needed because we might need to deserialize the `gasPrice` field into both
-    //! [`crate::Transaction::effective_gas_price`] and [`base_common_consensus::TxLegacy::gas_price`].
+    //! [`crate::Transaction::effective_gas_price`] and [`base_common_types_chain::TxLegacy::gas_price`].
     //!
     //! Additionally, during deserialization this module handles the case where the `gasPrice` field
     //! is larger than `u128::MAX` by saturating it to `u128::MAX`. This is known to happen on

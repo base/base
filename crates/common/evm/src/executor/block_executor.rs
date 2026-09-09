@@ -4,7 +4,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::{Encodable2718, Typed2718};
 use base_common_chains::Upgrades;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip658Value, Eip8130Receipt, Header, OpTxType,
     Predeploys, Transaction, TransactionEnvelope, TxReceipt,
 };
@@ -276,7 +276,7 @@ where
             self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
         }
 
-        let receipt = base_common_consensus::Receipt {
+        let receipt = base_common_types_chain::Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used: self.gas_used,
             logs: result.into_logs(),
@@ -351,7 +351,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Bytes, Signature, U256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, SignableTransaction,
         TxEip8130, TxLegacy, transaction::Recovered,
     };

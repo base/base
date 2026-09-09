@@ -27,7 +27,7 @@ use base_builder_core::{
         ChainDriver, EngineApi, LocalInstance, LocalInstanceBuilder, node_config_with_chain_spec,
     },
 };
-use base_common_consensus::{BaseTxEnvelope, transaction::SignerRecoverable};
+use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};

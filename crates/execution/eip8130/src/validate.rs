@@ -4,7 +4,7 @@
 use core::cmp::Ordering;
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::{Eip8130Constants, TxEip8130};
+use base_common_types_chain::{Eip8130Constants, TxEip8130};
 use base_common_precompiles::NonceManagerStorage;
 
 use crate::NonceError;

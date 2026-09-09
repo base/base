@@ -3,7 +3,7 @@
 //tests for simulate
 #[cfg(test)]
 mod tests {
-    use base_common_consensus::Transaction;
+    use base_common_types_chain::Transaction;
     use base_common_rpc_types::TransactionRequest;
     use base_evm_handler::database::CacheDB;
     use reth_provider::test_utils::MockEthProvider;
@@ -38,7 +38,7 @@ mod tests {
 
         let tx = resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &builder).unwrap();
 
-        assert_eq!(tx.tx_type(), base_common_consensus::OpTxType::Legacy);
+        assert_eq!(tx.tx_type(), base_common_types_chain::OpTxType::Legacy);
 
         let tx = tx.into_inner();
         assert_eq!(tx.gas_price(), Some(100));
@@ -61,7 +61,7 @@ mod tests {
         let result =
             resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &rpc_converter).unwrap();
 
-        assert_eq!(result.tx_type(), base_common_consensus::OpTxType::Eip1559);
+        assert_eq!(result.tx_type(), base_common_types_chain::OpTxType::Eip1559);
         let tx = result.into_inner();
         assert_eq!(tx.max_fee_per_gas(), 200);
         assert_eq!(tx.max_priority_fee_per_gas(), Some(10));

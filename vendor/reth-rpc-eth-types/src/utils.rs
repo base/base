@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use base_common_consensus::TxReceipt;
+use base_common_types_chain::TxReceipt;
 use reth_primitives_traits::{Recovered, SignedTransaction};
 
 use super::{EthApiError, EthResult};

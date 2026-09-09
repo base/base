@@ -6,7 +6,7 @@ use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
 use base_batcher_source::L1HeadEvent;
-use base_common_consensus::{
+use base_common_types_chain::{
     SignableTransaction, TxEip1559, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
 };
 use base_common_network::PrivateKeySigner;

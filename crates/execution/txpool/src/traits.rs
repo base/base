@@ -67,7 +67,7 @@ use alloy_primitives::{
     Address, B128, B256, TxHash,
     map::{AddressSet, B256Map},
 };
-use base_common_consensus::{BlockHeader, transaction::TxHashRef};
+use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use futures_util::{Stream, ready};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
@@ -91,10 +91,10 @@ pub type PeerId = alloy_primitives::B512;
 /// Cached Base transaction held by the pool.
 pub type PoolTx = crate::BasePooledTransaction;
 /// Base transaction envelope stored in blocks.
-pub type PoolConsensusTx = base_common_consensus::BaseTxEnvelope;
+pub type PoolConsensusTx = base_common_types_chain::BaseTxEnvelope;
 
 /// Base transaction envelope admitted to the pool.
-pub type PoolPooledTx = base_common_consensus::BasePooledTransaction;
+pub type PoolPooledTx = base_common_types_chain::BasePooledTransaction;
 
 /// General purpose abstraction of a transaction-pool.
 ///
@@ -186,7 +186,7 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
     /// Submit a consensus transaction directly to the pool
     fn add_consensus_transaction(
         &self,
-        tx: Recovered<base_common_consensus::BaseTxEnvelope>,
+        tx: Recovered<base_common_types_chain::BaseTxEnvelope>,
         origin: TransactionOrigin,
     ) -> impl Future<Output = PoolResult<AddedTransactionOutcome>> + Send {
         async move {
@@ -204,7 +204,7 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
     /// Submit a consensus transaction and subscribe to event stream
     fn add_consensus_transaction_and_subscribe(
         &self,
-        tx: Recovered<base_common_consensus::BaseTxEnvelope>,
+        tx: Recovered<base_common_types_chain::BaseTxEnvelope>,
         origin: TransactionOrigin,
     ) -> impl Future<Output = PoolResult<TransactionEvents>> + Send {
         async move {
@@ -341,7 +341,7 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
         &self,
         tx_hashes: Vec<TxHash>,
         limit: GetPooledTransactionLimit,
-    ) -> Vec<base_common_consensus::BasePooledTransaction>;
+    ) -> Vec<base_common_types_chain::BasePooledTransaction>;
 
     /// Extends the given vector with pooled transactions for the given hashes that are allowed to
     /// be propagated.
@@ -353,7 +353,7 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
         &self,
         tx_hashes: &[TxHash],
         limit: GetPooledTransactionLimit,
-        out: &mut Vec<base_common_consensus::BasePooledTransaction>,
+        out: &mut Vec<base_common_types_chain::BasePooledTransaction>,
     ) {
         out.extend(self.get_pooled_transaction_elements(tx_hashes.to_vec(), limit));
     }
@@ -373,7 +373,7 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
     fn get_pooled_transaction_element(
         &self,
         tx_hash: TxHash,
-    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>>;
+    ) -> Option<Recovered<base_common_types_chain::BasePooledTransaction>>;
 
     /// Returns an iterator that yields transactions that are ready for block production.
     ///
@@ -800,21 +800,21 @@ impl AllPoolTransactions {
     /// Returns an iterator over all pending [`Recovered`] transactions.
     pub fn pending_recovered(
         &self,
-    ) -> impl Iterator<Item = Recovered<base_common_consensus::BaseTxEnvelope>> + '_ {
+    ) -> impl Iterator<Item = Recovered<base_common_types_chain::BaseTxEnvelope>> + '_ {
         self.pending.iter().map(|tx| tx.to_consensus())
     }
 
     /// Returns an iterator over all queued [`Recovered`] transactions.
     pub fn queued_recovered(
         &self,
-    ) -> impl Iterator<Item = Recovered<base_common_consensus::BaseTxEnvelope>> + '_ {
+    ) -> impl Iterator<Item = Recovered<base_common_types_chain::BaseTxEnvelope>> + '_ {
         self.queued.iter().map(|tx| tx.to_consensus())
     }
 
     /// Returns an iterator over all transactions, both pending and queued.
     pub fn all(
         &self,
-    ) -> impl Iterator<Item = Recovered<base_common_consensus::BaseTxEnvelope>> + '_ {
+    ) -> impl Iterator<Item = Recovered<base_common_types_chain::BaseTxEnvelope>> + '_ {
         self.pending.iter().chain(self.queued.iter()).map(|tx| tx.to_consensus())
     }
 }

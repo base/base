@@ -9,7 +9,7 @@ use alloy_primitives::{B256, map::B256Set};
 use base_execution_payload_types::BuiltPayloadExecutedBlock;
 use crossbeam_channel::Sender;
 use futures::{Stream, StreamExt};
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use reth_network_p2p::BlockClient;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
 use reth_primitives_traits::SealedBlock;

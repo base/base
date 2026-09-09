@@ -11,7 +11,7 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
-use base_common_consensus::Predeploys;
+use base_common_types_chain::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
 use base_protocol::OutputRoot;
 use futures::stream::{self, StreamExt};
@@ -404,7 +404,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
-    use base_common_consensus::Header as ConsensusHeader;
+    use base_common_types_chain::Header as ConsensusHeader;
     use base_common_rpc_types::Header as RpcHeader;
     #[cfg(feature = "metrics")]
     use metrics_util::{

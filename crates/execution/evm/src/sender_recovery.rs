@@ -2,11 +2,11 @@ use alloc::sync::Arc;
 
 use alloy_primitives::{Address, B256, map::FbBuildHasher};
 #[cfg(test)]
-use base_common_consensus::EthereumTxEnvelope;
+use base_common_types_chain::EthereumTxEnvelope;
 #[cfg(test)]
-use base_common_consensus::EthereumTypedTransaction;
+use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
-use base_common_consensus::TxEip4844;
+use base_common_types_chain::TxEip4844;
 use reth_primitives_traits::{SignedTransaction, transaction::signed::RecoveryError};
 
 /// Number of entries retained in the default sender recovery cache.
@@ -64,7 +64,7 @@ impl fixed_cache::CacheConfig for SenderRecoveryCacheConfig {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Signature, U256};
-    use base_common_consensus::TxLegacy;
+    use base_common_types_chain::TxLegacy;
 
     use super::*;
 

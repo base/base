@@ -9,7 +9,7 @@ use alloy_provider::{
 use alloy_rpc_client::RpcClient;
 use alloy_transport::TransportError;
 use alloy_transport_http::Http;
-use base_common_consensus::Transaction as ConsensusTransaction;
+use base_common_types_chain::Transaction as ConsensusTransaction;
 use base_common_network::Base;
 use base_common_rpc_types::{TxpoolContent, TxpoolContentFrom};
 use jsonrpsee::{

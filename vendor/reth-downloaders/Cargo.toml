@@ -36,7 +36,7 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio = { workspace = true, features = ["sync", "fs", "io-util"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -52,7 +52,7 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tracing = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-consensus = {workspace = true, features = ["serde"]}
+base-common-types-chain = {workspace = true, features = ["serde"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-execution-consensus = { workspace = true, features = ["test-utils"] }

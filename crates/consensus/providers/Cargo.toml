@@ -41,7 +41,7 @@ alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
 tokio = { workspace = true, features = ["default", "time"] }
 http-body-util = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["std"]}
+base-common-types-chain = { workspace = true, features = ["std"]}
 alloy-rpc-client = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "ws", "reqwest"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }

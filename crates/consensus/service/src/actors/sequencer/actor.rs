@@ -781,7 +781,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Sealed};
-    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+    use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{RollupConfig, SystemConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock};
@@ -791,12 +791,12 @@ mod tests {
 
     fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
         let block = BaseBlock {
-            header: base_common_consensus::Header {
+            header: base_common_types_chain::Header {
                 number: 1,
                 extra_data: [vec![1], vec![0; 16]].concat().into(),
                 ..Default::default()
             },
-            body: base_common_consensus::BlockBody {
+            body: base_common_types_chain::BlockBody {
                 transactions: vec![BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
                     input: L1BlockInfoBedrock::default().encode_calldata(),
                     ..Default::default()

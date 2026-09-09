@@ -28,7 +28,7 @@ use std::{
 };
 
 use alloy_eip2124::EnrForkIdEntry;
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use reth_eth_wire::DisconnectReason;

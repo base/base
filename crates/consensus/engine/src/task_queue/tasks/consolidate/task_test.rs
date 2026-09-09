@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, b256};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
+use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::{BaseTransaction, Block as RpcBlock, BlockTransactions};
 use base_common_rpc_types_engine::{
@@ -64,8 +64,8 @@ fn matching_rpc_block(
 ) -> RpcBlock<BaseTransaction> {
     let mut block = RpcBlock::<BaseTransaction>::default();
     block.withdrawals = Some(Default::default());
-    block.header.withdrawals_root = Some(base_common_consensus::EMPTY_ROOT_HASH);
-    block.header.extra_data = base_common_consensus::JovianExtraData::encode(
+    block.header.withdrawals_root = Some(base_common_types_chain::EMPTY_ROOT_HASH);
+    block.header.extra_data = base_common_types_chain::JovianExtraData::encode(
         attributes.attributes().eip_1559_params.unwrap(),
         alloy_eips::eip1559::BaseFeeParams {
             max_change_denominator: 250,

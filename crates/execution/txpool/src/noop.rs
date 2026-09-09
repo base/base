@@ -171,7 +171,7 @@ impl TransactionPool for NoopTransactionPool {
         &self,
         _tx_hashes: Vec<TxHash>,
         _limit: GetPooledTransactionLimit,
-    ) -> Vec<base_common_consensus::BasePooledTransaction> {
+    ) -> Vec<base_common_types_chain::BasePooledTransaction> {
         vec![]
     }
 
@@ -179,14 +179,14 @@ impl TransactionPool for NoopTransactionPool {
         &self,
         _tx_hashes: &[TxHash],
         _limit: GetPooledTransactionLimit,
-        _out: &mut Vec<base_common_consensus::BasePooledTransaction>,
+        _out: &mut Vec<base_common_types_chain::BasePooledTransaction>,
     ) {
     }
 
     fn get_pooled_transaction_element(
         &self,
         _tx_hash: TxHash,
-    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
+    ) -> Option<Recovered<base_common_types_chain::BasePooledTransaction>> {
         None
     }
 
@@ -406,7 +406,7 @@ pub struct MockTransactionValidator {
 }
 
 impl TransactionValidator for MockTransactionValidator {
-    type Block = base_common_consensus::BaseBlock;
+    type Block = base_common_types_chain::BaseBlock;
 
     async fn validate_transaction(
         &self,

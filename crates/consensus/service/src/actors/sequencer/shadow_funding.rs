@@ -2,7 +2,7 @@
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
 
 /// Funding injected into the first private block of each shadow sequencing cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

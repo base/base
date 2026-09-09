@@ -20,7 +20,7 @@ alloy-eips = { workspace = true }
 reth-trie-common = {workspace = true}
 base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -39,6 +39,6 @@ std = [
     "reth-prune-types/std",
     "reth-static-file-types/std",
     "base-evm-handler/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "reth-trie-common/std",
 ]

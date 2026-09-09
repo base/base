@@ -4,7 +4,7 @@ use std::{collections::VecDeque, fmt, sync::Arc};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, ChannelId};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -682,7 +682,7 @@ impl BatchPipeline for BatchEncoder {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, Sealed, Signature};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTxEnvelope, BlockBody, Header, SignableTransaction, TxDeposit, TxLegacy,
     };
     use base_protocol::{Frame, L1BlockInfoBedrock, L1BlockInfoTx};

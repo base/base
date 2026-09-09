@@ -3,7 +3,7 @@
 use core::cmp::Ordering;
 
 use alloy_primitives::{B256, BlockNumber, Bytes, keccak256};
-use base_common_consensus::DecompressError;
+use base_common_types_chain::DecompressError;
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 

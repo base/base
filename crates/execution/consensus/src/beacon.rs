@@ -3,7 +3,7 @@ use alloc::{boxed::Box, format, sync::Arc};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use base_execution_chainspec::BaseChainSpec;
@@ -92,7 +92,7 @@ impl BaseBeaconConsensus {
 impl BaseBeaconConsensus {
     pub fn validate_body_against_header(
         &self,
-        body: &base_common_consensus::BaseBlockBody,
+        body: &base_common_types_chain::BaseBlockBody,
         header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         match &self.validation {
@@ -398,7 +398,7 @@ mod tests {
     };
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseReceipt, BaseTransactionSigned, BaseTypedTransaction, BlockBody, Eip658Value, Header,
         HoloceneExtraData, JovianExtraData, Receipt, TxEip7702, TxReceipt,
     };
@@ -517,7 +517,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         // validate blob, it should pass blob gas used validation
         let pre_execution = beacon_consensus.validate_block_pre_execution(&block);
@@ -550,7 +550,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         // validate blob, it should fail blob gas used validation
         let pre_execution = beacon_consensus.validate_block_pre_execution(&block);
@@ -600,7 +600,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED,
@@ -667,7 +667,7 @@ mod tests {
             withdrawals: Some(Withdrawals::default()),
         };
 
-        let block = SealedBlock::seal_slow(base_common_consensus::Block { header, body });
+        let block = SealedBlock::seal_slow(base_common_types_chain::Block { header, body });
 
         let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED + 1,

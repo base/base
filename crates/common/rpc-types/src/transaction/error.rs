@@ -1,6 +1,6 @@
 use alloc::string::String;
 
-/// Error variants when converting from [crate::Transaction] to [base_common_consensus::Signed]
+/// Error variants when converting from [crate::Transaction] to [base_common_types_chain::Signed]
 /// transaction.
 #[derive(Debug, thiserror::Error)]
 pub enum ConversionError {

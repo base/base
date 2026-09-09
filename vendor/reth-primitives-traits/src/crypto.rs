@@ -1,3 +1,3 @@
 //! Crypto utilities.
 
-pub use base_common_consensus::crypto::*;
+pub use base_common_types_chain::crypto::*;

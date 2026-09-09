@@ -3,7 +3,7 @@
 //! their authorization, then authenticates the final sender/payer signatures
 //! against the resulting post-apply state.
 
-use base_common_consensus::{AccountChange, Delegation, Eip8130Signed};
+use base_common_types_chain::{AccountChange, Delegation, Eip8130Signed};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ActorTxVerifier, AppliedAccountChanges,
@@ -23,7 +23,7 @@ pub struct AppliedTransaction {
     /// The authorizing actor resolved for each [`ConfigChange`] entry, in
     /// transaction order. Empty when the transaction carries no config changes.
     ///
-    /// [`ConfigChange`]: base_common_consensus::ConfigChange
+    /// [`ConfigChange`]: base_common_types_chain::ConfigChange
     pub config_changes: Vec<ResolvedActor>,
     /// The deferred account-*code* effects (created-account bytecode, delegation
     /// indicator) the execution layer must install against the account trie. All
@@ -77,7 +77,7 @@ impl TransactionAuthorizer {
     /// [`TxAuthError`] encountered. On error the caller MUST discard `storage`'s
     /// pending writes (revert the journal/overlay checkpoint).
     ///
-    /// [`ConfigChange`]: base_common_consensus::ConfigChange
+    /// [`ConfigChange`]: base_common_types_chain::ConfigChange
     pub fn authorize_and_apply(
         signed: &Eip8130Signed,
         storage: &mut AccountConfigurationStorage<'_>,
@@ -239,7 +239,7 @@ impl TransactionAuthorizer {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
     use alloy_sol_types::{SolValue, sol};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         AccountChangeChannel, ChangeType, CreateEntry, Delegation, Eip8130Constants, InitialActor,
         SignedAccountChanges, SignedChange, TxEip8130,
     };

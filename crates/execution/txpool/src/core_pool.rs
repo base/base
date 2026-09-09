@@ -124,7 +124,7 @@ where
     /// };
     /// use alloy_hardforks::{EthereumHardforks};
     /// use base_execution_evm::BaseEvmConfig;
-    /// use base_common_consensus::Header;
+    /// use base_common_types_chain::Header;
     /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
     /// # where
     /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
@@ -252,7 +252,7 @@ where
         &self,
         tx_hashes: Vec<TxHash>,
         limit: GetPooledTransactionLimit,
-    ) -> Vec<base_common_consensus::BasePooledTransaction> {
+    ) -> Vec<base_common_types_chain::BasePooledTransaction> {
         self.pool.get_pooled_transaction_elements(tx_hashes, limit)
     }
 
@@ -260,7 +260,7 @@ where
         &self,
         tx_hashes: &[TxHash],
         limit: GetPooledTransactionLimit,
-        out: &mut Vec<base_common_consensus::BasePooledTransaction>,
+        out: &mut Vec<base_common_types_chain::BasePooledTransaction>,
     ) {
         self.pool.append_pooled_transaction_elements(tx_hashes, limit, out)
     }
@@ -268,7 +268,7 @@ where
     fn get_pooled_transaction_element(
         &self,
         tx_hash: TxHash,
-    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
+    ) -> Option<Recovered<base_common_types_chain::BasePooledTransaction>> {
         self.pool.get_pooled_transaction_element(tx_hash)
     }
 

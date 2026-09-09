@@ -3,7 +3,7 @@
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 use alloy_serde::OtherFields;
-use base_common_consensus::{
+use base_common_types_chain::{
     BaseTransactionInfo, BaseTxEnvelope, Transaction as TransactionTrait, Typed2718,
     transaction::Recovered,
 };
@@ -206,11 +206,11 @@ mod tx_serde {
     //! Helper module for serializing and deserializing Base [`BaseTransaction`].
     //!
     //! This is needed because we might need to deserialize the `from` field into both
-    //! [`base_common_consensus::transaction::Recovered::signer`] which resides in
-    //! [`crate::Transaction::inner`] and [`base_common_consensus::TxDeposit::from`].
+    //! [`base_common_types_chain::transaction::Recovered::signer`] which resides in
+    //! [`crate::Transaction::inner`] and [`base_common_types_chain::TxDeposit::from`].
     //!
     //! Additionally, we need similar logic for the `gasPrice` field
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTxEnvelope, Transaction as TransactionTrait, transaction::Recovered,
     };
     use serde::{Deserialize, Serialize, de::Error};
@@ -362,7 +362,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::Bytes;
-    use base_common_consensus::{Eip8130Signed, TxEip8130};
+    use base_common_types_chain::{Eip8130Signed, TxEip8130};
 
     use super::*;
 

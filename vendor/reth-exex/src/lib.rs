@@ -29,7 +29,7 @@
 //!
 //! ### Simple Indexer ExEx
 //! ```no_run
-//! use base_common_consensus::BlockHeader;
+//! use base_common_types_chain::BlockHeader;
 //! use futures::StreamExt;
 //! use reth_exex::ExExContext;
 //! use reth_provider::CanonStateNotification;

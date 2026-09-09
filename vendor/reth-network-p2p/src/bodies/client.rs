@@ -11,7 +11,7 @@ use reth_primitives_traits::BlockBody;
 use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
 
 /// The bodies future type
-pub type BodiesFut<B = base_common_consensus::BaseBlockBody> =
+pub type BodiesFut<B = base_common_types_chain::BaseBlockBody> =
     Pin<Box<dyn Future<Output = PeerRequestResult<Vec<B>>> + Send + Sync>>;
 
 /// A client capable of downloading block bodies.

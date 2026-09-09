@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, keccak256};
-use base_common_consensus::Compact;
+use base_common_types_chain::Compact;
 use clap::Parser;
 use human_bytes::human_bytes;
 use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};

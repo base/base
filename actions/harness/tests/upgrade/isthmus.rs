@@ -10,14 +10,14 @@ use base_action_harness::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, L2Sequencer, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_common_consensus::{Predeploys, TxReceipt, constants::EMPTY_WITHDRAWALS};
+use base_common_types_chain::{Predeploys, TxReceipt, constants::EMPTY_WITHDRAWALS};
 
 const WITHDRAWAL_VALUE: u64 = 500;
 const WITHDRAWAL_GAS_LIMIT: u64 = 100_000;
 
 /// Call the harness `MessagePasser` stub so its storage root (and Isthmus
 /// `withdrawals_root`) can change.
-fn withdrawal_tx(sequencer: &L2Sequencer, chain_id: u64) -> base_common_consensus::BaseTxEnvelope {
+fn withdrawal_tx(sequencer: &L2Sequencer, chain_id: u64) -> base_common_types_chain::BaseTxEnvelope {
     let account = sequencer.test_account();
     let mut account = account.lock().expect("test account lock");
     account.create_tx(

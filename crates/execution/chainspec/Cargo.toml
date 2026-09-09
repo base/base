@@ -23,7 +23,7 @@ alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-common-genesis = { workspace = true, features = ["std"] }
@@ -35,7 +35,7 @@ base-common-rpc-types = { workspace = true, features = ["default"] }
 default = [ "std" ]
 std = [
     "alloy-chains/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
@@ -51,7 +51,7 @@ std = [
 ]
 serde = [
     "alloy-chains/serde",
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-hardforks/serde",
     "alloy-primitives/serde",

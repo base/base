@@ -7,7 +7,7 @@ use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId,
 };
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
 
 /// Shared recording state populated by the test pipeline implementations.

@@ -28,7 +28,7 @@ metrics = { workspace = true, optional = true }
 base-metrics = { workspace = true, optional = true }
 base-evm-handler = { workspace = true, features = ["rpc"] }
 
-base-common-consensus = { workspace = true, features = [] }
+base-common-types-chain = { workspace = true, features = [] }
 base-execution-eip8130 = { workspace = true, optional = true }
 base-precompile-storage = { workspace = true, optional = true }
 base-common-chains = { workspace = true, features = ["default"] }
@@ -46,7 +46,7 @@ serde_json = { workspace = true, features = ["alloc", "preserve_order"] }
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-eips/std",
     "base-evm-handler/std",
     "alloy-primitives/std",
@@ -63,7 +63,7 @@ std = [
     "thiserror/std",
 ]
 serde = [
-    "base-common-consensus/serde",
+    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-chains/serde",

@@ -1,5 +1,5 @@
 use alloy_eips::eip7594::BlobTransactionSidecarEip7594;
-use base_common_consensus::{BlobTransactionSidecar, EnvKzgSettings};
+use base_common_types_chain::{BlobTransactionSidecar, EnvKzgSettings};
 use tokio::sync::Semaphore;
 
 // We allow up to 5 concurrent conversions to avoid excessive memory usage.

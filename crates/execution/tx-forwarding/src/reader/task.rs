@@ -189,7 +189,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use alloy_primitives::{Address, B256, TxKind, U256};
-    use base_common_consensus::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
+    use base_common_types_chain::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
     use base_execution_txpool::{
         BasePooledTransaction, NoopTransactionPool, TransactionId, TransactionOrigin,
     };

@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{BaseTxEnvelope, Block};
+use base_common_types_chain::{BaseTxEnvelope, Block};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, ExecutionPayloadV3,
@@ -325,7 +325,7 @@ pub(crate) mod tests {
     use alloy_primitives::{Address, B256, Bytes, Signature};
     use alloy_rlp::BufMut;
     use arbitrary::{Arbitrary, Unstructured};
-    use base_common_consensus::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
+    use base_common_types_chain::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV1, ExecutionPayloadV2,
@@ -349,7 +349,7 @@ pub(crate) mod tests {
         let transactions: Vec<Bytes> =
             block.body.transactions().map(|tx| tx.encoded_2718().into()).collect();
 
-        let transactions_root = base_common_consensus::proofs::ordered_trie_root_with_encoder(
+        let transactions_root = base_common_types_chain::proofs::ordered_trie_root_with_encoder(
             &transactions,
             |item, buf| buf.put_slice(item),
         );
@@ -376,13 +376,13 @@ pub(crate) mod tests {
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
             },
-            base_common_consensus::EMPTY_ROOT_HASH,
+            base_common_types_chain::EMPTY_ROOT_HASH,
         ))
     }
 
     fn azul_valid_block() -> Block<BaseTxEnvelope> {
         let mut block = valid_block();
-        block.header.withdrawals_root = Some(base_common_consensus::EMPTY_ROOT_HASH);
+        block.header.withdrawals_root = Some(base_common_types_chain::EMPTY_ROOT_HASH);
         block.body.withdrawals = Some(Default::default());
         block.header.blob_gas_used = Some(0);
         block.header.excess_blob_gas = Some(0);
@@ -400,7 +400,7 @@ pub(crate) mod tests {
         let mut block = azul_valid_block();
 
         block.body.withdrawals = Some(vec![].into());
-        let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(
+        let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(
             &block.body.withdrawals.clone().unwrap_or_default(),
         );
 
@@ -414,7 +414,7 @@ pub(crate) mod tests {
         let mut block = valid_block();
 
         block.body.withdrawals = Some(vec![].into());
-        let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(
+        let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(
             &block.body.withdrawals.clone().unwrap_or_default(),
         );
         block.header.withdrawals_root = Some(withdrawals_root);
@@ -721,7 +721,7 @@ pub(crate) mod tests {
     fn test_v2_non_empty_withdrawals() {
         let mut block = v2_valid_block();
         block.body.withdrawals = Some(vec![Withdrawal::default()].into());
-        let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(
+        let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(
             &block.body.withdrawals.clone().unwrap_or_default(),
         );
         block.header.withdrawals_root = Some(withdrawals_root);
@@ -754,7 +754,7 @@ pub(crate) mod tests {
     fn test_v3_non_empty_withdrawals() {
         let mut block = v3_valid_block();
         block.body.withdrawals = Some(vec![Withdrawal::default()].into());
-        let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(
+        let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(
             &block.body.withdrawals.clone().unwrap_or_default(),
         );
         block.header.withdrawals_root = Some(withdrawals_root);

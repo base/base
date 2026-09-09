@@ -291,7 +291,7 @@ pub struct TypedStrictFilter;
 
 impl AnnouncementFilteringPolicy for TypedStrictFilter {
     fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance {
-        if base_common_consensus::BasePooledTransaction::is_type(ty) {
+        if base_common_types_chain::BasePooledTransaction::is_type(ty) {
             AnnouncementAcceptance::Accept
         } else {
             tracing::trace!(target: "net::tx::policy::strict_typed",
@@ -318,7 +318,7 @@ pub struct TypedRelaxedFilter;
 
 impl AnnouncementFilteringPolicy for TypedRelaxedFilter {
     fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance {
-        if base_common_consensus::BasePooledTransaction::is_type(ty) {
+        if base_common_types_chain::BasePooledTransaction::is_type(ty) {
             AnnouncementAcceptance::Accept
         } else {
             tracing::trace!(target: "net::tx::policy::relaxed_typed",

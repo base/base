@@ -98,7 +98,7 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, U256};
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,

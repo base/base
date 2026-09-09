@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 
 use crate::PayloadTransactions;
 

@@ -10,8 +10,8 @@ use test_fuzz::test_fuzz;
 
 /// Pre-Osaka pooled transaction type using EIP-4844 sidecar format.
 /// Test fixtures were generated with this format.
-type PreOsakaPooledTransaction = base_common_consensus::EthereumTxEnvelope<
-    base_common_consensus::TxEip4844WithSidecar<alloy_eips::eip4844::BlobTransactionSidecar>,
+type PreOsakaPooledTransaction = base_common_types_chain::EthereumTxEnvelope<
+    base_common_types_chain::TxEip4844WithSidecar<alloy_eips::eip4844::BlobTransactionSidecar>,
 >;
 
 /// Helper function to ensure encode-decode roundtrip works for [`PooledTransactions`].

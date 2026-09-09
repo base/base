@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use base_common_rpc_types::{
     TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
@@ -33,9 +33,9 @@ impl<Pool, Eth> TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
     Eth: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send
@@ -60,9 +60,9 @@ where
         ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
         where
             RpcTxB: reth_storage_api::BlockReader<
-                    Block = base_common_consensus::BaseBlock,
-                    Transaction = base_common_consensus::BaseTxEnvelope,
-                    Receipt = base_common_consensus::BaseReceipt,
+                    Block = base_common_types_chain::BaseBlock,
+                    Transaction = base_common_types_chain::BaseTxEnvelope,
+                    Receipt = base_common_types_chain::BaseReceipt,
                 > + base_execution_chainspec::ChainSpecProvider
                 + Clone
                 + Send
@@ -97,9 +97,9 @@ impl<Pool, Eth> TxPoolApiServer for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
     Eth: reth_storage_api::BlockReader<
-            Block = base_common_consensus::BaseBlock,
-            Transaction = base_common_consensus::BaseTxEnvelope,
-            Receipt = base_common_consensus::BaseReceipt,
+            Block = base_common_types_chain::BaseBlock,
+            Transaction = base_common_types_chain::BaseTxEnvelope,
+            Receipt = base_common_types_chain::BaseReceipt,
         > + base_execution_chainspec::ChainSpecProvider
         + Clone
         + Send

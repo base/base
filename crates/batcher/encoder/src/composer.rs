@@ -1,7 +1,7 @@
 //! Block-to-batch composition.
 
 use alloy_eips::eip2718::Encodable2718;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use base_protocol::{L1BlockInfoTx, SingleBatch};
 
 /// Errors returned by [`BatchComposer::block_to_single_batch`].
@@ -66,7 +66,7 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{B256, Bytes, Sealed, Signature};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, Header, SignableTransaction, TxDeposit, TxLegacy,
     };
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};

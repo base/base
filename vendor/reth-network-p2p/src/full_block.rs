@@ -11,7 +11,7 @@ use std::{
 
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{BaseBlock, BlockHeader};
+use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
@@ -648,7 +648,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<ResponseResult<base_common_consensus::Header, Client::Body>> {
+    ) -> Poll<ResponseResult<base_common_types_chain::Header, Client::Body>> {
         if let Some(fut) = Pin::new(&mut self.header).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -813,7 +813,7 @@ where
         Some(valid_responses)
     }
 
-    fn on_headers_response(&mut self, headers: WithPeerId<Vec<base_common_consensus::Header>>) {
+    fn on_headers_response(&mut self, headers: WithPeerId<Vec<base_common_types_chain::Header>>) {
         let (peer, mut headers_falling) =
             headers.map(|h| h.into_iter().map(SealedHeader::seal_slow).collect::<Vec<_>>()).split();
 
@@ -983,7 +983,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<RangeResponseResult<base_common_consensus::Header, Client::Body>> {
+    ) -> Poll<RangeResponseResult<base_common_types_chain::Header, Client::Body>> {
         if let Some(fut) = Pin::new(&mut self.headers).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -1036,7 +1036,7 @@ impl DownloadClient for NoopFullBlockClient {
 
 /// Implements the `BodiesClient` trait for the `NoopFullBlockClient` struct.
 impl BodiesClient for NoopFullBlockClient {
-    type Body = base_common_consensus::BaseBlockBody;
+    type Body = base_common_types_chain::BaseBlockBody;
     /// Defines the output type of the function.
     type Output = futures::future::Ready<PeerRequestResult<Vec<Self::Body>>>;
 
@@ -1065,7 +1065,7 @@ impl BodiesClient for NoopFullBlockClient {
 impl HeadersClient for NoopFullBlockClient {
     /// The output type representing a future containing a peer request result with a vector of
     /// headers.
-    type Output = futures::future::Ready<PeerRequestResult<Vec<base_common_consensus::Header>>>;
+    type Output = futures::future::Ready<PeerRequestResult<Vec<base_common_types_chain::Header>>>;
 
     /// Retrieves headers with a specified priority level.
     ///
@@ -1212,7 +1212,7 @@ mod tests {
     };
 
     use alloy_primitives::{Bytes, keccak256, map::B256Map};
-    use base_common_consensus::{BaseBlockBody as BlockBody, Header};
+    use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
     use parking_lot::Mutex;
 
     use super::*;
@@ -1645,7 +1645,7 @@ mod tests {
     }
 
     impl BlockClient for FullBlockWithAccessListsClient {
-        type Block = base_common_consensus::BaseBlock;
+        type Block = base_common_types_chain::BaseBlock;
     }
 
     #[derive(Clone, Debug)]
@@ -1703,7 +1703,7 @@ mod tests {
     }
 
     impl BlockClient for FailingBodiesClient {
-        type Block = base_common_consensus::BaseBlock;
+        type Block = base_common_types_chain::BaseBlock;
     }
 
     #[tokio::test]

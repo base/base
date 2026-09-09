@@ -1,6 +1,6 @@
 //! Storage metadata models.
 
-use base_common_consensus::{Compact, add_arbitrary_tests};
+use base_common_types_chain::{Compact, add_arbitrary_tests};
 use serde::{Deserialize, Serialize};
 
 /// Persisted storage layout marker. Only the v2 layout is supported.

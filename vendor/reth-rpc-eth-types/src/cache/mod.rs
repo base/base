@@ -10,7 +10,7 @@ use std::{
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
-use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader};
+use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader};
 use base_evm_handler::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
@@ -241,7 +241,7 @@ impl EthStateCache {
     pub async fn get_header(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<base_common_consensus::Header> {
+    ) -> ProviderResult<base_common_types_chain::Header> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetHeader { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable)?
@@ -336,7 +336,7 @@ pub(crate) struct EthStateCacheService<
     Provider: BlockReader + BalProvider,
     LimitBlocks: Limiter<B256, Arc<RecoveredBlock>>,
     LimitReceipts: Limiter<B256, Arc<Vec<Provider::Receipt>>>,
-    LimitHeaders: Limiter<B256, base_common_consensus::Header>,
+    LimitHeaders: Limiter<B256, base_common_types_chain::Header>,
     LimitBals: Limiter<B256, CachedRevmBal>,
 {
     /// The type used to lookup data from disk
@@ -349,7 +349,7 @@ pub(crate) struct EthStateCacheService<
     ///
     /// Headers are cached because they are required to populate the environment for execution
     /// (evm).
-    headers_cache: HeaderLruCache<base_common_consensus::Header, LimitHeaders>,
+    headers_cache: HeaderLruCache<base_common_types_chain::Header, LimitHeaders>,
     /// The LRU cache for revm BALs grouped by the block hash.
     bal_cache: BalLruCache<LimitBals>,
     /// Sender half of the action channel.
@@ -458,7 +458,7 @@ where
     fn on_reorg_header(
         &mut self,
         block_hash: B256,
-        res: ProviderResult<base_common_consensus::Header>,
+        res: ProviderResult<base_common_types_chain::Header>,
     ) {
         if let Some(queued) = self.headers_cache.remove(&block_hash) {
             // send the response to queued senders
@@ -745,7 +745,7 @@ enum CacheAction<R> {
     },
     GetHeader {
         block_hash: B256,
-        response_tx: HeaderResponseSender<base_common_consensus::Header>,
+        response_tx: HeaderResponseSender<base_common_types_chain::Header>,
     },
     GetReceipts {
         block_hash: B256,
@@ -773,7 +773,7 @@ enum CacheAction<R> {
     },
     HeaderResult {
         block_hash: B256,
-        res: Box<ProviderResult<base_common_consensus::Header>>,
+        res: Box<ProviderResult<base_common_types_chain::Header>>,
     },
     BalResult {
         block_hash: B256,
@@ -865,7 +865,7 @@ impl<R: Send + Sync> ActionSender<R> {
         }
     }
 
-    fn send_header(&mut self, header: Result<base_common_consensus::Header, ProviderError>) {
+    fn send_header(&mut self, header: Result<base_common_types_chain::Header, ProviderError>) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CacheAction::HeaderResult {
                 block_hash: self.blockhash,
@@ -1012,7 +1012,7 @@ mod tests {
     use alloy_eip7928::BlockAccessIndex;
     use alloy_eips::{BlockHashOrNumber, NumHash};
     use alloy_primitives::{Address, BlockHash, BlockNumber, Bytes, Signature, TxHash, TxNumber};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
         BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction, Header,
         transaction::TransactionMeta,
@@ -1271,8 +1271,8 @@ mod tests {
     }
 
     impl BlockNumReader for TestBalProvider {
-        fn chain_info(&self) -> ProviderResult<base_common_consensus::ChainInfo> {
-            Ok(base_common_consensus::ChainInfo::default())
+        fn chain_info(&self) -> ProviderResult<base_common_types_chain::ChainInfo> {
+            Ok(base_common_types_chain::ChainInfo::default())
         }
 
         fn best_block_number(&self) -> ProviderResult<BlockNumber> {
@@ -1292,21 +1292,21 @@ mod tests {
         fn header(
             &self,
             _block_hash: BlockHash,
-        ) -> ProviderResult<Option<base_common_consensus::Header>> {
+        ) -> ProviderResult<Option<base_common_types_chain::Header>> {
             Ok(None)
         }
 
         fn header_by_number(
             &self,
             _num: u64,
-        ) -> ProviderResult<Option<base_common_consensus::Header>> {
+        ) -> ProviderResult<Option<base_common_types_chain::Header>> {
             Ok(None)
         }
 
         fn headers_range(
             &self,
             _range: impl RangeBounds<BlockNumber>,
-        ) -> ProviderResult<Vec<base_common_consensus::Header>> {
+        ) -> ProviderResult<Vec<base_common_types_chain::Header>> {
             Ok(Vec::new())
         }
 

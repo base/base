@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use crate::ChainSpecParser;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use reth_db::{DatabaseError, mdbx::tx::Tx};
@@ -110,7 +110,7 @@ impl<C: ChainSpecParser> Command<C> {
         match self.stage {
             StageEnum::Headers => {
                 tx.clear::<tables::CanonicalHeaders>()?;
-                tx.clear::<tables::Headers<base_common_consensus::Header>>()?;
+                tx.clear::<tables::Headers<base_common_types_chain::Header>>()?;
                 tx.clear::<tables::HeaderNumbers>()?;
                 reset_stage_checkpoint(tx, StageId::Headers)?;
 
@@ -121,7 +121,7 @@ impl<C: ChainSpecParser> Command<C> {
                 tx.clear::<tables::Transactions<BaseTxEnvelope>>()?;
 
                 tx.clear::<tables::TransactionBlocks>()?;
-                tx.clear::<tables::BlockOmmers<base_common_consensus::Header>>()?;
+                tx.clear::<tables::BlockOmmers<base_common_types_chain::Header>>()?;
                 tx.clear::<tables::BlockWithdrawals>()?;
                 reset_stage_checkpoint(tx, StageId::Bodies)?;
 

@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
-use base_common_consensus::BaseReceipt;
+use base_common_types_chain::BaseReceipt;
 use rayon::slice::ParallelSliceMut;
 use reth_db::{
     cursor::{DbCursorRO, DbDupCursorRW},

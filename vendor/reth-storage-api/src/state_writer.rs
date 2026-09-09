@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::BlockNumber;
-use base_common_consensus::{BaseReceipt, transaction::Either};
+use base_common_types_chain::{BaseReceipt, transaction::Either};
 use base_evm_handler::database::{
     BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
 };

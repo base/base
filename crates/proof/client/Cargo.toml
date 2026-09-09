@@ -24,7 +24,7 @@ base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-common-genesis = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 base-consensus-derive = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 [dev-dependencies]
@@ -33,10 +33,10 @@ tokio = { workspace = true, features = ["default", "full"] }
 
 [features]
 std = [
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "base-evm-handler/std",
     "alloy-primitives/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "base-common-evm/std",
     "base-common-genesis/std",
     "base-proof-driver/std",

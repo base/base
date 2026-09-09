@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use alloy_hardforks::EthereumHardforks;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData, PayloadError};
 use base_execution_chainspec::BaseChainSpec;
 use derive_more::Constructor;

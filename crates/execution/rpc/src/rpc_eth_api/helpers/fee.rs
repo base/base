@@ -2,7 +2,7 @@
 
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::U256;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_common_rpc_types::{BlockNumberOrTag, FeeHistory};
 use base_execution_chainspec::ChainSpecProvider;
 use futures::{Future, StreamExt};

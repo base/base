@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt::Debug, fs::File, io::Write, path::PathBuf}
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_evm_handler::{
     bytecode::Bytecode,
     database::{AccountInfoRevert, AccountStatus, BundleState, RevertToSlot, State, StorageSlot},

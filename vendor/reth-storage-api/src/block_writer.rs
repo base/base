@@ -71,7 +71,7 @@ pub trait BlockWriter {
     /// Bodies are passed as [`Option`]s, if body is `None` the corresponding block is empty.
     fn append_block_bodies(
         &self,
-        bodies: Vec<(BlockNumber, Option<&base_common_consensus::BaseBlockBody>)>,
+        bodies: Vec<(BlockNumber, Option<&base_common_types_chain::BaseBlockBody>)>,
     ) -> ProviderResult<()>;
 
     /// Removes all blocks above the given block number from the database.

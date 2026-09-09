@@ -37,7 +37,7 @@ alloy-primitives = { workspace = true }
 bytes = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref", "debug"] }
-base-common-consensus = { workspace = true, features = ["alloy"]}
+base-common-types-chain = { workspace = true, features = ["alloy"]}
 arbitrary = { workspace = true, optional = true, features = ["derive"]}
 serde = { workspace = true, optional = true, features = ["derive", "rc"] }
 tokio = { workspace = true, optional = true, features = ["default", "rt-multi-thread", "macros"] }
@@ -72,7 +72,7 @@ std = [
     "revm-state/std",
     "either/std",
     "thiserror/std",
-    "base-common-consensus/std",
+    "base-common-types-chain/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
     "alloy-trie/std",
@@ -83,6 +83,6 @@ std = [
 ]
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
 reth-codec = ["dep:bytes", "dep:modular-bitfield"]
-test-utils = ["arbitrary", "base-common-consensus/test-utils"]
+test-utils = ["arbitrary", "base-common-types-chain/test-utils"]
 alloydb = ["std", "asyncdb", "dep:tokio", "dep:alloy-provider", "dep:alloy-eips", "dep:alloy-transport"]
 map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]

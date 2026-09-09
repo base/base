@@ -26,7 +26,7 @@ impl ValueWithSubKey for StorageTrieEntry {
 // and compress second part of the value. If we have compression
 // over whole value (Even SubKey) that would mess up fetching of values with seek_by_key_subkey
 #[cfg(any(test, feature = "reth-codec"))]
-impl base_common_consensus::Compact for StorageTrieEntry {
+impl base_common_types_chain::Compact for StorageTrieEntry {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -45,7 +45,7 @@ impl base_common_consensus::Compact for StorageTrieEntry {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-base_common_consensus::impl_compression_for_compact!(StorageTrieEntry);
+base_common_types_chain::impl_compression_for_compact!(StorageTrieEntry);
 
 /// Account storage trie node with packed nibble encoding (storage v2).
 ///
@@ -69,7 +69,7 @@ impl ValueWithSubKey for PackedStorageTrieEntry {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl base_common_consensus::Compact for PackedStorageTrieEntry {
+impl base_common_types_chain::Compact for PackedStorageTrieEntry {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -87,4 +87,4 @@ impl base_common_consensus::Compact for PackedStorageTrieEntry {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-base_common_consensus::impl_compression_for_compact!(PackedStorageTrieEntry);
+base_common_types_chain::impl_compression_for_compact!(PackedStorageTrieEntry);

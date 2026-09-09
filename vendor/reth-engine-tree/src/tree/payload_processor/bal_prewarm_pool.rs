@@ -166,7 +166,7 @@ fn prewarm_loop(rx: crossbeam_channel::Receiver<PrewarmMsg>) {
                     PrewarmTarget::Account(addr) => {
                         if let Ok(Some(account)) = provider.basic_account(&addr)
                             && let Some(code_hash) = account.bytecode_hash
-                            && code_hash != base_common_consensus::constants::KECCAK_EMPTY
+                            && code_hash != base_common_types_chain::constants::KECCAK_EMPTY
                         {
                             let _ = provider.bytecode_by_hash(&code_hash);
                         }

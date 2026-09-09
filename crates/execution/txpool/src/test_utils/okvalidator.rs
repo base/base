@@ -1,4 +1,4 @@
-use base_common_consensus::{BaseBlock as Block, Transaction};
+use base_common_types_chain::{BaseBlock as Block, Transaction};
 
 use crate::{
     TransactionOrigin, TransactionValidationOutcome, TransactionValidator,

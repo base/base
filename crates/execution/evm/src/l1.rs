@@ -1,7 +1,7 @@
 //! Base-specific implementation and utilities for the executor
 
 use alloy_primitives::{U16, U256, hex};
-use base_common_consensus::Transaction;
+use base_common_types_chain::Transaction;
 use base_common_evm::L1BlockInfo;
 use reth_primitives_traits::BlockBody;
 
@@ -302,7 +302,7 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
     use base_common_chains::Upgrades;
-    use base_common_consensus::{BaseTransactionSigned, Block, BlockBody, Header};
+    use base_common_types_chain::{BaseTransactionSigned, Block, BlockBody, Header};
     use base_execution_chainspec::BaseChainSpec;
 
     use super::*;

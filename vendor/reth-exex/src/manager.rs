@@ -12,7 +12,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_consensus::BlockHeader;
+use base_common_types_chain::BlockHeader;
 use base_execution_evm::BaseEvmConfig;
 use futures::StreamExt;
 use itertools::Itertools;

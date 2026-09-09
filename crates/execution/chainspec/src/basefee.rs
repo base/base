@@ -3,7 +3,7 @@
 use core::cmp::max;
 
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
-use base_common_consensus::{BlockHeader, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_types_chain::{BlockHeader, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 
 fn base_fee_params_from_extra_data(
     chain_spec: &crate::BaseChainSpec,
@@ -86,7 +86,7 @@ mod tests {
 
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::Bytes;
-    use base_common_consensus::JovianExtraData;
+    use base_common_types_chain::JovianExtraData;
     use base_common_genesis::BaseUpgrade;
 
     use super::*;

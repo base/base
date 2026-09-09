@@ -104,7 +104,7 @@ impl<'a, TX: DbTx, A: TrieTableAdapter> DatabaseStorageRoot<'a, TX>
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use base_common_consensus::Header;
+    use base_common_types_chain::Header;
     use reth_provider::{
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter, StorageSettingsCache,
         test_utils::create_test_provider_factory,

@@ -6,7 +6,7 @@ use alloc::{string::ToString, vec::Vec};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_trie::{Nibbles, TrieAccount};
-use base_common_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
+use base_common_types_chain::{EMPTY_ROOT_HASH, Header, Sealed};
 use base_evm_handler::{
     Database,
     database::{BundleState, StorageSlot},
@@ -360,7 +360,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, b256};
-    use base_common_consensus::Sealable;
+    use base_common_types_chain::Sealable;
     use base_evm_handler::database::{AccountStatus, BundleAccount, StorageSlot as RvmStorageSlot};
     use base_proof_mpt::NoopTrieHinter;
 

@@ -37,7 +37,7 @@ tokio-util = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["serde", "std"] }

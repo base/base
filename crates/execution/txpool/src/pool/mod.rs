@@ -401,7 +401,7 @@ where
         &self,
         tx_hashes: &[TxHash],
         limit: GetPooledTransactionLimit,
-        out: &mut Vec<base_common_consensus::BasePooledTransaction>,
+        out: &mut Vec<base_common_types_chain::BasePooledTransaction>,
     ) {
         let transactions = self.get_all_propagatable(tx_hashes);
         let mut size = 0;
@@ -468,7 +468,7 @@ where
     fn to_pooled_transaction(
         &self,
         transaction: Arc<ValidPoolTransaction>,
-    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
+    ) -> Option<Recovered<base_common_types_chain::BasePooledTransaction>> {
         transaction.transaction.clone_into_pooled().inspect_err(|err| {
             debug!(target: "txpool", %err, "failed to convert transaction to pooled element; skipping");
         }).ok()
@@ -480,7 +480,7 @@ where
         &self,
         tx_hashes: Vec<TxHash>,
         limit: GetPooledTransactionLimit,
-    ) -> Vec<base_common_consensus::BasePooledTransaction> {
+    ) -> Vec<base_common_types_chain::BasePooledTransaction> {
         let mut elements = Vec::new();
         self.append_pooled_transaction_elements(&tx_hashes, limit, &mut elements);
         elements.shrink_to_fit();
@@ -491,7 +491,7 @@ where
     pub fn get_pooled_transaction_element(
         &self,
         tx_hash: TxHash,
-    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
+    ) -> Option<Recovered<base_common_types_chain::BasePooledTransaction>> {
         self.get(&tx_hash).and_then(|tx| self.to_pooled_transaction(tx))
     }
 

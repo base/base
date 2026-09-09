@@ -49,7 +49,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::Provider;
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
-use base_common_consensus::TxEnvelope;
+use base_common_types_chain::TxEnvelope;
 use base_common_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
@@ -1836,7 +1836,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
     use alloy_transport::mock::Asserter;
-    use base_common_consensus::TxEip1559;
+    use base_common_types_chain::TxEip1559;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_runtime::{
         Clock,

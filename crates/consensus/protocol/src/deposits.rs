@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256, b256};
-use base_common_consensus::{TxDeposit, UserDepositSource};
+use base_common_types_chain::{TxDeposit, UserDepositSource};
 
 /// Deposit transaction utilities.
 #[derive(Debug)]

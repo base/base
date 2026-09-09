@@ -134,7 +134,7 @@ impl<R: Receipt> ReceiptRootTaskHandle<R> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, Log, b256, hex};
-    use base_common_consensus::{BaseReceipt, TxReceipt, proofs::calculate_receipt_root};
+    use base_common_types_chain::{BaseReceipt, TxReceipt, proofs::calculate_receipt_root};
     use crossbeam_channel::bounded;
 
     use super::*;
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn test_receipt_root_task_single_receipt() {
         let receipts: Vec<BaseReceipt> =
-            vec![base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
+            vec![base_common_types_chain::BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 status: false.into(),
                 ..Default::default()
             })];
@@ -188,8 +188,8 @@ mod tests {
     #[tokio::test]
     async fn test_receipt_root_task_multiple_receipts() {
         let receipts: Vec<BaseReceipt> = vec![
-            base_common_consensus::BaseReceipt::Legacy(
-                base_common_consensus::Receipt { status: false.into(), ..Default::default() }
+            base_common_types_chain::BaseReceipt::Legacy(
+                base_common_types_chain::Receipt { status: false.into(), ..Default::default() }
             );
             5
         ];
@@ -226,12 +226,12 @@ mod tests {
     async fn test_receipt_root_matches_standard_calculation() {
         // Create some receipts with actual data
         let receipts = vec![
-            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Legacy(base_common_types_chain::Receipt {
                 cumulative_gas_used: 21000,
                 status: (true).into(),
                 logs: vec![],
             }),
-            base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
                 cumulative_gas_used: 42000,
                 status: (true).into(),
                 logs: vec![Log {
@@ -239,7 +239,7 @@ mod tests {
                     data: alloy_primitives::LogData::new_unchecked(vec![B256::ZERO], Bytes::new()),
                 }],
             }),
-            base_common_consensus::BaseReceipt::Eip2930(base_common_consensus::Receipt {
+            base_common_types_chain::BaseReceipt::Eip2930(base_common_types_chain::Receipt {
                 cumulative_gas_used: 63000,
                 status: (false).into(),
                 logs: vec![],
@@ -275,8 +275,8 @@ mod tests {
     #[tokio::test]
     async fn test_receipt_root_task_out_of_order() {
         let receipts: Vec<BaseReceipt> = vec![
-            base_common_consensus::BaseReceipt::Legacy(
-                base_common_consensus::Receipt { status: false.into(), ..Default::default() }
+            base_common_types_chain::BaseReceipt::Legacy(
+                base_common_types_chain::Receipt { status: false.into(), ..Default::default() }
             );
             5
         ];

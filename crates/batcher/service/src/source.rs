@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_provider::Provider;
 use async_trait::async_trait;
 use base_batcher_source::{PollingSource, SourceError};
-use base_common_consensus::BaseBlock;
+use base_common_types_chain::BaseBlock;
 use base_common_network::Base;
 
 /// Fetches full L2 blocks from an RPC provider.

@@ -35,7 +35,7 @@ base-consensus-peers = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-derive = { workspace = true }
-base-common-consensus = { workspace = true }
+base-common-types-chain = { workspace = true }
 base-consensus-safedb = { workspace = true }
 base-consensus-sources = { workspace = true }
 base-consensus-providers = { workspace = true }
@@ -89,7 +89,7 @@ base-common-genesis = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
-base-common-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
 [features]
 default = []

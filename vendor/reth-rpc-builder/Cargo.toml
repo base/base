@@ -57,7 +57,7 @@ reth-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["serde"]}
+base-common-types-chain = { workspace = true, features = ["serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }

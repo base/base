@@ -1,7 +1,7 @@
 //! Implements data structures specific to the database
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_consensus::{Compact, add_arbitrary_tests, impl_compression_for_compact};
+use base_common_types_chain::{Compact, add_arbitrary_tests, impl_compression_for_compact};
 use reth_prune_types::PruneSegment;
 use reth_trie_common::{StoredNibbles, StoredNibblesSubKey, *};
 use serde::{Deserialize, Serialize};
@@ -260,7 +260,7 @@ mod tests {
     // expand the flags field and break backwards compatibility
     #[test]
     fn test_ensure_backwards_compatibility() {
-        use base_common_consensus::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
+        use base_common_types_chain::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
         use reth_primitives_traits::Account;
         use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
         use reth_stages_types::{

@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::Bytes;
-use base_common_consensus::{BaseBlock, BlockHeader, Transaction};
+use base_common_types_chain::{BaseBlock, BlockHeader, Transaction};
 use base_common_rpc_types_engine::{ForkchoiceState, PayloadStatus};
 use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};

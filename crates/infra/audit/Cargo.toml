@@ -27,7 +27,7 @@ moka = { workspace = true, features = ["default", "sync"] }
 tokio = { workspace = true, features = ["default", "full"] }
 anyhow = { workspace = true, features = ["default", "std"] }
 chrono = { workspace = true, features = ["default", "serde"] }
-base-common-consensus = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 uuid = { workspace = true, features = ["default", "v5", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }

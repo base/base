@@ -1,7 +1,7 @@
 //! EIP-8130 intrinsic gas: the total cost to include an AA transaction.
 
 use alloy_primitives::{Address, U256};
-use base_common_consensus::{
+use base_common_types_chain::{
     AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed, SignedChange,
 };
 
@@ -618,7 +618,7 @@ impl IntrinsicGas {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::SolValue;
-    use base_common_consensus::{
+    use base_common_types_chain::{
         AccountChange, AccountChangeChannel, ChangeType, CreateEntry, Delegation, InitialActor,
         SignedAccountChanges, SignedChange, TxEip8130,
     };

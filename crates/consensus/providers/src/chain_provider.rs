@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
-use base_common_consensus::{Header, Receipt, TxEnvelope};
+use base_common_types_chain::{Header, Receipt, TxEnvelope};
 use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_protocol::BlockInfo;
 use lru::LruCache;

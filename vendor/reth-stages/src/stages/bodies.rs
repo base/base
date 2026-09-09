@@ -479,7 +479,7 @@ mod tests {
         };
 
         use alloy_primitives::{B256, BlockNumber, TxNumber, map::B256Map};
-        use base_common_consensus::{
+        use base_common_types_chain::{
             BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
         };
         use futures_util::Stream;

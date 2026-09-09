@@ -12,14 +12,14 @@
 //! TODO(onbjerg): Find appropriate format for this...
 
 pub mod codecs;
-use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
+use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
 pub use codecs::IntegerListInput;
 
 mod raw;
 use std::fmt;
 
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{EthereumReceipt as Receipt, Header};
+use base_common_types_chain::{EthereumReceipt as Receipt, Header};
 pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_prune_types::{PruneCheckpoint, PruneSegment};

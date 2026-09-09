@@ -2,7 +2,7 @@ use std::{marker::PhantomData, time::Instant};
 
 use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
-use base_common_consensus::{BaseTransactionSigned, transaction::Recovered};
+use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
 use base_execution_txpool::{TransactionOrigin, TransactionPool};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -198,7 +198,7 @@ impl<P, E> BuilderApiImpl<P, E> {
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
-    use base_common_consensus::{
+    use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, TxDeposit, TxEip1559,
     };
     use base_execution_txpool::NoopTransactionPool;

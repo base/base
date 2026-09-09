@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::Address;
-use base_common_consensus::transaction::SignerRecoverable;
+use base_common_types_chain::transaction::SignerRecoverable;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
