@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes};
 /// derived from the parent block header alone. These attributes are typically provided
 /// by the consensus layer (CL) through the Engine API during payload building.
 ///
-/// # Relationship with [`BaseEvmConfig`] and [`execute::BlockAssembler`]
+/// # Relationship with [`BaseEvmConfig`] and [`crate::BaseBlockAssembler`]
 ///
 /// The flow for building a new block involves:
 ///
@@ -24,7 +24,7 @@ use alloy_primitives::{Address, B256, Bytes};
 /// 3. **Build the block** with transactions: ```rust,ignore let mut builder =
 ///    evm_config.builder_for_next_block( &mut state, &parent, attributes )?; ```
 ///
-/// 4. **Assemble the final block** using [`execute::BlockAssembler`] which takes:
+/// 4. **Assemble the final block** using [`crate::BaseBlockAssembler`] which takes:
 ///    - Execution results from all transactions
 ///    - The attributes used during execution
 ///    - Final state root after all changes
@@ -32,7 +32,7 @@ use alloy_primitives::{Address, B256, Bytes};
 /// This design cleanly separates:
 /// - **Configuration** (what parameters to use) - handled by `NextBlockEnvAttributes`
 /// - **Execution** (running transactions) - handled by `BlockExecutor`
-/// - **Assembly** (creating the final block) - handled by `BlockAssembler`
+/// - **Assembly** (creating the final block) - handled by `BaseBlockAssembler`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NextBlockEnvAttributes {
     /// The timestamp of the next block.

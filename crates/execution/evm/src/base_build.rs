@@ -4,17 +4,16 @@ use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BaseReceipt, BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
+    BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
     constants::EMPTY_WITHDRAWALS, proofs,
 };
-use base_common_evm::BaseBlockExecutionCtx;
 use base_evm_context::Block as _;
-use base_evm_handler::{BlockExecutionError, BlockExecutorFactory};
+use base_evm_handler::BlockExecutionError;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_execution_types::BlockExecutionResult;
 
-use crate::execute::{BlockAssembler, BlockAssemblerInput};
+use crate::execute::BlockAssemblerInput;
 
 /// Block builder for Base.
 #[derive(Debug)]
@@ -31,16 +30,10 @@ impl BaseBlockAssembler {
 
 impl BaseBlockAssembler {
     /// Builds a Base block from the execution result.
-    pub fn assemble_block<
-        F: for<'a> BlockExecutorFactory<
-                ExecutionCtx<'a>: Into<BaseBlockExecutionCtx>,
-                Transaction = BaseTxEnvelope,
-                Receipt = BaseReceipt,
-            >,
-    >(
+    pub fn assemble_block(
         &self,
-        input: BlockAssemblerInput<'_, '_, F>,
-    ) -> Result<Block<F::Transaction>, BlockExecutionError> {
+        input: BlockAssemblerInput<'_, '_>,
+    ) -> Result<Block<BaseTxEnvelope>, BlockExecutionError> {
         let BlockAssemblerInput {
             evm_env,
             execution_ctx: ctx,
@@ -51,7 +44,6 @@ impl BaseBlockAssembler {
             state_provider,
             ..
         } = input;
-        let ctx = ctx.into();
 
         let timestamp = evm_env.block_env.timestamp().saturating_to();
 
@@ -130,23 +122,5 @@ impl BaseBlockAssembler {
 impl Clone for BaseBlockAssembler {
     fn clone(&self) -> Self {
         Self { chain_spec: Arc::clone(&self.chain_spec) }
-    }
-}
-
-impl<F> BlockAssembler<F> for BaseBlockAssembler
-where
-    F: for<'a> BlockExecutorFactory<
-            ExecutionCtx<'a> = BaseBlockExecutionCtx,
-            Transaction = BaseTxEnvelope,
-            Receipt = BaseReceipt,
-        >,
-{
-    type Block = Block<F::Transaction>;
-
-    fn assemble_block(
-        &self,
-        input: BlockAssemblerInput<'_, '_, F>,
-    ) -> Result<Self::Block, BlockExecutionError> {
-        self.assemble_block(input)
     }
 }

@@ -278,7 +278,7 @@ impl BaseEvmConfig {
     ///
     /// Block builder wraps an inner [`base_evm_handler::BlockExecutor`] and has a similar
     /// interface. Builder collects all of the executed transactions, and once
-    /// [`BlockBuilder::finish`] is called, it invokes the configured [`BlockAssembler`] to
+    /// [`BlockBuilder::finish`] is called, it invokes the configured [`crate::BaseBlockAssembler`] to
     /// create a block.
     ///
     /// # Example
@@ -299,7 +299,7 @@ impl BaseEvmConfig {
         DB: Database,
         I: InspectorFor<&'a mut State<DB>> + 'a,
     {
-        BasicBlockBuilder::<BaseExecutorFactory, _, _> {
+        BasicBlockBuilder {
             executor: self.create_executor(evm, ctx.clone()),
             ctx,
             assembler: self.block_assembler(),

@@ -3760,7 +3760,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-debug",
- "auto_impl",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",

@@ -5,7 +5,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BlockHeader};
 pub use base_evm_handler::{
     BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
     InternalBlockExecutionError,
@@ -15,7 +15,7 @@ use base_evm_handler::{
 };
 use reth_execution_types::BlockExecutionResult;
 pub use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
-use reth_primitives_traits::{Block, Recovered, RecoveredBlock, SealedHeader};
+use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
@@ -144,9 +144,9 @@ pub trait Executor<DB: Database>: Sized {
     fn take_bal(&mut self) -> Option<BlockAccessList>;
 }
 
-/// Input for block building. Consumed by [`BlockAssembler`].
+/// Input for block building. Consumed by [`crate::BaseBlockAssembler`].
 ///
-/// This struct contains all the data needed by the [`BlockAssembler`] to create
+/// This struct contains all the data needed by the [`crate::BaseBlockAssembler`] to create
 /// a complete block after transaction execution.
 ///
 /// # Fields Overview
@@ -183,20 +183,19 @@ pub trait Executor<DB: Database>: Sized {
 /// ```
 #[derive(derive_more::Debug)]
 #[non_exhaustive]
-pub struct BlockAssemblerInput<'a, 'b, F: BlockExecutorFactory> {
+pub struct BlockAssemblerInput<'a, 'b> {
     /// Configuration of EVM used when executing the block.
     ///
     /// Contains context relevant to EVM such as [`base_evm_context::BlockEnv`].
-    pub evm_env:
-        EvmEnv<<F::EvmFactory as EvmFactory>::Spec, <F::EvmFactory as EvmFactory>::BlockEnv>,
+    pub evm_env: EvmEnv<base_common_evm::BaseSpecId>,
     /// [`BlockExecutorFactory::ExecutionCtx`] used to execute the block.
-    pub execution_ctx: F::ExecutionCtx<'a>,
+    pub execution_ctx: base_common_evm::BaseBlockExecutionCtx,
     /// Parent block header.
     pub parent: &'a SealedHeader,
     /// Transactions that were executed in this block.
-    pub transactions: Vec<F::Transaction>,
+    pub transactions: Vec<BaseTxEnvelope>,
     /// Output of block execution.
-    pub output: &'b BlockExecutionResult<F::Receipt>,
+    pub output: &'b BlockExecutionResult<BaseReceipt>,
     /// [`BundleState`] after the block execution.
     pub bundle_state: &'a BundleState,
     /// Provider with access to state.
@@ -208,18 +207,15 @@ pub struct BlockAssemblerInput<'a, 'b, F: BlockExecutorFactory> {
     pub block_access_list_hash: Option<B256>,
 }
 
-impl<'a, 'b, F: BlockExecutorFactory> BlockAssemblerInput<'a, 'b, F> {
+impl<'a, 'b> BlockAssemblerInput<'a, 'b> {
     /// Creates a new [`BlockAssemblerInput`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        evm_env: EvmEnv<
-            <F::EvmFactory as EvmFactory>::Spec,
-            <F::EvmFactory as EvmFactory>::BlockEnv,
-        >,
-        execution_ctx: F::ExecutionCtx<'a>,
+        evm_env: EvmEnv<base_common_evm::BaseSpecId>,
+        execution_ctx: base_common_evm::BaseBlockExecutionCtx,
         parent: &'a SealedHeader,
-        transactions: Vec<F::Transaction>,
-        output: &'b BlockExecutionResult<F::Receipt>,
+        transactions: Vec<BaseTxEnvelope>,
+        output: &'b BlockExecutionResult<BaseReceipt>,
         bundle_state: &'a BundleState,
         state_provider: &'b dyn StateProvider,
         state_root: B256,
@@ -237,60 +233,6 @@ impl<'a, 'b, F: BlockExecutorFactory> BlockAssemblerInput<'a, 'b, F> {
             block_access_list_hash,
         }
     }
-}
-
-/// A type that knows how to assemble a block from execution results.
-///
-/// The [`BlockAssembler`] is the final step in block production. After transactions
-/// have been executed by the [`BlockExecutor`], the assembler takes all the execution
-/// outputs and creates a properly formatted block.
-///
-/// # Responsibilities
-///
-/// The assembler is responsible for:
-/// - Setting the correct block header fields (gas used, receipts root, logs bloom, etc.)
-/// - Including the executed transactions in the correct order
-/// - Setting the state root from the post-execution state
-/// - Applying any chain-specific rules or adjustments
-///
-/// # Example Flow
-///
-/// ```rust,ignore
-/// // 1. Execute transactions and get results
-/// let execution_result = block_executor.finish()?;
-///
-/// // 2. Calculate state root from changes
-/// let state_root = state_provider.state_root(&bundle_state)?;
-///
-/// // 3. Assemble the final block
-/// let block = assembler.assemble_block(BlockAssemblerInput {
-///     evm_env,           // Environment used during execution
-///     execution_ctx,     // Context like withdrawals, ommers
-///     parent,            // Parent block header
-///     transactions,      // Executed transactions
-///     output,            // Execution results (receipts, gas)
-///     bundle_state,      // All state changes
-///     state_provider,    // For additional lookups if needed
-///     state_root,        // Computed state root
-/// })?;
-/// ```
-///
-/// # Relationship with Block Building
-///
-/// The assembler works together with:
-/// - `NextBlockEnvAttributes`: Provides the configuration for the new block
-/// - [`BlockExecutor`]: Executes transactions and produces results
-/// - [`BlockBuilder`]: Orchestrates the entire process and calls the assembler
-#[auto_impl::auto_impl(&, Arc)]
-pub trait BlockAssembler<F: BlockExecutorFactory> {
-    /// The block type produced by the assembler.
-    type Block: Block;
-
-    /// Builds a block. see [`BlockAssemblerInput`] documentation for more details.
-    fn assemble_block(
-        &self,
-        input: BlockAssemblerInput<'_, '_, F>,
-    ) -> Result<Self::Block, BlockExecutionError>;
 }
 
 /// Output of block building.
@@ -385,20 +327,17 @@ pub trait BlockBuilder {
 
 /// A type that constructs a block from transactions and execution results.
 #[derive(Debug)]
-pub struct BasicBlockBuilder<'a, F, Executor, Builder>
-where
-    F: BlockExecutorFactory,
-{
+pub struct BasicBlockBuilder<'a, Executor> {
     /// The block executor used to execute transactions.
     pub executor: Executor,
     /// The transactions executed in this block.
     pub transactions: Vec<Recovered<BaseTxEnvelope>>,
     /// The parent block execution context.
-    pub ctx: F::ExecutionCtx<'a>,
+    pub ctx: base_common_evm::BaseBlockExecutionCtx,
     /// The sealed parent block header.
     pub parent: &'a SealedHeader,
     /// The assembler used to build the block.
-    pub assembler: Builder,
+    pub assembler: &'a crate::BaseBlockAssembler,
 }
 
 /// Conversions for executable transactions.
@@ -439,21 +378,19 @@ where
     }
 }
 
-impl<'a, F, DB, Executor, Builder> BlockBuilder for BasicBlockBuilder<'a, F, Executor, Builder>
+impl<'a, DB, Executor> BlockBuilder for BasicBlockBuilder<'a, Executor>
 where
-    F: BlockExecutorFactory<Transaction = BaseTxEnvelope, Receipt = BaseReceipt>,
     Executor: BlockExecutor<
             Evm: Evm<
-                Spec = <F::EvmFactory as EvmFactory>::Spec,
-                HaltReason = <F::EvmFactory as EvmFactory>::HaltReason,
-                BlockEnv = <F::EvmFactory as EvmFactory>::BlockEnv,
+                Spec = <<crate::BaseExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::Spec,
+                HaltReason = <<crate::BaseExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason,
+                BlockEnv = <<crate::BaseExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::BlockEnv,
                 DB = &'a mut State<DB>,
             >,
             Transaction = BaseTxEnvelope,
             Receipt = BaseReceipt,
         >,
     DB: Database + 'a,
-    Builder: BlockAssembler<F, Block = BaseBlock>,
 {
     type Executor = Executor;
 
