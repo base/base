@@ -14,7 +14,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 
 /// [`TestRollupNode`] derives L2 blocks produced by the sequencer from
 /// calldata batches using real EVM execution.

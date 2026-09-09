@@ -8,7 +8,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // A. Gap-filling with a single persistent batcher (reorg signal path)
@@ -123,7 +123,7 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
 /// Each `Batcher` instance starts with a clean [`BatchEncoder`], which
 /// is the state that results from the batcher's fresh-start path.
 ///
-/// [`BatchEncoder`]: base_batcher_encoder::BatchEncoder
+/// [`BatchEncoder`]: base_batcher_encoding_channel::BatchEncoder
 #[tokio::test]
 async fn batcher_gap_fill_separate_instances() {
     let batcher_cfg = BatcherConfig {

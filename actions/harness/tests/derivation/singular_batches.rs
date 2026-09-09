@@ -3,7 +3,7 @@
 use base_action_harness::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 
 /// Shared setup helpers for singular batch action tests.
 #[derive(Debug)]

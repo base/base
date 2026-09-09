@@ -5,7 +5,7 @@
 //! [`InProcessConsensus`](super::InProcessConsensus).
 
 use alloy_primitives::B256;
-use base_batcher_encoder::DaType;
+use base_batcher_encoding_channel::DaType;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_common_network::PrivateKeySigner;
 use base_common_runtime_tasks::TokioRuntime;

@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::B256;
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId,
 };

@@ -35,7 +35,7 @@ members = [
   "crates/batcher/cli",
   "crates/batcher/comp",
   "crates/batcher/core",
-  "crates/batcher/encoder",
+  "crates/batcher/encoding/channel",
   "crates/batcher/service",
   "crates/batcher/source",
   "crates/builder/cli",
@@ -410,7 +410,7 @@ base-batcher-cli = { path = "crates/batcher/cli", default-features = false }
 base-batcher-core = { path = "crates/batcher/core", default-features = false }
 base-batcher-admin = { path = "crates/batcher/admin", default-features = false }
 base-batcher-source = { path = "crates/batcher/source", default-features = false }
-base-batcher-encoder = { path = "crates/batcher/encoder", default-features = false }
+base-batcher-encoding-channel = { path = "crates/batcher/encoding/channel", default-features = false }
 base-batcher-service = { path = "crates/batcher/service", default-features = false }
 
 # Utilities

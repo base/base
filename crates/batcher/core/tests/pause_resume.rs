@@ -14,7 +14,7 @@ use base_batcher_core::{
         TrackingSource,
     },
 };
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId,
 };

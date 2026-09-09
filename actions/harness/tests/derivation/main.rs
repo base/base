@@ -11,7 +11,7 @@ use base_action_harness::{
     TestGossipTransport, TestRollupConfigBuilder, TestRollupNode, UserDeposit, VerifierError,
     block_info_from,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_chain_config::SystemConfigUpdate;
 use base_common_network::PrivateKeySigner;
 use base_consensus_derive::{

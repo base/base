@@ -48,7 +48,7 @@ the execution client. The canonical implementation calls the `miner_setMaxDASize
 `NoopThrottleClient` silently discards all calls and is used when throttling is disabled, allowing
 the driver to invoke the same code path in both cases without special casing.
 
-This crate does not perform frame or blob encoding — those are handled by `base-batcher-encoder`
+This crate does not perform frame or blob encoding — those are handled by `base-batcher-encoding-channel`
 and `base-blobs`. It does not implement L2 block sourcing or L1 head tracking — those come from
 `base-batcher-source`. Transaction signing, gas estimation, and confirmation polling belong to
 `base-tx-manager`. Service configuration and process startup live in `base-batcher-service`.

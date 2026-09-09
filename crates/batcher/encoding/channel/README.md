@@ -1,4 +1,4 @@
-# base-batcher-encoder
+# base-batcher-encoding-channel
 
 Synchronous encoder: L2 blocks → L1 submissions. No async, no I/O.
 
@@ -23,7 +23,7 @@ Channel-close metric `reason` labels: `soft_target`, `protocol_limit`,
 ## Usage
 
 ```rust,ignore
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, StepResult,
     SubmissionPayload,
 };
@@ -47,7 +47,7 @@ while let Some(sub) = encoder.next_submission() {
             }
         }
         SubmissionPayload::Calldata(frame) => {
-            let _ = base_batcher_encoder::FrameEncoder::to_calldata(&frame);
+            let _ = base_batcher_encoding_channel::FrameEncoder::to_calldata(&frame);
         }
     }
     // Call encoder.requeue(sub.id) instead if the L1 transaction fails or is dropped.

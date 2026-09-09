@@ -26,7 +26,7 @@ alloy-primitives = { workspace = true }
 base-batcher-source = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-node = { workspace = true }
-base-batcher-encoder = { workspace = true }
+base-batcher-encoding-channel = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-rpc = { workspace = true }
 base-consensus-engine = { workspace = true }

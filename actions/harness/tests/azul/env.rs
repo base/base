@@ -5,7 +5,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,
     SharedL1Chain, TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder, TestRollupNode, VerifierPipeline,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 
 /// Test environment preconfigured to cross the Base Azul activation at L2 block 3.

@@ -4,7 +4,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_encoder::EncoderConfig;
+use base_batcher_encoding_channel::EncoderConfig;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use url::Url;
 

@@ -15,7 +15,7 @@ use base_batcher_core::{
         TrackingThrottleClient,
     },
 };
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId,
 };

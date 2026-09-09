@@ -13,7 +13,7 @@ channel, including Brotli's channel-version byte.
 `BrotliCompressor` exposes raw stateless Brotli output.
 Without the `std` feature, compression returns `BrotliUnavailable`.
 
-Batch encoding, sizing, and framing belong to `base-batcher-encoder`; this crate
+Batch encoding, sizing, and framing belong to `base-batcher-encoding-channel`; this crate
 only transforms uncompressed channel bytes into their protocol compression
 format.
 

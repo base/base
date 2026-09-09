@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchPipeline, BatcherMetrics, DerivationReconciliation, StepError, StepResult,
 };
 use base_batcher_source::{
@@ -324,7 +324,7 @@ where
     ///
     /// Returns `Ok(true)` if the pipeline reached [`StepResult::Idle`] (nothing left to
     /// encode), or `Ok(false)` if the step budget ran out first. Returns `Err` on a fatal
-    /// [`StepError`](base_batcher_encoder::StepError).
+    /// [`StepError`](base_batcher_encoding_channel::StepError).
     fn drain_encoding(&mut self) -> Result<bool, BatchDriverError> {
         let mut budget = Self::STEP_BUDGET;
         let mut steps = 0usize;
@@ -624,7 +624,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256, Bloom, Bytes};
-    use base_batcher_encoder::{
+    use base_batcher_encoding_channel::{
         BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
     };
     use base_batcher_source::{

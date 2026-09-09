@@ -1,6 +1,6 @@
 //! Error types for the batch driver.
 
-use base_batcher_encoder::StepError;
+use base_batcher_encoding_channel::StepError;
 use base_batcher_source::SourceError;
 use base_blobs::BlobEncodeError;
 

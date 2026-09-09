@@ -19,7 +19,7 @@ base-common-network = {workspace = true}
 base-batcher-admin = { workspace = true }
 base-batcher-source = { workspace = true }
 base-balance-monitor = { workspace = true }
-base-batcher-encoder = { workspace = true }
+base-batcher-encoding-channel = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
@@ -47,7 +47,7 @@ tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] 
 [features]
 metrics = [
     "base-batcher-core/metrics",
-    "base-batcher-encoder/metrics",
+    "base-batcher-encoding-channel/metrics",
     "base-consensus-rpc/metrics",
     "base-common-observability-metrics/metrics",
     "base-tx-manager/metrics",

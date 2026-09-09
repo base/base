@@ -16,7 +16,7 @@ auto_impl = { workspace = true }
 base-blobs = { workspace = true }
 base-tx-manager = { workspace = true }
 base-batcher-source = { workspace = true }
-base-batcher-encoder = { workspace = true }
+base-batcher-encoding-channel = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 async-trait = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
@@ -59,7 +59,7 @@ name = "pause_resume"
 required-features = ["test-utils"]
 
 [features]
-metrics = ["base-batcher-encoder/metrics", "base-tx-manager/metrics"]
+metrics = ["base-batcher-encoding-channel/metrics", "base-tx-manager/metrics"]
 test-utils = [
     "base-protocol/test-utils",
     "base-common-runtime-tasks/test-utils",

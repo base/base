@@ -1,5 +1,5 @@
 [package]
-name = "base-batcher-encoder"
+name = "base-batcher-encoding-channel"
 description = "Batcher encoding pipeline: BatchPipeline trait and BatchEncoder state machine"
 version.workspace = true
 edition.workspace = true

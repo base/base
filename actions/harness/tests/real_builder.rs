@@ -10,7 +10,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BuilderBackedEngineClient,
     L1MinerConfig, L2Sequencer, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 
 /// Build a harness + builder-backed sequencer anchored a few seconds ahead of wall-clock, so the
 /// full-block builder schedules blocks and selects from the pool (see the module docs).

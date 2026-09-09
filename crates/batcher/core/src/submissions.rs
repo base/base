@@ -3,7 +3,7 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchPipeline, BatcherMetrics, BlobPayload, DaEgress, DaType, EncoderConfig, FrameEncoder,
     SubmissionId, SubmissionPayload,
 };

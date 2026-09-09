@@ -6,7 +6,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,
     SharedL1Chain, TestRollupConfigBuilder, TestRollupNode, VerifierPipeline,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130,
 };

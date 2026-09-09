@@ -7,7 +7,7 @@ use base_action_harness::{
     SharedL1Chain, TEST_ACCOUNT_ADDRESS, TestAccount, TestRollupConfigBuilder, TestRollupNode,
     VerifierPipeline,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_execution_evm_precompiles::StorageKey;
 use base_execution_evm_precompiles::{
     ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,

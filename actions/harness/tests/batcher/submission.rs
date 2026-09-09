@@ -4,7 +4,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BatcherError, L1MinerConfig,
     NodeStepResult, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoding_channel::{DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // Batcher: persistent pipeline end-to-end path

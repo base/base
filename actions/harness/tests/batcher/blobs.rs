@@ -7,7 +7,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L1MinerTxManager,
     SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{
+use base_batcher_encoding_channel::{
     BatchEncoder, BatchPipeline, BatchSubmission, DaType, EncoderConfig, SubmissionPayload,
 };
 use base_blobs::BlobEncoder;

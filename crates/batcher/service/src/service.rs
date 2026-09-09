@@ -14,7 +14,7 @@ use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
+use base_batcher_encoding_channel::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;

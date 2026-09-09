@@ -2237,7 +2237,7 @@ dependencies = [
  "alloy-transport",
  "async-trait",
  "base-batcher-core",
- "base-batcher-encoder",
+ "base-batcher-encoding-channel",
  "base-batcher-source",
  "base-blobs",
  "base-builder-core",
@@ -2307,7 +2307,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "base-batcher-core",
- "base-batcher-encoder",
+ "base-batcher-encoding-channel",
  "base-batcher-service",
  "base-cli-utils",
  "base-common-network",
@@ -2329,7 +2329,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "auto_impl",
- "base-batcher-encoder",
+ "base-batcher-encoding-channel",
  "base-batcher-source",
  "base-blobs",
  "base-common-runtime-tasks",
@@ -2347,7 +2347,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-encoder"
+name = "base-batcher-encoding-channel"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -2378,7 +2378,7 @@ dependencies = [
  "base-balance-monitor",
  "base-batcher-admin",
  "base-batcher-core",
- "base-batcher-encoder",
+ "base-batcher-encoding-channel",
  "base-batcher-source",
  "base-common-network",
  "base-common-observability-metrics",
@@ -5058,7 +5058,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "base-batcher-encoder",
+ "base-batcher-encoding-channel",
  "base-batcher-service",
  "base-builder-core",
  "base-common-chain-activation",
