@@ -1,6 +1,6 @@
 use base_execution_evm_machine::{Cfg, CfgEnv, Context, Database, FrameStack, Transaction, TxEnv};
 use base_execution_evm_runtime::EvmMachine;
-use base_state::EmptyDB;
+use base_execution_state_memory::EmptyDB;
 
 use revm_primitives::hardfork::SpecId;
 
@@ -76,7 +76,7 @@ mod test {
     use alloy_signer::{Either, SignerSync};
     use base_common_network::PrivateKeySigner;
     use base_execution_evm_machine::{Authorization, Context, TxEnv};
-    use base_state::{BenchmarkDB, EEADDRESS, FFADDRESS};
+    use base_execution_state_memory::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use revm_bytecode::{
         Bytecode,
         opcode::{PUSH1, SSTORE},

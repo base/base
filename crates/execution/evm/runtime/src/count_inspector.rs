@@ -209,9 +209,9 @@ impl<CTX> Inspector<CTX> for CountInspector {
 mod tests {
     use base_execution_evm_machine::Context;
     use base_execution_evm_runtime::{MainBuilder, MainContext};
-    use base_state::BenchmarkDB;
+    use base_execution_state_memory::BenchmarkDB;
+    use base_execution_state_memory::bytecode::{Bytecode, opcode};
     use revm_primitives::{Bytes, TxKind};
-    use revm_state::bytecode::{Bytecode, opcode};
 
     use super::*;
     use crate::InspectEvm;
@@ -241,7 +241,7 @@ mod tests {
         // Execute the contract
         evm.inspect_one_tx(
             base_execution_evm_machine::TxEnv::builder()
-                .kind(TxKind::Call(base_state::BENCH_TARGET))
+                .kind(TxKind::Call(base_execution_state_memory::BENCH_TARGET))
                 .gas_limit(30000)
                 .build()
                 .unwrap(),
@@ -330,7 +330,7 @@ mod tests {
         // Execute the contract
         evm.inspect_one_tx(
             base_execution_evm_machine::TxEnv::builder()
-                .kind(TxKind::Call(base_state::BENCH_TARGET))
+                .kind(TxKind::Call(base_execution_state_memory::BENCH_TARGET))
                 .gas_limit(30000)
                 .build()
                 .unwrap(),

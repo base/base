@@ -1,6 +1,6 @@
 //! State commit hook.
 
-use crate::state::EvmState;
+use crate::EvmState;
 
 /// A hook that is called when state changes are committed.
 pub trait OnStateHook: Send + 'static {

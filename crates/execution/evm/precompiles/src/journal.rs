@@ -18,9 +18,9 @@ use alloc::string::ToString;
 use crate::EvmInternals;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use base_execution_evm_machine::JournalCheckpoint;
+use base_execution_state_memory::AccountInfo;
+use base_execution_state_memory::Bytecode;
 use revm_primitives::keccak256;
-use revm_state::AccountInfo;
-use revm_state::Bytecode;
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -237,9 +237,9 @@ mod tests {
     use crate::EvmInternals;
     use alloy_primitives::{Address, U256};
     use base_execution_evm_machine::EthEvmContext;
-    use base_state::EmptyDB;
+    use base_execution_state_memory::Bytecode;
+    use base_execution_state_memory::EmptyDB;
     use revm_primitives::hardfork::SpecId;
-    use revm_state::Bytecode;
 
     use super::JournalStorageProvider;
     use crate::storage_provider::PrecompileStorageProvider;

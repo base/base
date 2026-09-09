@@ -21,7 +21,6 @@ reth-db = { workspace = true }
 reth-trie = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-state = { workspace = true }
 reth-prune = { workspace = true }
 reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
@@ -33,6 +32,7 @@ reth-execution-cache = { workspace = true }
 reth-execution-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
+base-execution-state-memory = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }

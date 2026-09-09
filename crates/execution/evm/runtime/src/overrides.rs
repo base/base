@@ -15,7 +15,7 @@ use base_execution_evm_runtime::{
     Database, DatabaseCommit,
     bytecode::BytecodeDecodeError,
     database::{CacheDB, State},
-    state::{Account, AccountStatus, Bytecode, EvmStorageSlot, TransactionId},
+    state::{Account, Bytecode, EvmStorageSlot, JournalAccountStatus, TransactionId},
 };
 
 /// Errors that can occur when applying state overrides.
@@ -158,7 +158,7 @@ where
 
     // Create a new account marked as touched
     let mut acc = base_execution_evm_runtime::state::Account::from(info);
-    acc.status = AccountStatus::Touched;
+    acc.status = JournalAccountStatus::Touched;
 
     let storage_diff = match (account_override.state, account_override.state_diff) {
         (Some(_), Some(_)) => return Err(StateOverrideError::BothStateAndStateDiff(account)),
@@ -169,7 +169,7 @@ where
         (Some(state), None) => {
             // Destroy the account to ensure that its storage is cleared
             let mut destroyed = Account::default();
-            destroyed.status = AccountStatus::SelfDestructed | AccountStatus::Touched;
+            destroyed.status = JournalAccountStatus::SelfDestructed | JournalAccountStatus::Touched;
             db.commit(HashMap::from_iter([(account, destroyed)]));
             // Mark the account as created to ensure that old storage is not read
             acc.mark_created();
@@ -487,7 +487,7 @@ mod tests {
             let mut db = builder.build();
 
             // Apply stateDiff override on the CREATE2 target address, pre-populating
-            // storage. This is the key setup: the address will have AccountStatus::Touched
+            // storage. This is the key setup: the address will have JournalAccountStatus::Touched
             // from this commit, and then CREATE2 will deploy to it.
             let mut storage = HashMap::<B256, B256>::default();
             storage.insert(B256::from(U256::from(42)), B256::from(U256::from(999)));

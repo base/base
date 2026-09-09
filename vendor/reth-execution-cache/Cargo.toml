@@ -18,11 +18,11 @@ workspace = true
 [dependencies]
 metrics = { workspace = true }
 reth-trie = { workspace = true }
-base-state = { workspace = true }
 reth-provider = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
+base-execution-state-memory = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, features = ["common"] }

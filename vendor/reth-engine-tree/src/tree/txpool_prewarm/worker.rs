@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_runtime::Evm;
 use base_execution_evm_runtime::database::State;
-use base_state::CachedReads;
+use base_execution_state_memory::CachedReads;
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,

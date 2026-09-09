@@ -4,12 +4,12 @@ use std::{
     vec::Vec,
 };
 
+use base_execution_state_memory::AccountInfo;
 use revm_bytecode::Bytecode;
 use revm_primitives::{
     Address, AddressMap, AddressSet, B256, B256Map, HashMap, KECCAK_EMPTY, StorageKey,
     StorageKeyMap, StorageValue, hash_map::Entry,
 };
-use revm_state::AccountInfo;
 
 use super::{
     AccountRevert, AccountStatus, BundleAccount, PlainStateReverts, RevertToSlot, StorageSlot,

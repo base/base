@@ -7,13 +7,15 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 
+pub use revm_bytecode as bytecode;
+pub use revm_bytecode::Bytecode;
 pub use revm_primitives as primitives;
-pub use revm_state as state;
+extern crate self as base_execution_state_memory;
 
-mod account;
-pub use account::{
-    Account, Bytecode, EIP7702_BYTECODE_ID, LEGACY_ANALYZED_BYTECODE_ID, LEGACY_RAW_BYTECODE_ID,
-    REMOVED_BYTECODE_ID,
+mod stored_account;
+pub use stored_account::{
+    EIP7702_BYTECODE_ID, LEGACY_ANALYZED_BYTECODE_ID, LEGACY_RAW_BYTECODE_ID, REMOVED_BYTECODE_ID,
+    StoredAccount, StoredBytecode,
 };
 
 mod database;
@@ -23,8 +25,8 @@ pub use database::{
     WrapDatabaseRef,
 };
 
-mod bal;
-pub use bal::{BalDatabase, BalState, EvmDatabaseError};
+mod bal_database;
+pub use bal_database::{BalDatabase, BalState, EvmDatabaseError};
 
 mod either;
 
@@ -48,3 +50,15 @@ pub use in_memory_db::{AccountState, BenchmarkDB, Cache, CacheDB, DbAccount, InM
 
 mod states;
 pub use states::*;
+
+mod account_info;
+pub use account_info::{AccountId, AccountInfo};
+
+mod types;
+pub use types::{EvmState, EvmStorage, TransientStorage};
+
+mod journal_account;
+pub use journal_account::{Account, EvmStorageSlot, JournalAccountStatus, TransactionId};
+
+/// Block access lists and state-change indexing.
+pub mod bal;

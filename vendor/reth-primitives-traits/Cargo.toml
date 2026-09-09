@@ -28,17 +28,19 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
-serde = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+base-execution-state-memory = {workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+base-common-types-rpc = { workspace = true, optional = true }
 once_cell = { workspace = true, features = ["critical-section"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
-quanta = { workspace = true, optional = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["k256"] }
 dashmap = { workspace = true, features = ["inline"], optional = true }
-proptest = { workspace = true, optional = true, features = ["default"] }
+quanta = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-base-common-types-chain = { workspace = true, features = ["k256"], optional = false}
+proptest = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = [
     "map-foldhash",
     "k256",
@@ -48,8 +50,7 @@ secp256k1 = { workspace = true, features = [
     "recovery",
     "recovery",
 ], optional = true }
-base-state = {workspace = true}
-base-common-types-rpc = { workspace = true, optional = true }
+
 [dev-dependencies]
 serde = { workspace = true }
 alloy-genesis = { workspace = true }
@@ -57,9 +58,9 @@ modular-bitfield = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"] }
-proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
 byteorder = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = [
@@ -74,6 +75,7 @@ secp256k1 = { workspace = true, features = [
     "global-context",
     "rand",
 ] }
+
 [lints]
 workspace = true
 
@@ -81,45 +83,40 @@ workspace = true
 arbitrary = [
     "base-common-types-chain/arbitrary",
     "std",
-    "base-common-types-chain/arbitrary",
     "alloy-primitives/arbitrary",
     "dep:arbitrary",
     "dep:proptest",
     "dep:proptest-arbitrary-interop",
     "alloy-eips/arbitrary",
-    "base-common-types-chain/arbitrary",
     "secp256k1?/global-context",
     "secp256k1?/rand",
     "alloy-trie/arbitrary",
     "base-common-types-rpc?/arbitrary",
     "dashmap?/arbitrary",
-    "base-state/arbitrary",
+    "base-execution-state-memory/arbitrary",
 ]
 dashmap = ["dep:dashmap"]
 default = ["std", "quanta"]
 quanta = ["std", "dep:quanta"]
 rayon = ["dep:rayon"]
-reth-codec = ["base-common-types-chain/reth", "base-state/reth-codec"]
+reth-codec = ["base-common-types-chain/reth", "base-execution-state-memory/reth-codec"]
 rpc-compat = ["base-common-types-rpc"]
 secp256k1 = ["base-common-types-chain/secp256k1"]
 serde = [
     "base-common-types-chain/serde",
     "dep:serde",
-    "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bytes/serde",
     "rand/serde",
-    "base-common-types-chain/serde",
     "secp256k1?/serde",
     "alloy-trie/serde",
     "rand_08/serde",
     "base-common-types-rpc?/serde",
     "dashmap?/serde",
-    "base-state/serde",
+    "base-execution-state-memory/serde",
 ]
 std = [
-    "base-common-types-chain/std",
     "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
@@ -133,6 +130,6 @@ std = [
     "alloy-trie/std",
     "serde_json/std",
     "base-common-types-rpc?/std",
-    "base-state/std",
+    "base-execution-state-memory/std",
 ]
-test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-state/test-utils"]
+test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-execution-state-memory/test-utils"]

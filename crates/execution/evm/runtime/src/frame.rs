@@ -10,12 +10,12 @@ use base_execution_evm_machine::{
     Cfg, ContextError, ContextTr, Database, FrameToken, FromStringError, JournalCheckpoint,
     JournalTr, JournaledAccountTr, OutFrame, take_error,
 };
+use base_execution_state_memory::Bytecode;
 use revm_primitives::{
     Address, Bytes, U256,
     constants::CALL_STACK_LIMIT,
     hardfork::SpecId::{self, HOMESTEAD, LONDON, SPURIOUS_DRAGON},
 };
-use revm_state::Bytecode;
 
 use crate::{
     CallFrame, CreateFrame, FrameData, FrameResult, ItemOrResult, PrecompileProvider,

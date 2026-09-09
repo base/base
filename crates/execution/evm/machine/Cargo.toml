@@ -24,13 +24,12 @@ rustdoc-args = [
 bitvec = { workspace = true }
 cfg-if = { workspace = true }
 either = { workspace = true }
-revm-state = {workspace = true}
 auto_impl = { workspace = true }
-base-state = { workspace = true }
 revm-bytecode = {workspace = true}
 derive-where = { workspace = true }
 alloy-eip2930 = { workspace = true }
 revm-primitives = {workspace = true}
+base-execution-state-memory = {workspace = true}
 alloy-eip7702 = { workspace = true, features = ["k256"] }
 serde = {features = ["derive", "rc"], optional = true, workspace = true}
 
@@ -57,7 +56,7 @@ dev = [
     "optional_priority_fee_check",
     "optional_fee_charge",
 ]
-map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]
+map-foldhash = ["revm-primitives/map-foldhash", "base-execution-state-memory/map-foldhash"]
 memory_limit = []
 optional_balance_check = []
 optional_block_gas_limit = []
@@ -70,9 +69,8 @@ optional_priority_fee_check = []
 serde = [
     "dep:serde",
     "revm-primitives/serde",
-    "revm-state/serde",
+    "base-execution-state-memory/serde",
     "revm-bytecode/serde",
-    "base-state/serde",
     "derive-where/serde",
     "bitvec/serde",
     "alloy-eip7702/serde",
@@ -82,9 +80,8 @@ serde = [
 std = [
     "serde?/std",
     "revm-bytecode/std",
-    "base-state/std",
+    "base-execution-state-memory/std",
     "revm-primitives/std",
-    "revm-state/std",
     "bitvec/std",
     "alloy-eip7702/std",
     "alloy-eip2930/std",

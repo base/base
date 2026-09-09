@@ -1,8 +1,8 @@
 use core::ops::Range;
 
 use base_execution_evm_machine::{ContextTr, LocalContextTr};
+use base_execution_state_memory::Bytecode;
 use revm_primitives::{Address, B256, Bytes, U256};
-use revm_state::Bytecode;
 
 /// Input enum for a call.
 ///

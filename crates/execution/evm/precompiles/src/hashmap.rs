@@ -4,8 +4,8 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_execution_evm_machine::gas::KECCAK256;
 use base_execution_evm_machine::gas::KECCAK256WORD;
 use base_execution_evm_machine::{GasParams, JournalCheckpoint};
-use revm_state::AccountInfo;
-use revm_state::Bytecode;
+use base_execution_state_memory::AccountInfo;
+use base_execution_state_memory::Bytecode;
 
 use crate::{
     error::BasePrecompileError,

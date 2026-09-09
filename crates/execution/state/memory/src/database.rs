@@ -2,8 +2,8 @@ use core::{cell::RefCell, convert::Infallible};
 use std::vec::Vec;
 
 use auto_impl::auto_impl;
+use base_execution_state_memory::{Account, AccountId, AccountInfo, Bytecode, TransactionId};
 use revm_primitives::{Address, AddressMap, B256, StorageKey, StorageValue, U256, address};
-use revm_state::{Account, AccountId, AccountInfo, Bytecode, TransactionId};
 
 use crate::ErasedError;
 

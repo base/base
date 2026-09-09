@@ -1,5 +1,5 @@
+use base_execution_state_memory::AccountInfo;
 use revm_primitives::{HashMap, StorageKey, StorageKeyMap, StorageValue};
-use revm_state::AccountInfo;
 
 use super::{
     AccountRevert, AccountStatus, RevertToSlot, StorageSlot, StorageWithOriginalValues,

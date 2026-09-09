@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
+use base_execution_state_memory::{AccountInfo, EvmStorage};
 use either::Either;
 use revm_bytecode::Bytecode;
 use revm_primitives::{B256, U256, hash_map};
-use revm_state::{AccountInfo, EvmStorage};
 
 use super::{AccountRevert, AccountStatus, BundleAccount, StorageSlot, StorageWithOriginalValues};
 

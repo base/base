@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, LogData, U256, address};
-use base_execution_evm_precompiles::{Handler, Mapping, Result};
 use base_execution_evm_macros::contract;
+use base_execution_evm_precompiles::{Handler, Mapping, Result};
 
 use crate::PolicyAccounting;
 
@@ -166,7 +166,7 @@ mod tests {
         BasePrecompileError, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
         StorageKey,
     };
-    use revm_state::Bytecode;
+    use base_execution_state_memory::Bytecode;
 
     use crate::{
         IPolicyRegistry::PolicyType,

@@ -2,8 +2,8 @@
 use core::{convert::Infallible, fmt, marker::PhantomData};
 use std::string::ToString;
 
+use base_execution_state_memory::{AccountInfo, Bytecode};
 use revm_primitives::{Address, B256, StorageKey, StorageValue, keccak256};
-use revm_state::{AccountInfo, Bytecode};
 
 use crate::{DBErrorMarker, Database, DatabaseRef};
 

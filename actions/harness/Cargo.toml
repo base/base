@@ -16,7 +16,6 @@ tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-state = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
@@ -35,6 +34,7 @@ base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-state-memory = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }

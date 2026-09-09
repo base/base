@@ -9,7 +9,7 @@ use base_execution_evm_machine::{
 };
 use base_execution_evm_runtime::NoOpInspector;
 use base_execution_evm_runtime::{DatabaseCommit, Inspector};
-pub use base_state::Database;
+pub use base_execution_state_memory::Database;
 
 use crate::{BlockEnvironment, EvmEnv, EvmError, IntoTxEnv, tracing::TxTracer};
 

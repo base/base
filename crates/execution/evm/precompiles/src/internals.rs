@@ -10,14 +10,14 @@ use base_execution_evm_machine::{
     Cfg, ContextTr, DBErrorMarker, InvalidTransaction, JournalCheckpoint, JournalLoadError,
     JournalTr, JournaledAccountTr, TransferError,
 };
+use base_execution_state_memory::Account;
+use base_execution_state_memory::AccountInfo;
+use base_execution_state_memory::Bytecode;
 use revm_primitives::StorageKey;
 use revm_primitives::StorageValue;
-use revm_state::Account;
-use revm_state::AccountInfo;
-use revm_state::Bytecode;
 
 use base_execution_evm_machine::BlockEnvironment;
-use base_state::Database;
+use base_execution_state_memory::Database;
 
 /// Erased error type.
 #[derive(thiserror::Error, Debug)]
@@ -385,7 +385,7 @@ trait EvmInternalsTr: Database<Error = ErasedError> {
 #[derive(Debug)]
 struct EvmInternalsImpl<'a, T>(&'a mut T);
 
-impl<T> base_state::Database for EvmInternalsImpl<'_, T>
+impl<T> base_execution_state_memory::Database for EvmInternalsImpl<'_, T>
 where
     T: JournalTr<Database: Database>,
 {

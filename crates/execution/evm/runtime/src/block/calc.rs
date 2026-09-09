@@ -56,7 +56,7 @@ pub fn base_block_reward_pre_merge(
 ///
 /// ```
 /// # use alloy_hardforks::EthereumChainHardforks;
-/// # use base_execution_evm_runtime::::{base_block_reward, block_reward};
+/// # use base_execution_evm_runtime::{base_block_reward, block_reward};
 /// # use base_common_types_chain::constants::ETH_TO_WEI;
 /// # use alloy_primitives::U256;
 /// #

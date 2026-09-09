@@ -5,10 +5,10 @@ use base_execution_evm_machine::{
     Context, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
 };
 use base_execution_evm_runtime::EvmMachine;
-use base_state::InMemoryDB;
+use base_execution_state_memory::InMemoryDB;
 
+use base_execution_state_memory::AccountInfo;
 use revm_primitives::{TxKind, U256, address, hardfork::SpecId};
-use revm_state::AccountInfo;
 
 use base_execution_evm_machine::{CallInputs, InstructionResult, InterpreterResult};
 use base_execution_evm_machine::{Cfg, ContextTr};

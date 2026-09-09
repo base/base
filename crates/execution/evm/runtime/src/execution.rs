@@ -8,8 +8,8 @@ use base_execution_evm_machine::{
     Cfg, ContextTr, Database, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccountTr,
     Transaction,
 };
+use base_execution_state_memory::Bytecode;
 use revm_primitives::TxKind;
-use revm_state::Bytecode;
 
 /// Creates the first [`FrameInput`] from the transaction and the
 /// transaction-level `gas`, forwarding all remaining regular gas and the

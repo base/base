@@ -12,7 +12,7 @@ use core::{cell::RefCell, fmt};
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
 use base_execution_evm_machine::JournalCheckpoint;
-use revm_state::Bytecode;
+use base_execution_state_memory::Bytecode;
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},

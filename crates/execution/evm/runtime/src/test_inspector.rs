@@ -107,11 +107,12 @@ impl<CTX> Inspector<CTX> for TestInspector {
 
         let state = Self::capture_interpreter_state(interp);
         let opcode = interp.bytecode.opcode();
-        let opcode_name = if let Some(op) = revm_state::bytecode::opcode::OpCode::new(opcode) {
-            format!("{op}")
-        } else {
-            format!("Unknown(0x{opcode:02x})")
-        };
+        let opcode_name =
+            if let Some(op) = base_execution_state_memory::bytecode::opcode::OpCode::new(opcode) {
+                format!("{op}")
+            } else {
+                format!("Unknown(0x{opcode:02x})")
+            };
 
         self.events.push(InspectorEvent::Step(StepRecord {
             before: state,
@@ -176,8 +177,8 @@ impl<CTX> Inspector<CTX> for TestInspector {
 pub mod default_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
+    use base_execution_state_memory::bytecode::opcode;
     use revm_primitives::Bytes;
-    use revm_state::bytecode::opcode;
 
     use super::*;
 
@@ -257,13 +258,13 @@ pub mod default_tests {
 mod tests {
     use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
     use base_execution_evm_runtime::{ExecuteEvm, MainBuilder, MainContext};
-    use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
+    use base_execution_state_memory::{AccountInfo, Bytecode, bytecode::opcode};
+    use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_primitives::{
         Address, B256, Bytes, TxKind, U256, address,
         eip7708::{ETH_TRANSFER_LOG_ADDRESS, ETH_TRANSFER_LOG_TOPIC},
         hardfork::SpecId,
     };
-    use revm_state::{AccountInfo, Bytecode, bytecode::opcode};
 
     use crate::{
         InspectCommitEvm, InspectEvm, InspectSystemCallEvm, InspectorEvent, TestInspector,
@@ -444,7 +445,7 @@ mod tests {
         ]);
 
         // Create a custom database with two contracts
-        let mut db = base_state::InMemoryDB::default();
+        let mut db = base_execution_state_memory::InMemoryDB::default();
 
         // Add caller contract at BENCH_TARGET
         db.insert_account_info(
@@ -951,7 +952,7 @@ mod tests {
     #[test]
     fn test_system_call_gas_consistency_with_reservoir() {
         use base_execution_evm_runtime::SystemCallEvm;
-        use base_state::{CacheDB, EmptyDB};
+        use base_execution_state_memory::{CacheDB, EmptyDB};
         use revm_primitives::hardfork::SpecId;
 
         let child_addr = address!("0x000000000000000000000000000000000000c0de");
@@ -1092,7 +1093,7 @@ mod tests {
     /// i.e. the drained state must be empty.
     #[test]
     fn test_inspect_tx_finalizes_journal_on_error() {
-        use base_state::{CacheDB, EmptyDB};
+        use base_execution_state_memory::{CacheDB, EmptyDB};
 
         // Caller account exists in the DB with nonce = 1.
         let mut db = CacheDB::<EmptyDB>::default();
@@ -1136,7 +1137,7 @@ mod tests {
     /// committed), so a subsequent drain yields an empty state.
     #[test]
     fn test_inspect_tx_commit_finalizes_journal_on_error() {
-        use base_state::{CacheDB, EmptyDB};
+        use base_execution_state_memory::{CacheDB, EmptyDB};
 
         let mut db = CacheDB::<EmptyDB>::default();
         db.insert_account_info(
@@ -1196,7 +1197,8 @@ mod tests {
         code: Vec<u8>,
         callee_code: Option<Bytecode>,
     ) -> Vec<(Address, Address, U256)> {
-        let mut db = base_state::CacheDB::<base_state::EmptyDB>::default();
+        let mut db =
+            base_execution_state_memory::CacheDB::<base_execution_state_memory::EmptyDB>::default();
         db.insert_account_info(
             BENCH_CALLER,
             AccountInfo { balance: U256::from(1_000_000_000u64), ..Default::default() },

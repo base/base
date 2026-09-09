@@ -6,11 +6,11 @@ use core::{
 };
 use std::sync::Arc;
 
-use revm_primitives::{Address, B256, StorageKey, StorageValue};
-use revm_state::{
+use base_execution_state_memory::{
     Account, AccountId, AccountInfo, Bytecode, EvmState,
     bal::{Bal, BalError, BlockAccessIndex, alloy::AlloyBal},
 };
+use revm_primitives::{Address, B256, StorageKey, StorageValue};
 
 use crate::{DBErrorMarker, Database, DatabaseCommit};
 
@@ -436,8 +436,8 @@ impl<DB: DatabaseCommit> DatabaseCommit for BalDatabase<DB> {
 
 #[cfg(test)]
 mod tests {
+    use base_execution_state_memory::bal::{AccountBal, BalWrites};
     use revm_primitives::U256;
-    use revm_state::bal::{AccountBal, BalWrites};
 
     use super::*;
 

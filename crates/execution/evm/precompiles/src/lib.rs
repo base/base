@@ -152,7 +152,7 @@ pub use registry::{
 mod internals;
 pub use internals::{ErasedError, EvmInternals, EvmInternalsError, TransactionTr};
 
-pub use revm_state::Bytecode;
+pub use base_execution_state_memory::Bytecode;
 
 #[cfg(feature = "std")]
 mod eip8130;

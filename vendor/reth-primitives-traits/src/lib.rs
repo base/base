@@ -125,7 +125,7 @@ pub use quanta::Instant as FastInstant;
 /// Common constants.
 pub mod constants;
 /// Minimal account
-pub use base_state::{Account, Bytecode};
+pub use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 pub use constants::gas_units::{format_gas, format_gas_throughput};
 
 pub mod receipt;

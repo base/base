@@ -1,24 +1,13 @@
-//! Account and storage state.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-#[cfg(not(feature = "std"))]
-extern crate alloc as std;
-
-mod account_info;
-pub mod bal;
-mod types;
+//! Transaction journal accounts, status flags, storage, and touch tracking.
 
 use std::boxed::Box;
 
-pub use account_info::{AccountId, AccountInfo};
+use crate::AccountInfo;
 use bitflags::bitflags;
 use nonmax::NonMaxU32;
-pub use revm_bytecode as bytecode;
-pub use revm_bytecode::Bytecode;
-pub use revm_primitives as primitives;
+
+use crate::EvmStorage;
 use revm_primitives::{HashMap, StorageKey, StorageValue, U256, hardfork::SpecId};
-pub use types::{EvmState, EvmStorage, TransientStorage};
 
 /// Transaction id used to track when account or storage slot was touched/loaded into the journal.
 ///
@@ -83,7 +72,7 @@ pub struct Account {
     /// Storage cache
     pub storage: EvmStorage,
     /// Account status flags
-    pub status: AccountStatus,
+    pub status: JournalAccountStatus,
 
     /// Original account info used by BAL, changed only on cold load by BAL.
     /// `None` means `Default::default()`, to avoid allocations.
@@ -105,7 +94,11 @@ impl Account {
     /// Creates new account and mark it as non existing.
     #[inline]
     pub fn new_not_existing(transaction_id: TransactionId) -> Self {
-        Self { transaction_id, status: AccountStatus::LoadedAsNotExisting, ..Default::default() }
+        Self {
+            transaction_id,
+            status: JournalAccountStatus::LoadedAsNotExisting,
+            ..Default::default()
+        }
     }
 
     /// Make changes to the caller account.
@@ -159,37 +152,37 @@ impl Account {
     /// Marks the account as self destructed.
     #[inline]
     pub fn mark_selfdestruct(&mut self) {
-        self.status |= AccountStatus::SelfDestructed;
+        self.status |= JournalAccountStatus::SelfDestructed;
     }
 
     /// Unmarks the account as self destructed.
     #[inline]
     pub fn unmark_selfdestruct(&mut self) {
-        self.status -= AccountStatus::SelfDestructed;
+        self.status -= JournalAccountStatus::SelfDestructed;
     }
 
     /// Is account marked for self destruct.
     #[inline]
     pub const fn is_selfdestructed(&self) -> bool {
-        self.status.contains(AccountStatus::SelfDestructed)
+        self.status.contains(JournalAccountStatus::SelfDestructed)
     }
 
     /// Marks the account as touched
     #[inline]
     pub fn mark_touch(&mut self) {
-        self.status |= AccountStatus::Touched;
+        self.status |= JournalAccountStatus::Touched;
     }
 
     /// Unmarks the touch flag.
     #[inline]
     pub fn unmark_touch(&mut self) {
-        self.status -= AccountStatus::Touched;
+        self.status -= JournalAccountStatus::Touched;
     }
 
     /// If account status is marked as touched.
     #[inline]
     pub const fn is_touched(&self) -> bool {
-        self.status.contains(AccountStatus::Touched)
+        self.status.contains(JournalAccountStatus::Touched)
     }
 
     /// Returns true if account info was changed.
@@ -203,33 +196,33 @@ impl Account {
     /// Marks the account as newly created.
     #[inline]
     pub fn mark_created(&mut self) {
-        self.status |= AccountStatus::Created;
+        self.status |= JournalAccountStatus::Created;
     }
 
     /// Unmarks the created flag.
     #[inline]
     pub fn unmark_created(&mut self) {
-        self.status -= AccountStatus::Created;
+        self.status -= JournalAccountStatus::Created;
     }
 
     /// Marks the account as cold.
     #[inline]
     pub fn mark_cold(&mut self) {
-        self.status |= AccountStatus::Cold;
+        self.status |= JournalAccountStatus::Cold;
     }
 
     /// Is account warm for given transaction id.
     #[inline]
     pub const fn is_cold_transaction_id(&self, transaction_id: TransactionId) -> bool {
         self.transaction_id.get() != transaction_id.get()
-            || self.status.contains(AccountStatus::Cold)
+            || self.status.contains(JournalAccountStatus::Cold)
     }
 
     /// Marks the account as warm and return true if it was previously cold.
     #[inline]
     pub fn mark_warm_with_transaction_id(&mut self, transaction_id: TransactionId) -> bool {
         let is_cold = self.is_cold_transaction_id(transaction_id);
-        self.status -= AccountStatus::Cold;
+        self.status -= JournalAccountStatus::Cold;
         self.transaction_id = transaction_id;
         is_cold
     }
@@ -237,13 +230,13 @@ impl Account {
     /// Is account locally created
     #[inline]
     pub const fn is_created_locally(&self) -> bool {
-        self.status.contains(AccountStatus::CreatedLocal)
+        self.status.contains(JournalAccountStatus::CreatedLocal)
     }
 
     /// Is account locally selfdestructed
     #[inline]
     pub const fn is_selfdestructed_locally(&self) -> bool {
-        self.status.contains(AccountStatus::SelfDestructedLocal)
+        self.status.contains(JournalAccountStatus::SelfDestructedLocal)
     }
 
     /// Selfdestruct the account by clearing its storage and resetting its account info
@@ -258,29 +251,32 @@ impl Account {
     /// Returns true if it is created globally for first time.
     #[inline]
     pub fn mark_created_locally(&mut self) -> bool {
-        self.mark_local_and_global(AccountStatus::CreatedLocal, AccountStatus::Created)
+        self.mark_local_and_global(
+            JournalAccountStatus::CreatedLocal,
+            JournalAccountStatus::Created,
+        )
     }
 
     /// Unmark account as locally created
     #[inline]
     pub fn unmark_created_locally(&mut self) {
-        self.status -= AccountStatus::CreatedLocal;
+        self.status -= JournalAccountStatus::CreatedLocal;
     }
 
     /// Mark account as locally and globally selfdestructed
     #[inline]
     pub fn mark_selfdestructed_locally(&mut self) -> bool {
         self.mark_local_and_global(
-            AccountStatus::SelfDestructedLocal,
-            AccountStatus::SelfDestructed,
+            JournalAccountStatus::SelfDestructedLocal,
+            JournalAccountStatus::SelfDestructed,
         )
     }
 
     #[inline]
     fn mark_local_and_global(
         &mut self,
-        local_flag: AccountStatus,
-        global_flag: AccountStatus,
+        local_flag: JournalAccountStatus,
+        global_flag: JournalAccountStatus,
     ) -> bool {
         self.status |= local_flag;
         let is_global_first_time = !self.status.contains(global_flag);
@@ -291,7 +287,7 @@ impl Account {
     /// Unmark account as locally selfdestructed
     #[inline]
     pub fn unmark_selfdestructed_locally(&mut self) {
-        self.status -= AccountStatus::SelfDestructedLocal;
+        self.status -= JournalAccountStatus::SelfDestructedLocal;
     }
 
     /// Is account loaded as not existing from database.
@@ -299,7 +295,7 @@ impl Account {
     /// This is needed for pre spurious dragon hardforks where
     /// existing and empty were two separate states.
     pub const fn is_loaded_as_not_existing(&self) -> bool {
-        self.status.contains(AccountStatus::LoadedAsNotExisting)
+        self.status.contains(JournalAccountStatus::LoadedAsNotExisting)
     }
 
     /// Is account loaded as not existing from database and not touched.
@@ -309,7 +305,7 @@ impl Account {
 
     /// Is account newly created in this transaction.
     pub const fn is_created(&self) -> bool {
-        self.status.contains(AccountStatus::Created)
+        self.status.contains(JournalAccountStatus::Created)
     }
 
     /// Is account empty, check if nonce and balance are zero and code is empty.
@@ -387,7 +383,7 @@ impl From<AccountInfo> for Account {
             original_info,
             transaction_id: TransactionId::ZERO,
             storage: HashMap::default(),
-            status: AccountStatus::empty(),
+            status: JournalAccountStatus::empty(),
         }
     }
 }
@@ -424,7 +420,7 @@ mod serde_impl {
         original_info: MaybeOriginalInfo,
         storage: EvmStorage,
         transaction_id: TransactionId,
-        status: AccountStatus,
+        status: JournalAccountStatus,
     }
 
     impl<'de> Deserialize<'de> for super::Account {
@@ -485,7 +481,7 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[cfg_attr(feature = "serde", serde(transparent))]
-    pub struct AccountStatus: u8 {
+    pub struct JournalAccountStatus: u8 {
         /// When account is newly created we will not access database
         /// to fetch storage values.
         const Created = 0b00000001;
@@ -508,17 +504,17 @@ bitflags! {
     }
 }
 
-impl AccountStatus {
+impl JournalAccountStatus {
     /// Returns true if the account status is touched.
     #[inline]
     pub const fn is_touched(&self) -> bool {
-        self.contains(AccountStatus::Touched)
+        self.contains(JournalAccountStatus::Touched)
     }
 }
 
-impl Default for AccountStatus {
+impl Default for JournalAccountStatus {
     fn default() -> Self {
-        AccountStatus::empty()
+        JournalAccountStatus::empty()
     }
 }
 
@@ -671,7 +667,7 @@ mod tests {
         let mut account = Account::default();
 
         // Account is not cold by default
-        assert!(!account.status.contains(crate::AccountStatus::Cold));
+        assert!(!account.status.contains(crate::JournalAccountStatus::Cold));
 
         // When marking warm account as warm again, it should return false
         assert!(!account.mark_warm_with_transaction_id(TransactionId::ZERO));
@@ -680,7 +676,7 @@ mod tests {
         account.mark_cold();
 
         // Account is cold
-        assert!(account.status.contains(crate::AccountStatus::Cold));
+        assert!(account.status.contains(crate::JournalAccountStatus::Cold));
 
         // When marking cold account as warm, it should return true
         assert!(account.mark_warm_with_transaction_id(TransactionId::ZERO));
@@ -693,7 +689,7 @@ mod tests {
 
         assert_eq!(account.info, info);
         assert_eq!(account.storage, HashMap::default());
-        assert_eq!(account.status, AccountStatus::empty());
+        assert_eq!(account.status, JournalAccountStatus::empty());
     }
 
     #[test]
@@ -798,7 +794,7 @@ mod tests {
     fn test_account_with_cold_mark() {
         let account = Account::default().with_cold_mark();
 
-        assert!(account.status.contains(AccountStatus::Cold));
+        assert!(account.status.contains(JournalAccountStatus::Cold));
     }
 
     #[test]
@@ -828,18 +824,18 @@ mod tests {
     fn test_account_with_warm_mark() {
         // Start with a cold account
         let cold_account = Account::default().with_cold_mark();
-        assert!(cold_account.status.contains(AccountStatus::Cold));
+        assert!(cold_account.status.contains(JournalAccountStatus::Cold));
 
         // Use with_warm_mark to warm it
         let (warm_account, was_cold) = cold_account.with_warm_mark(TransactionId::ZERO);
 
         // Check that it's now warm and previously was cold
-        assert!(!warm_account.status.contains(AccountStatus::Cold));
+        assert!(!warm_account.status.contains(JournalAccountStatus::Cold));
         assert!(was_cold);
 
         // Try with an already warm account
         let (still_warm_account, was_cold) = warm_account.with_warm_mark(TransactionId::ZERO);
-        assert!(!still_warm_account.status.contains(AccountStatus::Cold));
+        assert!(!still_warm_account.status.contains(JournalAccountStatus::Cold));
         assert!(!was_cold);
     }
 
@@ -847,13 +843,13 @@ mod tests {
     fn test_account_with_warm() {
         // Start with a cold account
         let cold_account = Account::default().with_cold_mark();
-        assert!(cold_account.status.contains(AccountStatus::Cold));
+        assert!(cold_account.status.contains(JournalAccountStatus::Cold));
 
         // Use with_warm to warm it
         let warm_account = cold_account.with_warm(TransactionId::ZERO);
 
         // Check that it's now warm
-        assert!(!warm_account.status.contains(AccountStatus::Cold));
+        assert!(!warm_account.status.contains(JournalAccountStatus::Cold));
     }
 
     #[test]
@@ -879,7 +875,7 @@ mod tests {
         assert_eq!(account.storage.get(&slot_key), Some(&slot_value));
         assert!(account.is_created());
         assert!(account.is_touched());
-        assert!(!account.status.contains(AccountStatus::Cold));
+        assert!(!account.status.contains(JournalAccountStatus::Cold));
     }
 
     #[test]

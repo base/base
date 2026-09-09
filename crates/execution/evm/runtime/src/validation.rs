@@ -319,10 +319,10 @@ mod tests {
         Context, ContextTr, EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output,
         TxEnv,
     };
-    use base_state::{CacheDB, EmptyDB};
+    use base_execution_state_memory::{AccountInfo, Bytecode};
+    use base_execution_state_memory::{CacheDB, EmptyDB};
     use revm_bytecode::opcode;
     use revm_primitives::{B256, Bytes, TxKind, address, eip3860, eip7954, hardfork::SpecId};
-    use revm_state::{AccountInfo, Bytecode};
 
     use crate::{ExecuteCommitEvm, MainBuilder, MainContext, execution_api::ExecuteEvm};
 

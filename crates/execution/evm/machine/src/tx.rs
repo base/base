@@ -6,7 +6,7 @@ use base_execution_evm_machine::{
     AccessList, AccessListItem, Authorization, RecoveredAuthority, RecoveredAuthorization,
     SignedAuthorization, Transaction, either::Either,
 };
-use base_state::{BENCH_CALLER, BENCH_TARGET};
+use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET};
 use revm_primitives::{Address, B256, Bytes, TxKind, U256, eip7825};
 
 use crate::TransactionType;

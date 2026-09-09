@@ -14,9 +14,9 @@ use base_execution_evm_blocks::CancelOnDrop;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
+use base_execution_state_memory::CachedReads;
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::TransactionPool;
-use base_state::CachedReads;
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;

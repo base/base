@@ -2,11 +2,11 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::TrieAccount;
 use base_common_types_chain::{InMemorySize, constants::KECCAK_EMPTY};
+use base_execution_state_memory::AccountInfo;
 #[cfg(feature = "reth-codec")]
 use bytes::Buf;
 use derive_more::Deref;
 use revm_bytecode::{Bytecode as RevmBytecode, BytecodeDecodeError};
-use revm_state::AccountInfo;
 
 /// Identifier for legacy raw bytecode in the persisted encoding.
 pub const LEGACY_RAW_BYTECODE_ID: u8 = 0;
@@ -23,16 +23,16 @@ pub const EIP7702_BYTECODE_ID: u8 = 4;
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "reth-codec", derive(base_common_types_chain::Compact))]
 #[cfg_attr(feature = "reth-codec", base_common_types_chain::add_arbitrary_tests(compact))]
-pub struct Account {
-    /// Account nonce.
+pub struct StoredAccount {
+    /// StoredAccount nonce.
     pub nonce: u64,
-    /// Account balance.
+    /// StoredAccount balance.
     pub balance: U256,
     /// Hash of the account's bytecode.
     pub bytecode_hash: Option<B256>,
 }
 
-impl Account {
+impl StoredAccount {
     /// Whether the account has bytecode.
     #[inline]
     pub const fn has_bytecode(&self) -> bool {
@@ -67,8 +67,8 @@ impl Account {
         }
     }
 
-    /// Extracts the account information from a [`revm_state::Account`]
-    pub fn from_revm_account(revm_account: &revm_state::Account) -> Self {
+    /// Extracts the account information from a [`base_execution_state_memory::Account`]
+    pub fn from_revm_account(revm_account: &base_execution_state_memory::Account) -> Self {
         Self {
             balance: revm_account.info.balance,
             nonce: revm_account.info.nonce,
@@ -81,14 +81,14 @@ impl Account {
     }
 }
 
-impl From<revm_state::Account> for Account {
+impl From<base_execution_state_memory::Account> for StoredAccount {
     #[inline]
-    fn from(value: revm_state::Account) -> Self {
+    fn from(value: base_execution_state_memory::Account) -> Self {
         Self::from_revm_account(&value)
     }
 }
 
-impl From<TrieAccount> for Account {
+impl From<TrieAccount> for StoredAccount {
     #[inline]
     fn from(value: TrieAccount) -> Self {
         Self {
@@ -99,7 +99,7 @@ impl From<TrieAccount> for Account {
     }
 }
 
-impl InMemorySize for Account {
+impl InMemorySize for StoredAccount {
     #[inline]
     fn size(&self) -> usize {
         size_of::<Self>()
@@ -107,16 +107,16 @@ impl InMemorySize for Account {
 }
 
 #[cfg(feature = "reth-codec")]
-base_common_types_chain::impl_compression_for_compact!(Account);
+base_common_types_chain::impl_compression_for_compact!(StoredAccount);
 
-/// Bytecode for an account.
+/// StoredBytecode for an account.
 ///
 /// A wrapper around [`base_execution_evm_runtime::primitives::Bytecode`][RevmBytecode] with encoding/decoding support.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deref)]
-pub struct Bytecode(pub RevmBytecode);
+pub struct StoredBytecode(pub RevmBytecode);
 
-impl Bytecode {
+impl StoredBytecode {
     /// Create new bytecode from raw bytes.
     ///
     /// No analysis will be performed.
@@ -131,7 +131,7 @@ impl Bytecode {
 
     /// Creates a new raw [`revm_bytecode::Bytecode`].
     ///
-    /// Returns an error on incorrect Bytecode format.
+    /// Returns an error on incorrect StoredBytecode format.
     #[inline]
     pub fn new_raw_checked(bytecode: Bytes) -> Result<Self, BytecodeDecodeError> {
         RevmBytecode::new_raw_checked(bytecode).map(Self)
@@ -139,7 +139,7 @@ impl Bytecode {
 }
 
 #[cfg(feature = "reth-codec")]
-impl base_common_types_chain::Compact for Bytecode {
+impl base_common_types_chain::Compact for StoredBytecode {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -176,7 +176,7 @@ impl base_common_types_chain::Compact for Bytecode {
         let decoded = match variant {
             LEGACY_RAW_BYTECODE_ID => Self(RevmBytecode::new_raw(bytes)),
             REMOVED_BYTECODE_ID => {
-                unreachable!("Junk data in database: checked Bytecode variant was removed")
+                unreachable!("Junk data in database: checked StoredBytecode variant was removed")
             }
             LEGACY_ANALYZED_BYTECODE_ID => {
                 let original_len = buf.get_u64() as usize;
@@ -204,16 +204,16 @@ impl base_common_types_chain::Compact for Bytecode {
                 // EIP-7702 bytecode objects will be decoded from the raw bytecode
                 Self(RevmBytecode::new_raw(bytes))
             }
-            _ => unreachable!("Junk data in database: unknown Bytecode variant"),
+            _ => unreachable!("Junk data in database: unknown StoredBytecode variant"),
         };
         (decoded, &[])
     }
 }
 
 #[cfg(feature = "reth-codec")]
-base_common_types_chain::impl_compression_for_compact!(Bytecode);
+base_common_types_chain::impl_compression_for_compact!(StoredBytecode);
 
-impl From<&GenesisAccount> for Account {
+impl From<&GenesisAccount> for StoredAccount {
     fn from(value: &GenesisAccount) -> Self {
         Self {
             nonce: value.nonce.unwrap_or_default(),
@@ -223,7 +223,7 @@ impl From<&GenesisAccount> for Account {
     }
 }
 
-impl From<AccountInfo> for Account {
+impl From<AccountInfo> for StoredAccount {
     fn from(revm_acc: AccountInfo) -> Self {
         Self {
             balance: revm_acc.balance,
@@ -233,7 +233,7 @@ impl From<AccountInfo> for Account {
     }
 }
 
-impl From<&AccountInfo> for Account {
+impl From<&AccountInfo> for StoredAccount {
     fn from(revm_acc: &AccountInfo) -> Self {
         Self {
             balance: revm_acc.balance,
@@ -243,8 +243,8 @@ impl From<&AccountInfo> for Account {
     }
 }
 
-impl From<Account> for AccountInfo {
-    fn from(reth_acc: Account) -> Self {
+impl From<StoredAccount> for AccountInfo {
+    fn from(reth_acc: StoredAccount) -> Self {
         Self {
             balance: reth_acc.balance,
             nonce: reth_acc.nonce,
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn test_account() {
         let mut buf = vec![];
-        let mut acc = Account::default();
+        let mut acc = StoredAccount::default();
         let len = acc.to_compact(&mut buf);
         assert_eq!(len, 2);
 
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_empty_account() {
-        let mut acc = Account { nonce: 0, balance: U256::ZERO, bytecode_hash: None };
+        let mut acc = StoredAccount { nonce: 0, balance: U256::ZERO, bytecode_hash: None };
         // Nonce 0, balance 0, and bytecode hash set to None is considered empty.
         assert!(acc.is_empty());
 
@@ -308,18 +308,18 @@ mod tests {
     #[ignore]
     fn test_bytecode() {
         let mut buf = vec![];
-        let bytecode = Bytecode::new_raw(Bytes::default());
+        let bytecode = StoredBytecode::new_raw(Bytes::default());
         let len = bytecode.to_compact(&mut buf);
         assert_eq!(len, 14);
 
         let mut buf = vec![];
-        let bytecode = Bytecode::new_raw(Bytes::from(&hex!("ffff")));
+        let bytecode = StoredBytecode::new_raw(Bytes::from(&hex!("ffff")));
         let len = bytecode.to_compact(&mut buf);
         assert_eq!(len, 17);
 
         let mut buf = vec![];
         // SAFETY: hand-crafted analyzed bytecode used purely for round-trip testing.
-        let bytecode = Bytecode(unsafe {
+        let bytecode = StoredBytecode(unsafe {
             RevmBytecode::new_analyzed(
                 Bytes::from(&hex!("ff00")),
                 2,
@@ -329,50 +329,60 @@ mod tests {
         let len = bytecode.to_compact(&mut buf);
         assert_eq!(len, 16);
 
-        let (decoded, remainder) = Bytecode::from_compact(&buf, len);
+        let (decoded, remainder) = StoredBytecode::from_compact(&buf, len);
         assert_eq!(decoded, bytecode);
         assert!(remainder.is_empty());
     }
 
     #[test]
     fn test_account_has_bytecode() {
-        // Account with no bytecode (None)
-        let acc_no_bytecode = Account { nonce: 1, balance: U256::from(1000), bytecode_hash: None };
-        assert!(!acc_no_bytecode.has_bytecode(), "Account should not have bytecode");
+        // StoredAccount with no bytecode (None)
+        let acc_no_bytecode =
+            StoredAccount { nonce: 1, balance: U256::from(1000), bytecode_hash: None };
+        assert!(!acc_no_bytecode.has_bytecode(), "StoredAccount should not have bytecode");
 
-        // Account with bytecode hash set to KECCAK_EMPTY (should have bytecode)
-        let acc_empty_bytecode =
-            Account { nonce: 1, balance: U256::from(1000), bytecode_hash: Some(KECCAK_EMPTY) };
-        assert!(acc_empty_bytecode.has_bytecode(), "Account should have bytecode");
+        // StoredAccount with bytecode hash set to KECCAK_EMPTY (should have bytecode)
+        let acc_empty_bytecode = StoredAccount {
+            nonce: 1,
+            balance: U256::from(1000),
+            bytecode_hash: Some(KECCAK_EMPTY),
+        };
+        assert!(acc_empty_bytecode.has_bytecode(), "StoredAccount should have bytecode");
 
-        // Account with a non-empty bytecode hash
-        let acc_with_bytecode = Account {
+        // StoredAccount with a non-empty bytecode hash
+        let acc_with_bytecode = StoredAccount {
             nonce: 1,
             balance: U256::from(1000),
             bytecode_hash: Some(B256::from_slice(&[0x11u8; 32])),
         };
-        assert!(acc_with_bytecode.has_bytecode(), "Account should have bytecode");
+        assert!(acc_with_bytecode.has_bytecode(), "StoredAccount should have bytecode");
     }
 
     #[test]
     fn test_account_get_bytecode_hash() {
-        // Account with no bytecode (should return KECCAK_EMPTY)
-        let acc_no_bytecode = Account { nonce: 0, balance: U256::ZERO, bytecode_hash: None };
+        // StoredAccount with no bytecode (should return KECCAK_EMPTY)
+        let acc_no_bytecode = StoredAccount { nonce: 0, balance: U256::ZERO, bytecode_hash: None };
         assert_eq!(acc_no_bytecode.get_bytecode_hash(), KECCAK_EMPTY, "Should return KECCAK_EMPTY");
 
-        // Account with bytecode hash set to KECCAK_EMPTY
-        let acc_empty_bytecode =
-            Account { nonce: 1, balance: U256::from(1000), bytecode_hash: Some(KECCAK_EMPTY) };
+        // StoredAccount with bytecode hash set to KECCAK_EMPTY
+        let acc_empty_bytecode = StoredAccount {
+            nonce: 1,
+            balance: U256::from(1000),
+            bytecode_hash: Some(KECCAK_EMPTY),
+        };
         assert_eq!(
             acc_empty_bytecode.get_bytecode_hash(),
             KECCAK_EMPTY,
             "Should return KECCAK_EMPTY"
         );
 
-        // Account with a valid bytecode hash
+        // StoredAccount with a valid bytecode hash
         let bytecode_hash = B256::from_slice(&[0x11u8; 32]);
-        let acc_with_bytecode =
-            Account { nonce: 1, balance: U256::from(1000), bytecode_hash: Some(bytecode_hash) };
+        let acc_with_bytecode = StoredAccount {
+            nonce: 1,
+            balance: U256::from(1000),
+            bytecode_hash: Some(bytecode_hash),
+        };
         assert_eq!(
             acc_with_bytecode.get_bytecode_hash(),
             bytecode_hash,

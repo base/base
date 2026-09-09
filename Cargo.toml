@@ -53,7 +53,7 @@ members = [
   "crates/execution/evm/precompiles",
   "crates/common/types/rpc",
   "crates/common/types/payload",
-  "crates/common/state",
+  "crates/execution/state/memory",
   "crates/consensus/cli",
   "crates/consensus/derive",
   "crates/consensus/disc",
@@ -208,7 +208,6 @@ members = [
   "vendor/revm-inspectors",
   "vendor/revm-precompile",
   "vendor/revm-primitives",
-  "vendor/revm-state",
 ]
 default-members = [
   "bin/audit-archiver",
@@ -445,13 +444,12 @@ base-upgrade-signal = { path = "crates/utilities/upgrade-signal", default-featur
 base-balance-monitor = { path = "crates/utilities/balance-monitor", default-features = false }
 
 # revm
-revm-state = { path = "vendor/revm-state", default-features = false }
 base-execution-evm-machine = { path = "crates/execution/evm/machine", default-features = false }
 revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
 revm-precompile = { path = "vendor/revm-precompile", default-features = false }
 revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
 revm-primitives = { path = "vendor/revm-primitives", default-features = false }
-base-state = { path = "crates/common/state", default-features = false }
+base-execution-state-memory = { path = "crates/execution/state/memory", default-features = false }
 
 # alloy
 alloy-rlp = { version = "=0.3.16", default-features = false }

@@ -1,8 +1,8 @@
 use std::{borrow::Cow, vec::Vec};
 
+use base_execution_state_memory::{Account, AccountInfo, EvmStorage};
 use revm_bytecode::Bytecode;
 use revm_primitives::{Address, AddressMap, B256Map, HashMap, hash_map};
-use revm_state::{Account, AccountInfo, EvmStorage};
 
 use super::{
     CacheAccount, PlainAccount, plain_account::PlainStorage, transition_account::TransitionAccount,

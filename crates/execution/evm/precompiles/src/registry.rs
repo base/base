@@ -26,7 +26,7 @@ use revm_precompile::PrecompileResult;
 use revm_precompile::Precompiles;
 
 use crate::EvmInternals;
-use base_state::Database;
+use base_execution_state_memory::Database;
 
 /// Returns whether the given [`PrecompileId`] supports caching.
 ///
@@ -991,7 +991,7 @@ impl core::error::Error for MovePrecompileError {}
 mod tests {
     use alloy_primitives::{Bytes, address};
     use base_execution_evm_machine::BlockEnv;
-    use base_state::EmptyDB;
+    use base_execution_state_memory::EmptyDB;
     use revm_precompile::PrecompileId;
     use revm_precompile::PrecompileOutput;
     use revm_primitives::hardfork::SpecId;

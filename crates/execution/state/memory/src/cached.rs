@@ -5,8 +5,8 @@ use alloy_primitives::{
     Address, B256, U256,
     map::{AddressMap, B256Map, Entry, HashMap, U256Map},
 };
+use base_execution_state_memory::AccountInfo;
 use revm_bytecode::Bytecode;
-use revm_state::AccountInfo;
 
 use crate::{Database, DatabaseRef};
 
@@ -21,7 +21,7 @@ use crate::{Database, DatabaseRef};
 /// # Example
 ///
 /// ```
-/// use base_state::{CachedReads, Database, DatabaseRef};
+/// use base_execution_state_memory::{CachedReads, Database, DatabaseRef};
 /// use alloy_primitives::Address;
 ///
 /// fn build_payload<DB: DatabaseRef>(db: DB) {

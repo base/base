@@ -28,8 +28,8 @@ reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
-base-state = { workspace = true }
 base-testing-support = { workspace = true }
+base-execution-state-memory = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }

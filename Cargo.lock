@@ -2255,10 +2255,10 @@ dependencies = [
  "base-execution-evm-blocks",
  "base-execution-evm-precompiles",
  "base-execution-payload-builder",
+ "base-execution-state-memory",
  "base-execution-txpool",
  "base-protocol",
  "base-runtime",
- "base-state",
  "base-testing-support",
  "base-tx-manager",
  "eyre",
@@ -3344,14 +3344,13 @@ dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
  "auto_impl",
- "base-state",
+ "base-execution-state-memory",
  "bitvec",
  "cfg-if",
  "derive-where",
  "either",
  "revm-bytecode",
  "revm-primitives",
- "revm-state",
  "serde",
  "serde_json",
 ]
@@ -3377,7 +3376,7 @@ dependencies = [
  "base-common-types-chain",
  "base-execution-evm-machine",
  "base-execution-evm-macros",
- "base-state",
+ "base-execution-state-memory",
  "base64 0.22.1",
  "criterion",
  "derive_more",
@@ -3386,7 +3385,6 @@ dependencies = [
  "proptest",
  "revm-precompile",
  "revm-primitives",
- "revm-state",
  "rstest",
  "sha2 0.10.9",
  "thiserror 2.0.19",
@@ -3411,8 +3409,8 @@ dependencies = [
  "base-common-types-rpc",
  "base-execution-evm-machine",
  "base-execution-evm-precompiles",
+ "base-execution-state-memory",
  "base-metrics",
- "base-state",
  "derive_more",
  "either",
  "k256",
@@ -3420,7 +3418,6 @@ dependencies = [
  "revm-bytecode",
  "revm-precompile",
  "revm-primitives",
- "revm-state",
  "rstest",
  "serde",
  "serde_json",
@@ -3470,12 +3467,12 @@ dependencies = [
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-payload-types",
+ "base-execution-state-memory",
  "base-execution-trie",
  "base-execution-txpool",
  "base-metrics",
  "base-observability-events",
  "base-protocol",
- "base-state",
  "derive_more",
  "futures-core",
  "futures-util",
@@ -3608,6 +3605,33 @@ dependencies = [
  "tokio-stream",
  "tower",
  "tracing",
+]
+
+[[package]]
+name = "base-execution-state-memory"
+version = "0.0.0"
+dependencies = [
+ "alloy-eip7928",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-trie",
+ "arbitrary",
+ "auto_impl",
+ "base-common-types-chain",
+ "bitflags 2.13.1",
+ "bytes",
+ "derive_more",
+ "either",
+ "mockall",
+ "modular-bitfield",
+ "nonmax",
+ "proptest",
+ "proptest-arbitrary-interop",
+ "revm-bytecode",
+ "revm-primitives",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -4833,31 +4857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-state"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis",
- "alloy-primitives",
- "alloy-trie",
- "arbitrary",
- "auto_impl",
- "base-common-types-chain",
- "bytes",
- "derive_more",
- "either",
- "mockall",
- "modular-bitfield",
- "proptest",
- "proptest-arbitrary-interop",
- "revm-bytecode",
- "revm-primitives",
- "revm-state",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "base-system-tests"
 version = "0.0.0"
 dependencies = [
@@ -5116,11 +5115,11 @@ dependencies = [
  "alloy-primitives",
  "base-common-types-chain",
  "base-common-types-payload",
+ "base-execution-state-memory",
  "base-execution-txpool",
  "base-metrics",
  "base-node-runner",
  "base-observability-events",
- "base-state",
  "base-testing-support",
  "chrono",
  "derive_more",
@@ -14066,8 +14065,8 @@ dependencies = [
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
  "base-execution-payload-types",
+ "base-execution-state-memory",
  "base-execution-trie",
- "base-state",
  "crossbeam-channel",
  "derive_more",
  "eyre",
@@ -14222,7 +14221,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "base-execution-evm-runtime",
- "base-state",
+ "base-execution-state-memory",
  "fixed-cache",
  "metrics",
  "parking_lot",
@@ -14751,7 +14750,7 @@ dependencies = [
  "arbitrary",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-state",
+ "base-execution-state-memory",
  "byteorder",
  "bytes",
  "dashmap",
@@ -15488,19 +15487,6 @@ dependencies = [
  "alloy-primitives",
  "once_cell",
  "serde",
-]
-
-[[package]]
-name = "revm-state"
-version = "0.0.0"
-dependencies = [
- "alloy-eip7928",
- "bitflags 2.13.1",
- "nonmax",
- "revm-bytecode",
- "revm-primitives",
- "serde",
- "serde_json",
 ]
 
 [[package]]

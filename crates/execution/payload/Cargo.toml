@@ -17,7 +17,6 @@ metrics = { workspace = true  }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-state = { workspace = true }
 reth-tasks = { workspace = true }
 serde_json = { workspace = true }
 base-bundles = { workspace = true }
@@ -35,6 +34,7 @@ base-execution-evm-runtime = {workspace = true}
 base-observability-events = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 base-execution-evm-machine = { workspace = true }
+base-execution-state-memory = { workspace = true }
 derive_more = { workspace = true, features = ["full"]}
 tracing = { workspace = true, features = ["attributes"]}
 tokio = { workspace = true, features = ["sync", "time"] }

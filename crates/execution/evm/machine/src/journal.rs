@@ -11,14 +11,14 @@ use base_execution_evm_machine::{
     AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccount,
     SStoreResult, SelfDestructResult, StateLoad, TransferError,
 };
-use base_state::Database;
+use base_execution_state_memory::Database;
+use base_execution_state_memory::{Account, EvmState};
 pub use inner::{JournalCfg, JournalInner};
 use revm_bytecode::Bytecode;
 use revm_primitives::{
     Address, AddressMap, AddressSet, B256, HashSet, Log, StorageKey, StorageValue, U256,
     hardfork::SpecId,
 };
-use revm_state::{Account, EvmState};
 pub use warm_addresses::*;
 
 /// A journal of state changes internal to the EVM

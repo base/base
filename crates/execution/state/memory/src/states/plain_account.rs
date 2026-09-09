@@ -1,5 +1,5 @@
+use base_execution_state_memory::{AccountInfo, EvmStorageSlot};
 use revm_primitives::{HashMap, StorageKeyMap, StorageValue};
-use revm_state::{AccountInfo, EvmStorageSlot};
 
 /// Plain account of StateDatabase.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -414,7 +414,7 @@ struct OverlayPrecompileStorage<'a> {
     inner: StateProviderPrecompileStorage<'a>,
     storage: BTreeMap<(Address, U256), U256>,
     transient: BTreeMap<(Address, U256), U256>,
-    /// First base-state value read from each slot during authorization.
+    /// First base-execution-state-memory value read from each slot during authorization.
     reads: BTreeMap<(Address, U256), U256>,
     code_reads: BTreeSet<Address>,
 }
@@ -3773,7 +3773,7 @@ mod tests {
             assert_eq!(
                 read.expected,
                 U256::ZERO,
-                "overlay-buffered writes must not become base-state dependencies"
+                "overlay-buffered writes must not become base-execution-state-memory dependencies"
             );
             assert!(
                 state.watch_set.contains(&InvalidationKey::Slot {

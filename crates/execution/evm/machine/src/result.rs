@@ -10,9 +10,9 @@
 use core::fmt::{self, Debug};
 use std::{borrow::Cow, boxed::Box, string::String, sync::Arc, vec::Vec};
 
-use base_state::DBErrorMarker;
+use base_execution_state_memory::DBErrorMarker;
+use base_execution_state_memory::EvmState;
 use revm_primitives::{Address, Bytes, Log, U256};
-use revm_state::EvmState;
 
 use crate::{context::ContextError, transaction::TransactionError};
 
@@ -999,9 +999,9 @@ impl fmt::Display for InvalidHeader {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SuccessReason {
-    /// Stop [`revm_state::bytecode::opcode::STOP`] opcode.
+    /// Stop [`base_execution_state_memory::bytecode::opcode::STOP`] opcode.
     Stop,
-    /// Return [`revm_state::bytecode::opcode::RETURN`] opcode.
+    /// Return [`base_execution_state_memory::bytecode::opcode::RETURN`] opcode.
     Return,
     /// Self destruct opcode.
     SelfDestruct,
@@ -1037,7 +1037,7 @@ pub enum HaltReason {
     StackUnderflow,
     /// Attempting to push a value onto a full stack.
     StackOverflow,
-    /// Invalid memory or storage offset for [`revm_state::bytecode::opcode::RETURNDATACOPY`].
+    /// Invalid memory or storage offset for [`base_execution_state_memory::bytecode::opcode::RETURNDATACOPY`].
     OutOfOffset,
     /// Address collision during contract creation.
     CreateCollision,

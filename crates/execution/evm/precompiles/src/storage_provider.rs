@@ -8,8 +8,8 @@ use alloy_primitives::{Address, B256, KECCAK256_EMPTY, LogData, U256, keccak256}
 use base_execution_evm_machine::JournalCheckpoint;
 use base_execution_evm_machine::gas::KECCAK256;
 use base_execution_evm_machine::gas::KECCAK256WORD;
-use revm_state::AccountInfo;
-use revm_state::Bytecode;
+use base_execution_state_memory::AccountInfo;
+use base_execution_state_memory::Bytecode;
 
 use crate::error::{BasePrecompileError, Result};
 

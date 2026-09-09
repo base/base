@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256, address, b256};
-use base_execution_evm_precompiles::Result;
 use base_execution_evm_macros::contract;
+use base_execution_evm_precompiles::Result;
 
 use crate::{B20_MAX_SUPPLY_CAP, B20Variant};
 
@@ -42,7 +42,7 @@ impl<'a> B20FactoryStorage<'a> {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, address, keccak256};
     use base_execution_evm_precompiles::{HashMapStorageProvider, StorageCtx};
-    use revm_state::Bytecode;
+    use base_execution_state_memory::Bytecode;
 
     use super::FACTORY_MARKER_CODE_HASH;
     use crate::{B20FactoryStorage, B20Variant};

@@ -1,6 +1,6 @@
 //! Captured authorization read-set for stateless intra-block revalidation.
 //!
-//! EIP-8130 validation snapshots every base-state storage slot read by the
+//! EIP-8130 validation snapshots every base-execution-state-memory storage slot read by the
 //! authorizer, together with its value. A [`WatchManifest`] carries that exact
 //! read-set plus payer-balance and expiry predicates to the payload builder,
 //! where stale transactions can be dropped before execution without repeating
@@ -76,7 +76,7 @@ impl WatchManifest {
         self.effective_expiry
     }
 
-    /// Returns whether authorization read no base-state storage slots.
+    /// Returns whether authorization read no base-execution-state-memory storage slots.
     #[must_use]
     pub const fn has_no_config_slots(&self) -> bool {
         self.config_slots.is_empty()

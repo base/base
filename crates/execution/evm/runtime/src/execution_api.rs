@@ -7,8 +7,8 @@ use base_execution_evm_machine::{
     HaltReason, InvalidTransaction, JournalTr, ResultAndState, ResultVecAndState, Transaction,
     TransactionIndexedError,
 };
-use base_state::DatabaseCommit;
-use revm_state::EvmState;
+use base_execution_state_memory::DatabaseCommit;
+use base_execution_state_memory::EvmState;
 
 use crate::{Handler, MainnetHandler, PrecompileProvider};
 

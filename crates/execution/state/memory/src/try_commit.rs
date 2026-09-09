@@ -2,8 +2,8 @@
 use core::{convert::Infallible, error::Error, fmt};
 use std::sync::Arc;
 
+use base_execution_state_memory::Account;
 use revm_primitives::AddressMap;
-use revm_state::Account;
 
 use crate::DatabaseCommit;
 

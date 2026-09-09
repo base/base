@@ -5,11 +5,11 @@ use crate::{
     BENCH_CALLER, BENCH_CALLER_BALANCE, BENCH_TARGET, BENCH_TARGET_BALANCE, Database,
     DatabaseCommit, DatabaseRef, EmptyDB,
 };
+use base_execution_state_memory::{Account, AccountInfo, Bytecode};
 use revm_primitives::{
     Address, AddressMap, B256, B256Map, HashMap, KECCAK_EMPTY, Log, StorageKey, StorageKeyMap,
     StorageValue, U256, U256Map, hash_map::Entry,
 };
-use revm_state::{Account, AccountInfo, Bytecode};
 
 /// A [Database] implementation that stores all state changes in memory.
 pub type InMemoryDB = CacheDB<EmptyDB>;
@@ -555,8 +555,8 @@ impl Database for BenchmarkDB {
 #[cfg(test)]
 mod tests {
     use crate::{Database, DatabaseCommit};
+    use base_execution_state_memory::{Account, AccountInfo, EvmStorageSlot, TransactionId};
     use revm_primitives::{Address, HashMap, StorageKey, StorageValue};
-    use revm_state::{Account, AccountInfo, EvmStorageSlot, TransactionId};
 
     use super::{CacheDB, EmptyDB};
 

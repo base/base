@@ -5,7 +5,7 @@ use base_execution_evm_runtime::EvmMachine;
 use base_execution_evm_runtime::{
     EthFrame, EvmTr, EvmTrError, Handler, MainnetHandler, PrecompileProvider, SystemCallTx,
 };
-use base_state::DatabaseCommit;
+use base_execution_state_memory::DatabaseCommit;
 use revm_primitives::{Address, Bytes};
 
 use crate::{

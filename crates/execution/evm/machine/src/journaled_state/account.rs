@@ -6,12 +6,12 @@
 use std::vec::Vec;
 
 use auto_impl::auto_impl;
-use base_state::Database;
+use base_execution_state_memory::Database;
+use base_execution_state_memory::{Account, Bytecode, EvmStorageSlot, TransactionId};
 use revm_primitives::{
     Address, AddressMap, B256, HashSet, KECCAK_EMPTY, StorageKey, StorageValue, U256,
     hash_map::Entry,
 };
-use revm_state::{Account, Bytecode, EvmStorageSlot, TransactionId};
 
 use crate::{
     ErasedError, StateLoad,

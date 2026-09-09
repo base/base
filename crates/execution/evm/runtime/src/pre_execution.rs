@@ -9,9 +9,9 @@ use base_execution_evm_machine::{
     AccessListItemTr, AuthorizationTr, Block, Cfg, ContextTr, Database, InvalidTransaction,
     JournalCheckpoint, JournalTr, JournaledAccountTr, Transaction, TransactionType,
 };
+use base_execution_state_memory::AccountInfo;
 use revm_bytecode::Bytecode;
 use revm_primitives::{Address, AddressMap, HashSet, StorageKey, TxKind, U256, hardfork::SpecId};
-use revm_state::AccountInfo;
 
 use crate::{EvmTr, PrecompileProvider};
 
@@ -509,7 +509,7 @@ pub fn apply_auth_list<
 #[cfg(test)]
 mod tests {
     use base_execution_evm_machine::InvalidTransaction;
-    use revm_state::AccountInfo;
+    use base_execution_state_memory::AccountInfo;
 
     use super::validate_account_nonce_and_code;
 

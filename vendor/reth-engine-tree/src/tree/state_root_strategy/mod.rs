@@ -1302,7 +1302,7 @@ mod tests {
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_execution_evm_blocks::OnStateHook;
     use base_execution_evm_runtime::state::{
-        AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
+        AccountInfo, JournalAccountStatus, EvmState, EvmStorageSlot, TransactionId,
     };
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
@@ -1404,7 +1404,7 @@ mod tests {
                     account_id: None,
                 };
                 account.storage = storage;
-                account.status = AccountStatus::Touched;
+                account.status = JournalAccountStatus::Touched;
                 account.transaction_id = TransactionId::ZERO;
                 state_update.insert(address, account);
             }

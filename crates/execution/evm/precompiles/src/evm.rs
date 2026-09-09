@@ -14,9 +14,9 @@ use base_execution_evm_machine::gas::KECCAK256;
 use base_execution_evm_machine::gas::KECCAK256WORD;
 use base_execution_evm_machine::gas::LOG;
 use base_execution_evm_machine::{GasParams, JournalCheckpoint};
+use base_execution_state_memory::AccountInfo;
+use base_execution_state_memory::Bytecode;
 use revm_primitives::keccak256;
-use revm_state::AccountInfo;
-use revm_state::Bytecode;
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -386,9 +386,9 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use base_execution_evm_machine::EthEvmContext;
     use base_execution_evm_machine::GasParams;
-    use base_state::EmptyDB;
+    use base_execution_state_memory::Bytecode;
+    use base_execution_state_memory::EmptyDB;
     use revm_primitives::hardfork::SpecId;
-    use revm_state::Bytecode;
 
     use crate::{
         BytesLikeHandler, Handler, StorageCtx,
