@@ -11,7 +11,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set},
 };
 use base_execution_state_provider::OverlayManager;
-use reth_chain_state::ExecutedBlock;
+use base_execution_state_types::ExecutedBlock;
 use reth_primitives_traits::{AlloyBlockHeader, SealedHeader};
 use tracing::debug;
 

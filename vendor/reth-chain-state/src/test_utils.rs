@@ -29,8 +29,7 @@ use reth_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
 use tokio::sync::broadcast::{self, Sender};
 
 use crate::{
-    CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions,
-    in_memory::ExecutedBlock,
+    CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions, ExecutedBlock,
 };
 
 /// Fixed address used for storage slot writes in test blocks.

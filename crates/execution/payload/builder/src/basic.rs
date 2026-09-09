@@ -18,11 +18,11 @@ use base_execution_payload_types::{
 use base_execution_state_api::{BlockReaderIdExt, StateProviderFactory};
 use base_execution_state_memory::CachedReads;
 use base_execution_state_tasks::PayloadStateRootHandle;
+use base_execution_state_tasks::SavedCache;
+use base_execution_state_types::CanonStateNotification;
 use base_execution_txpool::TransactionPool;
 use futures_core::ready;
 use futures_util::FutureExt;
-use reth_chain_state::CanonStateNotification;
-use base_execution_state_tasks::SavedCache;
 use reth_primitives_traits::SealedHeader;
 use tokio::{
     sync::{Semaphore, oneshot},

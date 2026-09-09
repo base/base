@@ -10,8 +10,8 @@ use base_common_types_chain::{BaseReceipt, BlockHeader, EthereumReceipt as Recei
 use base_common_types_rpc::BaseTransactionReceipt;
 use base_execution_evm_blocks::EvmEnvFor;
 use derive_more::Constructor;
-use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_primitives_traits::{IndexedTx, RecoveredBlock, SealedHeader};
+use {base_execution_state_types::ExecutedBlock, reth_chain_state::BlockState};
 
 use crate::block::BlockAndReceipts;
 

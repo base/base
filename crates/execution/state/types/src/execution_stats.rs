@@ -4,7 +4,7 @@
 //! through the block processing pipeline, enabling unified detailed block logging after
 //! database commit.
 
-use std::time::Duration;
+use core::time::Duration;
 
 use alloy_primitives::B256;
 

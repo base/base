@@ -9,13 +9,13 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_runtime_tasks::spawn_os_thread;
-use base_execution_state_types::ProviderError;
-use crossbeam_channel::Sender as CrossbeamSender;
-use reth_primitives_traits::FastInstant as Instant;
 use base_execution_state_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
 };
+use base_execution_state_types::ProviderError;
+use crossbeam_channel::Sender as CrossbeamSender;
+use reth_primitives_traits::FastInstant as Instant;
 use reth_prune::{PrunerError, PrunerWithFactory};
 use reth_stages_api::{MetricEvent, MetricEventsSender};
 use thiserror::Error;
@@ -403,10 +403,6 @@ mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
     use base_execution_state_database::Database;
-    use base_execution_state_types::PruneMode;
-    use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
-    use reth_db_common::init::init_genesis;
-    use reth_exex_types::FinishedExExHeight;
     use base_execution_state_provider::{
         AccountReader, BalConfig, BalNotificationStream, BalStore, BalStoreHandle,
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,
@@ -414,8 +410,14 @@ mod tests {
         providers::{ReadOnlyConfig, RocksDBProvider, StaticFileProvider},
         test_utils::create_test_provider_factory,
     };
+    use base_execution_state_types::PruneMode;
+    use reth_db_common::init::init_genesis;
+    use reth_exex_types::FinishedExExHeight;
     use reth_prune::Pruner;
     use tokio::sync::mpsc::unbounded_channel;
+    use {
+        base_execution_state_types::ExecutedBlock, reth_chain_state::test_utils::TestBlockBuilder,
+    };
 
     use super::*;
 
@@ -642,7 +644,8 @@ mod tests {
         base_common_observability_tracing::init_test_tracing();
 
         let provider_factory = create_test_provider_factory();
-        provider_factory.set_storage_settings_cache(base_execution_state_provider::StorageSettings::v2());
+        provider_factory
+            .set_storage_settings_cache(base_execution_state_provider::StorageSettings::v2());
 
         // Share MDBX's environment while keeping independent read-only transactions and
         // secondary RocksDB/static-file views. This tests provider synchronization without

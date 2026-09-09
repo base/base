@@ -18,9 +18,9 @@ use base_execution_payload_types::{
     PayloadKind,
 };
 use base_execution_state_tasks::PayloadStateRootHandle;
-use futures_util::{Stream, StreamExt, future::FutureExt};
-use reth_chain_state::CanonStateNotification;
 use base_execution_state_tasks::SavedCache;
+use base_execution_state_types::CanonStateNotification;
+use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_primitives_traits::FastInstant as Instant;
 use tokio::sync::{
     broadcast, mpsc,
@@ -682,11 +682,11 @@ mod tests {
     use base_common_types_chain::{BaseBlock, Header};
     use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use base_execution_txpool::{
         BaseOrdering, BaseTransactionPool, BaseTransactionValidator,
         EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
     };
-    use base_execution_state_provider::test_utils::MockEthProvider;
 
     use super::*;
     use crate::{BasePayloadBuilder, BasicPayloadJobGeneratorConfig};

@@ -9,7 +9,6 @@ use base_common_types_chain::BlockHeader;
 use base_execution_state_api::{BlockReader, BlockReaderIdExt};
 use base_execution_txpool::TransactionPool;
 use chrono::Local;
-use reth_chain_state::{CanonStateNotification, CanonStateSubscriptions};
 use reth_network_api::{NetworkInfo, Peers};
 use reth_primitives_traits::{Block, BlockBody};
 use serde_json::Value;
@@ -21,6 +20,9 @@ use tokio_stream::StreamExt;
 use tokio_tungstenite_0_29_0::connect_async;
 use tracing::{debug, info};
 use url::Url;
+use {
+    base_execution_state_types::CanonStateNotification, reth_chain_state::CanonStateSubscriptions,
+};
 
 use crate::{
     connection::ConnWrapper,

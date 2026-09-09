@@ -25,13 +25,13 @@ use base_execution_state_api::{
 };
 use base_execution_state_types::ProviderResult;
 use parking_lot::Mutex;
-use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_primitives_traits::{
     AlloyBlockHeader,
     dashmap::{DashMap, mapref::entry::Entry},
 };
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, trace};
+use {base_execution_state_types::ExecutedBlock, reth_chain_state::PreservedSparseTrie};
 
 use crate::overlay::{
     ChangesetCache, OverlayBuilder, changeset_cache::compute_block_trie_updates,
@@ -663,8 +663,11 @@ mod tests {
 
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
-    use reth_chain_state::{ExecutedBlock, SparseTrie, test_utils::TestBlockBuilder};
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
+    use {
+        base_execution_state_types::ExecutedBlock, reth_chain_state::SparseTrie,
+        reth_chain_state::test_utils::TestBlockBuilder,
+    };
 
     use super::*;
 

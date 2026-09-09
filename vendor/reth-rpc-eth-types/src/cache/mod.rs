@@ -21,10 +21,10 @@ use base_execution_evm_runtime::{
     },
 };
 use base_execution_state_api::{BalProvider, BlockReader, TransactionVariant};
+use base_execution_state_types::CanonStateNotification;
 use base_execution_state_types::Chain;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
-use reth_chain_state::CanonStateNotification;
 use reth_primitives_traits::{InMemorySize, RecoveredBlock};
 use schnellru::{ByLength, Limiter, LruMap};
 use tokio::sync::{

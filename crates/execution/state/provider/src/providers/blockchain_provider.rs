@@ -1027,15 +1027,16 @@ mod tests {
     use base_execution_state_types::{StageCheckpoint, StageId};
     use itertools::Itertools;
     use rand::Rng;
-    use reth_chain_state::{
-        CanonStateNotification, CanonStateSubscriptions, ExecutedBlock, NewCanonicalChain,
-        test_utils::TestBlockBuilder,
-    };
     use reth_primitives_traits::{Block as _, RecoveredBlock, SealedBlock, SignerRecoverable};
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
+    use {
+        base_execution_state_types::CanonStateNotification,
+        base_execution_state_types::ExecutedBlock, reth_chain_state::CanonStateSubscriptions,
+        reth_chain_state::NewCanonicalChain, reth_chain_state::test_utils::TestBlockBuilder,
+    };
 
     use super::SNAPSHOT_STATE_RETENTION;
     use crate::{

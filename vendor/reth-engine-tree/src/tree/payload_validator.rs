@@ -137,7 +137,6 @@ use base_execution_state_provider::{
 use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
 use base_execution_state_tasks::{CacheFillMode, CacheStats};
 use base_execution_state_types::ProviderResult;
-use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
 use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
@@ -148,6 +147,10 @@ use reth_trie::{
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
+use {
+    base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
+    reth_chain_state::CanonicalInMemoryState,
+};
 
 pub use crate::tree::types::ValidationOutcome;
 use crate::tree::{

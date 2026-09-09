@@ -21,7 +21,6 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-primitives-traits = { workspace = true }
-serde = { workspace = true, optional = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-state-memory = {workspace = true}
@@ -51,7 +50,6 @@ base-execution-state-memory = {workspace = true, features = ["test-utils"]}
 
 [features]
 serde = [
-    "dep:serde",
     "base-common-types-chain/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",

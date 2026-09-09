@@ -30,6 +30,7 @@ use base_execution_state_database::{
     models::StorageSettings, models::StoredBlockBodyIndices, tables,
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
@@ -43,7 +44,6 @@ use base_execution_state_types::{ProviderResult, StaticFileWriterError};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
-use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::{
     Block as _, BlockBody as _, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
@@ -3543,8 +3543,8 @@ mod tests {
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::{MetadataProvider, StateReadProvider};
     use base_execution_state_database::models::StorageSettings;
+    use base_execution_state_types::ExecutedBlock;
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
-    use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_primitives_traits::SealedBlock;

@@ -23,7 +23,6 @@ async-trait = { workspace = true }
 pin-project = { workspace = true }
 futures-util = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-chain-state = { workspace = true }
 base-common-io-files = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
@@ -102,7 +101,6 @@ serde = [
     "rand?/serde",
     "smallvec/serde",
     "reth-primitives-traits/serde",
-    "reth-chain-state/serde",
     "base-execution-state-api/serde",
     "base-execution-evm-runtime/serde",
     "base-execution-state-memory/serde",
@@ -111,7 +109,7 @@ test-utils = [
     "rand",
     "paste",
     "serde",
-    "reth-chain-state/test-utils",
+    "base-execution-state-types/test-utils",
     "base-execution-state-provider/test-utils",
     "reth-primitives-traits/test-utils",
     "alloy-primitives/rand",

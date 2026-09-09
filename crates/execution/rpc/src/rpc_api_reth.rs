@@ -36,7 +36,7 @@ pub trait RethApi {
     #[subscription(
         name = "subscribeChainNotifications",
         unsubscribe = "unsubscribeChainNotifications",
-        item = reth_chain_state::CanonStateNotification
+        item = base_execution_state_types::CanonStateNotification
     )]
     async fn reth_subscribe_chain_notifications(&self) -> jsonrpsee::core::SubscriptionResult;
 
@@ -57,7 +57,7 @@ pub trait RethApi {
     #[subscription(
         name = "subscribeFinalizedChainNotifications",
         unsubscribe = "unsubscribeFinalizedChainNotifications",
-        item = Vec<reth_chain_state::CanonStateNotification>
+        item = Vec<base_execution_state_types::CanonStateNotification>
     )]
     async fn reth_subscribe_finalized_chain_notifications(
         &self,

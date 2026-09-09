@@ -162,3 +162,12 @@ pub use execution_outcome::{
 
 mod storage_entry;
 pub use storage_entry::{StorageEntry, ValueWithSubKey};
+
+mod executed_block;
+pub use executed_block::ExecutedBlock;
+
+mod execution_stats;
+pub use execution_stats::ExecutionTimingStats;
+
+mod canonical_notification;
+pub use canonical_notification::CanonStateNotification;

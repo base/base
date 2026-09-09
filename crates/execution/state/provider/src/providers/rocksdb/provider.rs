@@ -14,6 +14,7 @@ use base_execution_state_database::{
     models::ShardedKey, models::StorageSettings, models::storage_sharded_key::StorageShardedKey,
     tables,
 };
+use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::PruneMode;
 use base_execution_state_types::{
     DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation, LogLevel, ProviderError,
@@ -21,7 +22,6 @@ use base_execution_state_types::{
 };
 use metrics::Label;
 use parking_lot::Mutex;
-use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::{BlockBody as _, FastInstant as Instant};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, CompactionPri, DB, DBCompressionType,

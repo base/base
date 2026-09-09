@@ -242,7 +242,9 @@ mod tests {
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
-    use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
+    use {
+        base_execution_state_types::ExecutedBlock, reth_chain_state::test_utils::TestBlockBuilder,
+    };
 
     use reth_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,

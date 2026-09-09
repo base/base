@@ -81,7 +81,6 @@ pub use base_execution_state_tasks::{
 use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
 use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
-use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
@@ -95,6 +94,7 @@ use reth_trie_sparse::{
     ArenaParallelSparseTrie, RevealableSparseTrie, SparseStateTrie, TrieNodeEpoch,
 };
 use tracing::{Span, debug, debug_span, instrument, warn};
+use {base_execution_state_types::ExecutedBlock, reth_chain_state::PreservedSparseTrie};
 
 use self::sparse_trie::{SparseTrieCacheTask, SparseTrieTaskMetrics};
 use crate::tree::{

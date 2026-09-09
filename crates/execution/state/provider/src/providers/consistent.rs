@@ -1478,11 +1478,11 @@ mod tests {
     };
     use itertools::Itertools;
     use rand::Rng;
-    use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock};
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
+    use {base_execution_state_types::ExecutedBlock, reth_chain_state::NewCanonicalChain};
 
     use crate::{
         BlockWriter, providers::blockchain_provider::BlockchainProvider,

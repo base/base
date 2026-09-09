@@ -13,14 +13,14 @@ use base_execution_state_api::{
 use base_execution_state_types::ExecutionOutcome;
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};
-use reth_chain_state::{
-    CanonStateNotification, CanonStateSubscriptions, ForkChoiceSubscriptions,
-    PersistedBlockSubscriptions,
-};
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_eth_types::{EthApiError, EthResult};
 use serde::Serialize;
 use tokio::sync::oneshot;
+use {
+    base_execution_state_types::CanonStateNotification, reth_chain_state::CanonStateSubscriptions,
+    reth_chain_state::ForkChoiceSubscriptions, reth_chain_state::PersistedBlockSubscriptions,
+};
 
 /// `reth` API implementation.
 ///

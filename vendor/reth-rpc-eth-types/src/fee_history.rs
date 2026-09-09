@@ -17,12 +17,12 @@ use base_common_types_chain::TxEip4844;
 use base_common_types_chain::{BaseBlock, BlockHeader, Header, Transaction, TxReceipt};
 use base_common_types_rpc::TxGasAndReward;
 use base_execution_state_api::BlockReaderIdExt;
+use base_execution_state_types::CanonStateNotification;
 use futures::{
     FutureExt, Stream, StreamExt,
     future::{Fuse, FusedFuture},
 };
 use metrics::atomics::AtomicU64;
-use reth_chain_state::CanonStateNotification;
 use reth_primitives_traits::{BlockBody, SealedBlock};
 use reth_rpc_server_types::constants::gas_oracle::MAX_HEADER_HISTORY;
 use serde::{Deserialize, Serialize};

@@ -29,6 +29,7 @@ use base_execution_state_database::{
     static_file::StorageChangesetMask, static_file::TransactionMask,
     static_file::TransactionSenderMask, static_file::iter_static_files,
 };
+use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::PipelineTarget;
 use base_execution_state_types::PruneSegment;
 use base_execution_state_types::StorageEntry;
@@ -38,7 +39,6 @@ use base_execution_state_types::{
 };
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::RwLock;
-use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::{
     AlloyBlockHeader as _, RecoveredBlock, SealedHeader, dashmap::DashMap,
 };

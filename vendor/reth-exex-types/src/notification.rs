@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use base_execution_state_types::CanonStateNotification;
 use base_execution_state_types::Chain;
-use reth_chain_state::CanonStateNotification;
 
 /// Notifications sent to an `ExEx`.
 #[derive(Debug, Clone, PartialEq, Eq)]

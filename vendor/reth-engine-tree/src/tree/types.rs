@@ -6,8 +6,8 @@ use alloy_eip7928::bal::{DecodedBal, RawBal};
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
 use base_execution_evm_blocks::EvmEnvFor;
-use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
 use base_execution_state_tasks::TxPoolPrewarmCacheSnapshot;
+use {base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats};
 
 use crate::tree::error::InsertPayloadError;
 

@@ -31,10 +31,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
-use reth_chain_state::{
-    CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats, MemoryOverlayStateProvider,
-    NewCanonicalChain,
-};
 use reth_engine_primitives::{
     BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
     ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
@@ -48,6 +44,11 @@ use tokio::sync::{
     oneshot,
 };
 use tracing::*;
+use {
+    base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
+    reth_chain_state::CanonicalInMemoryState, reth_chain_state::MemoryOverlayStateProvider,
+    reth_chain_state::NewCanonicalChain,
+};
 
 use crate::{
     backfill::{BackfillAction, BackfillSyncState},

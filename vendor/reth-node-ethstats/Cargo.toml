@@ -25,6 +25,7 @@ base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-state-api = { workspace = true }
+base-execution-state-types = {workspace = true}
 thiserror = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }

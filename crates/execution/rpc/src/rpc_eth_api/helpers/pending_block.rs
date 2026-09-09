@@ -21,12 +21,12 @@ use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{BlockExecutionError, BlockValidationError};
 use base_execution_state_api::{BlockReader, BlockReaderIdExt, NoopProvider, StateProviderFactory};
 use base_execution_state_types::ComputedTrieData;
+use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::ProviderError;
 use base_execution_txpool::{
     BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
 };
 use futures::Future;
-use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
