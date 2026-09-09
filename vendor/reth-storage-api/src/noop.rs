@@ -41,7 +41,8 @@ use crate::{
 };
 #[cfg(feature = "db-api")]
 use crate::{
-    DBProvider, DatabaseProviderFactory, DbTxProvider, StorageChangeSetReader, StorageSettingsCache,
+    DBProvider, DatabaseProviderFactory, DatabaseProviderROFactory, DbTxProvider,
+    StorageChangeSetReader, StorageSettingsCache,
 };
 
 /// Supports various api interfaces for testing purposes.
@@ -693,13 +694,17 @@ impl DBProvider for NoopProvider {
 }
 
 #[cfg(feature = "db-api")]
-impl DatabaseProviderFactory for NoopProvider {
+impl DatabaseProviderROFactory for NoopProvider {
     type Provider = Self;
-    type ProviderRW = Self;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         Ok(self.clone())
     }
+}
+
+#[cfg(feature = "db-api")]
+impl DatabaseProviderFactory for NoopProvider {
+    type ProviderRW = Self;
 
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW> {
         Ok(self.clone())

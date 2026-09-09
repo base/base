@@ -177,7 +177,7 @@ mod tests {
         args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
         dirs::{DataDirPath, MaybePlatformPath},
     };
-    use reth_provider::{DatabaseProviderFactory, HeaderProvider};
+    use reth_provider::{DatabaseProviderROFactory, HeaderProvider};
     use reth_tasks::Runtime;
 
     use super::LocalNode;

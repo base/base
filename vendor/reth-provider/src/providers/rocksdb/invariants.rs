@@ -463,6 +463,7 @@ impl RocksDBProvider {
 
 #[cfg(test)]
 mod tests {
+    use reth_storage_api::DatabaseProviderROFactory;
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};

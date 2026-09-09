@@ -1,6 +1,7 @@
 //! Database provider factory.
 
 use core::fmt;
+use reth_storage_api::DatabaseProviderROFactory;
 use std::{
     ops::{RangeBounds, RangeInclusive},
     path::Path,
@@ -602,13 +603,16 @@ impl BalProvider for ProviderFactory {
     }
 }
 
-impl DatabaseProviderFactory for ProviderFactory {
+impl DatabaseProviderROFactory for ProviderFactory {
     type Provider = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TX>;
-    type ProviderRW = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TXMut>;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         self.provider()
     }
+}
+
+impl DatabaseProviderFactory for ProviderFactory {
+    type ProviderRW = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TXMut>;
 
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW> {
         self.provider_rw().map(|provider| provider.0)

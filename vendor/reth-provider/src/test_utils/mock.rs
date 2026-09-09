@@ -1,3 +1,4 @@
+use reth_storage_api::DatabaseProviderROFactory;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
@@ -493,9 +494,8 @@ impl ExtendedAccount {
     }
 }
 
-impl DatabaseProviderFactory for MockEthProvider {
+impl DatabaseProviderROFactory for MockEthProvider {
     type Provider = Self;
-    type ProviderRW = Self;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         if self.database_provider_available.load(Ordering::Relaxed) {
@@ -504,6 +504,10 @@ impl DatabaseProviderFactory for MockEthProvider {
             Err(ConsistentViewError::Syncing { best_block: GotExpected::new(0, 0) }.into())
         }
     }
+}
+
+impl DatabaseProviderFactory for MockEthProvider {
+    type ProviderRW = Self;
 
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW> {
         if self.database_provider_available.load(Ordering::Relaxed) {

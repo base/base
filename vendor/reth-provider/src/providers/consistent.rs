@@ -1,3 +1,4 @@
+use reth_storage_api::DatabaseProviderROFactory;
 use std::{
     ops::{Add, Bound, RangeBounds, RangeInclusive, Sub},
     sync::Arc,
@@ -19,7 +20,7 @@ use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
-    BlockBodyIndicesProvider, DatabaseProviderFactory, StateProviderBox, StorageChangeSetReader,
+    BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
     TryIntoHistoricalStateProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
@@ -45,7 +46,7 @@ use crate::{
 #[doc(hidden)] // triggers ICE for `cargo docs`
 pub struct ConsistentProvider {
     /// Storage provider.
-    storage_provider: <ProviderFactory as DatabaseProviderFactory>::Provider,
+    storage_provider: <ProviderFactory as reth_storage_api::DatabaseProviderROFactory>::Provider,
     /// Head block at time of [`Self`] creation
     head_block: Option<Arc<BlockState>>,
     /// In-memory canonical state. This is not a snapshot, and can change! Use with caution.

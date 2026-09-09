@@ -1,3 +1,4 @@
+use reth_storage_api::DatabaseProviderROFactory;
 use std::{
     ops::{RangeBounds, RangeInclusive},
     sync::Arc,
@@ -58,7 +59,7 @@ use crate::{
 /// [`StateRangeProviderFactory::state_range_provider`].
 pub const SNAPSHOT_STATE_RETENTION: u64 = 128;
 
-type StateRangeDbProvider = <ProviderFactory as DatabaseProviderFactory>::Provider;
+type StateRangeDbProvider = <ProviderFactory as DatabaseProviderROFactory>::Provider;
 type HistoricalStateRangeProvider = OverlayStateProvider<StateRangeDbProvider>;
 
 /// The main type for interacting with the blockchain.
@@ -373,13 +374,16 @@ impl StateRangeProvider for HistoricalStateRangeView {
     }
 }
 
-impl DatabaseProviderFactory for BlockchainProvider {
-    type Provider = <ProviderFactory as DatabaseProviderFactory>::Provider;
-    type ProviderRW = <ProviderFactory as DatabaseProviderFactory>::ProviderRW;
+impl DatabaseProviderROFactory for BlockchainProvider {
+    type Provider = <ProviderFactory as DatabaseProviderROFactory>::Provider;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
-        DatabaseProviderFactory::database_provider_ro(&self.database)
+        DatabaseProviderROFactory::database_provider_ro(&self.database)
     }
+}
+
+impl DatabaseProviderFactory for BlockchainProvider {
+    type ProviderRW = <ProviderFactory as DatabaseProviderFactory>::ProviderRW;
 
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW> {
         DatabaseProviderFactory::database_provider_rw(&self.database)

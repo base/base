@@ -40,6 +40,7 @@ use utils::*;
 
 #[cfg(test)]
 mod tests {
+    use reth_storage_api::DatabaseProviderROFactory;
     use std::{io::Write, sync::Arc};
 
     use alloy_primitives::{

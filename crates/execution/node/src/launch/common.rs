@@ -29,6 +29,7 @@
 //!
 //! This ensures correct initialization order without runtime checks.
 
+use reth_provider::DatabaseProviderROFactory;
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
 use alloy_chains::Chain;

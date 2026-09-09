@@ -149,24 +149,21 @@ pub trait DBProvider: DbTxProvider + Sized {
 
 /// Database provider factory.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait DatabaseProviderFactory: Send + Sync {
-    /// Provider type returned by the factory.
-    type Provider: DBProvider<Tx: Sync>;
-
+pub trait DatabaseProviderFactory:
+    DatabaseProviderROFactory<Provider: DBProvider<Tx: Sync>> + Send + Sync
+{
     /// Read-write provider type returned by the factory.
     type ProviderRW: DBProvider<Tx: DbTxMut + TableImporter + Sync>;
-
-    /// Create new read-only database provider.
-    fn database_provider_ro(&self) -> ProviderResult<Self::Provider>;
 
     /// Create new read-write database provider.
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW>;
 }
 
 /// Helper type alias to get the associated transaction type from a [`DatabaseProviderFactory`].
-pub type FactoryTx<F> = <<F as DatabaseProviderFactory>::Provider as DbTxProvider>::Tx;
+pub type FactoryTx<F> = <<F as DatabaseProviderROFactory>::Provider as DbTxProvider>::Tx;
 
 /// A trait which can be used to describe any factory-like type which returns a read-only provider.
+#[auto_impl::auto_impl(&, Arc)]
 pub trait DatabaseProviderROFactory {
     /// Provider type returned by this factory.
     ///
@@ -176,17 +173,6 @@ pub trait DatabaseProviderROFactory {
 
     /// Creates and returns a Provider.
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider>;
-}
-
-impl<T> DatabaseProviderROFactory for T
-where
-    T: DatabaseProviderFactory,
-{
-    type Provider = T::Provider;
-
-    fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
-        <T as DatabaseProviderFactory>::database_provider_ro(self)
-    }
 }
 
 /// Returns the length of the range if the range has a bounded end.

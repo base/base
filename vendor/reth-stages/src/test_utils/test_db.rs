@@ -102,7 +102,9 @@ impl TestStageDB {
     /// static files.
     pub fn query_with_provider<F, Ok>(&self, f: F) -> ProviderResult<Ok>
     where
-        F: FnOnce(<ProviderFactory as DatabaseProviderFactory>::Provider) -> ProviderResult<Ok>,
+        F: FnOnce(
+            <ProviderFactory as reth_storage_api::DatabaseProviderROFactory>::Provider,
+        ) -> ProviderResult<Ok>,
     {
         f(self.factory.provider()?)
     }

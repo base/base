@@ -19,7 +19,7 @@ use eyre::WrapErr;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_primitives_traits::{Account, GotExpected, format_gas_throughput};
 use reth_provider::{
-    BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderFactory, ReceiptProvider,
+    BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderROFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,
 };
 use reth_stages::stages::calculate_gas_used_from_headers;
@@ -86,7 +86,7 @@ impl<C: ChainSpecParser> Command<C> {
         let components = components(provider_factory.chain_spec());
 
         let min_block = self.from;
-        let best_block = DatabaseProviderFactory::database_provider_ro(&provider_factory)?
+        let best_block = DatabaseProviderROFactory::database_provider_ro(&provider_factory)?
             .best_block_number()?;
         let mut max_block = best_block;
         if let Some(to) = self.to {

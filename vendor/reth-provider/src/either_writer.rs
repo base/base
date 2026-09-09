@@ -837,6 +837,7 @@ mod tests {
     use alloy_primitives::Address;
     use reth_db::models::AccountBeforeTx;
     use reth_static_file_types::StaticFileSegment;
+    use reth_storage_api::DatabaseProviderROFactory;
     use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
 
     use super::*;
@@ -935,6 +936,7 @@ mod tests {
 
 #[cfg(test)]
 mod rocksdb_tests {
+    use reth_storage_api::DatabaseProviderROFactory;
     use std::marker::PhantomData;
 
     use alloy_primitives::{Address, B256};
