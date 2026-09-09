@@ -48,6 +48,19 @@ impl Default for NoopTransactionPool {
     }
 }
 
+impl crate::ParkableTransactionPool for NoopTransactionPool {
+    fn best_transactions_with_attributes_and_parking(
+        &self,
+        attributes: BestTransactionsAttributes,
+    ) -> Box<dyn crate::ParkableBestTransactions> {
+        Box::new(crate::ParkedBestTransactions::new(
+            self.best_transactions(),
+            crate::BaseOrdering::default(),
+            attributes.basefee,
+        ))
+    }
+}
+
 impl TransactionPool for NoopTransactionPool {
     fn pool_size(&self) -> PoolSize {
         Default::default()

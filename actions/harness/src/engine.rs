@@ -27,9 +27,9 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, CancelOnDrop};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,
-    NoopPayloadTransactions, PayloadConfig,
+    PayloadConfig,
 };
-use base_execution_txpool::{BasePooledTransaction, NoopTransactionPool};
+use base_execution_txpool::NoopTransactionPool;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_state_api::CachedReads;
 use base_test_utils::build_test_genesis;
@@ -399,10 +399,7 @@ impl ActionEngineClient {
             pool,
             inner.blockchain_provider.clone(),
             inner.evm_config.clone(),
-        )
-        .with_transactions(|_pool: TestPool, _attrs| {
-            NoopPayloadTransactions::<BasePooledTransaction>::default()
-        });
+        );
         let outcome = payload_builder.try_build(args).map_err(|e| {
             TransportError::from(TransportErrorKind::custom_str(&format!(
                 "payload builder failed: {e}"
