@@ -20,6 +20,7 @@ ambassador = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
 alloc-no-stdlib = { workspace = true }
+base-common-types-rpc = {workspace = true}
 serde = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
 base-common-types-payload = {workspace = true}

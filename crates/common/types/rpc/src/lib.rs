@@ -140,3 +140,6 @@ pub use consensus_peers::{
 };
 
 mod block_info;
+
+mod rollup_sync;
+pub use rollup_sync::RollupSyncStatus;

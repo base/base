@@ -1,8 +1,8 @@
 //! Sync Status Types
 
-use crate::{BlockInfo, L2BlockInfo};
+use base_common_types_chain::{BlockInfo, L2BlockInfo};
 
-/// The [`SyncStatus`] of a Base Rollup Node.
+/// The [`RollupSyncStatus`] of a Base Rollup Node.
 ///
 /// The sync status is a snapshot of the current state of the node's sync process.
 /// Values may not be derived yet and are zeroed out if they are not yet derived.
@@ -11,7 +11,7 @@ use crate::{BlockInfo, L2BlockInfo};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub struct SyncStatus {
+pub struct RollupSyncStatus {
     /// The current L1 block.
     ///
     /// This is the L1 block that the derivation process is last idled at.
@@ -66,21 +66,21 @@ mod tests {
 
     #[test]
     fn test_sync_status_default() {
-        let status = SyncStatus::default();
+        let status = RollupSyncStatus::default();
         assert_eq!(status.current_l1, BlockInfo::default());
         assert_eq!(status.unsafe_l2, L2BlockInfo::default());
     }
 
     #[test]
     fn test_sync_status_eq() {
-        let status1 = SyncStatus::default();
-        let status2 = SyncStatus::default();
+        let status1 = RollupSyncStatus::default();
+        let status2 = RollupSyncStatus::default();
         assert_eq!(status1, status2);
     }
 
     #[test]
     fn test_sync_status_clone() {
-        let status = SyncStatus {
+        let status = RollupSyncStatus {
             current_l1: BlockInfo::new(B256::from([1; 32]), 100, B256::from([0; 32]), 1000),
             head_l1: BlockInfo::new(B256::from([2; 32]), 101, B256::from([1; 32]), 1012),
             unsafe_l2: L2BlockInfo::new(
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_sync_status_serde() {
-        let status = SyncStatus {
+        let status = RollupSyncStatus {
             current_l1: BlockInfo::new(B256::from([1; 32]), 100, B256::from([0; 32]), 1000),
             current_l1_finalized: BlockInfo::new(
                 B256::from([1; 32]),
@@ -119,7 +119,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&status).unwrap();
-        let deserialized: SyncStatus = serde_json::from_str(&json).unwrap();
+        let deserialized: RollupSyncStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(status, deserialized);
     }
 }

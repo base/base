@@ -68,8 +68,7 @@ pub use info::{
 
 pub use base_common_types_chain::OutputRoot;
 
-mod sync;
-pub use sync::SyncStatus;
+pub use base_common_types_rpc::RollupSyncStatus as SyncStatus;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
