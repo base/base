@@ -96,6 +96,8 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L1_P2P_PORT}
       - --disable-discovery
+      # Keep persistence from stalling the local L1 while it builds a payload.
+      - --engine.suppress-persistence-during-build
       - --txpool.max-account-slots=256
       - -vvv
     healthcheck:
