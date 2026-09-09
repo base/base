@@ -1,6 +1,6 @@
 //! Implementation specific Errors for the `eth_` namespace.
 
-pub mod api;
+mod api;
 use core::time::Duration;
 use std::convert::Infallible;
 
@@ -8,7 +8,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
-pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
+
 use base_common_rpc_types::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
 use base_evm_handler::{BlockExecutionError, BlockValidationError, CallError, StateOverrideError};

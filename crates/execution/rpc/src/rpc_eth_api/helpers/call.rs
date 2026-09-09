@@ -26,7 +26,6 @@ use reth_primitives_traits::Recovered;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
-    error::{AsEthApiError, FromEthApiError},
     simulate::{self, EthSimulateError},
 };
 use reth_storage_api::{BlockIdReader, ProviderTx};
@@ -38,7 +37,7 @@ use revm::{
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 
-use crate::{BaseEthApi, FromEvmError};
+use crate::BaseEthApi;
 
 /// Result type for `eth_simulateV1` RPC method.
 pub type SimulatedBlocksResult<E> = Result<Vec<SimulatedBlock<BaseBlockResponse>>, E>;
@@ -239,7 +238,7 @@ impl BaseEthApi {
                     )]));
                     parent = simulated_header;
 
-                    let block = simulate::build_simulated_block::<BaseEthApiError, _>(
+                    let block = simulate::build_simulated_block(
                         result.block,
                         results,
                         return_full_transactions.into(),
@@ -491,7 +490,7 @@ impl BaseEthApi {
         DB: Database<Error = EvmDatabaseError<ProviderError>>,
     {
         let mut evm = self.evm_config().evm_with_env(db, evm_env);
-        let res = evm.transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
+        let res = evm.transact(tx_env).map_err(BaseEthApiError::from)?;
 
         Ok(res)
     }
@@ -510,7 +509,7 @@ impl BaseEthApi {
         I: InspectorFor<DB>,
     {
         let mut evm = self.evm_config().evm_with_env_and_inspector(db, evm_env, inspector);
-        let res = evm.transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
+        let res = evm.transact(tx_env).map_err(BaseEthApiError::from)?;
 
         Ok(res)
     }
@@ -661,8 +660,7 @@ impl BaseEthApi {
 
                 let tx_env = this.evm_config().tx_env(tx);
 
-                let res =
-                    executor.evm_mut().transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
+                let res = executor.evm_mut().transact(tx_env).map_err(BaseEthApiError::from)?;
                 drop(executor);
                 f(tx_info, res, db)
             })
@@ -698,7 +696,7 @@ impl BaseEthApi {
             }
 
             let tx_env = self.evm_config().tx_env(tx);
-            evm.transact_commit(tx_env).map_err(BaseEthApiError::from_evm_err)?;
+            evm.transact_commit(tx_env).map_err(BaseEthApiError::from)?;
         }
         Ok(())
     }

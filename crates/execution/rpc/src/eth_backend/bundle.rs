@@ -18,7 +18,7 @@ use reth_rpc_eth_types::{
 use reth_tasks::pool::BlockingTaskGuard;
 use revm::{DatabaseCommit, DatabaseRef};
 
-use crate::{BaseEthApi, EthCallBundleApiServer, FromEthApiError, FromEvmError};
+use crate::{BaseEthApi, EthCallBundleApiServer};
 
 /// `Eth` bundle implementation.
 pub struct EthBundle {
@@ -164,7 +164,7 @@ impl EthBundle {
                     hasher.update(*tx.tx_hash());
                     let ResultAndState { result, state } = evm
                         .transact(eth_api.evm_config().tx_env(&tx))
-                        .map_err(BaseEthApiError::from_evm_err)?;
+                        .map_err(BaseEthApiError::from)?;
 
                     let gas_price = tx
                         .effective_tip_per_gas(basefee)

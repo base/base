@@ -72,58 +72,57 @@ mod rpc_eth_api;
 pub use rpc_eth_api::*;
 
 mod rpc_api_rpc;
-pub use rpc_api_rpc::RpcApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_rpc::RpcApiClient;
+pub use rpc_api_rpc::RpcApiServer;
 
 mod rpc_api_debug;
-pub use rpc_api_debug::DebugApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_debug::DebugApiClient;
+pub use rpc_api_debug::DebugApiServer;
 
 mod rpc_api_otterscan;
-pub use rpc_api_otterscan::OtterscanServer;
 #[cfg(feature = "client")]
 pub use rpc_api_otterscan::OtterscanClient;
+pub use rpc_api_otterscan::OtterscanServer;
 
 mod rpc_api_admin;
-pub use rpc_api_admin::AdminApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_admin::AdminApiClient;
+pub use rpc_api_admin::AdminApiServer;
 
 mod rpc_api_web3;
-pub use rpc_api_web3::Web3ApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_web3::Web3ApiClient;
+pub use rpc_api_web3::Web3ApiServer;
 
 mod rpc_api_trace;
-pub use rpc_api_trace::TraceApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_trace::TraceApiClient;
+pub use rpc_api_trace::TraceApiServer;
 
 mod rpc_api_net;
-pub use rpc_api_net::NetApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_net::NetApiClient;
+pub use rpc_api_net::NetApiServer;
 
 mod rpc_api_txpool;
-pub use rpc_api_txpool::TxPoolApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_txpool::TxPoolApiClient;
+pub use rpc_api_txpool::TxPoolApiServer;
 
 mod rpc_api_mev;
-pub use rpc_api_mev::MevSimApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_mev::MevSimApiClient;
+pub use rpc_api_mev::MevSimApiServer;
 
 mod rpc_api_reth;
-pub use rpc_api_reth::RethApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_reth::RethApiClient;
+pub use rpc_api_reth::RethApiServer;
 
 pub use rpc_api_reth::RethJitAction;
 mod rpc_api_miner;
-pub use rpc_api_miner::MinerApiServer;
 #[cfg(feature = "client")]
 pub use rpc_api_miner::MinerApiClient;
-
+pub use rpc_api_miner::MinerApiServer;

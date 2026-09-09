@@ -21,10 +21,7 @@ use revm::{
     primitives::{Address, Bytes, TxKind, U256},
 };
 
-use crate::{
-    EthApiError,
-    error::{FromEvmError, ToRpcError, api::FromEthApiError},
-};
+use crate::{EthApiError, error::ToRpcError};
 
 /// Fallback seconds added between simulated block timestamps when neither the user nor the chain
 /// hint provides a value.
@@ -497,18 +494,13 @@ where
 }
 
 /// Handles outputs of the calls execution and builds a [`SimulatedBlock`].
-pub fn build_simulated_block<Err, T>(
+pub fn build_simulated_block<T>(
     block: RecoveredBlock,
     results: Vec<ExecutionResult<HaltReasonFor>>,
     txs_kind: BlockTransactionsKind,
     converter: &crate::BaseRpcConverter<T>,
-) -> Result<SimulatedBlock<BaseBlockResponse>, Err>
+) -> Result<SimulatedBlock<BaseBlockResponse>, crate::BaseEthApiError>
 where
-    Err: std::error::Error
-        + FromEthApiError
-        + FromEvmError
-        + From<crate::BaseEthApiError>
-        + Into<jsonrpsee_types::ErrorObject<'static>>,
     T: reth_storage_api::BlockReader<
             Block = base_common_consensus::BaseBlock,
             Transaction = base_common_consensus::BaseTxEnvelope,
@@ -526,7 +518,7 @@ where
     for (index, (result, tx)) in results.into_iter().zip(block.body().transactions()).enumerate() {
         let call = match result {
             ExecutionResult::Halt { reason, gas, .. } => {
-                let error = Err::from_evm_halt(reason, tx.gas_limit());
+                let error = crate::BaseEthApiError::from_evm_halt(reason, tx.gas_limit());
                 SimCallResult {
                     return_data: Bytes::new(),
                     error: Some(SimulateError {
@@ -541,7 +533,7 @@ where
                 }
             }
             ExecutionResult::Revert { output, gas, .. } => {
-                let error = Err::from_revert(output.clone());
+                let error = crate::BaseEthApiError::from_revert(output.clone());
                 SimCallResult {
                     return_data: Bytes::new(),
                     error: Some(SimulateError {

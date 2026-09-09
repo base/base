@@ -33,7 +33,7 @@ use reth_trie_common::ComputedTrieData;
 use revm::database::State;
 use tracing::debug;
 
-use crate::{BaseEthApi, FromEthApiError};
+use crate::BaseEthApi;
 
 /// Loads a pending block from database.
 ///

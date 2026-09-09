@@ -9,13 +9,7 @@ use base_execution_evm::{
     BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
 };
 use futures::Future;
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, RpcInvalidTransactionError,
-    error::{
-        FromEvmError,
-        api::{FromEvmHalt, FromRevert},
-    },
-};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError, RpcInvalidTransactionError};
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use reth_storage_api::StateProvider;
 use reth_storage_errors::provider::ProviderError;
@@ -25,7 +19,7 @@ use revm::{
 };
 use tracing::trace;
 
-use crate::{AsEthApiError, BaseEthApi, FromEthApiError, IntoEthApiError};
+use crate::BaseEthApi;
 
 /// Gas execution estimates
 impl BaseEthApi {
@@ -149,7 +143,7 @@ impl BaseEthApi {
             min_tx_env.set_gas_limit(21_000u64);
 
             // Reuse the same EVM instance
-            if let Ok(res) = evm.transact(min_tx_env).map_err(BaseEthApiError::from_evm_err)
+            if let Ok(res) = evm.transact(min_tx_env).map_err(BaseEthApiError::from)
                 && res.result.is_success()
             {
                 return Ok(U256::from(21_000u64));
@@ -159,7 +153,7 @@ impl BaseEthApi {
         trace!(target: "rpc::eth::estimate", ?tx_env, gas_limit = tx_env.gas_limit(), is_basic_transfer, "Starting gas estimation");
 
         // Execute the transaction with the highest possible gas limit.
-        let mut res = match evm.transact(tx_env.clone()).map_err(BaseEthApiError::from_evm_err) {
+        let mut res = match evm.transact(tx_env.clone()).map_err(BaseEthApiError::from) {
             // Handle the exceptional case where the transaction initialization uses too much
             // gas. If the gas price or gas limit was specified in the request,
             // retry the transaction with the block's gas limit to determine if
@@ -178,7 +172,7 @@ impl BaseEthApi {
                 return Err(RpcInvalidTransactionError::GasRequiredExceedsAllowance {
                     gas_limit: tx_env.gas_limit(),
                 }
-                .into_eth_err());
+                .into());
             }
             // Propagate other results (successful or other errors).
             ethres => ethres?,
@@ -230,7 +224,7 @@ impl BaseEthApi {
 
             // Re-execute the transaction with the new gas limit and update the result and
             // environment.
-            res = evm.transact(optimistic_tx_env).map_err(BaseEthApiError::from_evm_err)?;
+            res = evm.transact(optimistic_tx_env).map_err(BaseEthApiError::from)?;
 
             // Update the gas used based on the new result.
             gas_used = res.result.tx_gas_used();
@@ -266,7 +260,7 @@ impl BaseEthApi {
             mid_tx_env.set_gas_limit(mid_gas_limit);
 
             // Execute transaction and handle potential gas errors, adjusting limits accordingly.
-            match evm.transact(mid_tx_env).map_err(BaseEthApiError::from_evm_err) {
+            match evm.transact(mid_tx_env).map_err(BaseEthApiError::from) {
                 Err(err) if err.is_gas_too_high() => {
                     // Decrease the highest gas limit if gas is too high
                     highest_gas_limit = mid_gas_limit;
@@ -329,13 +323,13 @@ impl BaseEthApi {
         let req_gas_limit = tx_env.gas_limit();
         tx_env.set_gas_limit(max_gas_limit);
 
-        let retry_res = evm.transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
+        let retry_res = evm.transact(tx_env).map_err(BaseEthApiError::from)?;
 
         match retry_res.result {
             ExecutionResult::Success { .. } => {
                 // Transaction succeeded by manually increasing the gas limit,
                 // which means the caller lacks funds to pay for the tx
-                Err(RpcInvalidTransactionError::BasicOutOfGas(req_gas_limit).into_eth_err())
+                Err(RpcInvalidTransactionError::BasicOutOfGas(req_gas_limit).into())
             }
             ExecutionResult::Revert { output, .. } => {
                 // reverted again after bumping the limit

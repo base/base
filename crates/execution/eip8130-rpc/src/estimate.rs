@@ -2,18 +2,15 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::U256;
-use base_common_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::state::EvmOverrides;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};
 use base_evm_handler::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
-use base_execution_rpc::{BaseEthApi, FromEthApiError};
+use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_rpc_eth_types::{
-    BaseEthApiError,
-    error::api::{FromEvmHalt, FromRevert},
-};
+use reth_rpc_eth_types::BaseEthApiError;
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
 /// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.
@@ -113,11 +110,10 @@ impl Eip8130GasEstimator {
         match result.result {
             ExecutionResult::Success { .. } => Ok(U256::from(gas_used)),
             ExecutionResult::Revert { output, .. } => {
-                Err(<BaseEthApiError as FromRevert>::from_revert(output).into())
+                Err(BaseEthApiError::from_revert(output).into())
             }
             ExecutionResult::Halt { reason, gas, .. } => {
-                Err(<BaseEthApiError as FromEvmHalt<_>>::from_evm_halt(reason, gas.tx_gas_used())
-                    .into())
+                Err(BaseEthApiError::from_evm_halt(reason, gas.tx_gas_used()).into())
             }
         }
     }

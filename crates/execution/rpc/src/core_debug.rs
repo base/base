@@ -1,14 +1,15 @@
 use std::{collections::VecDeque, sync::Arc};
 
+use crate::DebugApiServer;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B256, Bytes, U64, hex::decode, uint};
 use alloy_rlp::{Decodable, Encodable};
-use base_common_rpc_types::BlockTransactionsKind;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
+use base_common_rpc_types::BlockTransactionsKind;
 use base_common_rpc_types::{
     Account, AccountInfo, BaseTransactionRequest, BlockError, BlockTraceResult, Bundle,
     GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
@@ -24,7 +25,6 @@ use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
-use crate::DebugApiServer;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, StateCacheDb};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;
 
-use crate::{BaseEthApi, FromEthApiError, FromEvmError};
+use crate::BaseEthApi;
 
 /// `debug` API implementation.
 ///
@@ -125,8 +125,7 @@ impl DebugApi {
                 while let Some((index, tx)) = transactions.next() {
                     let tx_env = eth_api.evm_config().tx_env(tx);
 
-                    let res =
-                        evm.transact(tx_env.clone()).map_err(BaseEthApiError::from_evm_err)?;
+                    let res = evm.transact(tx_env.clone()).map_err(BaseEthApiError::from)?;
 
                     let (db, inspector, _) = evm.components_mut();
                     let result = inspector
@@ -717,7 +716,7 @@ impl DebugApi {
                 let mut evm = eth_api.evm_config().evm_with_env(&mut db, evm_env);
                 for tx in block.transactions_recovered() {
                     let tx_env = eth_api.evm_config().tx_env(tx);
-                    evm.transact_commit(tx_env).map_err(BaseEthApiError::from_evm_err)?;
+                    evm.transact_commit(tx_env).map_err(BaseEthApiError::from)?;
 
                     let state = evm.db_mut();
                     // Merge transitions into cumulative bundle_state

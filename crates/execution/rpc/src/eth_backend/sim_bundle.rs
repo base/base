@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use crate::MevSimApiServer;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
 use base_common_consensus::{BlockHeader, transaction::TxHashRef};
@@ -16,14 +17,13 @@ use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use reth_provider::providers::BlockchainProvider;
-use crate::MevSimApiServer;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;
 use revm::{DatabaseCommit, DatabaseRef};
 use tracing::trace;
 
-use crate::{BaseEthApi, FromEthApiError, FromEvmError};
+use crate::BaseEthApi;
 
 /// Maximum bundle depth
 const MAX_NESTED_BUNDLE_DEPTH: usize = 5;
@@ -303,7 +303,7 @@ impl EthSimBundle {
                 apply_block_overrides(block_overrides, &mut db, evm_env.block_env.inner_mut());
 
                 let initial_coinbase_balance = DatabaseRef::basic_ref(&db, coinbase)
-                    .map_err(EthApiError::from_eth_err)?
+                    .map_err(EthApiError::from)?
                     .map(|acc| acc.balance)
                     .unwrap_or_default();
 
@@ -333,7 +333,7 @@ impl EthSimBundle {
 
                     let ResultAndState { result, state } = evm
                         .transact(eth_api.evm_config().tx_env(&item.tx))
-                        .map_err(BaseEthApiError::from_evm_err)?;
+                        .map_err(BaseEthApiError::from)?;
 
                     if !result.is_success() && !item.can_revert {
                         return Err(EthApiError::InvalidParams(

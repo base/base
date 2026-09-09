@@ -16,13 +16,12 @@ use futures::Future;
 use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,
-    error::IntoEthApiError,
 };
 use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 use reth_storage_api::{BlockIdReader, BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_trie_common::MultiProofTargets;
 
-use crate::{BaseEthApi, FromEthApiError};
+use crate::BaseEthApi;
 
 /// Helper methods for `eth_` methods relating to state (accounts).
 impl BaseEthApi {
@@ -402,7 +401,7 @@ impl BaseEthApi {
         self.spawn_blocking_io(move |this| {
             let address = match address {
                 Some(address) => address,
-                None => return Err(SignError::NoAccount.into_eth_err()),
+                None => return Err(SignError::NoAccount.into()),
             };
 
             // first fetch the on chain nonce of the account

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::TraceApiServer;
 use alloy_eips::BlockId;
 use alloy_primitives::{
     Address, B256, BlockHash, Bytes,
@@ -17,7 +18,6 @@ use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use reth_provider::providers::BlockchainProvider;
-use crate::TraceApiServer;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
 };
@@ -32,7 +32,7 @@ use revm_inspectors::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 
-use crate::{BaseEthApi, FromEthApiError};
+use crate::BaseEthApi;
 
 /// Maximum number of `trace_filter` blocks replayed concurrently.
 const TRACE_FILTER_BLOCK_BUFFER_SIZE: usize = 4;

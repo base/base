@@ -10,8 +10,7 @@ use reth_primitives_traits::{Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, error::FromEthApiError,
-    utils::calculate_gas_used_and_next_log_index,
+    BaseEthApiError, EthApiError, utils::calculate_gas_used_and_next_log_index,
 };
 use reth_storage_api::{ProviderReceipt, ProviderTx};
 

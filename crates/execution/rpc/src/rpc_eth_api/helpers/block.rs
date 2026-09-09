@@ -16,7 +16,7 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::BaseEthApiError;
 use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader};
 
-use crate::{BaseEthApi, FromEthApiError};
+use crate::BaseEthApi;
 
 /// Result type of the fetched block receipts.
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;

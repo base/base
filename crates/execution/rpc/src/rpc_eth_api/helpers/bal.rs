@@ -4,7 +4,7 @@ use alloy_primitives::Bytes;
 use base_common_consensus::BlockHeader;
 use base_common_rpc_types::BlockId;
 use base_execution_evm::{BlockExecutor, Evm};
-use reth_rpc_eth_types::{BaseEthApiError, EthApiError, error::FromEthApiError};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError};
 use reth_storage_api::StateProviderFactory;
 use revm::database::State;
 

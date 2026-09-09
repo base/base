@@ -17,7 +17,7 @@ use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::ProviderTx;
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 
-use crate::{BaseEthApi, FromEthApiError, FromEvmError};
+use crate::BaseEthApi;
 
 /// Executes CPU heavy tasks.
 impl BaseEthApi {
@@ -33,7 +33,7 @@ impl BaseEthApi {
         self.evm_config()
             .evm_with_env_and_inspector(db, evm_env, inspector)
             .transact(tx_env)
-            .map_err(BaseEthApiError::from_evm_err)
+            .map_err(BaseEthApiError::from)
     }
 
     /// Retrieves the transaction if it exists and returns its trace.
@@ -167,7 +167,7 @@ impl BaseEthApi {
         self.replay_transactions_until_with_evm(&mut evm, block_txs, target_tx_index)?;
         evm.enable_inspector();
 
-        let res = evm.transact(target_tx_env).map_err(BaseEthApiError::from_evm_err)?;
+        let res = evm.transact(target_tx_env).map_err(BaseEthApiError::from)?;
 
         let (_, evm_env) = evm.finish();
 

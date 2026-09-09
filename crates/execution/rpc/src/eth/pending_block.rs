@@ -3,7 +3,6 @@
 use alloy_eips::BlockNumberOrTag;
 use reth_rpc_eth_types::{
     EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
-    error::FromEthApiError,
 };
 use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 

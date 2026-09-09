@@ -13,7 +13,7 @@ use reth_rpc_eth_types::{
 use reth_storage_api::{BlockIdReader, BlockNumReader, BlockReaderIdExt, HeaderProvider};
 use tracing::debug;
 
-use crate::{BaseEthApi, FromEthApiError};
+use crate::BaseEthApi;
 
 /// Fee related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.

@@ -7,15 +7,15 @@ use alloy_primitives::Bytes;
 use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_common_rpc_types::{BlockError, error::EthRpcErrorCode};
-use base_evm_context::{EVMError, InvalidTransaction};
+use base_evm_context::{EVMError, ExecutionResult, InvalidTransaction};
 use base_execution_evm::{BaseBlockExecutionError, ProviderError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_rpc_convert::{EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
 
 use crate::{
-    EthApiError,
-    error::api::{AsEthApiError, FromEvmHalt, FromRevert},
+    EthApiError, RevertError,
+    error::{RpcInvalidTransactionError, SignError},
 };
 
 /// Base-specific errors, that extend [`EthApiError`].
@@ -35,8 +35,9 @@ pub enum BaseEthApiError {
     Sequencer(#[from] SequencerClientError),
 }
 
-impl AsEthApiError for BaseEthApiError {
-    fn as_err(&self) -> Option<&EthApiError> {
+impl BaseEthApiError {
+    /// Returns the underlying Ethereum error when present.
+    pub fn as_err(&self) -> Option<&EthApiError> {
         match self {
             Self::Eth(err) => Some(err),
             _ => None,
@@ -156,20 +157,24 @@ where
     }
 }
 
-impl FromEvmHalt<BaseHaltReason> for BaseEthApiError {
-    fn from_evm_halt(halt: BaseHaltReason, gas_limit: u64) -> Self {
+impl BaseEthApiError {
+    /// Maps an execution halt to its Base RPC error.
+    pub fn from_evm_halt(halt: BaseHaltReason, gas_limit: u64) -> Self {
         match halt {
             BaseHaltReason::FailedDeposit => {
                 BaseInvalidTransactionError::HaltedDepositPostRegolith.into()
             }
-            BaseHaltReason::Base(halt) => EthApiError::from_evm_halt(halt, gas_limit).into(),
+            BaseHaltReason::Base(halt) => {
+                EthApiError::from(RpcInvalidTransactionError::halt(halt, gas_limit)).into()
+            }
         }
     }
 }
 
-impl FromRevert for BaseEthApiError {
-    fn from_revert(output: Bytes) -> Self {
-        Self::Eth(EthApiError::from_revert(output))
+impl BaseEthApiError {
+    /// Maps unexpected revert data to its RPC error.
+    pub fn from_revert(output: Bytes) -> Self {
+        Self::Eth(RpcInvalidTransactionError::Revert(RevertError::new(output)).into())
     }
 }
 
@@ -206,5 +211,48 @@ impl From<Infallible> for BaseEthApiError {
 impl From<crate::error::RpcPoolError> for BaseEthApiError {
     fn from(error: crate::error::RpcPoolError) -> Self {
         Self::Eth(EthApiError::PoolError(error))
+    }
+}
+
+impl BaseEthApiError {
+    /// Converts an error through the Ethereum RPC error representation.
+    pub fn from_eth_err<E>(error: E) -> Self
+    where
+        EthApiError: From<E>,
+    {
+        Self::Eth(EthApiError::from(error))
+    }
+
+    /// Returns whether initialization failed because the requested gas limit was too high.
+    pub fn is_gas_too_high(&self) -> bool {
+        matches!(self, Self::Eth(error) if error.is_gas_too_high())
+    }
+
+    /// Returns whether initialization failed because the intrinsic gas was too low.
+    pub fn is_gas_too_low(&self) -> bool {
+        matches!(self, Self::Eth(error) if error.is_gas_too_low())
+    }
+
+    /// Returns successful call data or the corresponding revert/halt error.
+    pub fn ensure_success(result: ExecutionResult<BaseHaltReason>) -> Result<Bytes, Self> {
+        match result {
+            ExecutionResult::Success { output, .. } => Ok(output.into_data()),
+            ExecutionResult::Revert { output, .. } => Err(Self::from_revert(output)),
+            ExecutionResult::Halt { reason, gas, .. } => {
+                Err(Self::from_evm_halt(reason, gas.tx_gas_used()))
+            }
+        }
+    }
+}
+
+impl From<SignError> for BaseEthApiError {
+    fn from(error: SignError) -> Self {
+        Self::Eth(error.into())
+    }
+}
+
+impl From<RpcInvalidTransactionError> for BaseEthApiError {
+    fn from(error: RpcInvalidTransactionError) -> Self {
+        Self::Eth(error.into())
     }
 }

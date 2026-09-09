@@ -31,7 +31,7 @@ use reth_storage_api::{
 };
 
 use super::EthSigner;
-use crate::{BaseEthApi, FromEthApiError, IntoEthApiError};
+use crate::BaseEthApi;
 
 /// Transaction related functions for the [`EthApiServer`](crate::EthApiServer) trait in
 /// the `eth_` namespace.
@@ -380,11 +380,11 @@ impl BaseEthApi {
         async move {
             let from = match request.as_ref().from() {
                 Some(from) => from,
-                None => return Err(SignError::NoAccount.into_eth_err()),
+                None => return Err(SignError::NoAccount.into()),
             };
 
             if self.find_signer(&from).is_err() {
-                return Err(SignError::NoAccount.into_eth_err());
+                return Err(SignError::NoAccount.into());
             }
 
             // set nonce if not already set before
@@ -533,7 +533,7 @@ impl BaseEthApi {
         async move {
             let from = match request.as_ref().from() {
                 Some(from) => from,
-                None => return Err(SignError::NoAccount.into_eth_err()),
+                None => return Err(SignError::NoAccount.into()),
             };
 
             Ok(self.sign_request(&from, request).await?.encoded_2718().into())
@@ -568,7 +568,7 @@ impl BaseEthApi {
             .iter()
             .find(|signer| signer.is_signer_for(account))
             .map(|signer| dyn_clone::clone_box(&**signer))
-            .ok_or_else(|| SignError::NoAccount.into_eth_err())
+            .ok_or_else(|| SignError::NoAccount.into())
     }
 }
 
