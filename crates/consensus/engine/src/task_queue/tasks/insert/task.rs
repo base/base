@@ -455,18 +455,18 @@ mod tests {
         bedrock_payload_with_parent(block_number, B256::ZERO)
     }
 
-    fn cobalt_config() -> Arc<RollupConfig> {
+    fn denim_config() -> Arc<RollupConfig> {
         Arc::new(RollupConfig {
             block_time: 2,
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { cobalt: Some(2), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(2), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
         })
     }
 
-    fn cobalt_payload(
+    fn denim_payload(
         block_number: u64,
         timestamp: u64,
         timestamp_millis_part: u16,
@@ -652,23 +652,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cobalt_schedule_mismatch_is_rejected_before_new_payload() {
+    async fn denim_schedule_mismatch_is_rejected_before_new_payload() {
         let client = test_client();
         let mut state = TestEngineStateBuilder::new().build();
 
         for (payload, expected_error) in [
             (
-                cobalt_payload(2, 3, 200),
+                denim_payload(2, 3, 200),
                 BaseTimeScheduleError::InvalidTimestamp { expected: 2, actual: 3 },
             ),
             (
-                cobalt_payload(2, 2, 400),
+                denim_payload(2, 2, 400),
                 BaseTimeScheduleError::InvalidTimestampMillisPart { expected: 200, actual: 400 },
             ),
         ] {
             let error = InsertTask::unsafe_payload(
                 Arc::clone(&client),
-                cobalt_config(),
+                denim_config(),
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: None,
                     execution_payload: payload,
@@ -689,17 +689,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_cobalt_schedule_mismatch_is_returned_to_caller() {
+    async fn local_denim_schedule_mismatch_is_returned_to_caller() {
         let client = test_client();
         let mut state = TestEngineStateBuilder::new().build();
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
-            execution_payload: cobalt_payload(2, 3, 200),
+            execution_payload: denim_payload(2, 3, 200),
         };
 
         let error = InsertTask::new(
             Arc::clone(&client),
-            cobalt_config(),
+            denim_config(),
             envelope,
             InsertPayloadSafety::Unsafe,
         )
@@ -718,10 +718,10 @@ mod tests {
         let mut state = TestEngineStateBuilder::new().with_unsafe_head(current_unsafe).build();
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
-            execution_payload: cobalt_payload(2, 3, 200),
+            execution_payload: denim_payload(2, 3, 200),
         };
 
-        let result = InsertTask::unsafe_payload(Arc::clone(&client), cobalt_config(), envelope)
+        let result = InsertTask::unsafe_payload(Arc::clone(&client), denim_config(), envelope)
             .execute_with_result(&mut state)
             .await
             .expect("stale payload should be dropped before validation");

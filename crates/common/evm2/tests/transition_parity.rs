@@ -1,7 +1,7 @@
 //! Differential parity harness for the transition-block hooks.
 //!
 //! Runs each Base transition hook (Canyon create2-deployer, Zenith EIP-8130 system-account stub,
-//! Cobalt `BaseTime` predeploy) through the `base-common-evm2` executor and, on an equivalent
+//! Denim `BaseTime` predeploy) through the `base-common-evm2` executor and, on an equivalent
 //! database, through the revm-based `base-common-evm` reference function, asserting the two engines
 //! install byte-identical state (the affected account code hashes and, for `BaseTime`, the linked
 //! EIP-1967 implementation slot).
@@ -126,8 +126,8 @@ fn zenith_system_account_stub_matches_revm() {
 #[test]
 fn base_time_predeploy_matches_revm() {
     // evm2 side: seed a valid proxy, then run the hooks.
-    let mut executor = evm2_executor(BaseUpgrade::Cobalt, evm2_db_with_valid_base_time_proxy());
-    executor.apply_transition_hooks(&evm2_schedule(BaseUpgrade::Cobalt)).expect("hooks apply");
+    let mut executor = evm2_executor(BaseUpgrade::Denim, evm2_db_with_valid_base_time_proxy());
+    executor.apply_transition_hooks(&evm2_schedule(BaseUpgrade::Denim)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
     let evm2_impl_hash = evm2_code_hash(&mut evm, BaseTime::IMPLEMENTATION_ADDRESS);
     let evm2_slot = evm
@@ -153,7 +153,7 @@ fn base_time_predeploy_matches_revm() {
         U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
     )
     .unwrap();
-    RevmBaseTime::ensure_predeploy(revm_schedule(BaseUpgrade::Cobalt), ACTIVATION_TS, &mut db)
+    RevmBaseTime::ensure_predeploy(revm_schedule(BaseUpgrade::Denim), ACTIVATION_TS, &mut db)
         .expect("reference applies");
     let revm_impl_hash = revm_code_hash(&mut db, RevmBaseTime::IMPLEMENTATION_ADDRESS);
     let revm_slot = db.storage(Predeploys::BASE_TIME, IMPLEMENTATION_SLOT).unwrap();

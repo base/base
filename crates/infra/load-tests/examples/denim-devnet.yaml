@@ -1,7 +1,7 @@
-# Cobalt load profile for a local devnet already running native 200ms blocks.
+# Denim load profile for a local devnet already running native 200ms blocks.
 # Same 20M gas/s and transaction mix as devnet.yaml: 4M gas per 200ms block
 # instead of 40M per 2s block. Configure chain capacity separately; this file
-# does not activate Cobalt, select a builder, or change the block gas limit.
+# does not activate Denim, select a builder, or change the block gas limit.
 # No Flashblocks endpoint: canonical RPC is the only inclusion source.
 transaction_submission_rpcs:
   - "http://localhost:7545"

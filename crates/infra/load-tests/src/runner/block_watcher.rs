@@ -927,7 +927,7 @@ mod tests {
     }
 
     #[test]
-    fn catchup_windows_preserve_two_second_behavior_and_scale_for_cobalt() {
+    fn catchup_windows_preserve_two_second_behavior_and_scale_for_denim() {
         assert_eq!(BlockWatcher::catchup_blocks(LIVE_CATCHUP_WINDOW, Duration::from_secs(2)), 8);
         assert_eq!(
             BlockWatcher::catchup_blocks(STARTUP_CATCHUP_WINDOW, Duration::from_secs(2)),

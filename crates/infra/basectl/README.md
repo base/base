@@ -12,6 +12,14 @@ The crate also provides the interactive terminal monitor for block production,
 node sync status, flashblock throughput, and system metrics, plus the
 non-interactive `basectl flashblocks` JSON-lines stream.
 
+## Denim Readiness
+
+The upgrades monitor attaches `BaseTime` checks to Denim, using the live consensus
+node's `optimism_rollupConfig` Denim timestamp. `DenimChecker` checks a hash-pinned
+L2 snapshot for `BaseTime` installation, update metadata and receipt, storage/getter
+agreement, 200ms cadence, and millisecond RPC fields. Active-only checks start at
+Denim.
+
 ## Pods View
 
 `basectl monitor pods` displays Kubernetes pod status from groups defined in a

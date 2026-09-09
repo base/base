@@ -844,10 +844,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cobalt_profile_preserves_gas_per_second() {
+    fn denim_profile_preserves_gas_per_second() {
         let baseline = TestConfig::from_yaml(include_str!("../../examples/devnet.yaml")).unwrap();
         let config =
-            TestConfig::from_yaml(include_str!("../../examples/cobalt-devnet.yaml")).unwrap();
+            TestConfig::from_yaml(include_str!("../../examples/denim-devnet.yaml")).unwrap();
         let load = config.to_load_config(Some(1337)).unwrap();
 
         assert_eq!(load.block_time, Duration::from_millis(200));

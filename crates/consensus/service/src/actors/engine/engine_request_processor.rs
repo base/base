@@ -845,7 +845,7 @@ mod tests {
         let config = RollupConfig {
             block_time: 2,
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { cobalt: Some(2), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(2), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()

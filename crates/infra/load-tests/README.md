@@ -52,17 +52,17 @@ cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 
 ## 200ms devnet profile
 
-`examples/cobalt-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
+`examples/denim-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
 It keeps the `devnet.yaml` transaction mix and 20M gas/s target: 4M gas per 200ms block instead
-of 40M per 2s block. Configure the devnet separately with Cobalt active and native building;
+of 40M per 2s block. Configure the devnet separately with Denim active and native building;
 use one tenth of the baseline block gas limit to preserve gas/s capacity. The profile does not
 change chain configuration.
 
 ```bash
 # Use a funded local-devnet account, never a production key.
-FUNDER_KEY=0x... LOAD_TEST_OUTPUT=cobalt-results.json \
+FUNDER_KEY=0x... LOAD_TEST_OUTPUT=denim-results.json \
   cargo run -p base-load-tester-bin --bin base-load-tester -- \
-  crates/infra/load-tests/examples/cobalt-devnet.yaml
+  crates/infra/load-tests/examples/denim-devnet.yaml
 ```
 
 ## Configuration

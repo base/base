@@ -51,7 +51,7 @@ pub enum BlockInvalidError {
     /// Invalid block.
     #[error(transparent)]
     InvalidBlock(#[from] BasePayloadError),
-    /// The block timestamp does not match the absolute Cobalt schedule.
+    /// The block timestamp does not match the absolute Denim schedule.
     #[error(transparent)]
     InvalidBaseTimeSchedule(#[from] BaseTimeScheduleError),
     /// The block has an invalid parent beacon block root.

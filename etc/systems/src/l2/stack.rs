@@ -82,7 +82,7 @@ pub struct L2StackConfig {
     /// Whether both L2 nodes enable experimental validity transaction transport,
     /// including `base_sendRawTransactionValidity` on the builder.
     pub enable_experimental_validity_transactions: bool,
-    /// Whether the active builder cuts over from flashblocks to basic at Cobalt.
+    /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.

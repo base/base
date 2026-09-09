@@ -153,7 +153,7 @@ pub fn build_test_genesis_cobalt() -> Genesis {
     genesis
 }
 
-/// Builds a test genesis with Zenith enabled at timestamp 0.
+/// Builds a test genesis with Denim and Zenith enabled at timestamp 0.
 pub fn build_test_genesis_zenith() -> Genesis {
     let mut genesis = build_test_genesis_cobalt();
     genesis.config.extra_fields.insert(
@@ -162,6 +162,7 @@ pub fn build_test_genesis_zenith() -> Genesis {
             "azul": 0,
             "beryl": 0,
             "cobalt": 0,
+            "denim": 0,
             "zenith": 0
         }),
     );

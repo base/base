@@ -1,4 +1,4 @@
-//! End-to-end tests for the Cobalt builder and 200ms cutover, with and without later Denim.
+//! End-to-end tests for the Denim builder and 200ms cutover, with and without later Zenith.
 
 use std::time::Duration;
 
@@ -21,30 +21,31 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
-const COBALT_ACTIVATION_BLOCK: u64 = 10;
+const DENIM_ACTIVATION_BLOCK: u64 = 10;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
-async fn cuts_over_builder_and_block_time_at_cobalt() -> Result<()> {
+async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
     verify_cutover(None).await
 }
 
 #[tokio::test]
-async fn denim_keeps_native_builder_and_cobalt_cadence() -> Result<()> {
-    verify_cutover(Some(COBALT_ACTIVATION_BLOCK + 10)).await
+async fn zenith_keeps_native_builder_and_denim_cadence() -> Result<()> {
+    verify_cutover(Some(DENIM_ACTIVATION_BLOCK + 10)).await
 }
 
-async fn verify_cutover(denim_activation_block: Option<u64>) -> Result<()> {
+async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let mut setup = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
+        .with_base_cobalt_activation_block(0)
+        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_payload_builder_cutover();
-    if let Some(block) = denim_activation_block {
-        setup = setup.with_base_denim_activation_block(block);
+    if let Some(block) = zenith_activation_block {
+        setup = setup.with_base_zenith_activation_block(block);
     }
     let system = setup.build().await?;
     let builder = system.l2_builder_provider()?;
@@ -52,61 +53,61 @@ async fn verify_cutover(denim_activation_block: Option<u64>) -> Result<()> {
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
     let rollup_config: RollupConfig =
         serde_json::from_slice(&std::fs::read(system.l2_deployment().rollup_config_path())?)?;
-    let denim_timestamp = rollup_config.upgrade_activation_timestamp(BaseUpgrade::Denim);
-    assert_eq!(denim_timestamp.is_some(), denim_activation_block.is_some());
+    let zenith_timestamp = rollup_config.upgrade_activation_timestamp(BaseUpgrade::Zenith);
+    assert_eq!(zenith_timestamp.is_some(), zenith_activation_block.is_some());
 
     let pre_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("pre-cutover transaction failed")?;
     assert!(
-        pre_cutover_receipt_block < COBALT_ACTIVATION_BLOCK,
+        pre_cutover_receipt_block < DENIM_ACTIVATION_BLOCK,
         "pre-cutover transaction landed at block {pre_cutover_receipt_block}"
     );
 
-    wait_for_block(&builder, COBALT_ACTIVATION_BLOCK + 1).await?;
+    wait_for_block(&builder, DENIM_ACTIVATION_BLOCK + 1).await?;
     let post_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("post-cutover transaction failed")?;
     assert!(
-        post_cutover_receipt_block > COBALT_ACTIVATION_BLOCK,
+        post_cutover_receipt_block > DENIM_ACTIVATION_BLOCK,
         "post-cutover transaction landed at block {post_cutover_receipt_block}"
     );
 
     let mut last_verified_block = post_cutover_receipt_block + 4;
-    if let Some(timestamp) = denim_timestamp {
+    if let Some(timestamp) = zenith_timestamp {
         let metrics_url = system.l2_stack().builder().metrics_url()?;
         let metrics_before = reqwest::get(metrics_url.clone()).await?.text().await?;
         let flashblocks_builds_before = selected_build_count(&metrics_before, "flashblocks")?;
         let basic_builds_before = selected_build_count(&metrics_before, "basic")?;
-        assert!(flashblocks_builds_before > 0, "Flashblocks was never selected before Cobalt");
-        assert!(basic_builds_before > 0, "basic builder was never selected after Cobalt");
+        assert!(flashblocks_builds_before > 0, "Flashblocks was never selected before Denim");
+        assert!(basic_builds_before > 0, "basic builder was never selected after Denim");
 
         // Use the generated schedule rather than assuming the harness's requested block number
-        // still identifies the activation after Cobalt changes the block cadence.
-        let denim_active_head = wait_for_timestamp(&builder, timestamp).await?;
-        let post_denim_receipt_block =
-            send_transaction(&builder, &signer).await.wrap_err("post-Denim transaction failed")?;
+        // still identifies the activation after Denim changes the block cadence.
+        let zenith_active_head = wait_for_timestamp(&builder, timestamp).await?;
+        let post_zenith_receipt_block =
+            send_transaction(&builder, &signer).await.wrap_err("post-Zenith transaction failed")?;
         assert!(
-            post_denim_receipt_block > denim_active_head,
-            "post-Denim transaction landed at block {post_denim_receipt_block}"
+            post_zenith_receipt_block > zenith_active_head,
+            "post-Zenith transaction landed at block {post_zenith_receipt_block}"
         );
-        last_verified_block = post_denim_receipt_block + 4;
+        last_verified_block = post_zenith_receipt_block + 4;
         wait_for_block(&builder, last_verified_block).await?;
 
         let metrics_after = reqwest::get(metrics_url).await?.text().await?;
         assert_eq!(
             selected_build_count(&metrics_after, "flashblocks")?,
             flashblocks_builds_before,
-            "Denim restarted Flashblocks builder selection"
+            "Zenith restarted Flashblocks builder selection"
         );
         assert!(
             selected_build_count(&metrics_after, "basic")? > basic_builds_before,
-            "basic builder was not selected after Denim"
+            "basic builder was not selected after Zenith"
         );
     }
 
     wait_for_block(&builder, last_verified_block).await?;
     wait_for_block(&client, last_verified_block).await?;
     verify_chain_and_cadence(&builder, &client, last_verified_block).await?;
-    verify_flashblocks_stop_at_cobalt(&system.l2_stack().builder().flashblocks_url()).await?;
+    verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
 
     Ok(())
 }
@@ -210,7 +211,7 @@ async fn verify_chain_and_cadence(
             .timestamp_ms
             .unwrap_or_else(|| builder_block.header.timestamp.saturating_mul(1_000));
         if let Some(previous) = previous_timestamp_ms {
-            let expected_delta = if number <= COBALT_ACTIVATION_BLOCK { 2_000 } else { 200 };
+            let expected_delta = if number <= DENIM_ACTIVATION_BLOCK { 2_000 } else { 200 };
             assert_eq!(timestamp_ms - previous, expected_delta, "block {number} cadence mismatch");
         }
 
@@ -221,7 +222,7 @@ async fn verify_chain_and_cadence(
     Ok(())
 }
 
-async fn verify_flashblocks_stop_at_cobalt(url: &str) -> Result<()> {
+async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
     let replay_url = format!("{url}?block_number=0&flashblock_index=0");
     let (stream, _) = connect_async(replay_url).await?;
     let (_, mut messages) = stream.split();
@@ -236,14 +237,14 @@ async fn verify_flashblocks_stop_at_cobalt(url: &str) -> Result<()> {
         positions.push((metadata.block_number, flashblock.index));
     }
 
-    assert!(!positions.is_empty(), "no pre-Cobalt flashblocks were published");
+    assert!(!positions.is_empty(), "no pre-Denim flashblocks were published");
     assert!(
-        positions.iter().any(|(number, _)| *number == COBALT_ACTIVATION_BLOCK - 1),
-        "no Flashblocks were published immediately before Cobalt: {positions:?}"
+        positions.iter().any(|(number, _)| *number == DENIM_ACTIVATION_BLOCK - 1),
+        "no Flashblocks were published immediately before Denim: {positions:?}"
     );
     assert!(
-        positions.iter().all(|(number, _)| *number < COBALT_ACTIVATION_BLOCK),
-        "post-Cobalt flashblock published at {positions:?}"
+        positions.iter().all(|(number, _)| *number < DENIM_ACTIVATION_BLOCK),
+        "post-Denim flashblock published at {positions:?}"
     );
 
     Ok(())

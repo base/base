@@ -422,7 +422,7 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Runs both payload builders and cuts selection from flashblocks to basic at Cobalt.
+    /// Runs both payload builders and cuts selection from flashblocks to basic at Denim.
     pub const fn with_payload_builder_cutover(mut self) -> Self {
         self.payload_builder_cutover = true;
         self
