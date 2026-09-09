@@ -2277,7 +2277,7 @@ dependencies = [
  "base-precompile-storage",
  "base-protocol",
  "base-runtime",
- "base-state-api",
+ "base-state",
  "base-test-utils",
  "base-tx-manager",
  "eyre",
@@ -3316,7 +3316,7 @@ dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
  "auto_impl",
- "base-state-api",
+ "base-state",
  "bitvec",
  "cfg-if",
  "derive-where",
@@ -3340,12 +3340,11 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-evm-context",
- "base-state-api",
+ "base-state",
  "derive-where",
  "derive_more",
  "either",
  "revm-bytecode",
- "revm-database",
  "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
@@ -3613,7 +3612,7 @@ dependencies = [
  "base-metrics",
  "base-observability-events",
  "base-protocol",
- "base-state-api",
+ "base-state",
  "derive_more",
  "futures-core",
  "futures-util",
@@ -5028,11 +5027,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-state-api"
+name = "base-state"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-provider",
+ "alloy-transport",
  "alloy-trie",
  "arbitrary",
  "auto_impl",
@@ -5048,6 +5050,7 @@ dependencies = [
  "revm-primitives",
  "revm-state",
  "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tokio",
 ]
@@ -5318,6 +5321,7 @@ dependencies = [
  "base-metrics",
  "base-node-runner",
  "base-observability-events",
+ "base-state",
  "base-test-utils",
  "chrono",
  "derive_more",
@@ -5327,7 +5331,6 @@ dependencies = [
  "metrics",
  "reth-provider",
  "reth-tracing",
- "revm-database",
  "serde_json",
  "tokio",
  "tokio-stream",
@@ -14271,7 +14274,7 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-payload-types",
  "base-execution-trie",
- "base-state-api",
+ "base-state",
  "crossbeam-channel",
  "derive_more",
  "eyre",
@@ -14428,7 +14431,7 @@ name = "reth-execution-cache"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-state-api",
+ "base-state",
  "fixed-cache",
  "metrics",
  "parking_lot",
@@ -14961,7 +14964,7 @@ dependencies = [
  "arbitrary",
  "base-common-consensus",
  "base-common-rpc-types",
- "base-state-api",
+ "base-state",
  "byteorder",
  "bytes",
  "dashmap",
@@ -15640,9 +15643,8 @@ version = "0.0.0"
 dependencies = [
  "base-evm-context",
  "base-evm-handler",
- "base-state-api",
+ "base-state",
  "revm-bytecode",
- "revm-database",
  "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
@@ -15663,24 +15665,6 @@ dependencies = [
  "revm-primitives",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "revm-database"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-provider",
- "alloy-transport",
- "base-state-api",
- "derive_more",
- "either",
- "revm-bytecode",
- "revm-primitives",
- "revm-state",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

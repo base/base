@@ -320,7 +320,7 @@ mod tests {
         TxEnv,
     };
     use revm_bytecode::opcode;
-    use revm_database::{CacheDB, EmptyDB};
+    use base_state::{CacheDB, EmptyDB};
     use revm_primitives::{B256, Bytes, TxKind, address, eip3860, eip7954, hardfork::SpecId};
     use revm_state::{AccountInfo, Bytecode};
 

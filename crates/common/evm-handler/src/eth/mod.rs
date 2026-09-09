@@ -288,7 +288,7 @@ mod tests {
     use alloc::boxed::Box;
 
     use alloy_primitives::address;
-    use revm::{database_interface::EmptyDB, primitives::hardfork::SpecId};
+    use revm::{database::EmptyDB, primitives::hardfork::SpecId};
 
     use super::*;
 

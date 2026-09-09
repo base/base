@@ -16,13 +16,12 @@ pub use base_evm_handler::{
     SystemCallCommitEvm, SystemCallEvm,
 };
 #[doc(inline)]
-pub use base_state_api as database_interface;
-pub use base_state_api::{Database, DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
+pub use base_state::{Database, DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
 #[doc(inline)]
 pub use revm_bytecode as bytecode;
 #[doc(inline)]
 #[doc(inline)]
-pub use revm_database as database;
+pub use base_state as database;
 #[doc(inline)]
 pub use revm_interpreter as interpreter;
 #[doc(inline)]

@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_consensus::BaseReceipt;
 pub use base_evm_handler::BlockExecutionResult;
 use reth_primitives_traits::{Account, Bytecode};
-use revm::database::{BundleAccount, states::BundleState};
+use revm::database::{BundleAccount, BundleState};
 
 /// [`BlockExecutionResult`] combined with state.
 #[derive(

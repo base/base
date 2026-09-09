@@ -3,7 +3,7 @@ use base_evm_handler::{
     EthFrame, EvmTr, EvmTrError, Handler, InstructionProvider, MainnetHandler, PrecompileProvider,
     SystemCallTx,
 };
-use base_state_api::DatabaseCommit;
+use base_state::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_primitives::{Address, Bytes};
 use revm_state::EvmState;

@@ -6,7 +6,7 @@
 use std::vec::Vec;
 
 use auto_impl::auto_impl;
-use base_state_api::Database;
+use base_state::Database;
 use revm_primitives::{
     Address, AddressMap, B256, HashSet, KECCAK_EMPTY, StorageKey, StorageValue, U256,
     hash_map::Entry,

@@ -16,7 +16,7 @@ use base_execution_payload_types::{
 };
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::TransactionPool;
-use base_state_api::CachedReads;
+use base_state::CachedReads;
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;

@@ -20,7 +20,7 @@
 //!
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
 use base_evm_context::{ContextSetters, ContextTr, Evm, ExecResultAndState, JournalTr, TxEnv};
-use base_state_api::DatabaseCommit;
+use base_state::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
 use revm_state::EvmState;
@@ -274,7 +274,7 @@ mod tests {
     use base_evm_context::{
         Context, ExecutionResult, Output, ResultGas, SuccessReason, Transaction,
     };
-    use revm_database::InMemoryDB;
+    use base_state::InMemoryDB;
     use revm_primitives::{StorageKey, U256, b256, bytes};
     use revm_state::{AccountInfo, Bytecode};
 

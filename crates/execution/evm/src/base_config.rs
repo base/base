@@ -405,7 +405,7 @@ mod tests {
     use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
     use revm::{
         database::{BundleState, CacheDB},
-        database_interface::EmptyDBTyped,
+        database::EmptyDBTyped,
         primitives::Log,
         state::AccountInfo,
     };

@@ -30,7 +30,7 @@ use crossbeam_channel::{Receiver, Sender};
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::Runtime;
 use revm::{
-    database::{State, states::bundle_state::BundleRetention},
+    database::{State, BundleRetention},
     state::bal::Bal as RevmBal,
 };
 

@@ -27,7 +27,7 @@ derive_more = { workspace = true, features = ["display"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 [dev-dependencies]
-revm-database = { workspace = true }
+base-state = { workspace = true }
 base-test-utils = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }

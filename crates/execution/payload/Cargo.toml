@@ -24,7 +24,7 @@ base-bundles = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
-base-state-api = { workspace = true }
+base-state = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }

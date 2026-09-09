@@ -5,7 +5,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::Predeploys;
 use revm::{
     DatabaseCommit,
-    database_interface::Database,
+    database::Database,
     primitives::{HashMap, U256, uint},
     state::{Bytecode, EvmStorageSlot, TransactionId},
 };

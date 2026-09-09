@@ -10,7 +10,7 @@ use base_common_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
 use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
 use revm::{
     Database,
-    database::{BundleState, states::StorageSlot},
+    database::{BundleState, StorageSlot},
     primitives::{BLOCK_HASH_HISTORY, HashMap},
     state::{AccountInfo, Bytecode},
 };
@@ -362,7 +362,7 @@ mod tests {
     use alloy_primitives::{U256, b256};
     use base_common_consensus::Sealable;
     use base_proof_mpt::NoopTrieHinter;
-    use revm::database::{AccountStatus, BundleAccount, states::StorageSlot as RvmStorageSlot};
+    use revm::database::{AccountStatus, BundleAccount, StorageSlot as RvmStorageSlot};
 
     use super::*;
 

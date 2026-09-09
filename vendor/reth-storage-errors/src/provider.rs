@@ -8,7 +8,7 @@ use reth_primitives_traits::{GotExpected, transaction::signed::RecoveryError};
 use reth_prune_types::PruneSegmentError;
 use reth_static_file_types::StaticFileSegment;
 use revm::{
-    database_interface::{DBErrorMarker, EvmDatabaseError},
+    database::{DBErrorMarker, EvmDatabaseError},
     state::bal::BalError,
 };
 

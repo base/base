@@ -1,7 +1,7 @@
 use core::convert::Infallible;
 use std::vec::Vec;
 
-use base_state_api::{
+use crate::{
     BENCH_CALLER, BENCH_CALLER_BALANCE, BENCH_TARGET, BENCH_TARGET_BALANCE, Database,
     DatabaseCommit, DatabaseRef, EmptyDB,
 };
@@ -554,7 +554,7 @@ impl Database for BenchmarkDB {
 
 #[cfg(test)]
 mod tests {
-    use base_state_api::{Database, DatabaseCommit};
+    use crate::{Database, DatabaseCommit};
     use revm_primitives::{Address, HashMap, StorageKey, StorageValue};
     use revm_state::{Account, AccountInfo, EvmStorageSlot, TransactionId};
 

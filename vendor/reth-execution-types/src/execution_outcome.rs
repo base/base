@@ -9,7 +9,7 @@ use base_common_consensus::{BaseReceipt, TxReceipt};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_trie_common::HashedPostState;
 use revm::{
-    database::{BundleAccount, states::BundleState},
+    database::{BundleAccount, BundleState},
     state::AccountInfo,
 };
 

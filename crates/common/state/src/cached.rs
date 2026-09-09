@@ -21,7 +21,7 @@ use crate::{Database, DatabaseRef};
 /// # Example
 ///
 /// ```
-/// use base_state_api::{CachedReads, Database, DatabaseRef};
+/// use base_state::{CachedReads, Database, DatabaseRef};
 /// use alloy_primitives::Address;
 ///
 /// fn build_payload<DB: DatabaseRef>(db: DB) {

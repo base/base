@@ -988,7 +988,7 @@ impl Iterator for ChunkedHashedPostState {
 mod tests {
     use alloy_primitives::Bytes;
     use revm::{
-        database::{AccountStatus, StorageWithOriginalValues, states::StorageSlot},
+        database::{AccountStatus, StorageWithOriginalValues, StorageSlot},
         state::{AccountInfo, Bytecode},
     };
 

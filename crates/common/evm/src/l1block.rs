@@ -3,7 +3,7 @@ use base_common_consensus::Predeploys;
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
 use revm::{
-    database_interface::Database,
+    database::Database,
     interpreter::Gas,
     primitives::{U256, uint},
 };

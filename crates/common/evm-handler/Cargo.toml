@@ -26,7 +26,7 @@ auto_impl = { workspace = true }
 revm-state = { workspace = true }
 derive-where = { workspace = true }
 revm-bytecode = { workspace = true }
-base-state-api = { workspace = true }
+base-state = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
 base-evm-context = { workspace = true }
@@ -39,7 +39,6 @@ serde_json = { workspace = true, features = [
 tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-revm-database = {workspace = true}
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -48,7 +47,7 @@ base-common-consensus = {workspace = true, features = ["k256"]}
 [dev-dependencies]
 alloy-signer = { workspace = true }
 base-common-network = { workspace = true }
-revm-database = { workspace = true, features = ["serde"]}
+base-state = { workspace = true, features = ["serde"]}
 serde_json = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 [lints]
@@ -62,8 +61,8 @@ serde = [
     "revm-state/serde",
     "base-evm-context/serde",
     "revm-bytecode/serde",
-    "revm-database/serde",
-    "base-state-api/serde",
+    "base-state/serde",
+    "base-state/serde",
     "revm-interpreter/serde",
     "derive-where/serde",
     "either/serde",
@@ -73,8 +72,8 @@ std = [
     "serde?/std",
     "revm-bytecode/std",
     "base-evm-context/std",
-    "revm-database/std",
-    "base-state-api/std",
+    "base-state/std",
+    "base-state/std",
     "revm-interpreter/std",
     "revm-precompile/std",
     "revm-primitives/std",

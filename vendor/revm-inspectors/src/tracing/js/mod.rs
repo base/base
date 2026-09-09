@@ -763,7 +763,7 @@ mod tests {
     use revm::{
         InspectEvm, MainBuilder, MainContext,
         database::CacheDB,
-        database_interface::EmptyDB,
+        database::EmptyDB,
         primitives::hardfork::SpecId,
         state::{AccountInfo, Bytecode},
     };

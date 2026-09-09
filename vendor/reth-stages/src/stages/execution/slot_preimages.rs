@@ -13,7 +13,7 @@ use reth_libmdbx::{
 };
 use reth_provider::{DBProvider, ExecutionOutcome};
 use reth_stages_api::StageError;
-use revm::database::states::RevertToSlot;
+use revm::database::RevertToSlot;
 use tracing::trace;
 
 /// Separate MDBX environment for storing `keccak256(slot) → slot` preimage mappings.

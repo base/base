@@ -271,7 +271,7 @@ pub mod default_tests {
 mod tests {
     use base_evm_context::{CfgEnv, Context, TxEnv};
     use base_evm_handler::{ExecuteEvm, MainBuilder, MainContext};
-    use revm_database::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
+    use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_primitives::{
         Address, B256, Bytes, TxKind, U256, address,
         eip7708::{ETH_TRANSFER_LOG_ADDRESS, ETH_TRANSFER_LOG_TOPIC},
@@ -458,7 +458,7 @@ mod tests {
         ]);
 
         // Create a custom database with two contracts
-        let mut db = revm_database::InMemoryDB::default();
+        let mut db = base_state::InMemoryDB::default();
 
         // Add caller contract at BENCH_TARGET
         db.insert_account_info(
@@ -965,7 +965,7 @@ mod tests {
     #[test]
     fn test_system_call_gas_consistency_with_reservoir() {
         use base_evm_handler::SystemCallEvm;
-        use revm_database::{CacheDB, EmptyDB};
+        use base_state::{CacheDB, EmptyDB};
         use revm_primitives::hardfork::SpecId;
 
         let child_addr = address!("0x000000000000000000000000000000000000c0de");
@@ -1106,7 +1106,7 @@ mod tests {
     /// i.e. the drained state must be empty.
     #[test]
     fn test_inspect_tx_finalizes_journal_on_error() {
-        use revm_database::{CacheDB, EmptyDB};
+        use base_state::{CacheDB, EmptyDB};
 
         // Caller account exists in the DB with nonce = 1.
         let mut db = CacheDB::<EmptyDB>::default();
@@ -1150,7 +1150,7 @@ mod tests {
     /// committed), so a subsequent drain yields an empty state.
     #[test]
     fn test_inspect_tx_commit_finalizes_journal_on_error() {
-        use revm_database::{CacheDB, EmptyDB};
+        use base_state::{CacheDB, EmptyDB};
 
         let mut db = CacheDB::<EmptyDB>::default();
         db.insert_account_info(
@@ -1210,7 +1210,7 @@ mod tests {
         code: Vec<u8>,
         callee_code: Option<Bytecode>,
     ) -> Vec<(Address, Address, U256)> {
-        let mut db = revm_database::CacheDB::<revm_database::EmptyDB>::default();
+        let mut db = base_state::CacheDB::<base_state::EmptyDB>::default();
         db.insert_account_info(
             BENCH_CALLER,
             AccountInfo { balance: U256::from(1_000_000_000u64), ..Default::default() },

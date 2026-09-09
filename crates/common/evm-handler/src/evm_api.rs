@@ -8,7 +8,7 @@ use base_evm_context::{
     CfgEnv, ContextTr, DBErrorMarker, ExecutionResult, HaltReasonTr, ResultAndState,
 };
 use base_evm_handler::{JournalExt, NoOpInspector};
-pub use base_state_api::Database;
+pub use base_state::Database;
 use revm::{DatabaseCommit, Inspector};
 
 use crate::{EvmEnv, EvmError, IntoTxEnv, env::BlockEnvironment, tracing::TxTracer};

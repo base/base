@@ -17,7 +17,7 @@ use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
 use base_evm_handler::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory, EvmFactory};
 use base_proof_mpt::TrieHinter;
-use revm::database::{State, states::bundle_state::BundleRetention};
+use revm::database::{State, BundleRetention};
 
 use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 

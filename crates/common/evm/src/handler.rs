@@ -396,7 +396,7 @@ mod tests {
         InspectEvm,
         bytecode::Bytecode,
         database::InMemoryDB,
-        database_interface::EmptyDB,
+        database::EmptyDB,
         interpreter::{CallOutcome, Gas, InstructionResult, InterpreterResult},
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,

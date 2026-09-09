@@ -592,7 +592,7 @@ mod tests {
     use alloy_primitives::{U256, address};
     use revm::{
         database::CacheDB,
-        database_interface::EmptyDB,
+        database::EmptyDB,
         state::{Account, AccountInfo},
     };
 

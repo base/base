@@ -29,7 +29,7 @@ revm-state = { workspace = true }
 derive-where = { workspace = true }
 revm-bytecode = { workspace = true }
 alloy-eip2930 = { workspace = true }
-base-state-api = { workspace = true }
+base-state = { workspace = true }
 revm-primitives = { workspace = true }
 alloy-eip7702 = { workspace = true, features = ["k256"] }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
@@ -64,7 +64,7 @@ serde = [
     "revm-primitives/serde",
     "revm-state/serde",
     "revm-bytecode/serde",
-    "base-state-api/serde",
+    "base-state/serde",
     "derive-where/serde",
     "bitvec/serde",
     "alloy-eip7702/serde",
@@ -74,7 +74,7 @@ serde = [
 std = [
     "serde?/std",
     "revm-bytecode/std",
-    "base-state-api/std",
+    "base-state/std",
     "revm-primitives/std",
     "revm-state/std",
     "bitvec/std",

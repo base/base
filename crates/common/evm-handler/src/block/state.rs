@@ -1,7 +1,7 @@
 //! State database abstraction.
 
 use revm::{
-    DatabaseCommit, database::State, database_interface::BalDatabase, state::bal::BlockAccessIndex,
+    DatabaseCommit, database::State, database::BalDatabase, state::bal::BlockAccessIndex,
 };
 
 use crate::Database;
@@ -58,7 +58,7 @@ impl<T> StateDB for T where T: Database + DatabaseCommit {}
 
 #[cfg(test)]
 mod tests {
-    use revm::{database::CacheDB, database_interface::EmptyDB};
+    use revm::{database::CacheDB, database::EmptyDB};
 
     use super::*;
 

@@ -508,7 +508,7 @@ where
 /// in the [ExecutionResult] state map and compares the balance and nonce against what's in the
 /// `db`, which should point to the beginning of the transaction.
 ///
-/// It's expected that `DB` is a revm [Database](revm::database_interface::Database) which at this
+/// It's expected that `DB` is a revm [Database](revm::database::Database) which at this
 /// point already contains all the accounts that are in the state map and never has to fetch them
 /// from disk.
 pub fn populate_state_diff<'a, DB, I>(

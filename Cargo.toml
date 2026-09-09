@@ -272,12 +272,11 @@ revm-state = { path = "vendor/revm-state", default-features = false }
 base-evm-context = { path = "crates/common/evm-context", default-features = false }
 base-evm-handler = { path = "crates/common/evm-handler", default-features = false }
 revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
-revm-database = { path = "vendor/revm-database", default-features = false }
 revm-precompile = { path = "vendor/revm-precompile", default-features = false }
 revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
 revm-primitives = { path = "vendor/revm-primitives", default-features = false }
 revm-interpreter = { path = "vendor/revm-interpreter", default-features = false }
-base-state-api = { path = "crates/common/state-api", default-features = false }
+base-state = { path = "crates/common/state", default-features = false }
 
 # alloy
 alloy-rlp = { version = "=0.3.16", default-features = false }

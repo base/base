@@ -20,7 +20,7 @@ use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
 use revm::{
-    database::{BundleState, State, states::bundle_state::BundleRetention},
+    database::{BundleState, State, BundleRetention},
     state::bal::Bal,
 };
 

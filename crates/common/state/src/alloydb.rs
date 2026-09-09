@@ -3,13 +3,13 @@
 use core::error::Error;
 use std::fmt::Display;
 
+use crate::{DBErrorMarker, DatabaseAsyncRef};
 pub use alloy_eips::BlockId;
 use alloy_provider::{
     Network, Provider,
-    network::{BlockResponse, revm_primitives::HeaderResponse},
+    network::{BlockResponse, primitives::HeaderResponse},
 };
 use alloy_transport::TransportError;
-use base_state_api::{DBErrorMarker, DatabaseAsyncRef};
 use revm_primitives::{Address, B256, StorageKey, StorageValue};
 use revm_state::{AccountInfo, Bytecode};
 
@@ -52,7 +52,7 @@ impl From<TransportError> for AlloyDBError {
     }
 }
 
-/// An alloy-powered REVM [Database][base_state_api::Database].
+/// An alloy-powered REVM [Database][crate::Database].
 ///
 /// When accessing the database, it'll use the given provider to fetch the corresponding account's data.
 #[derive(Debug)]
@@ -123,8 +123,8 @@ impl<N: Network, P: Provider<N>> DatabaseAsyncRef for AlloyDB<N, P> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{DatabaseRef, WrapDatabaseAsync};
     use alloy_provider::ProviderBuilder;
-    use base_state_api::{DatabaseRef, WrapDatabaseAsync};
 
     use super::*;
 

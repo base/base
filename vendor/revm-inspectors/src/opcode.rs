@@ -152,7 +152,7 @@ mod tests {
         Context, MainContext,
         bytecode::Bytecode,
         database::CacheDB,
-        database_interface::EmptyDB,
+        database::EmptyDB,
         interpreter::{InputsImpl, SharedMemory, interpreter::ExtBytecode},
         primitives::{Bytes, hardfork::SpecId},
     };

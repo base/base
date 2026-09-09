@@ -103,7 +103,7 @@ impl GasInspector {
 mod tests {
     use base_evm_context::{CfgEnv, Context, TxEnv};
     use base_evm_handler::{MainBuilder, MainContext};
-    use revm_database::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
+    use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_interpreter::{
         CallInputs, CreateInputs, Interpreter, InterpreterResult, InterpreterTypes,
         interpreter_types::{Jumps, ReturnData},

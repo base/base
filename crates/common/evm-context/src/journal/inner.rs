@@ -7,7 +7,7 @@ use base_evm_context::{
     JournaledAccountTr, SStoreResult, SelfDestructResult, SelfdestructionRevertStatus, StateLoad,
     TransferError,
 };
-use base_state_api::Database;
+use base_state::Database;
 use revm_bytecode::Bytecode;
 use revm_primitives::{
     Address, B256, Bytes, HashMap, KECCAK_EMPTY, Log, LogData, StorageKey, StorageValue, U256,
@@ -1114,7 +1114,7 @@ impl JournalInner {
 
 #[cfg(test)]
 mod tests {
-    use base_state_api::EmptyDB;
+    use base_state::EmptyDB;
     use revm_primitives::{HashSet, U256, address};
     use revm_state::AccountInfo;
 

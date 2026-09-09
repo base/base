@@ -62,7 +62,7 @@ pub use reth_storage_api::{
 /// Re-export provider error.
 pub use reth_storage_errors::provider::{ProviderError, ProviderResult};
 /// Re-export `OriginalValuesKnown`
-pub use revm::database::states::OriginalValuesKnown;
+pub use revm::database::OriginalValuesKnown;
 pub use static_file::StaticFileSegment;
 
 /// Converts a [`RangeBounds`](std::ops::RangeBounds) into a concrete [`Range`](std::ops::Range)

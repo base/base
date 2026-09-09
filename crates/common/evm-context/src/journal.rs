@@ -12,7 +12,7 @@ use base_evm_context::{
     JournalLoadError, JournalTr, JournaledAccount, SStoreResult, SelfDestructResult, StateLoad,
     TransferError,
 };
-use base_state_api::Database;
+use base_state::Database;
 pub use inner::{JournalCfg, JournalInner};
 use revm_bytecode::Bytecode;
 use revm_primitives::{

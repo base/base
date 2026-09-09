@@ -240,7 +240,7 @@ impl<DB: Database> JournalExt for Journal<DB> {
 mod tests {
     use ::base_evm_handler::{InspectEvm, MainBuilder, MainContext};
     use base_evm_context::{BlockEnv, CfgEnv, Context, Journal, TxEnv};
-    use revm_database::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
+    use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use revm_interpreter::{InstructionResult, InterpreterTypes, interpreter::EthInterpreter};
     use revm_primitives::TxKind;
     use revm_state::{Bytecode, bytecode::opcode};

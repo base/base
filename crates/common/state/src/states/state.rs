@@ -1,6 +1,6 @@
 use std::{borrow::Cow, boxed::Box, sync::Arc};
 
-use base_state_api::{
+use crate::{
     BalState, Database, DatabaseCommit, DatabaseRef, EmptyDB, EvmDatabaseError, OnStateHook,
 };
 use revm_bytecode::Bytecode;
@@ -237,7 +237,7 @@ impl<DB: Database> State<DB> {
 
     /// Set whether reads not covered by the BAL fall back to the underlying database.
     ///
-    /// See [`BalState::allow_db_fallback`](base_state_api::BalState).
+    /// See [`BalState::allow_db_fallback`](crate::BalState).
     #[inline]
     pub const fn set_allow_bal_db_fallback(&mut self, allow: bool) {
         self.bal_state.allow_db_fallback = allow;

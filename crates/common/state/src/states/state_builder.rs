@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_state_api::{BalState, DBErrorMarker, Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
+use crate::{BalState, DBErrorMarker, Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use revm_state::bal::Bal;
 
 use super::{BundleState, State, TransitionState, cache::CacheState, state::DBBox};

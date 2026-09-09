@@ -5,7 +5,7 @@ use base_evm_context::{
     HaltReason, InvalidTransaction, JournalTr, ResultAndState, ResultVecAndState, Transaction,
     TransactionIndexedError,
 };
-use base_state_api::DatabaseCommit;
+use base_state::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_state::EvmState;
 

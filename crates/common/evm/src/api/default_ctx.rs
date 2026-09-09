@@ -1,7 +1,7 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
 use base_common_genesis::BaseUpgrade;
 use base_evm_context::{BlockEnv, CfgEnv};
-use revm::{Context, Journal, MainContext, database_interface::EmptyDB};
+use revm::{Context, Journal, MainContext, database::EmptyDB};
 
 use crate::{BaseSpecId, BaseTransaction, L1BlockInfo};
 

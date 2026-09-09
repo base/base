@@ -14,8 +14,7 @@ use reth_trie::{HashedStorage, updates::TrieUpdates};
 use revm::{
     bytecode::Bytecode,
     database::{
-        AccountStatus, BundleState, RevertToSlot, State,
-        states::{StorageSlot, reverts::AccountInfoRevert},
+        AccountStatus, BundleState, RevertToSlot, State, StorageSlot, AccountInfoRevert,
     },
     state::AccountInfo,
 };
@@ -413,7 +412,7 @@ mod tests {
     use reth_testing_utils::generators::{self, BlockParams, random_eoa_accounts};
     use revm::{
         bytecode::Bytecode,
-        database::{BundleAccount, BundleState, states::reverts::AccountRevert},
+        database::{BundleAccount, BundleState, AccountRevert},
     };
     use tempfile::TempDir;
 

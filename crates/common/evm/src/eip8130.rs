@@ -1733,7 +1733,7 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;
     use revm::{
-        Database, bytecode::Bytecode, database::InMemoryDB, database_interface::DBErrorMarker,
+        Database, bytecode::Bytecode, database::InMemoryDB, database::DBErrorMarker,
         state::AccountInfo,
     };
 

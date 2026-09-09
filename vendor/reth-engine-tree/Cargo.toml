@@ -24,7 +24,7 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
 reth-provider = { workspace = true }
-base-state-api = { workspace = true }
+base-state = { workspace = true }
 reth-stages-api = { workspace = true }
 base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }

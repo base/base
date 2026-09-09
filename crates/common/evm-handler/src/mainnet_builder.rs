@@ -2,7 +2,7 @@ use base_evm_context::{
     Block, BlockEnv, Cfg, CfgEnv, Context, Database, Evm, FrameStack, Journal, JournalTr,
     Transaction, TxEnv,
 };
-use base_state_api::EmptyDB;
+use base_state::EmptyDB;
 use revm_interpreter::interpreter::EthInterpreter;
 use revm_primitives::hardfork::SpecId;
 
@@ -85,7 +85,7 @@ mod test {
         Bytecode,
         opcode::{PUSH1, SSTORE},
     };
-    use revm_database::{BenchmarkDB, EEADDRESS, FFADDRESS};
+    use base_state::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use revm_primitives::{StorageKey, StorageValue, TxKind, U256, hardfork::SpecId};
 
     use crate::{ExecuteEvm, MainBuilder, MainContext};

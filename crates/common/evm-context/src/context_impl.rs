@@ -4,7 +4,7 @@ use base_evm_context::{
     JournalTr, LoadError, LocalContextTr, SStoreResult, SelfDestructResult, StateLoad, Transaction,
     TransactionType,
 };
-use base_state_api::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
+use base_state::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use derive_where::derive_where;
 use revm_primitives::{
     Address, B256, Log, StorageKey, StorageValue, U256, hardfork::SpecId, hints_util::cold_path,

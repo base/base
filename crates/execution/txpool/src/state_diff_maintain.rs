@@ -167,7 +167,7 @@ impl AccountStateDiff {
 mod tests {
     use alloy_primitives::Address;
     use revm::{
-        database::{BundleAccount, states::StorageSlot},
+        database::{BundleAccount, StorageSlot},
         primitives::HashMap,
         state::AccountInfo,
     };

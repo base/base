@@ -53,7 +53,7 @@ use reth_trie::{
     ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
-use revm::database::states::{PlainStateReverts, PlainStorageRevert, StateChangeset};
+use revm::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
 

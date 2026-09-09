@@ -138,7 +138,7 @@ mod tests {
     use reth_storage_api::HashedPostStateProvider;
     use reth_storage_errors::provider::ProviderResult;
     use revm::{
-        database::{AccountStatus, BundleAccount, EmptyDB, states::CacheAccount},
+        database::{AccountStatus, BundleAccount, EmptyDB, CacheAccount},
         state::AccountInfo,
     };
 

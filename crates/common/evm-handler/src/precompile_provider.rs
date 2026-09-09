@@ -163,7 +163,7 @@ mod tests {
     use base_evm_context::{
         Context, Evm, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
     };
-    use revm_database::InMemoryDB;
+    use base_state::InMemoryDB;
     use revm_interpreter::interpreter::EthInterpreter;
     use revm_primitives::{TxKind, U256, address, hardfork::SpecId};
     use revm_state::AccountInfo;

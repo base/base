@@ -6,8 +6,7 @@ use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie_common::HashedPostStateSorted;
 use revm::database::{
-    BundleState, OriginalValuesKnown,
-    states::{PlainStateReverts, StateChangeset},
+    BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
 };
 
 /// A helper type used as input to [`StateWriter`] for writing execution outcome for one or many

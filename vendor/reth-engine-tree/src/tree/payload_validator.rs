@@ -146,7 +146,7 @@ use reth_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
-use revm::database::{BundleAccount, State, states::bundle_state::BundleRetention};
+use revm::database::{BundleAccount, State, BundleRetention};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 
 pub use crate::tree::types::ValidationOutcome;

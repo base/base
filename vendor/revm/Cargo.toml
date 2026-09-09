@@ -33,8 +33,7 @@ path = "src/lib.rs"
 [dependencies]
 revm-state = { workspace = true }
 revm-bytecode = { workspace = true }
-revm-database = { workspace = true }
-base-state-api = { workspace = true }
+base-state = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
 base-evm-handler = { workspace = true }
@@ -54,10 +53,10 @@ serde_json = { workspace = true, features = [
 workspace = true
 
 [features]
-alloydb = ["revm-database/alloydb"]
+alloydb = ["base-state/alloydb"]
 arbitrary = ["revm-primitives/arbitrary"]
 asm-keccak = ["revm-primitives/asm-keccak"]
-asyncdb = ["base-state-api/asyncdb"]
+asyncdb = ["base-state/asyncdb"]
 blst = ["revm-precompile/blst"]
 bn = ["revm-precompile/bn"]
 c-kzg = ["revm-precompile/c-kzg"]
@@ -89,13 +88,13 @@ portable = ["revm-precompile/portable"]
 secp256k1 = ["revm-precompile/secp256k1"]
 serde = [
     "revm-interpreter/serde",
-    "base-state-api/serde",
+    "base-state/serde",
     "revm-primitives/serde",
     "base-evm-handler/serde",
     "base-evm-context/serde",
     "revm-bytecode/serde",
     "base-evm-context/serde",
-    "revm-database/serde",
+    "base-state/serde",
     "base-evm-handler/serde",
     "revm-state/serde",
 ]
@@ -108,8 +107,8 @@ std = [
     "base-evm-context/std",
     "base-evm-context/std",
     "revm-bytecode/std",
-    "revm-database/std",
-    "base-state-api/std",
+    "base-state/std",
+    "base-state/std",
     "base-evm-handler/std",
     "revm-primitives/std",
     "revm-state/std",

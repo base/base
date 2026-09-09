@@ -6,7 +6,7 @@ use std::{
 use alloy_primitives::B256;
 use base_evm_handler::Evm;
 use base_execution_evm::BaseEvmConfig;
-use base_state_api::CachedReads;
+use base_state::CachedReads;
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,

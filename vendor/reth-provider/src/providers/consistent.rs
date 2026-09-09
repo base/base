@@ -24,7 +24,7 @@ use reth_storage_api::{
     TryIntoHistoricalStateProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
-use revm::database::states::PlainStorageRevert;
+use revm::database::PlainStorageRevert;
 
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{

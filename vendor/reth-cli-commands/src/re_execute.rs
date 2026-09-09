@@ -25,8 +25,7 @@ use reth_provider::{
 use reth_stages::stages::calculate_gas_used_from_headers;
 use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use revm::database::{
-    BundleState,
-    states::reverts::{AccountInfoRevert, RevertToSlot},
+    BundleState, AccountInfoRevert, RevertToSlot,
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;

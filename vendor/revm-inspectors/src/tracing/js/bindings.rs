@@ -1436,7 +1436,7 @@ where
 #[cfg(test)]
 mod tests {
     use boa_engine::Source;
-    use revm::{database::CacheDB, database_interface::EmptyDB};
+    use revm::{database::CacheDB, database::EmptyDB};
 
     use super::*;
     use crate::tracing::js::builtins::{json_stringify, register_builtins, to_serde_value};

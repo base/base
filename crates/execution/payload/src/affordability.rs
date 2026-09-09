@@ -83,7 +83,7 @@ mod tests {
     use revm::{
         Database,
         database::InMemoryDB,
-        database_interface::DBErrorMarker,
+        database::DBErrorMarker,
         state::{AccountInfo, Bytecode},
     };
 

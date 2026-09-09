@@ -6,8 +6,8 @@
 extern crate alloc as std;
 extern crate self as base_evm_context;
 
-pub use base_state_api as database_interface;
-pub use base_state_api::{DBErrorMarker, Database, ErasedError};
+pub use base_state as database;
+pub use base_state::{DBErrorMarker, Database, ErasedError};
 pub use either;
 pub use revm_bytecode as bytecode;
 pub use revm_primitives as primitives;

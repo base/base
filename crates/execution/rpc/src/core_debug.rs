@@ -39,7 +39,7 @@ use reth_trie_common::{
 };
 use revm::{
     Database, DatabaseCommit,
-    database::{State, states::bundle_state::BundleRetention},
+    database::{State, BundleRetention},
 };
 use revm_inspectors::tracing::{DebugInspector, TransactionContext};
 use serde::{Deserialize, Serialize};
@@ -1265,7 +1265,7 @@ mod tests {
     use reth_primitives_traits::StorageEntry;
     use reth_provider::test_utils::create_test_provider_factory;
     use revm::{
-        database::{AccountStatus, BundleAccount, BundleState, states::StorageSlot},
+        database::{AccountStatus, BundleAccount, BundleState, StorageSlot},
         state::AccountInfo as RevmAccountInfo,
     };
 

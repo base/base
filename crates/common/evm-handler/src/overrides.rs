@@ -375,7 +375,7 @@ mod tests {
         use base_evm_handler::Inspector;
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
-            database_interface::EmptyDB,
+            database::EmptyDB,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
             state::AccountInfo,
@@ -654,7 +654,7 @@ mod tests {
         use base_evm_context::{CfgEnv, ContextTr, JournalTr, TxEnv};
         use base_evm_handler::Inspector;
         use revm::{
-            database_interface::EmptyDB,
+            database::EmptyDB,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
             state::AccountInfo,
@@ -782,7 +782,7 @@ mod tests {
         use base_evm_handler::Inspector;
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
-            database_interface::EmptyDB,
+            database::EmptyDB,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
             state::AccountInfo,

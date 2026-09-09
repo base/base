@@ -47,3 +47,14 @@ pub use try_commit::{ArcUpgradeError, TryDatabaseCommit};
 
 mod cached;
 pub use cached::{CachedAccount, CachedReads, CachedReadsDbMut};
+
+mod in_memory_db;
+pub use in_memory_db::{AccountState, BenchmarkDB, Cache, CacheDB, DbAccount, InMemoryDB};
+
+mod states;
+pub use states::*;
+
+#[cfg(feature = "alloydb")]
+mod alloydb;
+#[cfg(feature = "alloydb")]
+pub use alloydb::{AlloyDB, AlloyDBError, BlockId};
