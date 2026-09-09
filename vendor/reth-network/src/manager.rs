@@ -43,7 +43,7 @@ use reth_network_api::{
     test_utils::PeersHandle,
 };
 use base_execution_network_types::{NodeRecord, PeerId};
-use reth_network_types::ReputationChangeKind;
+use base_execution_network_types::ReputationChangeKind;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;

@@ -18,7 +18,7 @@ use reth_dns_discovery::{
 };
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent};
 use base_execution_network_types::{NodeRecord, PeerId};
-use reth_network_types::PeerAddr;
+use base_execution_network_types::PeerAddr;
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 use tokio_stream::{Stream, wrappers::ReceiverStream};

@@ -139,7 +139,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-network-api](../../vendor/reth-network-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-p2p](../../vendor/reth-network-p2p/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
-| [reth-network-types](../../vendor/reth-network-types/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-nippy-jar](../../vendor/reth-nippy-jar/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-api](../../vendor/reth-node-api/Cargo.toml) | Consolidate; retain required code |
 | [reth-node-builder](../../vendor/reth-node-builder/Cargo.toml) | Retain shared infrastructure |

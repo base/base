@@ -52,15 +52,14 @@ parking_lot = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-network-types = { workspace = true, features = ["serde"] }
 enr = { workspace = true, features = ["serde", "rust-secp256k1"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
-base-execution-network-types = {features = ["net", "std"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
 
@@ -79,12 +78,12 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
-reth-network-types = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-discv4 = { workspace = true, features = ["default", "test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
+base-execution-network-types = { workspace = true, features = ["std", "test-utils"] }
 
 [features]
 serde = [
@@ -109,14 +108,14 @@ serde = [
     "reth-network-api/serde",
     "rand_08/serde",
     "base-execution-state-api/serde",
-    "reth-network-types/serde",
+    "base-execution-network-types/serde",
     "base-execution-state-types/serde",
     "reth-trie/serde",
     "alloy-eip7928/serde",
 ]
 test-utils = [
     "base-execution-txpool/test-utils",
-    "reth-network-types/test-utils",
+    "base-execution-network-types/test-utils",
     "base-execution-evm-blocks/test-utils",
     "reth-discv4/test-utils",
     "reth-network/test-utils",

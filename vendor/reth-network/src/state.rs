@@ -26,7 +26,8 @@ use reth_eth_wire::{
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use reth_network_p2p::receipts::client::ReceiptsResponse;
 use base_execution_network_types::PeerId;
-use reth_network_types::{PeerAddr, PeerKind};
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerKind;
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};

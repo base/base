@@ -37,7 +37,7 @@ use reth_eth_wire::{
 pub use reth_network_api::{Direction, PeerInfo};
 use reth_network_api::{PeerRequest, PeerRequestSender};
 use base_execution_network_types::PeerId;
-use reth_network_types::SessionsConfig;
+use base_execution_network_types::SessionsConfig;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 use rustc_hash::FxHashMap;
 use secp256k1::SecretKey;

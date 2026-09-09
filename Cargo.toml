@@ -157,7 +157,6 @@ members = [
   "vendor/reth-network-api",
   "vendor/reth-network-p2p",
   "crates/execution/network/types",
-  "vendor/reth-network-types",
   "vendor/reth-nippy-jar",
   "vendor/reth-node-core",
   "vendor/reth-node-ethstats",
@@ -500,7 +499,6 @@ reth-engine-local = { path = "vendor/reth-engine-local", default-features = fals
 base-execution-network-types = { path = "crates/execution/network/types", default-features = false }
 reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
 reth-rpc-eth-types = { path = "vendor/reth-rpc-eth-types", default-features = false }
-reth-network-types = { path = "vendor/reth-network-types", default-features = false }
 reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = false }
 reth-dns-discovery = { path = "vendor/reth-dns-discovery", default-features = false }
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }

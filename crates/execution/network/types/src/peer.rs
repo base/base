@@ -1,20 +1,12 @@
-pub mod addr;
-pub mod config;
-pub mod kind;
-pub mod reputation;
-pub mod state;
-
 use std::time::{Duration, Instant};
 
+use crate::{NodeRecord, PeerId};
 use alloy_eip2124::ForkId;
-pub use config::{ConnectionsConfig, PeersConfig};
-pub use reputation::{Reputation, ReputationChange, ReputationChangeKind, ReputationChangeWeights};
-use base_execution_network_types::{NodeRecord, PeerId};
 use tracing::trace;
 
 use crate::{
-    DEFAULT_REPUTATION, PeerAddr, PeerConnectionState, PeerKind, ReputationChangeOutcome,
-    is_banned_reputation,
+    DEFAULT_REPUTATION, PeerAddr, PeerConnectionState, PeerKind, ReputationChangeKind,
+    ReputationChangeOutcome, is_banned_reputation,
 };
 
 /// Tracks info about a single peer.

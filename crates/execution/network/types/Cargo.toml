@@ -19,10 +19,15 @@ workspace = true
 url = { workspace = true }
 thiserror = { workspace = true }
 enr = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+alloy-eip2124 = { workspace = true, optional = true}
+humantime-serde = { workspace = true, optional = true }
 serde_with = { workspace = true, features = ["macros"] }
 ipnet = { workspace = true, features = ["default"], optional = true}
 alloy-primitives = {features = ["map-foldhash", "rlp"], workspace = true}
+tracing = { workspace = true, features = ["attributes"], optional = true}
+serde_json = { workspace = true, features = ["alloc", "std"], optional = true }
 alloy-rlp = { workspace = true, features = ["core-net", "derive", "core-error"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery"], optional = true }
 
@@ -45,8 +50,18 @@ std = [
     "serde_with/std",
     "thiserror/std",
     "url/std",
-    "serde_json/std",
+    "serde_json?/std",
     "dep:ipnet",
+    "dep:alloy-eip2124",
+    "dep:tracing",
 ]
 secp256k1 = ["dep:secp256k1", "enr/secp256k1", "alloy-primitives/secp256k1"]
 net = ["std", "dep:tokio", "tokio?/net"]
+serde = [
+    "dep:serde",
+    "dep:humantime-serde",
+    "dep:serde_json",
+    "alloy-eip2124/serde",
+    "std",
+]
+test-utils = []

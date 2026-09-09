@@ -30,7 +30,7 @@ use reth_network_p2p::{
     snap::client::SnapResponse,
 };
 use base_execution_network_types::PeerId;
-use reth_network_types::ReputationChangeKind;
+use base_execution_network_types::ReputationChangeKind;
 use tokio::sync::{mpsc, mpsc::UnboundedSender, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

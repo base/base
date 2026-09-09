@@ -29,7 +29,7 @@ use reth_network_p2p::{
     snap::client::{SnapClient, SnapResponse},
 };
 use base_execution_network_types::PeerId;
-use reth_network_types::ReputationChangeKind;
+use base_execution_network_types::ReputationChangeKind;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{fetch::DownloadRequest, flattened_response::FlattenedResponse};

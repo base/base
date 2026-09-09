@@ -165,7 +165,8 @@ pub use reth_network_api::{
 /// re-export p2p interfaces
 pub use reth_network_p2p as p2p;
 pub use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
-pub use reth_network_types::{PeersConfig, SessionsConfig};
+pub use base_execution_network_types::PeersConfig;
+pub use base_execution_network_types::SessionsConfig;
 pub use session::{
     ActiveSessionHandle, ActiveSessionMessage, Direction, EthRlpxConnection, PeerInfo,
     PendingSessionEvent, PendingSessionHandle, PendingSessionHandshakeError, SessionCommand,
@@ -177,7 +178,7 @@ pub use swarm::NetworkConnectionState;
 pub mod types {
     pub use reth_discv4::NatResolver;
     pub use reth_eth_wire_types::*;
-    pub use reth_network_types::*;
+    pub use base_execution_network_types::*;
 }
 
 use aquamarine as _;

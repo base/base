@@ -60,9 +60,8 @@ pub mod tx_manager {
 
 /// Constants used by [`TransactionFetcher`](super::TransactionFetcher).
 pub mod tx_fetcher {
-    use reth_network_types::peers::config::{
-        DEFAULT_MAX_COUNT_PEERS_INBOUND, DEFAULT_MAX_COUNT_PEERS_OUTBOUND,
-    };
+    use base_execution_network_types::DEFAULT_MAX_COUNT_PEERS_INBOUND;
+    use base_execution_network_types::DEFAULT_MAX_COUNT_PEERS_OUTBOUND;
 
     use super::{
         SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE,

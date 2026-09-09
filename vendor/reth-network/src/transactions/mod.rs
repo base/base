@@ -62,7 +62,7 @@ use reth_network_p2p::{
     sync::SyncStateProvider,
 };
 use base_execution_network_types::PeerId;
-use reth_network_types::ReputationChangeKind;
+use base_execution_network_types::ReputationChangeKind;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;

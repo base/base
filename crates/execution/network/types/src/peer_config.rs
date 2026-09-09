@@ -2,10 +2,10 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use base_execution_network_types::{BanList, IpFilter};
-use base_execution_network_types::{NodeRecord, TrustedPeer};
+use crate::{BanList, IpFilter};
+use crate::{NodeRecord, TrustedPeer};
 
-use crate::{BackoffKind, ReputationChangeWeights, peers::PersistedPeerInfo};
+use crate::{BackoffKind, PersistedPeerInfo, ReputationChangeWeights};
 
 /// Maximum number of available slots for outbound sessions.
 pub const DEFAULT_MAX_COUNT_PEERS_OUTBOUND: u32 = 100;

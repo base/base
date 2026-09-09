@@ -38,7 +38,9 @@ use reth_eth_wire_types::{
 };
 pub use reth_network_p2p::{BlockClient, HeadersClient};
 use base_execution_network_types::NodeRecord;
-pub use reth_network_types::{PeerKind, Reputation, ReputationChangeKind};
+pub use base_execution_network_types::PeerKind;
+pub use base_execution_network_types::Reputation;
+pub use base_execution_network_types::ReputationChangeKind;
 
 /// The `PeerId` type.
 pub type PeerId = alloy_primitives::B512;

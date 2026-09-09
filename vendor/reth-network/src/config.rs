@@ -20,7 +20,8 @@ use reth_eth_wire::{
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
 use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
-use reth_network_types::{PeersConfig, SessionsConfig};
+use base_execution_network_types::PeersConfig;
+use base_execution_network_types::SessionsConfig;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 

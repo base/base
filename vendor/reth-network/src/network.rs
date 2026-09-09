@@ -27,7 +27,10 @@ use reth_network_api::{
 };
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState, SyncStateProvider};
 use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-use reth_network_types::{PeerAddr, PeerKind, Reputation, ReputationChangeKind};
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerKind;
+use base_execution_network_types::Reputation;
+use base_execution_network_types::ReputationChangeKind;
 use base_common_runtime_tasks::{EventSender, EventStream};
 use secp256k1::SecretKey;
 use tokio::sync::{

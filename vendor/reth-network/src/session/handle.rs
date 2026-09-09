@@ -8,7 +8,7 @@ use reth_eth_wire::{
 };
 use reth_network_api::PeerInfo;
 use base_execution_network_types::{NodeRecord, PeerId};
-use reth_network_types::PeerKind;
+use base_execution_network_types::PeerKind;
 use tokio::sync::{
     mpsc::{self, error::SendError},
     oneshot,

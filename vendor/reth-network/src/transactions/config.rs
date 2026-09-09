@@ -4,7 +4,7 @@ use std::{fmt::Debug, str::FromStr};
 use alloy_eips::eip2718::IsTyped2718;
 use alloy_primitives::B256;
 use derive_more::{Constructor, Display};
-use reth_network_types::peers::kind::PeerKind;
+use base_execution_network_types::PeerKind;
 
 use super::{
     DEFAULT_MAX_COUNT_TRANSACTIONS_SEEN_BY_PEER,

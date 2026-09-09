@@ -5,7 +5,8 @@ use std::net::SocketAddr;
 
 use derive_more::Constructor;
 use base_execution_network_types::{NodeRecord, PeerId};
-use reth_network_types::{Peer, ReputationChangeKind};
+use base_execution_network_types::Peer;
+use base_execution_network_types::ReputationChangeKind;
 use tokio::sync::{mpsc, oneshot};
 
 /// Provides an API for managing the peers of the network.

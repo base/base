@@ -8,7 +8,7 @@ use reth_eth_wire::{
     DisconnectReason,
     errors::{EthHandshakeError, EthStreamError, P2PHandshakeError, P2PStreamError},
 };
-use reth_network_types::BackoffKind;
+use base_execution_network_types::BackoffKind;
 
 use crate::session::PendingSessionHandshakeError;
 

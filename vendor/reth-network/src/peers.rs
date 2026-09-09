@@ -18,15 +18,21 @@ use reth_eth_wire::{DisconnectReason, errors::EthStreamError};
 use base_execution_network_types::BanList;
 use reth_network_api::test_utils::{PeerCommand, PeersHandle};
 use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-use reth_network_types::{
-    ConnectionsConfig, Peer, PeerAddr, PeerConnectionState, PeerKind, PeersConfig,
-    PersistedPeerInfo, ReputationChangeKind, ReputationChangeOutcome, ReputationChangeWeights,
-    is_connection_failed_reputation,
-    peers::{
-        config::{PEER_ROTATION_MIN_UPTIME, PeerBackoffDurations},
-        reputation::{DEFAULT_REPUTATION, MAX_TRUSTED_PEER_REPUTATION_CHANGE},
-    },
-};
+use base_execution_network_types::ConnectionsConfig;
+use base_execution_network_types::Peer;
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerConnectionState;
+use base_execution_network_types::PeerKind;
+use base_execution_network_types::PeersConfig;
+use base_execution_network_types::PersistedPeerInfo;
+use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_types::ReputationChangeOutcome;
+use base_execution_network_types::ReputationChangeWeights;
+use base_execution_network_types::is_connection_failed_reputation;
+use base_execution_network_types::PEER_ROTATION_MIN_UPTIME;
+use base_execution_network_types::PeerBackoffDurations;
+use base_execution_network_types::DEFAULT_REPUTATION;
+use base_execution_network_types::MAX_TRUSTED_PEER_REPUTATION_CHANGE;
 use thiserror::Error;
 use tokio::{
     sync::mpsc,
@@ -1520,9 +1526,10 @@ mod tests {
     use base_execution_network_types::BanList;
     use reth_network_api::Direction;
     use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-    use reth_network_types::{
-        BackoffKind, Peer, ReputationChangeKind, peers::reputation::DEFAULT_REPUTATION,
-    };
+    use base_execution_network_types::BackoffKind;
+    use base_execution_network_types::Peer;
+    use base_execution_network_types::ReputationChangeKind;
+    use base_execution_network_types::DEFAULT_REPUTATION;
     use url::Host;
 
     use super::PeersManager;

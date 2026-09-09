@@ -3575,18 +3575,22 @@ dependencies = [
 name = "base-execution-network-types"
 version = "0.0.0"
 dependencies = [
+ "alloy-eip2124",
  "alloy-primitives",
  "alloy-rlp",
  "base-common-chain-config",
  "enr",
+ "humantime-serde",
  "ipnet",
  "rand 0.8.7",
  "rand 0.9.5",
  "secp256k1 0.30.0",
+ "serde",
  "serde_json",
  "serde_with",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
  "url",
 ]
 
@@ -3727,7 +3731,6 @@ dependencies = [
  "reth-engine-primitives",
  "reth-network",
  "reth-network-api",
- "reth-network-types",
  "reth-payload-util",
  "reth-primitives-traits",
  "reth-provider",
@@ -13697,7 +13700,6 @@ dependencies = [
  "base-execution-state-types",
  "eyre",
  "humantime-serde",
- "reth-network-types",
  "serde",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
@@ -14419,7 +14421,6 @@ dependencies = [
  "reth-network",
  "reth-network-api",
  "reth-network-p2p",
- "reth-network-types",
  "reth-primitives-traits",
  "reth-provider",
  "reth-testing-utils",
@@ -14455,7 +14456,6 @@ dependencies = [
  "futures",
  "reth-eth-wire-types",
  "reth-network-p2p",
- "reth-network-types",
  "serde",
  "thiserror 2.0.19",
  "tokio",
@@ -14478,22 +14478,9 @@ dependencies = [
  "futures",
  "parking_lot",
  "reth-eth-wire-types",
- "reth-network-types",
  "reth-primitives-traits",
  "test-case",
  "tokio",
- "tracing",
-]
-
-[[package]]
-name = "reth-network-types"
-version = "0.0.0"
-dependencies = [
- "alloy-eip2124",
- "base-execution-network-types",
- "humantime-serde",
- "serde",
- "serde_json",
  "tracing",
 ]
 

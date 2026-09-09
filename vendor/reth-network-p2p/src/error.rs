@@ -7,7 +7,7 @@ use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_types::{DatabaseError, ProviderError};
 use derive_more::{Display, Error};
 use base_execution_network_types::WithPeerId;
-use reth_network_types::ReputationChangeKind;
+use base_execution_network_types::ReputationChangeKind;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 use tokio::sync::{mpsc, oneshot};
 

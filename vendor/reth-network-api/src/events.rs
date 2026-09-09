@@ -21,7 +21,8 @@ use reth_network_p2p::{
     snap::client::SnapResponse,
 };
 use base_execution_network_types::{NodeRecord, PeerId};
-use reth_network_types::{PeerAddr, PeerKind};
+use base_execution_network_types::PeerAddr;
+use base_execution_network_types::PeerKind;
 use base_common_runtime_tasks::EventStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{Stream, StreamExt, wrappers::UnboundedReceiverStream};
