@@ -16,10 +16,10 @@ use crate::types::{BaseNodeAddOns, BaseNodeComponents, BaseNodeTypes};
 type BaseEthApi = base_execution_rpc::BaseEthApi<BaseNodeComponents>;
 
 /// Convenience alias for the full Base node handle produced after launch.
-type BaseFullNode = FullNode<BaseNodeComponents, BaseNodeAddOns>;
+type BaseFullNode = FullNode<reth_db::DatabaseEnv, BaseNodeAddOns>;
 
 /// Alias for the RPC context used by Base extensions.
-pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeComponents, BaseEthApi>;
+pub type BaseRpcContext<'a> = RpcContext<'a, reth_db::DatabaseEnv, BaseEthApi>;
 
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;
@@ -33,7 +33,7 @@ type NodeStartedHook = Box<dyn FnOnce(BaseFullNode) -> Result<()> + Send + 'stat
 /// Type-erased `ExEx` factory.
 type BoxExExFactory = Box<
     dyn FnOnce(
-            ExExContext<BaseNodeComponents>,
+            ExExContext<reth_db::DatabaseEnv>,
         ) -> BoxFuture<'static, eyre::Result<BoxFuture<'static, eyre::Result<()>>>>
         + Send
         + 'static,
@@ -75,8 +75,8 @@ impl NodeHooks {
 
         // Install ExEx hooks
         for (id, factory) in exex_hooks {
-            builder =
-                builder.install_exex(id, move |ctx: ExExContext<BaseNodeComponents>| factory(ctx));
+            builder = builder
+                .install_exex(id, move |ctx: ExExContext<reth_db::DatabaseEnv>| factory(ctx));
         }
 
         for hook in add_ons_hooks {
@@ -136,7 +136,7 @@ impl NodeHooks {
     /// Installs an `ExEx` extension with the given name and closure.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<BaseNodeComponents>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<reth_db::DatabaseEnv>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send + 'static,
     {

@@ -51,7 +51,7 @@ pub type TestFullNodeTypes = TmpDB;
 /// Components needed by an execution extension, without a node launcher or RPC addons.
 pub type Adapter = BaseNodeContext<TestFullNodeTypes>;
 /// An [`ExExContext`] using the [`Adapter`] type.
-pub type TestExExContext = ExExContext<Adapter>;
+pub type TestExExContext = ExExContext<crate::TmpDB>;
 
 /// A helper type for testing Execution Extensions.
 #[derive(Debug)]
@@ -130,7 +130,7 @@ impl TestExExHandle {
 /// doing this.
 pub async fn test_exex_context_with_chain_spec(
     chain_spec: Arc<BaseChainSpec>,
-) -> eyre::Result<(ExExContext<Adapter>, TestExExHandle)> {
+) -> eyre::Result<(ExExContext<crate::TmpDB>, TestExExHandle)> {
     let (static_dir, _) = create_test_static_files_dir();
     let (rocksdb_dir, _) = create_test_rocksdb_dir();
     let db = create_test_rw_db();
@@ -235,7 +235,7 @@ pub async fn test_exex_context_with_chain_spec(
 /// Creates a new [`ExExContext`] with (mainnet)[`std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())`] chain spec.
 ///
 /// For more information see [`test_exex_context_with_chain_spec`].
-pub async fn test_exex_context() -> eyre::Result<(ExExContext<Adapter>, TestExExHandle)> {
+pub async fn test_exex_context() -> eyre::Result<(ExExContext<crate::TmpDB>, TestExExHandle)> {
     test_exex_context_with_chain_spec(std::sync::Arc::new(
         base_execution_chainspec::BaseChainSpec::mainnet(),
     ))

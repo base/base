@@ -1,21 +1,25 @@
 use std::fmt;
 
-use base_node_context::{FullNodeComponents, NodeAddOns};
+use base_node_context::NodeAddOns;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 
 use crate::full_node::FullNode;
 
 /// Container for all the configurable hook functions.
-pub struct NodeHooks<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
+pub struct NodeHooks<
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    AddOns: NodeAddOns<DB>,
+> {
     /// Hook to run once core components are initialized.
-    pub on_component_initialized: Box<dyn OnComponentInitializedHook<Node>>,
+    pub on_component_initialized:
+        Box<dyn OnComponentInitializedHook<base_node_context::BaseNodeContext<DB>>>,
     /// Hook to run once the node is started.
-    pub on_node_started: Box<dyn OnNodeStartedHook<Node, AddOns>>,
+    pub on_node_started: Box<dyn OnNodeStartedHook<DB, AddOns>>,
 }
 
-impl<Node, AddOns> NodeHooks<Node, AddOns>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> NodeHooks<DB, AddOns>
 where
-    Node: FullNodeComponents,
-    AddOns: NodeAddOns<Node>,
+    AddOns: NodeAddOns<DB>,
 {
     /// Creates a new, empty [`NodeHooks`] instance for the given node type.
     pub fn new() -> Self {
@@ -28,7 +32,7 @@ where
     /// Sets the hook that is run once the node's components are initialized.
     pub(crate) fn set_on_component_initialized<F>(&mut self, hook: F) -> &mut Self
     where
-        F: OnComponentInitializedHook<Node> + 'static,
+        F: OnComponentInitializedHook<base_node_context::BaseNodeContext<DB>> + 'static,
     {
         self.on_component_initialized = Box::new(hook);
         self
@@ -38,7 +42,7 @@ where
     #[expect(unused)]
     pub(crate) fn on_component_initialized<F>(mut self, hook: F) -> Self
     where
-        F: OnComponentInitializedHook<Node> + 'static,
+        F: OnComponentInitializedHook<base_node_context::BaseNodeContext<DB>> + 'static,
     {
         self.set_on_component_initialized(hook);
         self
@@ -47,7 +51,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub(crate) fn set_on_node_started<F>(&mut self, hook: F) -> &mut Self
     where
-        F: OnNodeStartedHook<Node, AddOns> + 'static,
+        F: OnNodeStartedHook<DB, AddOns> + 'static,
     {
         self.on_node_started = Box::new(hook);
         self
@@ -57,26 +61,26 @@ where
     #[expect(unused)]
     pub(crate) fn on_node_started<F>(mut self, hook: F) -> Self
     where
-        F: OnNodeStartedHook<Node, AddOns> + 'static,
+        F: OnNodeStartedHook<DB, AddOns> + 'static,
     {
         self.set_on_node_started(hook);
         self
     }
 }
 
-impl<Node, AddOns> Default for NodeHooks<Node, AddOns>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> Default
+    for NodeHooks<DB, AddOns>
 where
-    Node: FullNodeComponents,
-    AddOns: NodeAddOns<Node>,
+    AddOns: NodeAddOns<DB>,
 {
     fn default() -> Self {
         Self::new()
     }
 }
-impl<Node, AddOns> fmt::Debug for NodeHooks<Node, AddOns>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> fmt::Debug
+    for NodeHooks<DB, AddOns>
 where
-    Node: FullNodeComponents,
-    AddOns: NodeAddOns<Node>,
+    AddOns: NodeAddOns<DB>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NodeHooks")
@@ -104,20 +108,24 @@ where
 }
 
 /// A helper trait that is run once the node is started.
-pub trait OnNodeStartedHook<Node: FullNodeComponents, AddOns: NodeAddOns<Node>>: Send {
+pub trait OnNodeStartedHook<
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    AddOns: NodeAddOns<DB>,
+>: Send
+{
     /// Consumes the event hook and runs it.
     ///
     /// If this returns an error, the node launch will be aborted.
-    fn on_event(self: Box<Self>, node: FullNode<Node, AddOns>) -> eyre::Result<()>;
+    fn on_event(self: Box<Self>, node: FullNode<DB, AddOns>) -> eyre::Result<()>;
 }
 
-impl<Node, AddOns, F> OnNodeStartedHook<Node, AddOns> for F
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns, F>
+    OnNodeStartedHook<DB, AddOns> for F
 where
-    Node: FullNodeComponents,
-    AddOns: NodeAddOns<Node>,
-    F: FnOnce(FullNode<Node, AddOns>) -> eyre::Result<()> + Send,
+    AddOns: NodeAddOns<DB>,
+    F: FnOnce(FullNode<DB, AddOns>) -> eyre::Result<()> + Send,
 {
-    fn on_event(self: Box<Self>, node: FullNode<Node, AddOns>) -> eyre::Result<()> {
+    fn on_event(self: Box<Self>, node: FullNode<DB, AddOns>) -> eyre::Result<()> {
         (*self)(node)
     }
 }
@@ -128,12 +136,12 @@ impl<Node> OnComponentInitializedHook<Node> for () {
     }
 }
 
-impl<Node, AddOns> OnNodeStartedHook<Node, AddOns> for ()
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> OnNodeStartedHook<DB, AddOns>
+    for ()
 where
-    Node: FullNodeComponents,
-    AddOns: NodeAddOns<Node>,
+    AddOns: NodeAddOns<DB>,
 {
-    fn on_event(self: Box<Self>, _node: FullNode<Node, AddOns>) -> eyre::Result<()> {
+    fn on_event(self: Box<Self>, _node: FullNode<DB, AddOns>) -> eyre::Result<()> {
         Ok(())
     }
 }

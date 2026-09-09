@@ -49,7 +49,7 @@ pub async fn setup<AO>(
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    AO: RethRpcAddOns<crate::Adapter> + 'static,
+    AO: RethRpcAddOns<crate::TmpDB> + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
@@ -67,7 +67,7 @@ pub async fn setup_engine<AO>(
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    AO: RethRpcAddOns<crate::Adapter> + 'static,
+    AO: RethRpcAddOns<crate::TmpDB> + 'static,
 {
     setup_engine_with_connection(
         node_factory,
@@ -92,7 +92,7 @@ pub async fn setup_engine_with_connection<AO>(
     connect_nodes: bool,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    AO: RethRpcAddOns<crate::Adapter> + 'static,
+    AO: RethRpcAddOns<crate::TmpDB> + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_tree_config_modifier(move |base| {
@@ -118,7 +118,7 @@ pub type TmpNodeAdapter = TmpDB;
 pub type Adapter = BaseNodeContext<TmpNodeAdapter>;
 
 /// Context for a test node with explicit components and add-ons.
-pub type NodeHelperType<AO> = NodeTestContext<Adapter, AO>;
+pub type NodeHelperType<AO> = NodeTestContext<crate::TmpDB, AO>;
 
 mod base_node;
 pub use base_node::{BaseNodeTestUtils, BaseTestNode};

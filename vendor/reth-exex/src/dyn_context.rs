@@ -1,12 +1,11 @@
 //! Mirrored version of [`ExExContext`](`crate::ExExContext`)
-//! without generic abstraction over [Node](`base_node_context::FullNodeComponents`)
+//! without generic abstraction over [Node](`base_node_context::BaseNodeContext`)
 
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
-use base_node_context::FullNodeComponents;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_node_core::node_config::NodeConfig;
-use reth_provider::BlockReader;
 use tokio::sync::mpsc;
 
 use crate::{ExExContext, ExExEvent, ExExNotificationsStream};
@@ -49,12 +48,10 @@ impl Debug for ExExContextDyn {
     }
 }
 
-impl<Node> From<ExExContext<Node>> for ExExContextDyn
-where
-    Node: FullNodeComponents,
-    Node::Provider: Debug + BlockReader,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> From<ExExContext<DB>>
+    for ExExContextDyn
 {
-    fn from(ctx: ExExContext<Node>) -> Self {
+    fn from(ctx: ExExContext<DB>) -> Self {
         let notifications = Box::new(ctx.notifications) as Box<_>;
 
         Self {

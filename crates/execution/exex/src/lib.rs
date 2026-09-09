@@ -19,11 +19,13 @@ use base_execution_trie::{
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
 };
-use base_node_context::FullNodeComponents;
 use futures::TryStreamExt;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
-use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
+use reth_provider::{
+    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
+};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
@@ -50,11 +52,9 @@ const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
 
 /// Builder for [`BaseProofsExEx`].
 #[derive(Debug)]
-pub struct BaseProofsExExBuilder<Node, Storage>
-where
-    Node: FullNodeComponents,
+pub struct BaseProofsExExBuilder<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
 {
-    ctx: ExExContext<Node>,
+    ctx: ExExContext<DB>,
     storage: BaseProofsStorage<Storage>,
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
@@ -62,12 +62,11 @@ where
     max_prune_blocks_startup: u64,
 }
 
-impl<Node, Storage> BaseProofsExExBuilder<Node, Storage>
-where
-    Node: FullNodeComponents,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
+    BaseProofsExExBuilder<DB, Storage>
 {
     /// Create a new builder with required parameters and defaults.
-    pub const fn new(ctx: ExExContext<Node>, storage: BaseProofsStorage<Storage>) -> Self {
+    pub const fn new(ctx: ExExContext<DB>, storage: BaseProofsStorage<Storage>) -> Self {
         Self {
             ctx,
             storage,
@@ -104,7 +103,7 @@ where
     }
 
     /// Builds the [`BaseProofsExEx`].
-    pub fn build(self) -> BaseProofsExEx<Node, Storage> {
+    pub fn build(self) -> BaseProofsExEx<DB, Storage> {
         BaseProofsExEx {
             ctx: self.ctx,
             storage: self.storage,
@@ -135,7 +134,7 @@ where
 /// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{BaseNode, args::RollupArgs};
 /// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, RocksdbProofsStorage};
-/// use BlockchainProvider;
+/// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
 /// let config = NodeConfig::new(Arc::new(BaseChainSpec::mainnet()));
@@ -181,13 +180,10 @@ where
 ///     .check_launch();
 /// ```
 #[derive(Debug)]
-pub struct BaseProofsExEx<Node, Storage>
-where
-    Node: FullNodeComponents,
-{
+pub struct BaseProofsExEx<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage> {
     /// The `ExEx` context containing the node related utilities e.g. provider, notifications,
     /// events.
-    ctx: ExExContext<Node>,
+    ctx: ExExContext<DB>,
     /// The type of storage DB.
     storage: BaseProofsStorage<Storage>,
     /// The window to span blocks for proofs history. Value is the number of blocks, received as
@@ -204,27 +200,25 @@ where
     max_prune_blocks_startup: u64,
 }
 
-impl<Node, Storage> BaseProofsExEx<Node, Storage>
-where
-    Node: FullNodeComponents,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
+    BaseProofsExEx<DB, Storage>
 {
     /// Create a new `BaseProofsExEx` instance.
-    pub fn new(ctx: ExExContext<Node>, storage: BaseProofsStorage<Storage>) -> Self {
+    pub fn new(ctx: ExExContext<DB>, storage: BaseProofsStorage<Storage>) -> Self {
         BaseProofsExExBuilder::new(ctx, storage).build()
     }
 
     /// Create a new builder for `BaseProofsExEx`.
     pub const fn builder(
-        ctx: ExExContext<Node>,
+        ctx: ExExContext<DB>,
         storage: BaseProofsStorage<Storage>,
-    ) -> BaseProofsExExBuilder<Node, Storage> {
+    ) -> BaseProofsExExBuilder<DB, Storage> {
         BaseProofsExExBuilder::new(ctx, storage)
     }
 }
 
-impl<Node, Storage> BaseProofsExEx<Node, Storage>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage> BaseProofsExEx<DB, Storage>
 where
-    Node: FullNodeComponents,
     Storage: BaseProofsBatchStore + Clone + 'static,
 {
     /// Main execution loop for the `ExEx`
@@ -348,8 +342,8 @@ where
     async fn sync_loop(
         sync_target: Arc<SyncTarget>,
         storage: BaseProofsStorage<Storage>,
-        provider: Node::Provider,
-        collector: &LiveTrieCollector<'_, Node::Provider, Storage>,
+        provider: BlockchainProvider<DB>,
+        collector: &LiveTrieCollector<'_, BlockchainProvider<DB>, Storage>,
         verification_interval: u64,
     ) {
         info!(target: "base::exex", "Starting proofs storage sync loop");
@@ -395,7 +389,7 @@ where
 
     fn handle_revert(
         storage: &BaseProofsStorage<Storage>,
-        collector: &LiveTrieCollector<'_, Node::Provider, Storage>,
+        collector: &LiveTrieCollector<'_, BlockchainProvider<DB>, Storage>,
         revert_to: BlockWithParent,
     ) {
         let latest = match storage.get_latest_block_number() {
@@ -430,8 +424,8 @@ where
     async fn sync_forward(
         sync_target: &SyncTarget,
         storage: &BaseProofsStorage<Storage>,
-        provider: &Node::Provider,
-        collector: &LiveTrieCollector<'_, Node::Provider, Storage>,
+        provider: &BlockchainProvider<DB>,
+        collector: &LiveTrieCollector<'_, BlockchainProvider<DB>, Storage>,
         verification_interval: u64,
         target: u64,
     ) {
@@ -492,7 +486,7 @@ where
     fn build_batch_entry(
         block_number: u64,
         cached: Option<CachedBlockTrieData>,
-        provider: &Node::Provider,
+        provider: &BlockchainProvider<DB>,
         verification_interval: u64,
     ) -> eyre::Result<BatchBlock> {
         let should_verify =
@@ -792,12 +786,11 @@ mod tests {
     }
 
     // Initialize exex with config
-    fn build_test_exex<NodeT, Store>(
-        ctx: ExExContext<NodeT>,
+    fn build_test_exex<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Store>(
+        ctx: ExExContext<DB>,
         storage: BaseProofsStorage<Store>,
-    ) -> BaseProofsExEx<NodeT, Store>
+    ) -> BaseProofsExEx<DB, Store>
     where
-        NodeT: FullNodeComponents,
         Store: BaseProofsStore + Clone + 'static,
     {
         BaseProofsExEx::builder(ctx, storage)

@@ -38,7 +38,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::TransactionPool;
-use base_node_context::{BaseNodeContext, FullNodeComponents};
+use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
@@ -1036,7 +1036,7 @@ where
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<BaseNodeContext<DB>>>)>,
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<DB>>)>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1055,8 +1055,8 @@ where
     #[expect(clippy::type_complexity)]
     pub fn exex_launcher(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<BaseNodeContext<DB>>>)>,
-    ) -> ExExLauncher<BaseNodeContext<DB>> {
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<DB>>)>,
+    ) -> ExExLauncher<DB> {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),

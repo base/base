@@ -3,18 +3,20 @@ use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{EthereumTxEnvelope, TxEip4844Variant};
 use base_common_network::eip2718::Decodable2718;
 use base_execution_rpc::{BaseEthApi, BaseEthApiError, RpcNodeCore};
-use base_node_context::FullNodeComponents;
 use base_node_core::RpcRegistry;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_rpc_api::DebugApiServer;
 
 #[expect(missing_debug_implementations)]
-pub struct RpcTestContext<Node: FullNodeComponents, EthApi: RpcNodeCore> {
-    pub inner: RpcRegistry<Node, EthApi>,
+pub struct RpcTestContext<
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    EthApi: RpcNodeCore,
+> {
+    pub inner: RpcRegistry<DB, EthApi>,
 }
 
-impl<Node> RpcTestContext<Node, BaseEthApi<Node>>
-where
-    Node: FullNodeComponents,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>
+    RpcTestContext<DB, BaseEthApi<base_node_context::BaseNodeContext<DB>>>
 {
     /// Injects a raw transaction into the node tx pool via RPC server
     pub async fn inject_tx(&self, raw_tx: Bytes) -> Result<B256, BaseEthApiError> {

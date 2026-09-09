@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, TxKind, U256, b256};
 use base_common_consensus::{
     BaseBlock, BaseBlockBody, BaseTypedTransaction, BlockHeader, Header, TxEip2930,
@@ -86,7 +85,6 @@ fn blocks(
             receipts_root: b256!(
                 "0xd3a6acf9a244d78b33831df95d472c4128ea85bf079a1d41e32ed0b7d2244c9e"
             ),
-            difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
             number: 1,
             gas_limit: 21_000u64,
             gas_used: 21_000u64,
@@ -117,7 +115,6 @@ fn blocks(
             receipts_root: b256!(
                 "0xd3a6acf9a244d78b33831df95d472c4128ea85bf079a1d41e32ed0b7d2244c9e"
             ),
-            difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
             number: 2,
             gas_limit: 21_000u64,
             gas_used: 21_000u64,

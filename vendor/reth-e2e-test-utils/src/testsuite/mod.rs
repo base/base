@@ -306,7 +306,7 @@ impl TestBuilder {
         node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     ) -> Result<()>
     where
-        AO: RethRpcAddOns<crate::Adapter> + 'static,
+        AO: RethRpcAddOns<crate::TmpDB> + 'static,
     {
         let mut setup = self.setup.take();
 

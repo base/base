@@ -3,9 +3,9 @@
 use std::{fmt, fmt::Debug};
 
 use alloy_eips::{BlockNumHash, eip2124::Head};
-use base_node_context::FullNodeComponents;
 use futures::future;
 use reth_chain_state::ForkChoiceSubscriptions;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
@@ -17,10 +17,10 @@ use tracing::Instrument;
 use crate::{WithConfigs, exex::BoxedLaunchExEx};
 
 /// Can launch execution extensions.
-pub struct ExExLauncher<Node: FullNodeComponents> {
+pub struct ExExLauncher<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     head: Head,
-    extensions: Vec<(String, Box<dyn BoxedLaunchExEx<Node>>)>,
-    components: Node,
+    extensions: Vec<(String, Box<dyn BoxedLaunchExEx<DB>>)>,
+    components: base_node_context::BaseNodeContext<DB>,
     config_container: WithConfigs,
     /// The threshold for the number of blocks in the WAL before emitting a warning.
     wal_blocks_warning: usize,
@@ -28,12 +28,12 @@ pub struct ExExLauncher<Node: FullNodeComponents> {
     capacity: usize,
 }
 
-impl<Node: FullNodeComponents + Clone> ExExLauncher<Node> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ExExLauncher<DB> {
     /// Create a new `ExExLauncher` with the given extensions.
     pub const fn new(
         head: Head,
-        components: Node,
-        extensions: Vec<(String, Box<dyn BoxedLaunchExEx<Node>>)>,
+        components: base_node_context::BaseNodeContext<DB>,
+        extensions: Vec<(String, Box<dyn BoxedLaunchExEx<DB>>)>,
         config_container: WithConfigs,
     ) -> Self {
         Self {
@@ -173,7 +173,7 @@ impl<Node: FullNodeComponents + Clone> ExExLauncher<Node> {
     }
 }
 
-impl<Node: FullNodeComponents> Debug for ExExLauncher<Node> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Debug for ExExLauncher<DB> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExExLauncher")
             .field("head", &self.head)

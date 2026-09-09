@@ -4,7 +4,9 @@ use base_execution_rpc::{
     BaseMinerExtApi, BaseNodeEthApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
 };
 use base_execution_txpool::{BasePooledTx, TransactionPool};
-use base_node_context::{FullNodeComponents, NodeAddOns};
+use base_node_context::NodeAddOns;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 
@@ -18,23 +20,25 @@ use crate::{
 /// This type provides Base-specific addons to the node and exposes the RPC server and engine
 /// API.
 #[derive(Debug)]
-pub struct BaseAddOns<N: FullNodeComponents, RpcMiddleware = Identity> {
+pub struct BaseAddOns<
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    RpcMiddleware = Identity,
+> {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
-    pub rpc_add_ons: RpcAddOns<N, RpcMiddleware>,
+    pub rpc_add_ons: RpcAddOns<DB, RpcMiddleware>,
     /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
-impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
-where
-    N: FullNodeComponents,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
+    BaseAddOns<DB, RpcMiddleware>
 {
     /// Creates a new instance from components.
     pub const fn new(
-        rpc_add_ons: RpcAddOns<N, RpcMiddleware>,
+        rpc_add_ons: RpcAddOns<DB, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
     ) -> Self {
@@ -42,28 +46,21 @@ where
     }
 }
 
-impl<N> Default for BaseAddOns<N>
-where
-    N: FullNodeComponents,
-{
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Default for BaseAddOns<DB> {
     fn default() -> Self {
         Self::builder().build()
     }
 }
 
-impl<N> BaseAddOns<N>
-where
-    N: FullNodeComponents,
-{
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BaseAddOns<DB> {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder {
         BaseAddOnsBuilder::default()
     }
 }
 
-impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
-where
-    N: FullNodeComponents,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
+    BaseAddOns<DB, RpcMiddleware>
 {
     /// Sets the RPC middleware stack for processing RPC requests.
     ///
@@ -72,7 +69,7 @@ where
     /// layer, allowing you to intercept, modify, or enhance RPC request processing.
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, T> {
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<DB, T> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_rpc_middleware(rpc_middleware),
@@ -84,7 +81,10 @@ where
     /// Sets the hook that is run once the rpc server is started.
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, N, BaseNodeEthApi<N>>, RethRpcServerHandles) -> eyre::Result<()>
+        F: FnOnce(
+                RpcContext<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+                RethRpcServerHandles,
+            ) -> eyre::Result<()>
             + Send
             + 'static,
     {
@@ -95,23 +95,27 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(
+                RpcContext<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+            ) -> eyre::Result<()>
+            + Send
+            + 'static,
     {
         self.rpc_add_ons = self.rpc_add_ons.extend_rpc_modules(hook);
         self
     }
 }
 
-impl<N, RpcMiddleware> NodeAddOns<N> for BaseAddOns<N, RpcMiddleware>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> NodeAddOns<DB>
+    for BaseAddOns<DB, RpcMiddleware>
 where
-    N: FullNodeComponents,
     RpcMiddleware: RethRpcMiddleware,
 {
-    type Handle = RpcHandle<N, BaseNodeEthApi<N>>;
+    type Handle = RpcHandle<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>;
 
     async fn launch_add_ons(
         self,
-        ctx: base_node_context::AddOnsContext<'_, N>,
+        ctx: base_node_context::AddOnsContext<'_, DB>,
     ) -> eyre::Result<Self::Handle> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         let eth_config =
@@ -151,13 +155,16 @@ where
     }
 }
 
-impl<N, RpcMiddleware> RethRpcAddOns<N> for BaseAddOns<N, RpcMiddleware>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> RethRpcAddOns<DB>
+    for BaseAddOns<DB, RpcMiddleware>
 where
-    N: FullNodeComponents,
-    <base_node_context::BaseNodePool<N::Provider> as TransactionPool>::Transaction: BasePooledTx,
+    <base_node_context::BaseNodePool<BlockchainProvider<DB>> as TransactionPool>::Transaction:
+        BasePooledTx,
     RpcMiddleware: RethRpcMiddleware,
 {
-    fn hooks_mut(&mut self) -> &mut crate::RpcHooks<N, BaseNodeEthApi<N>> {
+    fn hooks_mut(
+        &mut self,
+    ) -> &mut crate::RpcHooks<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>> {
         self.rpc_add_ons.hooks_mut()
     }
 }
@@ -261,10 +268,9 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
 
 impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     /// Builds an instance of [`BaseAddOns`].
-    pub fn build<N>(self) -> BaseAddOns<N, RpcMiddleware>
-    where
-        N: FullNodeComponents,
-    {
+    pub fn build<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        self,
+    ) -> BaseAddOns<DB, RpcMiddleware> {
         let Self {
             sequencer_url,
             sequencer_headers,

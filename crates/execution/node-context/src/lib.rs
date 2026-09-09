@@ -2,6 +2,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod components;
-pub use components::{BaseNodeContext, BaseNodePool, FullNodeComponents};
+pub use components::{BaseNodeContext, BaseNodePool};
 mod add_ons;
 pub use add_ons::{AddOnsContext, NodeAddOns};

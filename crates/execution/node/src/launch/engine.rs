@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin};
 
 use base_common_consensus::BlockHeader;
 use base_execution_payload_builder::{BaseEngineValidator, BaseExecutionHandle};
-use base_node_context::{AddOnsContext, BaseNodeContext, FullNodeComponents};
+use base_node_context::AddOnsContext;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
 use reth_db::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::ConsensusEngineHandle;
@@ -65,10 +65,10 @@ impl EngineNodeLauncher {
     async fn launch_node<DB, AO>(
         self,
         target: NodeBuilderWithComponents<DB, AO>,
-    ) -> eyre::Result<NodeHandle<BaseNodeContext<DB>, AO>>
+    ) -> eyre::Result<NodeHandle<DB, AO>>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        AO: RethRpcAddOns<BaseNodeContext<DB>>,
+        AO: RethRpcAddOns<DB>,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
@@ -421,9 +421,9 @@ impl EngineNodeLauncher {
 impl<DB, AO> LaunchNode<NodeBuilderWithComponents<DB, AO>> for EngineNodeLauncher
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<BaseNodeContext<DB>> + 'static,
+    AO: RethRpcAddOns<DB> + 'static,
 {
-    type Node = NodeHandle<BaseNodeContext<DB>, AO>;
+    type Node = NodeHandle<DB, AO>;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
 
     fn launch_node(self, target: NodeBuilderWithComponents<DB, AO>) -> Self::Future {

@@ -134,7 +134,7 @@ impl Setup {
         node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     ) -> Result<()>
     where
-        AO: RethRpcAddOns<crate::Adapter> + 'static,
+        AO: RethRpcAddOns<crate::TmpDB> + 'static,
     {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_(env, node_factory)).await
@@ -147,7 +147,7 @@ impl Setup {
         node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     ) -> Result<()>
     where
-        AO: RethRpcAddOns<crate::Adapter> + 'static,
+        AO: RethRpcAddOns<crate::TmpDB> + 'static,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;

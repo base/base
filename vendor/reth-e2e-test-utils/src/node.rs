@@ -7,11 +7,11 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::BlockHeader;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_rpc::BaseEthApi;
-use base_node_context::FullNodeComponents;
 use base_node_core::{FullNode, RethRpcAddOns};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::Block;
 use reth_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
@@ -25,31 +25,29 @@ use crate::{network::NetworkTestContext, payload::PayloadTestContext, rpc::RpcTe
 
 /// A helper struct to handle node actions
 #[expect(missing_debug_implementations)]
-pub struct NodeTestContext<Node, AddOns>
+pub struct NodeTestContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns>
 where
-    Node: FullNodeComponents,
-    AddOns: RethRpcAddOns<Node>,
+    AddOns: RethRpcAddOns<DB>,
 {
     /// The core structure representing the full node.
-    pub inner: FullNode<Node, AddOns>,
+    pub inner: FullNode<DB, AddOns>,
     /// Context for testing payload-related features.
     pub payload: PayloadTestContext,
     /// Context for testing network functionalities.
     pub network: NetworkTestContext<reth_network::NetworkHandle>,
     /// Context for testing RPC features.
-    pub rpc: RpcTestContext<Node, BaseEthApi<Node>>,
+    pub rpc: RpcTestContext<DB, BaseEthApi<base_node_context::BaseNodeContext<DB>>>,
     /// Canonical state events.
     pub canonical_stream: CanonStateNotificationStream,
 }
 
-impl<Node, AddOns> NodeTestContext<Node, AddOns>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> NodeTestContext<DB, AddOns>
 where
-    Node: FullNodeComponents,
-    AddOns: RethRpcAddOns<Node>,
+    AddOns: RethRpcAddOns<DB>,
 {
     /// Creates a new test node
     pub async fn new(
-        node: FullNode<Node, AddOns>,
+        node: FullNode<DB, AddOns>,
         attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + 'static,
     ) -> eyre::Result<Self> {
         Ok(Self {
@@ -81,7 +79,7 @@ where
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
     ) -> eyre::Result<Vec<BaseBuiltPayload>>
     where
-        AddOns: RethRpcAddOns<Node>,
+        AddOns: RethRpcAddOns<DB>,
     {
         let mut chain = Vec::with_capacity(length as usize);
         for i in 0..length {

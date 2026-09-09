@@ -3,10 +3,10 @@ use std::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
-use base_node_context::FullNodeComponents;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_exex_types::ExExHead;
 use reth_node_core::node_config::NodeConfig;
-use reth_provider::BlockReader;
+use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskExecutor;
 use tokio::sync::mpsc::{UnboundedSender, error::SendError};
 
@@ -15,7 +15,7 @@ use crate::{ExExContextDyn, ExExEvent, ExExNotifications, ExExNotificationsStrea
 /// Captures the context that an `ExEx` has access to.
 ///
 /// This type wraps various node components that the `ExEx` has access to.
-pub struct ExExContext<Node: FullNodeComponents> {
+pub struct ExExContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// The current head of the blockchain at launch.
     pub head: BlockNumHash,
     /// The config of the node
@@ -36,17 +36,13 @@ pub struct ExExContext<Node: FullNodeComponents> {
     ///
     /// Once an [`ExExNotification`](crate::ExExNotification) is sent over the channel, it is
     /// considered delivered by the node.
-    pub notifications: ExExNotifications<Node::Provider>,
+    pub notifications: ExExNotifications<BlockchainProvider<DB>>,
 
     /// Node components
-    pub components: Node,
+    pub components: base_node_context::BaseNodeContext<DB>,
 }
 
-impl<Node> Debug for ExExContext<Node>
-where
-    Node: FullNodeComponents,
-    Node::Provider: Debug,
-{
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Debug for ExExContext<DB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExExContext")
             .field("head", &self.head)
@@ -59,23 +55,16 @@ where
     }
 }
 
-impl<Node> ExExContext<Node>
-where
-    Node: FullNodeComponents,
-    Node::Provider: Debug + BlockReader,
-{
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ExExContext<DB> {
     /// Returns dynamic version of the context
     pub fn into_dyn(self) -> ExExContextDyn {
         ExExContextDyn::from(self)
     }
 }
 
-impl<Node> ExExContext<Node>
-where
-    Node: FullNodeComponents,
-{
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ExExContext<DB> {
     /// Returns the transaction pool of the node.
-    pub fn pool(&self) -> &base_node_context::BaseNodePool<Node::Provider> {
+    pub fn pool(&self) -> &base_node_context::BaseNodePool<BlockchainProvider<DB>> {
         self.components.pool()
     }
 
@@ -85,7 +74,7 @@ where
     }
 
     /// Returns the provider of the node.
-    pub fn provider(&self) -> &Node::Provider {
+    pub fn provider(&self) -> &BlockchainProvider<DB> {
         self.components.provider()
     }
 
@@ -138,9 +127,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_node_context::FullNodeComponents;
+    use reth_db_api::{Database, database_metrics::DatabaseMetrics};
     use reth_exex_types::ExExHead;
-    use reth_provider::BlockReader;
 
     use crate::ExExContext;
 
@@ -148,14 +136,11 @@ mod tests {
     #[test]
     const fn issue_12054() {
         #[expect(dead_code)]
-        struct ExEx<Node: FullNodeComponents> {
-            ctx: ExExContext<Node>,
+        struct ExEx<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+            ctx: ExExContext<DB>,
         }
 
-        impl<Node: FullNodeComponents> ExEx<Node>
-        where
-            Node::Provider: BlockReader,
-        {
+        impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ExEx<DB> {
             async fn _test_bounds(mut self) -> eyre::Result<()> {
                 self.ctx.pool();
                 self.ctx.evm_config();

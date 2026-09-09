@@ -7,7 +7,6 @@ use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiO
 use base_execution_trie::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
 };
-use base_node_context::FullNodeComponents;
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;

@@ -21,6 +21,7 @@ tokio = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
+reth-db-api = { workspace = true }
 alloy-genesis = {workspace = true}
 reth-network = { workspace = true }
 alloy-signer = { workspace = true }

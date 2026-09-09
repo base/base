@@ -112,7 +112,7 @@ pub use states::*;
 /// ## Internals
 ///
 /// The builder carries the database and provider backends through its construction phases.
-/// [`FullNodeComponents`](base_node_context::FullNodeComponents) exposes the initialized services.
+/// [`BaseNodeContext`](base_node_context::BaseNodeContext) exposes the initialized services.
 /// After [`WithLaunchContext::launch`], the [`NodeHandle`] contains the running [`FullNode`].
 ///
 /// ### Limitations
@@ -331,7 +331,7 @@ where
         add_ons: AO,
     ) -> WithLaunchContext<NodeBuilderWithComponents<DB, AO>>
     where
-        AO: NodeAddOns<BaseNodeContext<DB>>,
+        AO: NodeAddOns<DB>,
     {
         WithLaunchContext {
             builder: self.builder.with_add_ons(add_ons),
@@ -343,7 +343,7 @@ where
 impl<DB, AO> WithLaunchContext<NodeBuilderWithComponents<DB, AO>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<BaseNodeContext<DB>>,
+    AO: RethRpcAddOns<DB>,
 {
     /// Returns a reference to the node builder's config.
     pub const fn config(&self) -> &NodeConfig {
@@ -411,7 +411,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<BaseNodeContext<DB>, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<DB, AO>) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
     }
@@ -449,11 +449,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<
-                    '_,
-                    BaseNodeContext<DB>,
-                    base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>,
-                >,
+                RpcContext<'_, DB, base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -501,11 +497,7 @@ where
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<
-                    '_,
-                    BaseNodeContext<DB>,
-                    base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>,
-                >,
+                RpcContext<'_, DB, base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>>,
             ) -> eyre::Result<()>
             + Send
             + 'static,
@@ -520,7 +512,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<BaseNodeContext<DB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<DB>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -537,7 +529,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex_if<F, R, E>(self, cond: bool, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<BaseNodeContext<DB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<DB>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {

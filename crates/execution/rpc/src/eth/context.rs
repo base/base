@@ -1,14 +1,14 @@
 //! Inputs used to construct the Base eth API.
 
-use base_node_context::FullNodeComponents;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_rpc_eth_types::{EthConfig, EthStateCache};
 
 /// Node components and RPC settings used to construct the Base eth API.
 #[derive(Debug)]
-pub struct EthApiCtx<'a, N: FullNodeComponents> {
+pub struct EthApiCtx<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// Reference to the node components
-    pub components: &'a N,
+    pub components: &'a base_node_context::BaseNodeContext<DB>,
     /// Eth API configuration
     pub config: EthConfig,
     /// Cache for eth state
@@ -17,9 +17,9 @@ pub struct EthApiCtx<'a, N: FullNodeComponents> {
     pub engine_handle: ConsensusEngineHandle,
 }
 
-impl<'a, N: FullNodeComponents> EthApiCtx<'a, N> {
+impl<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> EthApiCtx<'a, DB> {
     /// Provides a [`crate::EthApiBuilder`] with preconfigured config and components.
-    pub fn eth_api_builder(self) -> crate::EthApiBuilder<N> {
+    pub fn eth_api_builder(self) -> crate::EthApiBuilder<base_node_context::BaseNodeContext<DB>> {
         crate::EthApiBuilder::new_with_components(self.components.clone())
             .eth_cache(self.cache)
             .task_spawner(self.components.task_executor().clone())

@@ -2,7 +2,8 @@ use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_primitives::BlockNumber;
 use base_execution_evm::BaseEvmConfig;
-use base_node_context::FullNodeComponents;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
+use reth_provider::providers::BlockchainProvider;
 use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
 
@@ -76,10 +77,10 @@ impl<P: Clone> BackfillJobFactory<P> {
 }
 
 impl BackfillJobFactory<()> {
-    /// Creates a new [`BackfillJobFactory`] from [`FullNodeComponents`].
-    pub fn new_from_components<Node: FullNodeComponents>(
-        components: Node,
-    ) -> BackfillJobFactory<Node::Provider> {
+    /// Creates a new [`BackfillJobFactory`] from [`BaseNodeContext`].
+    pub fn new_from_components<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        components: base_node_context::BaseNodeContext<DB>,
+    ) -> BackfillJobFactory<BlockchainProvider<DB>> {
         BackfillJobFactory::<_>::new(components.evm_config().clone(), components.provider().clone())
     }
 }

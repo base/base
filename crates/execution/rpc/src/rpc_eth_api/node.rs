@@ -1,27 +1,20 @@
-//! Helper trait for interfacing with [`FullNodeComponents`].
+//! Components used by RPC handlers.
 
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{PoolTransaction, TransactionPool};
-use base_node_context::FullNodeComponents;
 use reth_chain_state::CanonStateSubscriptions;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_network_api::NetworkInfo;
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::EthStateCache;
 use reth_storage_api::{
     BalProvider, BlockReader, BlockReaderIdExt, PruneCheckpointReader, StageCheckpointReader,
     StateProviderFactory,
 };
 
-/// Helper trait that provides the same interface as [`FullNodeComponents`] but without requiring
-/// implementation of trait bounds.
-///
-/// This trait is structurally equivalent to [`FullNodeComponents`], exposing the same associated
-/// types and methods. However, it doesn't enforce the trait bounds required by
-/// [`FullNodeComponents`]. This makes it useful for RPC types that need access to node components
-/// where the full trait bounds of the components are not necessary.
-///
-/// Every type that is a [`FullNodeComponents`] also implements this trait.
+/// Components used by RPC handlers.
 pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
     /// The provider type used to interact with the node.
     type Provider: BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
@@ -55,33 +48,32 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
     fn provider(&self) -> &Self::Provider;
 }
 
-impl<T> RpcNodeCore for T
-where
-    T: FullNodeComponents<Provider: ChainSpecProvider>,
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RpcNodeCore
+    for base_node_context::BaseNodeContext<DB>
 {
-    type Provider = T::Provider;
-    type Pool = base_node_context::BaseNodePool<T::Provider>;
+    type Provider = BlockchainProvider<DB>;
+    type Pool = base_node_context::BaseNodePool<BlockchainProvider<DB>>;
 
     type Network = reth_network::NetworkHandle;
 
     #[inline]
     fn pool(&self) -> &Self::Pool {
-        FullNodeComponents::pool(self)
+        &self.transaction_pool
     }
 
     #[inline]
     fn evm_config(&self) -> &BaseEvmConfig {
-        FullNodeComponents::evm_config(self)
+        &self.evm_config
     }
 
     #[inline]
     fn network(&self) -> &Self::Network {
-        FullNodeComponents::network(self)
+        &self.network
     }
 
     #[inline]
     fn provider(&self) -> &Self::Provider {
-        FullNodeComponents::provider(self)
+        &self.provider
     }
 }
 

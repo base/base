@@ -24,7 +24,6 @@ use base_execution_txpool::{
     DiskFileBlobStore, GuardLimits, TransactionValidationTaskExecutor,
     maintain_state_diff_invalidation,
 };
-use base_node_context::BaseNodeContext;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
@@ -246,7 +245,7 @@ impl BaseNode {
 }
 
 /// Concrete add-ons for the core Base node and its provider adapter.
-pub type BaseNodeAddOns<N> = BaseAddOns<BaseNodeContext<N>>;
+pub type BaseNodeAddOns<N> = BaseAddOns<N>;
 
 impl BaseNode {
     /// Returns the concrete RPC conversion and local-mining configuration.
@@ -729,7 +728,7 @@ impl BaseNetworkBuilder {
     pub async fn build_network<DB>(
         self,
         ctx: &BuilderContext<DB>,
-        pool: base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider<DB>>,
+        pool: base_node_context::BaseNodePool<BlockchainProvider<DB>>,
     ) -> eyre::Result<NetworkHandle>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
