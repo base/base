@@ -12,10 +12,10 @@ use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
 use base_execution_network_discovery::Discv5;
 use base_execution_network_discovery::Discv5Config as Config;
 use base_execution_network_discovery::NatResolver;
+use base_execution_network_discv5::Event;
+use base_execution_network_discv5::ListenConfig;
 use base_execution_network_types::NodeRecord;
 use clap::Parser;
-use discv5_reth::Event;
-use discv5_reth::ListenConfig;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};
@@ -244,7 +244,8 @@ impl Command {
         } else {
             ListenConfig::Ipv4 { ip: Ipv4Addr::UNSPECIFIED, port }
         };
-        builder = builder.discv5_config(discv5_reth::ConfigBuilder::new(listen).build());
+        builder = builder
+            .discv5_config(base_execution_network_discv5::ConfigBuilder::new(listen).build());
 
         for ip in &nat.advertised_ips {
             builder = builder.advertised_ip(*ip);

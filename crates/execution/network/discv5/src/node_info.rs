@@ -7,7 +7,8 @@ use libp2p_identity::{KeyType, PublicKey};
 use multiaddr::{Multiaddr, Protocol};
 
 use super::*;
-use crate::Enr;
+/// Ethereum node record using either supported key type.
+pub type Enr = enr::Enr<enr::CombinedKey>;
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.

@@ -25,7 +25,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 rustc-hash = { workspace = true }
-discv5-reth = { workspace = true }
 pin-project = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-network-api = { workspace = true }
@@ -39,6 +38,7 @@ base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
+base-execution-network-discv5 = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
@@ -92,7 +92,7 @@ serde = [
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "alloy-trie/serde",
-    "discv5-reth/serde",
+    "base-execution-network-discv5/serde",
     "parking_lot/serde",
     "rand/serde",
     "smallvec/serde",

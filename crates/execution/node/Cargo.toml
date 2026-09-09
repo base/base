@@ -14,7 +14,6 @@ workspace = true
 rayon = { workspace = true }
 fdlimit = { workspace = true }
 alloy-rlp = { workspace = true }
-discv5-reth = {workspace = true}
 humantime = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-exex = { workspace = true }
@@ -54,6 +53,7 @@ reth-invalid-block-hooks = { workspace = true }
 base-common-client-ethereum = {workspace = true}
 base-execution-eip8130-rpc = { workspace = true }
 base-execution-payload-types = {workspace = true}
+base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default"] }

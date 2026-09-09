@@ -20,6 +20,7 @@ use base_execution_network_discovery::DEFAULT_SECONDS_LOOKUP_INTERVAL;
 use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR;
 use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT as DEFAULT_DISCOVERY_PORT;
 use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
+use base_execution_network_discv5::ListenConfig;
 use base_execution_network_types::IpFilter;
 use base_execution_network_types::NodeRecord;
 use base_execution_network_types::{TrustedPeer, mainnet_nodes};
@@ -27,7 +28,6 @@ use clap::{
     Args,
     builder::{OsStr, Resettable},
 };
-use discv5_reth::ListenConfig;
 use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
 use reth_config::Config;
 use reth_network::{
@@ -1059,7 +1059,7 @@ impl DiscoveryArgs {
         });
 
         let mut discv5_config_builder =
-            discv5_reth::ConfigBuilder::new(ListenConfig::from_two_sockets(
+            base_execution_network_discv5::ConfigBuilder::new(ListenConfig::from_two_sockets(
                 discv5_addr_ipv4.map(|addr| SocketAddrV4::new(addr, discv5_port.unwrap_or(*port))),
                 discv5_addr_ipv6
                     .map(|addr| SocketAddrV6::new(addr, discv5_port_ipv6.unwrap_or(*port), 0, 0)),

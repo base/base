@@ -121,7 +121,7 @@ members = [
   "crates/common/client/contracts",
   "vendor/alloy-node-bindings",
   "crates/common/client/ethereum",
-  "vendor/discv5-reth",
+  "crates/execution/network/discv5",
   "vendor/reth-chain-state",
   "vendor/reth-cli-commands",
   "vendor/reth-cli-util",
@@ -719,7 +719,7 @@ enr = { version = "=0.13.0", default-features = false }
 nybbles = { version = "=0.4.8", default-features = false }
 tree_hash = { version = "=0.12.1", default-features = false }
 ethereum_serde_utils = { version = "=0.8.1", default-features = false }
-discv5-reth = { path = "vendor/discv5-reth", default-features = false, package = "discv5-reth" }
+base-execution-network-discv5 = { path = "crates/execution/network/discv5", default-features = false }
 
 # Additional shared dependencies
 fnv = { version = "1", default-features = false }

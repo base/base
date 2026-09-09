@@ -60,7 +60,7 @@ pub struct Discovery {
     /// Handler to interact with the Discovery v5 service
     discv5: Option<Discv5>,
     /// All KAD table updates from the discv5 service.
-    discv5_updates: Option<ReceiverStream<discv5_reth::Event>>,
+    discv5_updates: Option<ReceiverStream<base_execution_network_discv5::Event>>,
     /// Background task that, in shared-port mode, drains `UnrecognizedFrame`s from discv5 and
     /// feeds them into the discv4 ingress so packets advance without polling `Discovery`.
     _discv5_forwarder: Option<JoinHandle<()>>,
@@ -193,7 +193,8 @@ impl Discovery {
                     }
                 }
 
-                discv5_cfg.listen_config = discv5_reth::ListenConfig::FromSockets { ipv4, ipv6 };
+                discv5_cfg.listen_config =
+                    base_execution_network_discv5::ListenConfig::FromSockets { ipv4, ipv6 };
             }
 
             let (discv5, discv5_updates) = Discv5::start(&sk, config).await?;
@@ -212,7 +213,9 @@ impl Discovery {
                 let (tx, rx) = mpsc::channel(updates.max_capacity());
                 let handle = tokio::spawn(async move {
                     while let Some(event) = updates.recv().await {
-                        if let discv5_reth::Event::UnrecognizedFrame(frame) = &event {
+                        if let base_execution_network_discv5::Event::UnrecognizedFrame(frame) =
+                            &event
+                        {
                             ingress.handle_packet(&frame.packet, frame.src_address).await;
                             continue;
                         }
@@ -523,9 +526,11 @@ mod tests {
         // disable `NatResolver`
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
-        let discv5_listen_config = discv5_reth::ListenConfig::from(discv5_addr);
+        let discv5_listen_config = base_execution_network_discv5::ListenConfig::from(discv5_addr);
         let discv5_config = base_execution_network_discovery::Discv5Config::builder(discv5_addr)
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
+            .discv5_config(
+                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+            )
             .build();
 
         Discovery::new(
@@ -549,7 +554,9 @@ mod tests {
         let mut discv5_config = base_execution_network_discovery::Discv5Config::builder(
             (Ipv4Addr::LOCALHOST, 0).into(),
         )
-        .discv5_config(discv5_reth::ConfigBuilder::new(discv5_addr.into()).build())
+        .discv5_config(
+            base_execution_network_discv5::ConfigBuilder::new(discv5_addr.into()).build(),
+        )
         .build();
 
         set_bound_rlpx_port_if_unset(&mut discv5_config, bound_rlpx_port);
@@ -567,7 +574,9 @@ mod tests {
         let discv5_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let mut discv5_config =
             base_execution_network_discovery::Discv5Config::builder(advertised_addr)
-                .discv5_config(discv5_reth::ConfigBuilder::new(discv5_addr.into()).build())
+                .discv5_config(
+                    base_execution_network_discv5::ConfigBuilder::new(discv5_addr.into()).build(),
+                )
                 .build();
 
         set_bound_rlpx_port_if_unset(&mut discv5_config, 30307);
@@ -674,9 +683,11 @@ mod tests {
 
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
-        let discv5_listen_config = discv5_reth::ListenConfig::from(disc_addr);
+        let discv5_listen_config = base_execution_network_discv5::ListenConfig::from(disc_addr);
         let discv5_config = base_execution_network_discovery::Discv5Config::builder(tcp_addr)
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
+            .discv5_config(
+                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+            )
             .build();
 
         // Both protocols use the same address, triggering shared-port mode
@@ -820,14 +831,16 @@ mod tests {
 
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
-        let discv5_listen_config = discv5_reth::ListenConfig::DualStack {
+        let discv5_listen_config = base_execution_network_discv5::ListenConfig::DualStack {
             ipv4: std::net::Ipv4Addr::UNSPECIFIED,
             ipv4_port: port,
             ipv6: std::net::Ipv6Addr::UNSPECIFIED,
             ipv6_port: port,
         };
         let discv5_config = base_execution_network_discovery::Discv5Config::builder(tcp_addr)
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
+            .discv5_config(
+                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+            )
             .build();
 
         Discovery::new(

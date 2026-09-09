@@ -3,11 +3,13 @@
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
 };
 
 use alloy_rlp::bytes::Bytes;
 use enr::{CombinedKey, Enr, EnrKey, NodeId, k256};
 use rand_core::{RngCore, SeedableRng};
+use tokio::net::UdpSocket;
 
 use crate::{Discv5, socket::ListenConfig, *};
 
@@ -21,34 +23,15 @@ fn update_enr<T: alloy_rlp::Encodable>(discv5: &mut Discv5, key: &str, value: &T
     discv5.enr_insert(key, value).is_ok()
 }
 
-#[allow(dead_code)]
-async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
-    let mut nodes = Vec::new();
-    let ip: Ipv4Addr = "127.0.0.1".parse().unwrap();
-
-    for port in base_port..base_port + n as u16 {
-        let enr_key = CombinedKey::generate_secp256k1();
-        let listen_config = ListenConfig::Ipv4 { ip, port };
-        let config = ConfigBuilder::new(listen_config).build();
-
-        let enr = Enr::builder().ip4(ip).udp4(port).build(&enr_key).unwrap();
-        // transport for building a swarm
-        let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start().await.unwrap();
-        nodes.push(discv5);
-    }
-    nodes
-}
-
 /// Build `n` swarms using passed keypairs.
-async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
+async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>) -> Vec<Discv5> {
     let mut nodes = Vec::new();
     let ip: Ipv4Addr = "127.0.0.1".parse().unwrap();
 
-    for (i, enr_key) in keys.into_iter().enumerate() {
-        let port = base_port + i as u16;
-
-        let listen_config = ListenConfig::Ipv4 { ip, port };
+    for enr_key in keys {
+        let socket = Arc::new(UdpSocket::bind((ip, 0)).await.unwrap());
+        let port = socket.local_addr().unwrap().port();
+        let listen_config = ListenConfig::FromSockets { ipv4: Some(socket), ipv6: None };
         let config = ConfigBuilder::new(listen_config).build();
 
         let enr = Enr::builder().ip4(ip).udp4(port).build(&enr_key).unwrap();
@@ -60,13 +43,13 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
     nodes
 }
 
-async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
+async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>) -> Vec<Discv5> {
     let mut nodes = Vec::new();
 
-    for (i, enr_key) in keys.into_iter().enumerate() {
-        let port = base_port + i as u16;
-
-        let listen_config = ListenConfig::Ipv6 { ip: Ipv6Addr::LOCALHOST, port };
+    for enr_key in keys {
+        let socket = Arc::new(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap());
+        let port = socket.local_addr().unwrap().port();
+        let listen_config = ListenConfig::FromSockets { ipv4: None, ipv6: Some(socket) };
         let config = ConfigBuilder::new(listen_config).build();
 
         let enr = Enr::builder().ip6(Ipv6Addr::LOCALHOST).udp6(port).build(&enr_key).unwrap();
@@ -78,22 +61,15 @@ async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) 
     nodes
 }
 
-async fn build_nodes_from_keypairs_dual_stack(
-    keys: Vec<CombinedKey>,
-    base_port: u16,
-) -> Vec<Discv5> {
+async fn build_nodes_from_keypairs_dual_stack(keys: Vec<CombinedKey>) -> Vec<Discv5> {
     let mut nodes = Vec::new();
 
-    for (i, enr_key) in keys.into_iter().enumerate() {
-        let ipv4_port = base_port + i as u16;
-        let ipv6_port = ipv4_port + 1000;
-
-        let listen_config = ListenConfig::DualStack {
-            ipv4: Ipv4Addr::LOCALHOST,
-            ipv4_port,
-            ipv6: Ipv6Addr::LOCALHOST,
-            ipv6_port,
-        };
+    for enr_key in keys {
+        let ipv4 = Arc::new(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap());
+        let ipv6 = Arc::new(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap());
+        let ipv4_port = ipv4.local_addr().unwrap().port();
+        let ipv6_port = ipv6.local_addr().unwrap().port();
+        let listen_config = ListenConfig::FromSockets { ipv4: Some(ipv4), ipv6: Some(ipv6) };
         let config = ConfigBuilder::new(listen_config).build();
 
         let enr = Enr::builder()
@@ -320,7 +296,7 @@ async fn test_discovery_three_peers_ipv4() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // IPv4
-    let nodes = build_nodes_from_keypairs(keypairs, 10000).await;
+    let nodes = build_nodes_from_keypairs(keypairs).await;
 
     assert_eq!(total_nodes, test_discovery_three_peers(nodes, total_nodes).await);
 }
@@ -337,7 +313,7 @@ async fn test_discovery_three_peers_ipv6() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // IPv6
-    let nodes = build_nodes_from_keypairs_ipv6(keypairs, 10010).await;
+    let nodes = build_nodes_from_keypairs_ipv6(keypairs).await;
 
     assert_eq!(total_nodes, test_discovery_three_peers(nodes, total_nodes).await);
 }
@@ -354,7 +330,7 @@ async fn test_discovery_three_peers_dual_stack() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // DualStack
-    let nodes = build_nodes_from_keypairs_dual_stack(keypairs, 10020).await;
+    let nodes = build_nodes_from_keypairs_dual_stack(keypairs).await;
 
     assert_eq!(total_nodes, test_discovery_three_peers(nodes, total_nodes).await);
 }
@@ -374,15 +350,15 @@ async fn test_discovery_three_peers_mixed() {
 
     let mut nodes = vec![];
     // Bootstrap node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10030).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)]).await);
     // A node to run query (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10031).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)]).await);
     // IPv4 node
-    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10032).await);
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)]).await);
     // IPv6 node
-    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10033).await);
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)]).await);
     // Target node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10034).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)]).await);
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
@@ -407,15 +383,15 @@ async fn test_discovery_three_peers_mixed_query_from_ipv4() {
 
     let mut nodes = vec![];
     // Bootstrap node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10040).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)]).await);
     // A node to run query (** IPv4 **)
-    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10041).await);
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)]).await);
     // IPv4 node
-    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10042).await);
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)]).await);
     // IPv6 node
-    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10043).await);
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)]).await);
     // Target node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10044).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)]).await);
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
@@ -478,7 +454,7 @@ async fn test_discovery_star_topology() {
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut nodes = build_nodes_from_keypairs(keypairs, 11000).await;
+    let mut nodes = build_nodes_from_keypairs(keypairs).await;
     // Last node is bootstrap node in a star topology
     let bootstrap_node = nodes.remove(0);
     // target_node is not polled.
@@ -522,7 +498,7 @@ async fn test_findnode_query() {
     // buckets from each other and the target.
     let mut keypairs = generate_deterministic_keypair(total_nodes + 1, 5);
     let target_node_id = NodeId::from(keypairs.remove(0).public());
-    let mut nodes = build_nodes_from_keypairs(keypairs, 30000).await;
+    let mut nodes = build_nodes_from_keypairs(keypairs).await;
     let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr()).collect();
 
     // link the nodes together
@@ -561,7 +537,7 @@ async fn test_findnode_query_with_target() {
     // buckets from each other and the target.
     let keypairs = generate_deterministic_keypair(total_nodes + 1, 5);
     let target_node_id = NodeId::from(keypairs[0].public());
-    let mut nodes = build_nodes_from_keypairs(keypairs, 40150).await;
+    let mut nodes = build_nodes_from_keypairs(keypairs).await;
     let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr()).collect();
 
     // link the nodes together
@@ -593,7 +569,7 @@ async fn test_predicate_search() {
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut nodes = build_nodes_from_keypairs(keypairs, 1500).await;
+    let mut nodes = build_nodes_from_keypairs(keypairs).await;
     // Last node is bootstrap node in a star topology
     let bootstrap_node = nodes.remove(0);
     // target_node is not polled.

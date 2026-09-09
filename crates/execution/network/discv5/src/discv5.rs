@@ -465,7 +465,7 @@ impl Discv5 {
     /// lock).
     /// ```
     /// use std::str::FromStr;
-    /// use discv5::{ConfigBuilder, Discv5, ListenConfig, Enr, enr::CombinedKey};
+    /// use base_execution_network_discv5::{ConfigBuilder, Discv5, ListenConfig, Enr, enr::CombinedKey};
     ///
     /// let sk = CombinedKey::generate_secp256k1();
     /// let enr = Enr::builder().build(&sk).unwrap();

@@ -857,8 +857,8 @@ mod tests {
 
         use base_common_chain_config::BaseChainSpecBuilder;
         use base_common_runtime_tasks::Runtime;
-        use discv5_reth::ConfigBuilder as Discv5ConfigBuilder;
-        use discv5_reth::ListenConfig;
+        use base_execution_network_discv5::ConfigBuilder as Discv5ConfigBuilder;
+        use base_execution_network_discv5::ListenConfig;
         use reth_network::{NetworkConfigBuilder, NetworkManager};
 
         // Use a scheduled fork so startup and the later runtime update advertise different IDs.

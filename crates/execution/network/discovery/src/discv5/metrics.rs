@@ -20,13 +20,13 @@ pub struct DiscoveredPeersMetrics {
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Kbuckets
     ////////////////////////////////////////////////////////////////////////////////////////////////
-    /// Total peers currently in [`discv5_reth::Discv5`]'s kbuckets.
+    /// Total peers currently in [`base_execution_network_discv5::Discv5`]'s kbuckets.
     kbucket_peers_raw_total: Gauge,
-    /// Total discovered peers that are inserted into [`discv5_reth::Discv5`]'s kbuckets.
+    /// Total discovered peers that are inserted into [`base_execution_network_discv5::Discv5`]'s kbuckets.
     ///
     /// This is a subset of the total established sessions, in which all peers advertise a udp
     /// socket in their node record which is reachable from the local node. Only these peers make
-    /// it into [`discv5_reth::Discv5`]'s kbuckets and will hence be included in queries.
+    /// it into [`base_execution_network_discv5::Discv5`]'s kbuckets and will hence be included in queries.
     ///
     /// Note: the definition of 'discovered' is not exactly synonymous in `base_execution_network_discovery::Discv4`.
     inserted_kbucket_peers_raw_total: Counter,
@@ -34,23 +34,23 @@ pub struct DiscoveredPeersMetrics {
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Sessions
     ////////////////////////////////////////////////////////////////////////////////////////////////
-    /// Total peers currently connected to [`discv5_reth::Discv5`].
+    /// Total peers currently connected to [`base_execution_network_discv5::Discv5`].
     sessions_raw_total: Gauge,
-    /// Total number of sessions established by [`discv5_reth::Discv5`].
+    /// Total number of sessions established by [`base_execution_network_discv5::Discv5`].
     established_sessions_raw_total: Counter,
-    /// Total number of sessions established by [`discv5_reth::Discv5`], with peers that don't advertise
+    /// Total number of sessions established by [`base_execution_network_discv5::Discv5`], with peers that don't advertise
     /// a socket which is reachable from the local node in their node record.
     ///
-    /// These peers can't make it into [`discv5_reth::Discv5`]'s kbuckets, and hence won't be part of
+    /// These peers can't make it into [`base_execution_network_discv5::Discv5`]'s kbuckets, and hence won't be part of
     /// queries (neither shared with peers in NODES responses, nor queried for peers with FINDNODE
     /// requests).
     established_sessions_unreachable_enr_total: Counter,
-    /// Total number of sessions established by [`discv5_reth::Discv5`], that pass configured
+    /// Total number of sessions established by [`base_execution_network_discv5::Discv5`], that pass configured
     /// [`filter`](crate::discv5::filter) rules.
     established_sessions_custom_filtered_total: Counter,
-    /// Total number of unverifiable ENRs discovered by [`discv5_reth::Discv5`].
+    /// Total number of unverifiable ENRs discovered by [`base_execution_network_discv5::Discv5`].
     ///
-    /// These are peers that fail [`discv5_reth::Discv5`] session establishment, because the UDP socket
+    /// These are peers that fail [`base_execution_network_discv5::Discv5`] session establishment, because the UDP socket
     /// they're making a connection from doesn't match the UDP socket advertised in their ENR.
     /// These peers will be denied a session (and hence can't make it into kbuckets) until they
     /// have update their ENR, to reflect their actual UDP socket.
@@ -58,39 +58,39 @@ pub struct DiscoveredPeersMetrics {
 }
 
 impl DiscoveredPeersMetrics {
-    /// Sets current total number of peers in [`discv5_reth::Discv5`]'s kbuckets.
+    /// Sets current total number of peers in [`base_execution_network_discv5::Discv5`]'s kbuckets.
     pub fn set_total_kbucket_peers(&self, num: usize) {
         self.kbucket_peers_raw_total.set(num as f64)
     }
 
-    /// Increments the number of kbucket insertions in [`discv5_reth::Discv5`].
+    /// Increments the number of kbucket insertions in [`base_execution_network_discv5::Discv5`].
     pub fn increment_kbucket_insertions(&self, num: u64) {
         self.inserted_kbucket_peers_raw_total.increment(num)
     }
 
-    /// Sets current total number of peers connected to [`discv5_reth::Discv5`].
+    /// Sets current total number of peers connected to [`base_execution_network_discv5::Discv5`].
     pub fn set_total_sessions(&self, num: usize) {
         self.sessions_raw_total.set(num as f64)
     }
 
-    /// Increments number of sessions established by [`discv5_reth::Discv5`].
+    /// Increments number of sessions established by [`base_execution_network_discv5::Discv5`].
     pub fn increment_established_sessions_raw(&self, num: u64) {
         self.established_sessions_raw_total.increment(num)
     }
 
-    /// Increments number of sessions established by [`discv5_reth::Discv5`], with peers that don't have
+    /// Increments number of sessions established by [`base_execution_network_discv5::Discv5`], with peers that don't have
     /// a reachable node record.
     pub fn increment_established_sessions_unreachable_enr(&self, num: u64) {
         self.established_sessions_unreachable_enr_total.increment(num)
     }
 
-    /// Increments number of sessions established by [`discv5_reth::Discv5`], that pass configured
+    /// Increments number of sessions established by [`base_execution_network_discv5::Discv5`], that pass configured
     /// [`filter`](crate::discv5::filter) rules.
     pub fn increment_established_sessions_filtered(&self, num: u64) {
         self.established_sessions_custom_filtered_total.increment(num)
     }
 
-    /// Increments number of unverifiable ENRs discovered by [`discv5_reth::Discv5`]. These are peers
+    /// Increments number of unverifiable ENRs discovered by [`base_execution_network_discv5::Discv5`]. These are peers
     /// that fail session establishment because their advertised UDP socket doesn't match the
     /// socket they are making the connection from.
     pub fn increment_unverifiable_enrs_raw_total(&self, num: u64) {
@@ -122,7 +122,7 @@ pub struct AdvertisedChainMetrics {
 
 impl AdvertisedChainMetrics {
     /// Counts each recognised network stack type that is advertised on node record, once.
-    pub fn increment_once_by_network_type(&self, enr: &discv5_reth::Enr) {
+    pub fn increment_once_by_network_type(&self, enr: &base_execution_network_discv5::Enr) {
         if enr.get_raw_rlp(NetworkStackId::OPEL).is_some() {
             self.opel.increment(1u64)
         }

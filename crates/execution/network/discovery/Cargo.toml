@@ -30,7 +30,6 @@ dashmap = { workspace = true, features = ["inline"] }
 futures = { workspace = true, features = ["default"] }
 schnellru = {workspace = true, features = ["default"]}
 derive_more = { workspace = true, features = ["full"] }
-discv5-reth = {features = ["libp2p"], workspace = true}
 tracing = {features = ["attributes"], workspace = true}
 tokio-stream = {workspace = true, features = ["default"]}
 parking_lot = { workspace = true, features = ["default"] }
@@ -42,6 +41,7 @@ base-common-runtime-tasks = { workspace = true, features = ["time"] }
 rand_08 = { workspace = true, optional = true, features = ["default"] }
 serde_with = {workspace = true, optional = true, features = ["macros"]}
 hickory-resolver = { workspace = true, features = ["default", "tokio"] }
+base-execution-network-discv5 = {features = ["libp2p"], workspace = true}
 alloy-primitives = {features = ["map-foldhash", "rand"], workspace = true}
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 base-execution-network-types = {features = ["secp256k1", "std"], workspace = true}
@@ -68,7 +68,7 @@ serde = [
     "dashmap/serde",
     "dep:serde",
     "dep:serde_with",
-    "discv5-reth/serde",
+    "base-execution-network-discv5/serde",
     "enr/serde",
     "hickory-resolver/serde",
     "linked_hash_set/serde",

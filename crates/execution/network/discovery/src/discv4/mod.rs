@@ -14,14 +14,17 @@ use std::{
 
 use alloy_eip2124::ForkId;
 use alloy_primitives::{B256, bytes::Bytes, hex};
+use base_execution_network_discv5 as kbucket;
+use base_execution_network_discv5::BucketInsertResult;
+use base_execution_network_discv5::ConnectionDirection;
+use base_execution_network_discv5::ConnectionState;
+use base_execution_network_discv5::Distance;
+use base_execution_network_discv5::Entry as BucketEntry;
+use base_execution_network_discv5::InsertResult;
+use base_execution_network_discv5::KBucketsTable;
+use base_execution_network_discv5::MAX_NODES_PER_BUCKET;
+use base_execution_network_discv5::NodeStatus;
 use base_execution_network_types::{PeerId, pk2id};
-use discv5_reth::{
-    ConnectionDirection, ConnectionState, kbucket,
-    kbucket::{
-        BucketInsertResult, Distance, Entry as BucketEntry, InsertResult, KBucketsTable,
-        MAX_NODES_PER_BUCKET, NodeStatus,
-    },
-};
 use enr::Enr;
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -930,7 +933,11 @@ impl Discv4Service {
         self.remove_key(node_id, key)
     }
 
-    fn remove_key(&mut self, node_id: PeerId, key: discv5_reth::Key<NodeKey>) -> bool {
+    fn remove_key(
+        &mut self,
+        node_id: PeerId,
+        key: base_execution_network_discv5::Key<NodeKey>,
+    ) -> bool {
         let removed = self.kbuckets.remove(&key);
         if removed {
             trace!(target: "discv4", ?node_id, "removed node");
@@ -2233,7 +2240,7 @@ struct LookupContext {
 impl LookupContext {
     /// Create new context for a recursive lookup
     fn new(
-        target: discv5_reth::Key<NodeKey>,
+        target: base_execution_network_discv5::Key<NodeKey>,
         nearest_nodes: impl IntoIterator<Item = (Distance, NodeRecord)>,
         listener: Option<NodeRecordSender>,
     ) -> Self {
@@ -2331,7 +2338,7 @@ unsafe impl Send for LookupContext {}
 #[derive(Debug)]
 struct LookupContextInner {
     /// The target to lookup.
-    target: discv5_reth::Key<NodeKey>,
+    target: base_execution_network_discv5::Key<NodeKey>,
     /// The closest nodes
     closest_nodes: RefCell<BTreeMap<Distance, QueryNode>>,
     /// A listener for all the nodes retrieved in this lookup

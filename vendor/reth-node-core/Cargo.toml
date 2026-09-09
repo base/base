@@ -18,7 +18,6 @@ workspace = true
 url = { workspace = true }
 serde = { workspace = true }
 dirs-next = { workspace = true }
-discv5-reth = {workspace = true}
 humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
@@ -35,6 +34,7 @@ base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
+base-execution-network-discv5 = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["mdbx"] }
 strum = { workspace = true, features = ["derive"] }

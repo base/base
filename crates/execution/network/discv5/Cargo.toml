@@ -1,5 +1,5 @@
 [package]
-name = "discv5-reth"
+name = "base-execution-network-discv5"
 description = "Implementation of the p2p discv5 discovery protocol"
 version.workspace = true
 edition.workspace = true
@@ -16,19 +16,19 @@ readme = "./README.md"
 [dependencies]
 aes = { workspace = true }
 ctr = { workspace = true }
-uint = { workspace = true }
 hkdf = { workspace = true }
+uint = { workspace = true }
 socket2 = { workspace = true }
-smallvec = { workspace = true }
 hashlink = { workspace = true }
+smallvec = { workspace = true }
 delay_map = { workspace = true }
 lazy_static = { workspace = true }
 more-asserts = { workspace = true }
-hex = { workspace = true, features = ["default"] }
 fnv = { workspace = true, features = ["default"] }
+hex = { workspace = true, features = ["default"] }
+aes-gcm = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-aes-gcm = { workspace = true, features = ["default"] }
 arrayvec = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
@@ -41,6 +41,7 @@ libp2p-identity = { workspace = true, features = [
   "ed25519",
   "secp256k1",
 ], optional = true }
+
 [dev-dependencies]
 if-addrs = { workspace = true }
 rand_core = { workspace = true }
@@ -49,6 +50,7 @@ rand_0_7 = { workspace = true, features = ["default"] }
 quickcheck = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
+
 [lints]
 workspace = true
 

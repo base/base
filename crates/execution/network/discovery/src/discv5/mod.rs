@@ -32,11 +32,11 @@ pub use metrics::*;
 mod network_stack_id;
 pub use network_stack_id::*;
 
-use discv5_reth::IpMode;
+use base_execution_network_discv5::IpMode;
 
 /// Max kbucket index is 255.
 ///
-/// This is the max log2distance for 32 byte [`NodeId`](discv5_reth::enr::NodeId) - 1. See <https://github.com/sigp/discv5/blob/e9e0d4f93ec35591832a9a8d937b4161127da87b/src/kbucket.rs#L586-L587>.
+/// This is the max log2distance for 32 byte [`NodeId`](base_execution_network_discv5::enr::NodeId) - 1. See <https://github.com/sigp/discv5/blob/e9e0d4f93ec35591832a9a8d937b4161127da87b/src/kbucket.rs#L586-L587>.
 pub const MAX_KBUCKET_INDEX: usize = 255;
 
 /// Default lowest kbucket index to attempt filling, in periodic look up query to populate kbuckets.
@@ -46,22 +46,22 @@ pub const MAX_KBUCKET_INDEX: usize = 255;
 /// Default is 0th index.
 pub const DEFAULT_MIN_TARGET_KBUCKET_INDEX: usize = 0;
 
-/// Transparent wrapper around [`discv5_reth::Discv5`].
+/// Transparent wrapper around [`base_execution_network_discv5::Discv5`].
 #[derive(Clone)]
 pub struct Discv5 {
     /// sigp/discv5 node.
-    discv5: Arc<discv5_reth::Discv5>,
+    discv5: Arc<base_execution_network_discv5::Discv5>,
     /// [`IpMode`] of the `RLPx` network.
     rlpx_ip_mode: IpMode,
     /// Key used in kv-pair to ID chain, e.g. 'opstack' or 'eth'.
     fork_key: Option<&'static [u8]>,
     /// Filter applied to a discovered peers before passing it up to app.
     discovered_peer_filter: MustNotIncludeKeys,
-    /// Metrics for underlying [`discv5_reth::Discv5`] node and filtered discovered peers.
+    /// Metrics for underlying [`base_execution_network_discv5::Discv5`] node and filtered discovered peers.
     metrics: Discv5Metrics,
     /// Returns the _local_ [`NodeRecord`] this service was started with.
-    // Note: we must track this separately because the `discv5_reth::Discv5` does not necessarily
-    // provide this via its [`local_enr`](discv5_reth::Discv5::local_enr()). This is intended for
+    // Note: we must track this separately because the `base_execution_network_discv5::Discv5` does not necessarily
+    // provide this via its [`local_enr`](base_execution_network_discv5::Discv5::local_enr()). This is intended for
     // obtaining the port this service was launched at
     local_node_record: NodeRecord,
 }
@@ -145,7 +145,7 @@ impl Discv5 {
     }
 
     /// Returns the local [`Enr`] of the service.
-    pub fn local_enr(&self) -> Enr<discv5_reth::enr::CombinedKey> {
+    pub fn local_enr(&self) -> Enr<base_execution_network_discv5::enr::CombinedKey> {
         self.discv5.local_enr()
     }
 
@@ -154,13 +154,13 @@ impl Discv5 {
         self.local_node_record.udp_port
     }
 
-    /// Spawns [`discv5_reth::Discv5`]. Returns [`discv5_reth::Discv5`] handle in reth compatible wrapper type
-    /// [`Discv5`], a receiver of [`discv5_reth::Event`]s from the underlying node, and the local
-    /// [`Enr`](discv5_reth::Enr) converted into the reth compatible [`NodeRecord`] type.
+    /// Spawns [`base_execution_network_discv5::Discv5`]. Returns [`base_execution_network_discv5::Discv5`] handle in reth compatible wrapper type
+    /// [`Discv5`], a receiver of [`base_execution_network_discv5::Event`]s from the underlying node, and the local
+    /// [`Enr`](base_execution_network_discv5::Enr) converted into the reth compatible [`NodeRecord`] type.
     pub async fn start(
         sk: &SecretKey,
         discv5_config: Config,
-    ) -> Result<(Self, mpsc::Receiver<discv5_reth::Event>), Error> {
+    ) -> Result<(Self, mpsc::Receiver<base_execution_network_discv5::Event>), Error> {
         //
         // 1. make local enr from listen config
         //
@@ -182,9 +182,11 @@ impl Discv5 {
         } = discv5_config;
 
         let EnrCombinedKeyWrapper(enr) = enr.into();
-        let sk =
-            discv5_reth::enr::CombinedKey::secp256k1_from_bytes(&mut sk.secret_bytes()).unwrap();
-        let mut discv5 = match discv5_reth::Discv5::new(enr, sk, discv5_config) {
+        let sk = base_execution_network_discv5::enr::CombinedKey::secp256k1_from_bytes(
+            &mut sk.secret_bytes(),
+        )
+        .unwrap();
+        let mut discv5 = match base_execution_network_discv5::Discv5::new(enr, sk, discv5_config) {
             Ok(discv5) => discv5,
             Err(err) => return Err(Error::InitFailure(err)),
         };
@@ -226,16 +228,19 @@ impl Discv5 {
         ))
     }
 
-    /// Process an event from the underlying [`discv5_reth::Discv5`] node.
-    pub fn on_discv5_update(&self, update: discv5_reth::Event) -> Option<DiscoveredPeer> {
+    /// Process an event from the underlying [`base_execution_network_discv5::Discv5`] node.
+    pub fn on_discv5_update(
+        &self,
+        update: base_execution_network_discv5::Event,
+    ) -> Option<DiscoveredPeer> {
         #[expect(clippy::match_same_arms)]
         match update {
-            discv5_reth::Event::SocketUpdated(_) | discv5_reth::Event::TalkRequest(_) |
+            base_execution_network_discv5::Event::SocketUpdated(_) | base_execution_network_discv5::Event::TalkRequest(_) |
             // `Discovered` not unique discovered peers
-            discv5_reth::Event::Discovered(_) |
+            base_execution_network_discv5::Event::Discovered(_) |
             // Unrecognized frames are handled separately by the discovery layer
-            discv5_reth::Event::UnrecognizedFrame(_) => None,
-            discv5_reth::Event::NodeInserted { .. } => {
+            base_execution_network_discv5::Event::UnrecognizedFrame(_) => None,
+            base_execution_network_discv5::Event::NodeInserted { .. } => {
 
                 // node has been inserted into kbuckets
 
@@ -245,7 +250,7 @@ impl Discv5 {
 
                 None
             }
-            discv5_reth::Event::SessionEstablished(enr, remote_socket) => {
+            base_execution_network_discv5::Event::SessionEstablished(enr, remote_socket) => {
                 // this branch is semantically similar to branches of
                 // `base_execution_network_discovery::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
                 // `DiscoveryUpdate::DiscoveredAtCapacity(_)
@@ -257,7 +262,7 @@ impl Discv5 {
 
                 self.on_discovered_peer(&enr, remote_socket)
             }
-            discv5_reth::Event::UnverifiableEnr {
+            base_execution_network_discv5::Event::UnverifiableEnr {
                 enr,
                 socket,
                 node_id: _,
@@ -269,7 +274,7 @@ impl Discv5 {
                 // peer has been discovered as part of query, or, by an outgoing session (but peer
                 // is behind NAT and responds from a different socket)
 
-                // NOTE: `discv5_reth::Discv5` won't initiate a session with any peer with an
+                // NOTE: `base_execution_network_discv5::Discv5` won't initiate a session with any peer with an
                 // unverifiable node record, for example one that advertises a reserved LAN IP
                 // address on a WAN network. This is in order to prevent DoS attacks, where some
                 // malicious peers may advertise a victim's socket. We will still try and connect
@@ -293,7 +298,7 @@ impl Discv5 {
     /// Processes a discovered peer. Returns `true` if peer is added to
     pub fn on_discovered_peer(
         &self,
-        enr: &discv5_reth::Enr,
+        enr: &base_execution_network_discv5::Enr,
         socket: SocketAddr,
     ) -> Option<DiscoveredPeer> {
         self.metrics.discovered_peers_advertised_networks.increment_once_by_network_type(enr);
@@ -335,8 +340,8 @@ impl Discv5 {
         Some(DiscoveredPeer { node_record, fork_id })
     }
 
-    /// Tries to recover an unreachable [`Enr`](discv5_reth::Enr) received via
-    /// [`discv5_reth::Event::UnverifiableEnr`], into a [`NodeRecord`] usable by `RLPx`.
+    /// Tries to recover an unreachable [`Enr`](base_execution_network_discv5::Enr) received via
+    /// [`base_execution_network_discv5::Event::UnverifiableEnr`], into a [`NodeRecord`] usable by `RLPx`.
     ///
     /// NOTE: Fallback solution to be compatible with Geth which includes peers into the discv5
     /// WAN topology which, for example, advertise in their ENR that localhost is their UDP IP
@@ -346,7 +351,7 @@ impl Discv5 {
     /// reading their ENR.
     pub fn try_into_reachable(
         &self,
-        enr: &discv5_reth::Enr,
+        enr: &base_execution_network_discv5::Enr,
         socket: SocketAddr,
     ) -> Result<NodeRecord, Error> {
         // ignore UDP socket advertised in ENR, use sender socket instead
@@ -374,15 +379,18 @@ impl Discv5 {
 
     /// Applies filtering rules on an ENR. Returns [`Ok`](FilterOutcome::Ok) if peer should be
     /// passed up to app, and [`Ignore`](FilterOutcome::Ignore) if peer should instead be dropped.
-    pub fn filter_discovered_peer(&self, enr: &discv5_reth::Enr) -> FilterOutcome {
+    pub fn filter_discovered_peer(
+        &self,
+        enr: &base_execution_network_discv5::Enr,
+    ) -> FilterOutcome {
         self.discovered_peer_filter.filter(enr)
     }
 
-    /// Returns the [`ForkId`] of the given [`Enr`](discv5_reth::Enr) w.r.t. the local node's network
+    /// Returns the [`ForkId`] of the given [`Enr`](base_execution_network_discv5::Enr) w.r.t. the local node's network
     /// stack, if field is set.
-    pub fn get_fork_id<K: discv5_reth::enr::EnrKey>(
+    pub fn get_fork_id<K: base_execution_network_discv5::enr::EnrKey>(
         &self,
-        enr: &discv5_reth::enr::Enr<K>,
+        enr: &base_execution_network_discv5::enr::Enr<K>,
     ) -> Result<ForkId, Error> {
         let Some(key) = self.fork_key else { return Err(Error::NetworkStackIdNotConfigured) };
         let fork_id = enr
@@ -412,10 +420,10 @@ impl Discv5 {
     // Interface with sigp/discv5
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    /// Exposes API of [`discv5_reth::Discv5`].
+    /// Exposes API of [`base_execution_network_discv5::Discv5`].
     pub fn with_discv5<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&discv5_reth::Discv5) -> R,
+        F: FnOnce(&base_execution_network_discv5::Discv5) -> R,
     {
         f(&self.discv5)
     }
@@ -429,7 +437,7 @@ impl Discv5 {
         self.rlpx_ip_mode
     }
 
-    /// Returns the key to use to identify the [`ForkId`] kv-pair on the [`Enr`](discv5_reth::Enr).
+    /// Returns the key to use to identify the [`ForkId`] kv-pair on the [`Enr`](base_execution_network_discv5::Enr).
     pub const fn fork_key(&self) -> Option<&[u8]> {
         self.fork_key
     }
@@ -441,7 +449,7 @@ impl fmt::Debug for Discv5 {
     }
 }
 
-/// Result of successfully processing a peer discovered by [`discv5_reth::Discv5`].
+/// Result of successfully processing a peer discovered by [`base_execution_network_discv5::Discv5`].
 #[derive(Debug)]
 pub struct DiscoveredPeer {
     /// A discovery v4 backwards compatible ENR.
@@ -455,7 +463,7 @@ pub fn build_local_enr(
     sk: &SecretKey,
     config: &Config,
 ) -> (Enr<SecretKey>, NodeRecord, Option<&'static [u8]>, IpMode) {
-    let mut builder = discv5_reth::enr::Enr::builder();
+    let mut builder = base_execution_network_discv5::enr::Enr::builder();
 
     let Config {
         discv5_config,
@@ -525,10 +533,10 @@ pub fn build_local_enr(
     (enr, bc_enr, network_stack_id, rlpx_ip_mode)
 }
 
-/// Bootstraps underlying [`discv5_reth::Discv5`] node with configured peers.
+/// Bootstraps underlying [`base_execution_network_discv5::Discv5`] node with configured peers.
 pub async fn bootstrap(
     bootstrap_nodes: HashSet<BootNode>,
-    discv5: &Arc<discv5_reth::Discv5>,
+    discv5: &Arc<base_execution_network_discv5::Discv5>,
 ) -> Result<(), Error> {
     trace!(target: "net::discv5",
         ?bootstrap_nodes,
@@ -568,7 +576,7 @@ pub fn spawn_populate_kbuckets_bg(
     bootstrap_lookup_interval: u64,
     bootstrap_lookup_countdown: u64,
     metrics: Discv5Metrics,
-    discv5: std::sync::Weak<discv5_reth::Discv5>,
+    discv5: std::sync::Weak<base_execution_network_discv5::Discv5>,
 ) {
     let lookup_interval = Duration::from_secs(lookup_interval);
     let metrics = metrics.discovered_peers;
@@ -584,7 +592,7 @@ pub fn spawn_populate_kbuckets_bg(
         // make many fast lookup queries at bootstrap, trying to fill kbuckets at furthest
         // log2distance from local node
         for i in (0..bootstrap_lookup_countdown).rev() {
-            let target = discv5_reth::enr::NodeId::random();
+            let target = base_execution_network_discv5::enr::NodeId::random();
 
             trace!(target: "net::discv5",
                 %target,
@@ -638,8 +646,8 @@ pub fn spawn_populate_kbuckets_bg(
 /// Gets the next lookup target, based on which bucket is currently being targeted.
 pub fn get_lookup_target(
     kbucket_index: usize,
-    local_node_id: discv5_reth::enr::NodeId,
-) -> discv5_reth::enr::NodeId {
+    local_node_id: base_execution_network_discv5::enr::NodeId,
+) -> base_execution_network_discv5::enr::NodeId {
     // init target
     let mut target = local_node_id.raw();
 
@@ -666,10 +674,10 @@ pub fn get_lookup_target(
     target.into()
 }
 
-/// Runs a [`discv5_reth::Discv5`] lookup query.
+/// Runs a [`base_execution_network_discv5::Discv5`] lookup query.
 pub async fn lookup(
-    target: discv5_reth::enr::NodeId,
-    discv5: &discv5_reth::Discv5,
+    target: base_execution_network_discv5::enr::NodeId,
+    discv5: &base_execution_network_discv5::Discv5,
     metrics: &DiscoveredPeersMetrics,
 ) {
     metrics.set_total_sessions(discv5.metrics().active_sessions);
@@ -710,7 +718,7 @@ mod test {
     };
 
     use ::enr::{CombinedKey, EnrKey};
-    use discv5_reth::ListenConfig;
+    use base_execution_network_discv5::ListenConfig;
     use futures::FutureExt;
     use rand_08::thread_rng;
     use tracing::trace;
@@ -721,10 +729,13 @@ mod test {
         let sk = CombinedKey::generate_secp256k1();
         Discv5 {
             discv5: Arc::new(
-                discv5_reth::Discv5::new(
+                base_execution_network_discv5::Discv5::new(
                     Enr::empty(&sk).unwrap(),
                     sk,
-                    discv5_reth::ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG).build(),
+                    base_execution_network_discv5::ConfigBuilder::new(
+                        DEFAULT_DISCOVERY_V5_LISTEN_CONFIG,
+                    )
+                    .build(),
                 )
                 .unwrap(),
             ),
@@ -741,7 +752,7 @@ mod test {
 
     async fn start_discovery_node(
         udp_port_discv5: u16,
-    ) -> (Discv5, mpsc::Receiver<discv5_reth::Event>) {
+    ) -> (Discv5, mpsc::Receiver<base_execution_network_discv5::Event>) {
         let secret_key = SecretKey::new(&mut thread_rng());
 
         let discv5_addr: SocketAddr = format!("127.0.0.1:{udp_port_discv5}").parse().unwrap();
@@ -749,7 +760,9 @@ mod test {
 
         let discv5_listen_config = ListenConfig::from(discv5_addr);
         let discv5_config = Config::builder(rlpx_addr)
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
+            .discv5_config(
+                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+            )
             .build();
 
         Discv5::start(&secret_key, discv5_config).await.expect("should build discv5")
@@ -758,13 +771,15 @@ mod test {
     async fn start_discovery_node_with_key(
         secret_key: &SecretKey,
         udp_port_discv5: u16,
-    ) -> Result<(Discv5, mpsc::Receiver<discv5_reth::Event>), Error> {
+    ) -> Result<(Discv5, mpsc::Receiver<base_execution_network_discv5::Event>), Error> {
         let discv5_addr: SocketAddr = format!("127.0.0.1:{udp_port_discv5}").parse().unwrap();
         let rlpx_addr: SocketAddr = "127.0.0.1:30303".parse().unwrap();
 
         let discv5_listen_config = ListenConfig::from(discv5_addr);
         let discv5_config = Config::builder(rlpx_addr)
-            .discv5_config(discv5_reth::ConfigBuilder::new(discv5_listen_config).build())
+            .discv5_config(
+                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+            )
             .build();
 
         Discv5::start(secret_key, discv5_config).await
@@ -856,14 +871,14 @@ mod test {
 
         assert!(matches!(
             event_1_v5,
-            discv5_reth::Event::SessionEstablished(node, socket) if node == node_2_enr && socket == node_2_enr.udp4_socket().unwrap().into()
+            base_execution_network_discv5::Event::SessionEstablished(node, socket) if node == node_2_enr && socket == node_2_enr.udp4_socket().unwrap().into()
         ));
 
         // verify node_1 is in KBuckets of node_2:discv5
         let event_2_v5 = stream_2.recv().await.unwrap();
         assert!(matches!(
             event_2_v5,
-            discv5_reth::Event::NodeInserted { node_id, replaced } if node_id == node_1_enr.node_id() && replaced.is_none()
+            base_execution_network_discv5::Event::NodeInserted { node_id, replaced } if node_id == node_1_enr.node_id() && replaced.is_none()
         ));
     }
 
@@ -981,7 +996,7 @@ mod test {
     fn select_lookup_target() {
         for bucket_index in 0..=MAX_KBUCKET_INDEX {
             let sk = CombinedKey::generate_secp256k1();
-            let local_node_id = discv5_reth::enr::NodeId::from(sk.public());
+            let local_node_id = base_execution_network_discv5::enr::NodeId::from(sk.public());
             let target = get_lookup_target(bucket_index, local_node_id);
 
             let local_node_id = sigp::Key::from(local_node_id);
