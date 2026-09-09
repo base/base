@@ -11,11 +11,11 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::{Address, B256};
 use base_common_chain_config::{BaseUpgrade, FeeConfig, UpgradeActivation, UpgradeActivationSink};
 use base_common_chain_config::{ChainConfig, ChainUpgrades, ExecutionFork, Upgrades};
+use base_common_types_chain::OutputRoot;
 use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{
     BlockHeader, EMPTY_ROOT_HASH, Header, Predeploys, proofs::storage_root_unhashed,
 };
-use base_protocol::OutputRoot;
 use reth_network_peers::{NodeRecord, parse_nodes};
 
 use crate::{compute_jovian_base_fee, decode_holocene_base_fee};

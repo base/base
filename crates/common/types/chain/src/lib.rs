@@ -183,3 +183,6 @@ pub mod __private;
 
 mod sealed_header;
 pub use sealed_header::SealedHeader;
+
+mod output_root;
+pub use output_root::OutputRoot;

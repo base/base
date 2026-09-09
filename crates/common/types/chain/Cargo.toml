@@ -49,6 +49,7 @@ k256 = { workspace = true, features = [
 ], optional = true }
 derive_more = { workspace = true, features = [
     "as_ref",
+    "display",
     "from",
     "deref",
     "deref_mut",

@@ -20,7 +20,6 @@ serde_json = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-genesis = { workspace = true }
-base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -39,7 +38,6 @@ std = [
     "alloy-primitives/std",
     "base-common-chain-config/std",
     "base-common-types-rpc/std",
-    "base-protocol/std",
     "reth-network-peers/std",
     "serde?/std",
     "serde_json/std",
@@ -53,5 +51,4 @@ serde = [
     "alloy-primitives/serde",
     "base-common-chain-config/serde",
     "base-common-types-rpc/serde",
-    "base-protocol/serde",
 ]

@@ -3316,7 +3316,6 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-protocol",
  "reth-network-peers",
  "serde",
  "serde_json",

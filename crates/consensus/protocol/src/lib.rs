@@ -65,8 +65,7 @@ pub use info::{
     L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields, L1BlockInfoTx,
 };
 
-mod output_root;
-pub use output_root::OutputRoot;
+pub use base_common_types_chain::OutputRoot;
 
 mod sync;
 pub use sync::SyncStatus;
