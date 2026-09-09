@@ -148,7 +148,10 @@ mod tests {
         for (index, predicate) in stress.iter().enumerate() {
             let salt = u64::try_from(index + 1).unwrap();
             match storage_slot_value(predicate) {
-                (PredicateSlotConfig::SenderNonce { salt: got }, PredicateValueConfig::Fixed(v)) => {
+                (
+                    PredicateSlotConfig::SenderNonce { salt: got },
+                    PredicateValueConfig::Fixed(v),
+                ) => {
                     assert_eq!(*got, U256::from(salt));
                     assert_eq!(*v, U256::ZERO);
                 }
@@ -158,9 +161,13 @@ mod tests {
 
         match gate {
             ValidityPredicateConfig::Storage { slot, mask, value, .. } => {
-                assert!(matches!(slot, PredicateSlotConfig::Fixed { value } if *value == U256::ZERO));
+                assert!(
+                    matches!(slot, PredicateSlotConfig::Fixed { value } if *value == U256::ZERO)
+                );
                 assert_eq!(*mask, Some(U256::from(1)));
-                assert!(matches!(value, PredicateValueConfig::Source(source) if source == "sender_parity"));
+                assert!(
+                    matches!(value, PredicateValueConfig::Source(source) if source == "sender_parity")
+                );
             }
             other => panic!("expected storage gate predicate, got {other:?}"),
         }
@@ -182,7 +189,10 @@ mod tests {
             }
             assert!(!matches!(
                 predicate,
-                ValidityPredicateConfig::Storage { slot: PredicateSlotConfig::SenderNonce { .. }, .. }
+                ValidityPredicateConfig::Storage {
+                    slot: PredicateSlotConfig::SenderNonce { .. },
+                    ..
+                }
             ));
         }
     }
