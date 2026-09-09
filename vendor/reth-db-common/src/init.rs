@@ -27,14 +27,14 @@ use base_execution_state_provider::{
     StaticFileProviderFactory, StorageSettings, StorageSettingsCache, TrieWriter,
     providers::StaticFileWriter,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot as StateRootComputer,
     StateRootProgress, prefix_set::TriePrefixSets,
 };
 
 type DbStateRoot<'a, TX, A> = StateRootComputer<
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 
 use std::io::BufRead;
@@ -855,7 +855,7 @@ where
     Provider: DBProvider<Tx: DbTxMut> + TrieWriter + StorageSettingsCache,
 {
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         compute_state_root_inner::<_, A>(provider, prefix_sets)
     }
 }
@@ -866,7 +866,7 @@ fn compute_state_root_inner<Provider, A>(
 ) -> Result<B256, InitStorageError>
 where
     Provider: DBProvider<Tx: DbTxMut> + TrieWriter + StorageSettingsCache,
-    A: reth_trie::TrieTableAdapter,
+    A: base_execution_state_trie::TrieTableAdapter,
 {
     trace!(target: "reth::cli", "Computing state root");
 
@@ -933,7 +933,7 @@ where
     let provider_rw = provider_factory.database_provider_rw().map_err(provider_db_err)?;
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
 
         drop(provider_rw);
         compute_state_root_chunked_inner::<PF, A>(provider_factory)
@@ -945,7 +945,7 @@ where
     PF: DatabaseProviderFactory<
         ProviderRW: DBProvider<Tx: DbTxMut> + TrieWriter + StorageSettingsCache,
     >,
-    A: reth_trie::TrieTableAdapter,
+    A: base_execution_state_trie::TrieTableAdapter,
 {
     trace!(target: "reth::cli", "Computing state root");
 

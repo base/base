@@ -9,7 +9,7 @@ use base_execution_state_tasks::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsStore, BlockStateDiff,
     MdbxProofsStorage,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
     hashed_cursor::HashedCursor,
     trie_cursor::TrieCursor,

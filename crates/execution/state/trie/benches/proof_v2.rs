@@ -7,7 +7,7 @@ use codspeed_criterion_compat::{
     BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main,
 };
 use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
-use reth_trie::{
+use base_execution_state_trie::{
     hashed_cursor::{HashedCursorFactory, mock::MockHashedCursorFactory},
     proof::StorageProof,
     proof_v2::StorageProofCalculator,
@@ -86,7 +86,7 @@ fn generate_test_data(
 fn create_cursor_factories(
     post_state: &HashedPostState,
 ) -> (MockTrieCursorFactory, MockHashedCursorFactory) {
-    use reth_trie::{StateRoot, updates::StorageTrieUpdates};
+    use base_execution_state_trie::{StateRoot, updates::StorageTrieUpdates};
 
     // Create empty trie cursor factory to serve as the initial state for StateRoot
     // Ensure that there's a storage trie dataset for every storage account

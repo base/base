@@ -14,7 +14,7 @@ use base_execution_state_provider::{
     ExecutionOutcome, ProviderFactory, StorageSettingsCache,
     test_utils::create_test_provider_factory,
 };
-use reth_trie::HashedPostState;
+use base_execution_state_trie::HashedPostState;
 
 const HISTORY_BLOCKS: u64 = 128;
 const ACCOUNT_COUNT: usize = 256;

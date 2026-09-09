@@ -12,7 +12,7 @@ use std::{fmt, sync::Arc};
 use alloy_primitives::{B256, keccak256, map::B256Map};
 use base_execution_evm_runtime::OnStateHook;
 use base_execution_evm_runtime::state::EvmState;
-use reth_trie::{
+use base_execution_state_trie::{
     HashedPostState, HashedStorage, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates,
 };
 use tracing::trace;

@@ -5,7 +5,7 @@ use base_execution_state_api::{
 use base_execution_state_database::{DbDupCursorRO, DbTx, tables};
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::{ProviderError, ProviderResult};
-use reth_trie::{
+use base_execution_state_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
     StorageMultiProof, StorageRoot, TrieInput, TrieInputSorted,
@@ -19,21 +19,21 @@ use reth_trie::{
 use crate::{AccountReader, BlockHashReader, HashedPostStateProvider, StateRootProvider};
 
 type DbStateRoot<'a, TX, A> = StateRoot<
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbStorageRoot<'a, TX, A> = StorageRoot<
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbStorageProof<'a, TX, A> = StorageProof<
     'static,
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 type DbProof<'a, TX, A> = Proof<
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 /// State provider over latest state that takes tx reference.
 ///
@@ -94,7 +94,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateRootProvider
 {
     fn state_root(&self, hashed_state: HashedPostState) -> ProviderResult<B256> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             let sorted = hashed_state.into_sorted();
             Ok(<DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root(self.tx(), &sorted)?)
@@ -103,7 +103,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateRootProvider
 
     fn state_root_from_nodes(&self, input: TrieInput) -> ProviderResult<B256> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             Ok(<DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_from_nodes(
                 self.tx(),
@@ -117,7 +117,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateRootProvider
         hashed_state: HashedPostState,
     ) -> ProviderResult<(B256, TrieUpdates)> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             let sorted = hashed_state.into_sorted();
             Ok(<DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_with_updates(
@@ -132,7 +132,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateRootProvider
         input: TrieInput,
     ) -> ProviderResult<(B256, TrieUpdates)> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             Ok(
                 <DbStateRoot<'_, _, A> as DatabaseStateRoot<_>>::overlay_root_from_nodes_with_updates(
@@ -153,7 +153,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
         hashed_storage: HashedStorage,
     ) -> ProviderResult<B256> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             <DbStorageRoot<'_, _, A>>::overlay_root(self.tx(), address, hashed_storage)
                 .map_err(|err| ProviderError::Database(err.into()))
@@ -165,9 +165,9 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
         address: Address,
         slot: B256,
         hashed_storage: HashedStorage,
-    ) -> ProviderResult<reth_trie::StorageProof> {
+    ) -> ProviderResult<base_execution_state_trie::StorageProof> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             <DbStorageProof<'_, _, A>>::overlay_storage_proof(
                 self.tx(),
@@ -186,7 +186,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StorageRootProvider
         hashed_storage: HashedStorage,
     ) -> ProviderResult<StorageMultiProof> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             <DbStorageProof<'_, _, A>>::overlay_storage_multiproof(
                 self.tx(),
@@ -209,7 +209,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
         slots: &[B256],
     ) -> ProviderResult<AccountProof> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(self.tx());
             proof.overlay_account_proof(input, address, slots).map_err(ProviderError::from)
@@ -222,7 +222,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
         targets: MultiProofTargets,
     ) -> ProviderResult<MultiProof> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(self.tx());
             proof.overlay_multiproof(input, targets).map_err(ProviderError::from)
@@ -236,17 +236,17 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
         mode: ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             let nodes_sorted = input.nodes.into_sorted();
             let state_sorted = input.state.into_sorted();
             let witness = TrieWitness::new(
                 InMemoryTrieCursorFactory::new(
-                    reth_trie::DatabaseTrieCursorFactory::<_, A>::new(self.tx()),
+                    base_execution_state_trie::DatabaseTrieCursorFactory::<_, A>::new(self.tx()),
                     &nodes_sorted,
                 ),
                 HashedPostStateCursorFactory::new(
-                    reth_trie::DatabaseHashedCursorFactory::new(self.tx()),
+                    base_execution_state_trie::DatabaseHashedCursorFactory::new(self.tx()),
                     &state_sorted,
                 ),
             )
@@ -270,7 +270,7 @@ impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_
     ) -> ProviderResult<HashedPostState> {
         let mut hashed_state = HashedPostState::from_bundle_state(bundle_state.state());
         zero_destroyed_account_storage(
-            &reth_trie::DatabaseHashedCursorFactory::new(self.tx()),
+            &base_execution_state_trie::DatabaseHashedCursorFactory::new(self.tx()),
             bundle_state.state(),
             &mut hashed_state,
         )?;

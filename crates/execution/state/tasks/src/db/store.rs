@@ -16,7 +16,7 @@ use base_execution_state_types::{
 use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
-use reth_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
+use base_execution_state_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
 #[cfg(feature = "metrics")]
 use tracing::error;
 
@@ -1308,7 +1308,7 @@ mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::B256;
     use base_execution_state_database::{DatabaseError, DbDupCursorRO, DbTx, DbTxMut};
-    use reth_trie::{
+    use base_execution_state_trie::{
         BranchNodeCompact, HashedPostStateSorted, HashedStorage, Nibbles, StoredNibbles,
         updates::{StorageTrieUpdates, TrieUpdatesSorted},
     };
@@ -3056,7 +3056,7 @@ mod tests {
         let st_path = Nibbles::from_nibbles_unchecked([0x01, 0x02, 0x03]);
 
         let mut diff_trie_updates = TrieUpdates::default();
-        let mut st_updates = reth_trie::updates::StorageTrieUpdates::default();
+        let mut st_updates = base_execution_state_trie::updates::StorageTrieUpdates::default();
         // mark this storage trie node as removed
         st_updates.removed_nodes.insert(st_path);
         diff_trie_updates.storage_tries.insert(addr, st_updates);
@@ -3239,7 +3239,7 @@ mod tests {
         // Build BlockStateDiff that marks this address as wiped at BLOCK
         let mut diff_post_state = HashedPostState::default();
 
-        let wiped = reth_trie::HashedStorage::new(true);
+        let wiped = base_execution_state_trie::HashedStorage::new(true);
 
         diff_post_state.storages.insert(addr, wiped);
 
@@ -3300,11 +3300,11 @@ mod tests {
         let mut diff_post_state = HashedPostState::default();
 
         // Wiped storage for addr_wiped
-        let wiped = reth_trie::HashedStorage::new(true);
+        let wiped = base_execution_state_trie::HashedStorage::new(true);
         diff_post_state.storages.insert(addr_wiped, wiped);
 
         // Non-wiped storage for addr_live (append new value)
-        let mut live = reth_trie::HashedStorage::default();
+        let mut live = base_execution_state_trie::HashedStorage::default();
         live.storage.insert(ls1, lv1_new);
         diff_post_state.storages.insert(addr_live, live);
 

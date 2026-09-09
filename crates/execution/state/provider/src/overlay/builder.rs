@@ -16,7 +16,7 @@ use base_execution_state_types::StageId;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use metrics::{Counter, Histogram};
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_trie::{DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted};
+use base_execution_state_trie::{DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, debug_span, instrument};
 
 use crate::overlay::OverlayManager;
@@ -608,7 +608,7 @@ mod tests {
     #[cfg(feature = "partial-persistence")]
     #[cfg(feature = "partial-persistence")]
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
-    use reth_trie::{BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles};
+    use base_execution_state_trie::{BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles};
     use {crate::test_utils::TestBlockBuilder, base_execution_state_types::ExecutedBlock};
 
     use super::*;

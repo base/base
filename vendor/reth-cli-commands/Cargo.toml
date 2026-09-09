@@ -57,7 +57,6 @@ serde_json = { workspace = true, features = ["alloc"] }
 crossterm = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["crossterm"] }
 reth-config = { workspace = true, features = ["serde"] }
-reth-trie = { workspace = true, features = ["metrics"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-network = { workspace = true, features = ["serde"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -72,6 +71,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-state-types = {features = ["clap"], workspace = true}
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-execution-state-database = {workspace = true, features = ["mdbx"]}
+base-execution-state-trie = { workspace = true, features = ["metrics"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-wire = {workspace = true, features = ["transport"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }

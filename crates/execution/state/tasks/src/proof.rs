@@ -13,7 +13,7 @@ use base_execution_state_types::{
 use base_execution_state_types::{
     StateProofError, StateRootError, StorageRootError, TrieWitnessError,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     StateRoot, StorageRoot, TrieType,
     hashed_cursor::HashedPostStateCursorFactory,
     metrics::TrieRootMetrics,

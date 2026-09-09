@@ -11,7 +11,7 @@ use base_execution_state_api::{
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ProviderResult;
-use reth_trie::{
+use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     TrieInput, updates::TrieUpdates,
 };
@@ -161,7 +161,7 @@ impl StorageRootProvider for MemoryOverlayStateProviderRef<'_> {
         address: Address,
         slot: B256,
         storage: HashedStorage,
-    ) -> ProviderResult<reth_trie::StorageProof> {
+    ) -> ProviderResult<base_execution_state_trie::StorageProof> {
         let merged = self.merged_hashed_storage(address, storage);
         self.historical.storage_proof(address, slot, merged)
     }
@@ -202,7 +202,7 @@ impl StateProofProvider for MemoryOverlayStateProviderRef<'_> {
         &self,
         mut input: TrieInput,
         target: HashedPostState,
-        mode: reth_trie::ExecutionWitnessMode,
+        mode: base_execution_state_trie::ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
         input.prepend_self(self.trie_input().clone());
         self.historical.witness(input, target, mode)

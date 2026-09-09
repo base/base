@@ -84,7 +84,7 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
     updates::TrieUpdates,
 };
@@ -1317,7 +1317,7 @@ mod tests {
     use rand::Rng;
     use reth_db_common::init::init_genesis;
     use reth_testing_utils::generators;
-    use reth_trie::test_utils::state_root;
+    use base_execution_state_trie::test_utils::state_root;
 
     use super::*;
 

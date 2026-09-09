@@ -10,7 +10,7 @@ use base_execution_state_types::{
     BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
 use derive_more::{AddAssign, Constructor};
-use reth_trie::{
+use base_execution_state_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };

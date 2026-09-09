@@ -37,7 +37,7 @@ use reth_engine_primitives::{
 };
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_stages_api::ControlFlow;
-use reth_trie::ComputedTrieData;
+use base_execution_state_trie::ComputedTrieData;
 use state::TreeState;
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -443,8 +443,8 @@ where
     P: ChangeSetReader,
     base_execution_state_provider::OverlayStateProviderFactory<P>:
         base_execution_state_api::DatabaseProviderROFactory<
-                Provider: reth_trie::trie_cursor::TrieCursorFactory
-                              + reth_trie::hashed_cursor::HashedCursorFactory,
+                Provider: base_execution_state_trie::trie_cursor::TrieCursorFactory
+                              + base_execution_state_trie::hashed_cursor::HashedCursorFactory,
             > + Clone
             + 'static,
 {

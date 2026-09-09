@@ -11,7 +11,7 @@ use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ProviderError;
 use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
 use reth_primitives_traits::{FastInstant as Instant, constants::gas_units::MEGAGAS};
-use reth_trie::updates::TrieUpdates;
+use base_execution_state_trie::updates::TrieUpdates;
 
 use crate::tree::{TreeOutcome, error::InsertBlockFatalError};
 

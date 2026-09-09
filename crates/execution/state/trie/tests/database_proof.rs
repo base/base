@@ -11,7 +11,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::EMPTY_ROOT_HASH;
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_provider::test_utils::{create_test_provider_factory_with_chain_spec, insert_genesis};
-use reth_trie::{
+use base_execution_state_trie::{
     AccountProof, DatabaseHashedCursorFactory, DatabaseProof, DatabaseTrieCursorFactory, Nibbles,
     StorageProof, proof::Proof,
 };
@@ -105,7 +105,7 @@ fn testspec_proofs() {
 
     let provider = factory.provider().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         for (target, expected_proof) in data {
             let target = Address::from_str(target).unwrap();
             let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
@@ -131,7 +131,7 @@ fn testspec_empty_storage_proof() {
 
     let provider = factory.provider().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &slots).unwrap();
         assert_eq!(account_proof.storage_root, EMPTY_ROOT_HASH, "expected empty storage root");
@@ -165,7 +165,7 @@ fn empty_state_trie_account_proof() {
 
     let provider = factory.provider().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &[]).unwrap();
         assert_eq!(account_proof.info, None, "absent account should have no info");
@@ -201,7 +201,7 @@ fn mainnet_genesis_account_proof() {
 
     let provider = factory.provider().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &[]).unwrap();
         similar_asserts::assert_eq!(account_proof.proof, expected_account_proof);
@@ -228,7 +228,7 @@ fn mainnet_genesis_account_proof_nonexistent() {
 
     let provider = factory.provider().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &[]).unwrap();
         similar_asserts::assert_eq!(account_proof.proof, expected_account_proof);
@@ -329,7 +329,7 @@ fn holesky_deposit_contract_proof() {
 
     let provider = factory.provider().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let account_proof = proof.account_proof(target, &slots).unwrap();
         similar_asserts::assert_eq!(account_proof, expected);

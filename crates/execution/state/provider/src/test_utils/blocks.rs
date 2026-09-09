@@ -13,7 +13,7 @@ use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
 use base_execution_state_database::{Database, models::StoredBlockBodyIndices, tables};
 use base_execution_state_memory::StoredAccount as Account;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
-use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
+use base_execution_state_trie::root::{state_root_unhashed, storage_root_unhashed};
 
 use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};
 

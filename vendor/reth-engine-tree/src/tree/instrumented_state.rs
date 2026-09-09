@@ -17,7 +17,7 @@ use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateRootProvider, StorageRootProvider,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
@@ -254,7 +254,7 @@ impl<S: StateProofProvider> StateProofProvider for InstrumentedStateProvider<S> 
         &self,
         input: TrieInput,
         target: HashedPostState,
-        mode: reth_trie::ExecutionWitnessMode,
+        mode: base_execution_state_trie::ExecutionWitnessMode,
     ) -> ProviderResult<Vec<alloy_primitives::Bytes>> {
         self.state_provider.witness(input, target, mode)
     }

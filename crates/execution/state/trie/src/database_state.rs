@@ -100,8 +100,8 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     /// use base_execution_state_database::{test_utils::create_test_rw_db};
     /// use base_execution_state_database::{Database};
     /// use base_execution_state_memory::StoredAccount;
-    /// use crate::{updates::TrieUpdates, HashedPostState, StateRoot};
-    /// use reth_trie::{DatabaseStateRoot, PackedKeyAdapter};
+    /// use base_execution_state_trie::{HashedPostState, StateRoot};
+    /// use base_execution_state_trie::{DatabaseStateRoot, PackedKeyAdapter};
     ///
     /// // Initialize the database
     /// let db = create_test_rw_db();
@@ -110,14 +110,14 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     /// let mut hashed_state = HashedPostState::default();
     /// hashed_state.accounts.insert(
     ///     [0x11; 32].into(),
-    ///     Some(Account { nonce: 1, balance: U256::from(10), bytecode_hash: None }),
+    ///     Some(StoredAccount { nonce: 1, balance: U256::from(10), bytecode_hash: None }),
     /// );
     ///
     /// // Calculate the state root
     /// let tx = db.tx().expect("failed to create transaction");
     /// let state_root = <StateRoot<
-    ///     reth_trie::DatabaseTrieCursorFactory<_, PackedKeyAdapter>,
-    ///     reth_trie::DatabaseHashedCursorFactory<_>,
+    ///     base_execution_state_trie::DatabaseTrieCursorFactory<_, PackedKeyAdapter>,
+    ///     base_execution_state_trie::DatabaseHashedCursorFactory<_>,
     /// > as DatabaseStateRoot<_>>::overlay_root(&tx, &hashed_state.into_sorted());
     /// ```
     ///

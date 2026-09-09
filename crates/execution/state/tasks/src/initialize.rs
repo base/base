@@ -12,7 +12,7 @@ use base_execution_state_types::{
     BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };
 use derive_more::Constructor;
-use reth_trie::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
+use base_execution_state_trie::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
 use tracing::{debug, info};
 
 use crate::{
@@ -545,7 +545,7 @@ mod tests {
                     Database, DbCursorRW, DbTxMut, Decode, Encode, test_utils::create_test_rw_db,
                 };
                 use base_execution_state_memory::StoredAccount as Account;
-                use reth_trie::{
+                use base_execution_state_trie::{
                     BranchNodeCompact, PackedStorageTrieEntry, PackedStoredNibbles,
                     PackedStoredNibblesSubKey, StoredNibbles, StoredNibblesSubKey, TrieMask,
                     hashed_cursor::HashedCursor, trie_cursor::TrieCursor,

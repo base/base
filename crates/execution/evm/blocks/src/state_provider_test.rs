@@ -10,7 +10,7 @@ use base_execution_state_api::{
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::ProviderResult;
-use reth_trie::{
+use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
@@ -145,7 +145,7 @@ impl StateProofProvider for StateProviderTest {
         &self,
         _input: TrieInput,
         _target: HashedPostState,
-        _mode: reth_trie::ExecutionWitnessMode,
+        _mode: base_execution_state_trie::ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
         unimplemented!("witness generation is not supported")
     }

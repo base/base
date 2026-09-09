@@ -17,7 +17,6 @@ either = { workspace = true }
 dashmap = { workspace = true }
 dirs-next = { workspace = true }
 jsonrpsee = { workspace = true }
-reth-trie = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 reth-cli-util = { workspace = true }
@@ -39,6 +38,7 @@ nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
+base-execution-state-trie = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 base-execution-state-tasks = { workspace = true }
 base-execution-state-provider = {workspace = true}
@@ -136,7 +136,7 @@ metrics = [
     "base-common-observability-events/metrics",
     "dep:metrics",
     "base-execution-evm-blocks/metrics",
-    "reth-trie/metrics",
+    "base-execution-state-trie/metrics",
 ]
 jemalloc = ["dep:tikv-jemallocator", "reth-cli-util/jemalloc"]
 jemalloc-prof = ["jemalloc", "reth-cli-util/jemalloc-prof", "tikv-jemallocator?/profiling"]
@@ -166,7 +166,7 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
-    "reth-trie/test-utils",
+    "base-execution-state-trie/test-utils",
     "rlimit",
     "testcontainers",
 ]

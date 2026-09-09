@@ -17,7 +17,7 @@ use base_execution_state_tasks::{
     api::{InitialStateAnchor, WriteCounts},
     db::{MdbxProofsStorage, RocksdbProofsStorage},
 };
-use reth_trie::{
+use base_execution_state_trie::{
     BranchNodeCompact, HashedPostState, HashedPostStateSorted, HashedStorage, Nibbles, TrieMask,
     hashed_cursor::HashedCursor,
     trie_cursor::TrieCursor,

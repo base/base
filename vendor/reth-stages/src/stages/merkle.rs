@@ -12,13 +12,13 @@ use reth_stages_api::{
     BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, MerkleCheckpoint, Stage,
     StageCheckpoint, StageError, StageId, StorageRootMerkleCheckpoint, UnwindInput, UnwindOutput,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot, StateRootProgress, StoredSubNode,
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 use tracing::*;
 
@@ -245,7 +245,7 @@ impl<TX: DbTx + DbTxMut + 'static> Stage<base_execution_state_provider::Database
 
             let tx = provider.tx_ref();
             let progress = {
-                type A = reth_trie::PackedKeyAdapter;
+                type A = base_execution_state_trie::PackedKeyAdapter;
                 DbStateRoot::<_, A>::from_tx(tx)
                     .with_intermediate_state(checkpoint.map(IntermediateStateRootState::from))
                     .root_with_progress()
@@ -321,7 +321,7 @@ impl<TX: DbTx + DbTxMut + 'static> Stage<base_execution_state_provider::Database
                     "Processing chunk"
                 );
                 let (root, updates) = {
-                    type A = reth_trie::PackedKeyAdapter;
+                    type A = base_execution_state_trie::PackedKeyAdapter;
                     DbStateRoot::<_, A>::incremental_root_with_updates(provider, chunk_range)
                 }
                 .map_err(|e| {
@@ -407,7 +407,7 @@ impl<TX: DbTx + DbTxMut + 'static> Stage<base_execution_state_provider::Database
             info!(target: "sync::stages::merkle::unwind", "Nothing to unwind");
         } else {
             let (block_root, updates) = {
-                type A = reth_trie::PackedKeyAdapter;
+                type A = base_execution_state_trie::PackedKeyAdapter;
 
                 DbStateRoot::<_, A>::incremental_root_calculator(provider, range).and_then(
                     |calculator| {
@@ -482,7 +482,7 @@ mod tests {
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_contract_account_range,
     };
-    use reth_trie::test_utils::{state_root, state_root_prehashed};
+    use base_execution_state_trie::test_utils::{state_root, state_root_prehashed};
 
     use super::*;
     use crate::test_utils::{
@@ -620,7 +620,7 @@ mod tests {
             .db
             .query_with_provider(|provider| {
                 Ok({
-                    type A = reth_trie::PackedKeyAdapter;
+                    type A = base_execution_state_trie::PackedKeyAdapter;
 
                     DbStateRoot::<_, A>::incremental_root_with_updates(
                         &provider,

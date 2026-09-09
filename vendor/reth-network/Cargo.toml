@@ -63,7 +63,6 @@ tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-th
 
 [dev-dependencies]
 url = { workspace = true }
-reth-trie = { workspace = true }
 test-case = { workspace = true }
 alloy-trie = { workspace = true }
 alloy-chains = { workspace = true }
@@ -71,13 +70,14 @@ alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-trie = { workspace = true }
 base-execution-state-types = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-network = { workspace = true, features = ["test-utils"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 base-execution-network-types = { workspace = true, features = ["std", "test-utils"] }
@@ -107,7 +107,7 @@ serde = [
     "base-execution-state-api/serde",
     "base-execution-network-types/serde",
     "base-execution-state-types/serde",
-    "reth-trie/serde",
+    "base-execution-state-trie/serde",
     "alloy-eip7928/serde",
     "base-execution-state-memory/serde",
 ]
@@ -122,6 +122,6 @@ test-utils = [
     "base-execution-state-provider/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-state-types/test-utils",
-    "reth-trie/test-utils",
+    "base-execution-state-trie/test-utils",
     "base-execution-state-memory/test-utils",
 ]

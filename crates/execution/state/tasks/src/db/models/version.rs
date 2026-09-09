@@ -118,7 +118,7 @@ impl<T> ValueWithSubKey for VersionedValue<T> {
 #[cfg(test)]
 mod tests {
     use base_execution_state_memory::StoredAccount as Account;
-    use reth_trie::BranchNodeCompact;
+    use base_execution_state_trie::BranchNodeCompact;
 
     use super::*;
 

@@ -14,11 +14,9 @@ categories.workspace = true
 [dependencies]
 serde = { workspace = true }
 reth-etl = { workspace = true }
-reth-trie = { workspace = true }
 thiserror = { workspace = true }
 reth-config = { workspace = true }
 alloy-genesis = { workspace = true }
-base-execution-state-provider = { workspace = true }
 base-common-io-files = { workspace = true }
 boyer-moore-magiclen = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -26,8 +24,10 @@ base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-state-memory = {workspace = true}
+base-execution-state-trie = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
+base-execution-state-provider = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true, features = ["attributes"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -35,8 +35,8 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

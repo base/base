@@ -640,7 +640,7 @@ mod tests {
     };
     use base_execution_state_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
-    use reth_trie::{
+    use base_execution_state_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
     };
 

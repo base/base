@@ -140,7 +140,7 @@ mod tests {
         StateWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,
     };
-    use reth_trie::{HashedStorage, test_utils::storage_root_prehashed};
+    use base_execution_state_trie::{HashedStorage, test_utils::storage_root_prehashed};
 
     use super::*;
 

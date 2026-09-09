@@ -157,7 +157,7 @@ impl Decode for ProofWindowKey {
 
 #[cfg(test)]
 mod tests {
-    use reth_trie::Nibbles;
+    use base_execution_state_trie::Nibbles;
 
     use super::*;
 

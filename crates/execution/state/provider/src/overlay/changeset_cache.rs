@@ -28,13 +28,13 @@ use base_execution_state_types::{ProviderError, ProviderResult};
 use parking_lot::RwLock;
 use reth_primitives_traits::FastInstant as Instant;
 #[cfg(test)]
-use reth_trie::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
-use reth_trie::{
+use base_execution_state_trie::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
+use base_execution_state_trie::{
     DatabaseTrieCursorFactory, TrieTableAdapter,
     trie_cursor::{InMemoryTrieCursorFactory, TrieCursor, TrieCursorFactory},
 };
 #[cfg(test)]
-use reth_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
+use base_execution_state_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
 use tracing::{debug, warn};
 
 use crate::overlay::{OverlayManager, OverlayStateProvider, database_state_frontiers};
@@ -82,7 +82,7 @@ where
         + StorageSettingsCache,
 {
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         compute_block_trie_updates_inner::<_, A>(overlay_manager, provider, block_number)
     }
 }
@@ -407,7 +407,7 @@ impl ChangesetCache {
             .build_overlay_at_frontiers(provider, partial_state_trie, finish)?;
         let state_trie_provider = OverlayStateProvider::new(provider, overlay);
 
-        let accumulated_reverts = Arc::new(reth_trie::compute_range_trie_changesets(
+        let accumulated_reverts = Arc::new(base_execution_state_trie::compute_range_trie_changesets(
             provider,
             &state_trie_provider,
             start_block..=end_block,
@@ -629,7 +629,7 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
-    use reth_trie::{BranchNodeCompact, Nibbles, StateRoot};
+    use base_execution_state_trie::{BranchNodeCompact, Nibbles, StateRoot};
 
     use super::*;
     use crate::overlay::Overlay;
@@ -712,7 +712,7 @@ mod tests {
             + StorageSettingsCache,
     {
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             legacy_compute_block_trie_changesets_inner::<_, A>(provider, block_number)
         }
     }
@@ -919,14 +919,14 @@ mod tests {
 
         provider.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(3)).unwrap();
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             seed_tip_trie_tables::<_, A>(&*provider)
         };
 
         let overlay = empty_overlay();
         let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
         let actual =
-            reth_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 1..=3, 3)
+            base_execution_state_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 1..=3, 3)
                 .unwrap();
         let storage_revert = actual
             .storage_tries_ref()
@@ -1008,7 +1008,7 @@ mod tests {
 
         provider.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(3)).unwrap();
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             seed_tip_trie_tables::<_, A>(&*provider)
         };
 
@@ -1016,7 +1016,7 @@ mod tests {
         let overlay = empty_overlay();
         let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
         let actual =
-            reth_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 2..=3, 3)
+            base_execution_state_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 2..=3, 3)
                 .unwrap();
         assert_eq!(actual, expected);
     }

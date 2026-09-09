@@ -11,7 +11,7 @@ use base_execution_state_database::{DatabaseError, DbTx};
 use base_execution_state_types::ProviderResult;
 use metrics::{Counter, Histogram};
 use reth_primitives_traits::dashmap::{self, DashMap};
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseAccountTrieCursor, DatabaseHashedCursorFactory, DatabaseStorageTrieCursor,
     HashedPostStateSorted, PackedAccountsTrie, PackedKeyAdapter, PackedStoragesTrie,
     hashed_cursor::{HashedCursorFactory, HashedPostStateCursorFactory},
@@ -241,7 +241,7 @@ mod tests {
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
     use {crate::test_utils::TestBlockBuilder, base_execution_state_types::ExecutedBlock};
 
-    use reth_trie::{
+    use base_execution_state_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,
         updates::TrieUpdatesSorted,
     };

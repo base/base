@@ -11,7 +11,7 @@ navigating account and storage tries, a pruner for removing data outside the ret
 an initialization job for syncing historical proofs at startup.
 
 Also owns parallel account/storage proof workers and the state-root task handles shared by the
-execution driver and payload builder. Core trie algorithms and database cursors live in `reth-trie`,
+execution driver and payload builder. Core trie algorithms and database cursors live in `base-execution-state-trie`,
 below the provider layer; this crate composes providers with task scheduling and proof history.
 
 Cross-block execution caches and transaction-pool prewarm snapshots live here too. Cache checkout

@@ -35,7 +35,7 @@ use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
-use reth_trie::{
+use base_execution_state_trie::{
     MultiProofTargets, StorageRoot, TrieInput, TrieInputSorted, TrieType,
     hashed_cursor::{HashedCursor, HashedCursorFactory},
     metrics::TrieRootMetrics,
@@ -1031,7 +1031,7 @@ mod tests {
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
-    use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
+    use base_execution_state_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
     use {
         crate::CanonStateSubscriptions, crate::NewCanonicalChain,
         crate::test_utils::TestBlockBuilder, base_execution_state_types::CanonStateNotification,

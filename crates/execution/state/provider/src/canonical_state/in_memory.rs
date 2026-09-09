@@ -848,7 +848,7 @@ mod tests {
     use base_execution_state_types::LazyTrieData;
     use base_execution_state_types::ProviderResult;
     use rand::Rng;
-    use reth_trie::{
+    use base_execution_state_trie::{
         AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets,
         StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
     };
@@ -1010,7 +1010,7 @@ mod tests {
             &self,
             _input: TrieInput,
             _target: HashedPostState,
-            _mode: reth_trie::ExecutionWitnessMode,
+            _mode: base_execution_state_trie::ExecutionWitnessMode,
         ) -> ProviderResult<Vec<Bytes>> {
             Ok(Vec::default())
         }

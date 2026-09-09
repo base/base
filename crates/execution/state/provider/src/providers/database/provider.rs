@@ -47,7 +47,7 @@ use rayon::slice::ParallelSliceMut;
 use reth_primitives_traits::{
     Block as _, BlockBody as _, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
@@ -2761,7 +2761,7 @@ impl<TX: DbTxMut + DbTx + 'static> TrieWriter for DatabaseProvider<TX> {
         let mut num_entries = 0;
 
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             Self::write_account_trie_updates::<A>(self.tx_ref(), trie_updates, &mut num_entries)?;
         };
@@ -2787,7 +2787,7 @@ impl<TX: DbTxMut + DbTx + 'static> StorageTrieWriter for DatabaseProvider<TX> {
         let mut storage_tries = storage_tries.collect::<Vec<_>>();
         storage_tries.sort_unstable_by(|a, b| a.0.cmp(b.0));
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             Self::write_storage_tries::<A>(self.tx_ref(), storage_tries, &mut num_entries)?;
         };
@@ -3549,7 +3549,7 @@ mod tests {
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
     use reth_testing_utils::generators::{self, BlockParams};
-    use reth_trie::{
+    use base_execution_state_trie::{
         HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
     };
 
@@ -3955,7 +3955,7 @@ mod tests {
 
     #[test]
     fn test_write_trie_updates_sorted() {
-        use reth_trie::{
+        use base_execution_state_trie::{
             BranchNodeCompact, PackedStorageTrieEntry,
             updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
         };
@@ -4125,7 +4125,7 @@ mod tests {
         let nibbles1 = PackedStoredNibbles(Nibbles::from_nibbles([0x1, 0x2]));
         let entry1 = cursor.seek_exact(nibbles1).unwrap();
         assert!(entry1.is_some(), "Updated account node should exist");
-        let expected_mask = reth_trie::TrieMask::new(0b1111_1111_1111_1111);
+        let expected_mask = base_execution_state_trie::TrieMask::new(0b1111_1111_1111_1111);
         assert_eq!(
             entry1.unwrap().1.state_mask,
             expected_mask,
@@ -4176,7 +4176,7 @@ mod tests {
     #[cfg(feature = "partial-persistence")]
     #[test]
     fn test_save_blocks_merges_storage_wipe_in_multi_block_batch() {
-        use reth_trie::{
+        use base_execution_state_trie::{
             BranchNodeCompact, HashedPostStateSorted,
             updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
         };
@@ -4243,7 +4243,7 @@ mod tests {
     #[test]
     fn test_save_blocks_batches_transient_storage_wipe() {
         use alloy_primitives::map::B256Set;
-        use reth_trie::{HashBuilder, HashedPostStateSorted, updates::TrieUpdates};
+        use base_execution_state_trie::{HashBuilder, HashedPostStateSorted, updates::TrieUpdates};
 
         let factory = create_test_provider_factory();
         factory.set_storage_settings_cache(StorageSettings::v2());
@@ -4459,7 +4459,7 @@ mod tests {
     #[test]
     fn test_write_state_and_historical_read_hashed() {
         use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
-        use reth_trie::HashedPostState;
+        use base_execution_state_trie::HashedPostState;
 
         let factory = create_test_provider_factory();
         factory.set_storage_settings_cache(StorageSettings::v2());

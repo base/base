@@ -29,7 +29,7 @@ use reth_primitives_traits::{
     AlloyBlockHeader,
     dashmap::{DashMap, mapref::entry::Entry},
 };
-use reth_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
+use base_execution_state_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, trace};
 use {crate::PreservedSparseTrie, base_execution_state_types::ExecutedBlock};
 
@@ -663,7 +663,7 @@ mod tests {
 
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
-    use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
+    use base_execution_state_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
     use {
         crate::SparseTrie, crate::test_utils::TestBlockBuilder,
         base_execution_state_types::ExecutedBlock,

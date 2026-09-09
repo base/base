@@ -3,7 +3,7 @@
 use alloy_primitives::B256;
 use base_execution_state_database::{DbCursorRW, DbTxMut, tables};
 use base_execution_state_provider::test_utils::create_test_provider_factory;
-use reth_trie::{
+use base_execution_state_trie::{
     BranchNodeCompact, DatabaseTrieCursorFactory, Nibbles, PackedStorageTrieEntry,
     prefix_set::PrefixSetMut,
     trie_cursor::{TrieCursor, TrieCursorFactory},
@@ -42,7 +42,7 @@ fn walk_nodes_with_common_prefix() {
     }
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let trie_factory = DatabaseTrieCursorFactory::<_, A>::new(tx.tx_ref());
         let account_trie = trie_factory.account_trie_cursor().unwrap();
         test_cursor(account_trie, &expected);
@@ -123,7 +123,7 @@ fn cursor_rootnode_with_changesets() {
     }
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let trie_factory = DatabaseTrieCursorFactory::<_, A>::new(tx.tx_ref());
         let mut trie = trie_factory.storage_trie_cursor(hashed_address).unwrap();
 

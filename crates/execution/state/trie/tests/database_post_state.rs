@@ -9,7 +9,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use proptest::prelude::*;
 use proptest_arbitrary_interop::arb;
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseHashedCursorFactory, HashedPostState, HashedStorage,
     hashed_cursor::{
         HashedCursor, HashedCursorFactory, HashedPostStateCursorFactory, HashedStorageCursor,

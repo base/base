@@ -8,7 +8,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use proptest::prelude::*;
 use base_execution_state_provider::test_utils::create_test_provider_factory;
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseTrieCursorFactory,
     HashedPostState, HashedStorage, StateRoot, StorageRoot,
     test_utils::{state_root_prehashed, storage_root_prehashed},
@@ -38,7 +38,7 @@ proptest! {
         }
 
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             // Compute initial root and updates
             let (_, mut trie_nodes) = DbStateRoot::<_, A>::from_tx(provider.tx_ref())
                 .root_with_updates()
@@ -96,7 +96,7 @@ proptest! {
         }
 
         {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             // Compute initial storage root and updates
             let (_, _, mut storage_trie_nodes) =
                 DbStorageRoot::<_, A>::from_tx_hashed(provider.tx_ref(), hashed_address).root_with_updates().unwrap();

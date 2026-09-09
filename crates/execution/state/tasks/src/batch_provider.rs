@@ -22,7 +22,7 @@ use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     StateRoot, StorageRoot, TrieType,
     hashed_cursor::{HashedCursor, HashedPostStateCursorFactory},
     metrics::TrieRootMetrics,

@@ -19,7 +19,7 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use reth_primitives_traits::FastInstant as Instant;
-use reth_trie::{
+use base_execution_state_trie::{
     DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,
     updates::TrieUpdates,
 };
@@ -1146,7 +1146,7 @@ mod tests {
             address,
             Some(Account { balance: U256::from(100), nonce: 1, bytecode_hash: None }),
         );
-        let mut storage = reth_trie::HashedStorage::new(false);
+        let mut storage = base_execution_state_trie::HashedStorage::new(false);
         storage.storage.insert(slot, value);
         hashed_state.storages.insert(address, storage);
 

@@ -6,7 +6,7 @@ use base_execution_state_database::DatabaseError;
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, Nibbles};
 use derive_more::Constructor;
-use reth_trie::{
+use base_execution_state_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };

@@ -608,7 +608,7 @@ mod tests {
         proof::{ProofNodes, ProofRetainer},
     };
     use rand::{Rng, SeedableRng, rngs::StdRng};
-    use reth_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
+    use base_execution_state_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
 
     use super::*;
     use crate::{ArenaParallelSparseTrie, LeafLookup, LeafUpdate};

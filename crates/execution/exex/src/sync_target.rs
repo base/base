@@ -9,7 +9,7 @@
 use std::{collections::BTreeMap, sync::Mutex};
 
 use alloy_eips::eip1898::BlockWithParent;
-use reth_trie::LazyTrieData;
+use base_execution_state_trie::LazyTrieData;
 use tokio::sync::Notify;
 use tracing::debug;
 
@@ -239,7 +239,7 @@ mod tests {
 
     use alloy_eips::{NumHash, eip1898::BlockWithParent};
     use base_common_types_chain::private::alloy_primitives::B256;
-    use reth_trie::{
+    use base_execution_state_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
     };
 

@@ -20,7 +20,7 @@ use base_execution_state_types::{
 #[cfg(feature = "metrics")]
 use metrics::Label;
 use parking_lot::{Mutex, RwLock};
-use reth_trie::{
+use base_execution_state_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };

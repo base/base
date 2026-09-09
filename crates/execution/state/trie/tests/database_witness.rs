@@ -11,7 +11,7 @@ use base_execution_state_database::{DbCursorRW, tables};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_provider::{HashingWriter, test_utils::create_test_provider_factory};
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseProof, DatabaseStateRoot, DatabaseStorageRoot,
     DatabaseTrieCursorFactory, ExecutionWitnessMode, HashedPostState, HashedStorage, LeafNode,
     MultiProofTargets, Nibbles, StateRoot, StorageRoot, TrieNodeV2, proof::Proof,
@@ -34,7 +34,7 @@ fn includes_empty_node_preimage() {
     let hashed_slot = B256::random();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let legacy_empty_witness = TrieWitness::new(
             DatabaseTrieCursorFactory::<_, A>::new(provider.tx_ref()),
             DatabaseHashedCursorFactory::new(provider.tx_ref()),
@@ -131,7 +131,7 @@ fn includes_nodes_for_destroyed_storage_nodes() {
         .unwrap();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let multiproof = proof
@@ -182,7 +182,7 @@ fn correctly_decodes_branch_node_values() {
         .unwrap();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let multiproof = proof
@@ -236,7 +236,7 @@ fn skips_storage_root_node_for_account_only_changes_in_canonical_mode() {
         .unwrap();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let storage_root =
             DbStorageRoot::<_, A>::from_tx(provider.tx_ref(), address).root().unwrap();
@@ -324,7 +324,7 @@ fn canonical_mode_handles_mixed_storage_inserts_and_removals() {
         .unwrap();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let state_root = DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root().unwrap();
         let proof = <DbProof<'_, _, A> as DatabaseProof>::from_tx(provider.tx_ref());
         let initial_multiproof = proof

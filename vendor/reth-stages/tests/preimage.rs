@@ -46,7 +46,7 @@ use reth_stages::{
 use reth_stages_api::{Pipeline, StageSet};
 use reth_static_file::StaticFileProducer;
 use reth_testing_utils::generators::{self, generate_key};
-use reth_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
+use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
 type TestProviderFactory = base_execution_state_provider::ProviderFactory;
@@ -151,7 +151,7 @@ async fn test_pipeline_v2_selfdestruct_changesets_use_plain_slots() -> eyre::Res
 
 /// Prefunding ensures the CREATE2 target has original account state, while its init code performs
 /// no `SSTORE`. This verifies that destruction alone does not create an otherwise-empty
-/// [`reth_trie::HashedStorage`] solely to carry `wiped = true`.
+/// [`base_execution_state_trie::HashedStorage`] solely to carry `wiped = true`.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline_v2_prefunded_create2_selfdestruct_does_not_wipe_storage() -> eyre::Result<()>
 {
@@ -1104,11 +1104,11 @@ fn execute_and_commit_block(
     let gas_used = output.gas_used;
     let hashed_state = provider.latest().hashed_post_state(&output.state)?;
     type TestStateRoot<'a, TX, A> = StateRoot<
-        reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-        reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+        base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+        base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
     >;
     let (state_root, _trie_updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
 
         TestStateRoot::<_, A>::overlay_root_with_updates(
             provider.tx_ref(),

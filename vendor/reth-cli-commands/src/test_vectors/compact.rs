@@ -38,7 +38,7 @@ use proptest::{
     test_runner::{TestRng, TestRunner},
 };
 use reth_primitives_traits::{Log, LogData};
-use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
+use base_execution_state_trie::{TrieMask, hash_builder::HashBuilderValue};
 
 pub const VECTORS_FOLDER: &str = "testdata/micro/compact";
 pub const VECTOR_SIZE: usize = 100;

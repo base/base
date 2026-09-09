@@ -10,7 +10,7 @@ use base_execution_state_database::{
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StorageEntry;
-use reth_trie::{DatabaseStateRoot, StateRoot};
+use base_execution_state_trie::{DatabaseStateRoot, StateRoot};
 
 use crate::{
     ChainSpecProvider, HashingWriter, ProviderFactory, TrieWriter,
@@ -18,8 +18,8 @@ use crate::{
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
-    reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-    reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+    base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+    base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
 >;
 
 pub mod blocks;
@@ -147,7 +147,7 @@ pub fn insert_genesis(provider_factory: &ProviderFactory) -> ProviderResult<B256
     provider.insert_storage_for_hashing(alloc_storage)?;
 
     let (root, updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStateRoot::<_, A>::from_tx(provider.tx_ref()).root_with_updates()?
     };
     provider.write_trie_updates(updates).unwrap();

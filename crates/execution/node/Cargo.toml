@@ -86,7 +86,6 @@ tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256-aws-lc-rs", "secp256k1"], workspace = true}
 
 [dev-dependencies]
-reth-trie = { workspace = true }
 alloy-genesis = { workspace = true  }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -96,6 +95,7 @@ reth-rpc-eth-types = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
+base-execution-state-trie = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
@@ -154,7 +154,7 @@ test-utils = [
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
-    "reth-trie/test-utils",
+    "base-execution-state-trie/test-utils",
     "reth-engine-tree/test-utils",
     "reth-downloaders/test-utils",
     "reth-network-p2p/test-utils",

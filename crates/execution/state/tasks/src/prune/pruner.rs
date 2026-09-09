@@ -251,7 +251,7 @@ mod tests {
 
                 use alloy_primitives::{B256, U256};
                 use base_execution_state_memory::StoredAccount as Account;
-                use reth_trie::{
+                use base_execution_state_trie::{
                     BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
                     hashed_cursor::HashedCursor,
                     trie_cursor::TrieCursor,

@@ -23,13 +23,13 @@ metrics = { workspace = true, optional = true }
 base-execution-state-memory = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
-reth-trie = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true }
 alloy-eip7928 = {features = ["rlp"], workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 base-common-types-chain = {features = ["reth"], workspace = true}
+base-execution-state-trie = { workspace = true, optional = true }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-execution-evm-runtime = {features = ["std"], workspace = true}
 base-execution-state-api = {features = ["default"], workspace = true}
@@ -40,17 +40,17 @@ base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
 
 [dev-dependencies]
-reth-trie = {workspace = true}
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = {workspace = true}
 reth-db-common = { workspace = true }
+base-execution-state-trie = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = {features = ["std"], workspace = true}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {features = ["arbitrary", "reth", "serde"], workspace = true}
 
 [[test]]
@@ -90,19 +90,19 @@ std = [
 ]
 portable = ["base-execution-evm-runtime/portable"]
 test-utils = [
-    "dep:reth-trie",
+    "dep:base-execution-state-trie",
     "reth-primitives-traits/test-utils",
     "base-execution-state-types/test-utils",
-    "reth-trie?/test-utils",
+    "base-execution-state-trie?/test-utils",
     "std",
     "base-execution-state-memory/test-utils",
 ]
-witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
+witness = ["dep:base-execution-state-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
 serde = [
     "base-execution-evm-runtime/serde",
     "alloy-primitives/serde",
     "base-common-types-chain/serde",
-    "reth-trie?/serde",
+    "base-execution-state-trie?/serde",
     "reth-primitives-traits/serde",
     "base-execution-state-api/serde",
     "base-execution-state-memory/serde",

@@ -38,7 +38,7 @@ use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;
 use reth_testing_utils::generators::{self, generate_key};
-use reth_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
+use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
 /// Counter contract deployed bytecode compiled with Solidity 0.8.31.
@@ -307,11 +307,11 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         // Convert bundle state to hashed post state and compute state root
         let hashed_state = HashedPostState::from_bundle_state(output.state.state());
         type TestStateRoot<'a, TX, A> = StateRoot<
-            reth_trie::DatabaseTrieCursorFactory<&'a TX, A>,
-            reth_trie::DatabaseHashedCursorFactory<&'a TX>,
+            base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
+            base_execution_state_trie::DatabaseHashedCursorFactory<&'a TX>,
         >;
         let (state_root, _trie_updates) = {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
 
             TestStateRoot::<_, A>::overlay_root_with_updates(
                 provider.tx_ref(),

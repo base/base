@@ -41,7 +41,7 @@ use parking_lot::Mutex;
 use reth_primitives_traits::{
     Block, BlockBody, GotExpected, RecoveredBlock, SealedHeader, SignerRecoverable,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
@@ -1031,7 +1031,7 @@ impl StorageRootProvider for MockEthProvider {
         _address: Address,
         slot: B256,
         _hashed_storage: HashedStorage,
-    ) -> ProviderResult<reth_trie::StorageProof> {
+    ) -> ProviderResult<base_execution_state_trie::StorageProof> {
         Ok(StorageProof::new(slot))
     }
 
@@ -1067,7 +1067,7 @@ impl StateProofProvider for MockEthProvider {
         &self,
         _input: TrieInput,
         _target: HashedPostState,
-        _mode: reth_trie::ExecutionWitnessMode,
+        _mode: base_execution_state_trie::ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
         Ok(Vec::default())
     }

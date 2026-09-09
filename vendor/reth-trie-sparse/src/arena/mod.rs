@@ -3131,7 +3131,7 @@ mod tests {
 
     use alloy_primitives::{B256, U256, map::B256Map};
     use rand::{Rng, SeedableRng, seq::SliceRandom};
-    use reth_trie::test_utils::TrieTestHarness;
+    use base_execution_state_trie::test_utils::TrieTestHarness;
     use base_execution_state_types::ProofV2Target;
     use tracing::{info, trace};
 
@@ -3225,7 +3225,7 @@ mod tests {
             let mut actual_updates = apst.take_updates();
 
             // Minimize sparse updates inline (can't use TrieTestHarness::minimize_sparse_updates
-            // due to the crate's SparseTrieUpdates being a different type than reth-trie's copy).
+            // due to the crate's SparseTrieUpdates being a different type than base-execution-state-trie's copy).
             actual_updates.updated_nodes.retain(|path, node| {
                 self.storage_trie_updates().storage_nodes.get(path) != Some(node)
             });

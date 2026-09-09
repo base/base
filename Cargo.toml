@@ -162,7 +162,7 @@ members = [
   "crates/execution/state/api",
   "vendor/reth-testing-utils",
   "crates/common/observability/tracing",
-  "vendor/reth-trie",
+  "crates/execution/state/trie",
   "crates/execution/state/types",
   "vendor/reth-trie-sparse",
   "crates/common/codec/storage",
@@ -434,7 +434,7 @@ alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, packag
 # reth
 base-execution-state-database = { path = "crates/execution/state/database", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
-reth-trie = { path = "vendor/reth-trie", default-features = false }
+base-execution-state-trie = { path = "crates/execution/state/trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
 reth-prune = { path = "vendor/reth-prune", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }

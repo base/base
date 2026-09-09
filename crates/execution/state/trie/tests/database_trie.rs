@@ -16,7 +16,7 @@ use proptest_arbitrary_interop::arb;
 use base_execution_state_provider::{
     DatabaseProviderRW, StorageTrieWriter, TrieWriter, test_utils::create_test_provider_factory,
 };
-use reth_trie::{
+use base_execution_state_trie::{
     BranchNodeCompact, DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot,
     DatabaseTrieCursorFactory, HashBuilder, IntermediateStateRootState, Nibbles, StateRoot,
     StateRootProgress, StorageRoot, TrieMask,
@@ -66,7 +66,7 @@ fn incremental_vs_full_root(inputs: &[&str], modified: &str) {
     }
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         // Generate the intermediate nodes on the receiving end of the channel
         let (_, _, trie_updates) =
             DbStorageRoot::<_, A>::from_tx_hashed(tx.tx_ref(), hashed_address)
@@ -139,7 +139,7 @@ fn arbitrary_storage_root() {
         tx.commit().unwrap();
 
         let tx =  factory.provider_rw().unwrap();
-        { type A = reth_trie::PackedKeyAdapter;  {
+        { type A = base_execution_state_trie::PackedKeyAdapter;  {
             let got = DbStorageRoot::<_, A>::from_tx(tx.tx_ref(), address).root().unwrap();
             let expected = storage_root(storage.into_iter());
             assert_eq!(expected, got);
@@ -201,7 +201,7 @@ fn test_empty_storage_root() {
 
     let tx = factory.provider_rw().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let (got, walked, updates) =
             DbStorageRoot::<_, A>::from_tx(tx.tx_ref(), address).root_with_updates().unwrap();
         assert_eq!(got, EMPTY_ROOT_HASH);
@@ -235,7 +235,7 @@ fn cleared_storage_emits_node_removals_without_deleted_flag() {
     }
 
     let (_, _, initial_updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStorageRoot::<_, A>::from_tx_hashed(tx.tx_ref(), hashed_address)
             .root_with_updates()
             .unwrap()
@@ -260,7 +260,7 @@ fn cleared_storage_emits_node_removals_without_deleted_flag() {
     drop(hashed_storage_cursor);
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let (root, _, updates) = DbStorageRoot::<_, A>::from_tx_hashed(tx.tx_ref(), hashed_address)
             .with_prefix_set(prefix_set.freeze())
             .root_with_updates()
@@ -293,7 +293,7 @@ fn test_storage_root() {
 
     let tx = factory.provider_rw().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let got = DbStorageRoot::<_, A>::from_tx(tx.tx_ref(), address).root().unwrap();
         assert_eq!(storage_root(storage.into_iter()), got);
     };
@@ -333,7 +333,7 @@ fn arbitrary_state_root_with_progress() {
             let mut hashed_entries_walked = 0;
 
             let mut intermediate_state: Option<Box<IntermediateStateRootState>> = None;
-            { type A = reth_trie::PackedKeyAdapter;  {
+            { type A = base_execution_state_trie::PackedKeyAdapter;  {
                 while got.is_none() {
                     let calculator = DbStateRoot::<_, A>::from_tx(tx.tx_ref())
                         .with_threshold(threshold)
@@ -368,7 +368,7 @@ fn test_state_root_with_state(state: State) {
 
     let tx = factory.provider_rw().unwrap();
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let got = DbStateRoot::<_, A>::from_tx(tx.tx_ref()).root().unwrap();
         assert_eq!(expected, got);
     };
@@ -410,7 +410,7 @@ fn storage_root_regression() {
     let tx = factory.provider_rw().unwrap();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let account3_storage_root =
             DbStorageRoot::<_, A>::from_tx(tx.tx_ref(), address3).root().unwrap();
         let expected_root = storage_root_prehashed(storage);
@@ -475,7 +475,7 @@ fn account_and_storage_trie() {
         hashed_storage_cursor.upsert(key3, &StorageEntry { key: hashed_slot, value }).unwrap();
     }
     let account3_storage_root = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStorageRoot::<_, A>::from_tx(tx.tx_ref(), address3).root().unwrap()
     };
     hash_builder
@@ -514,7 +514,7 @@ fn account_and_storage_trie() {
 
     // Check state root calculation from scratch
     let (root, trie_updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStateRoot::<_, A>::from_tx(tx.tx_ref()).root_with_updates().unwrap()
     };
     assert_eq!(root, computed_expected_root);
@@ -557,7 +557,7 @@ fn account_and_storage_trie() {
         b256!("0x8e263cd4eefb0c3cbbb14e5541a66a755cad25bcfab1e10dd9d706263e811b28");
 
     let (root, trie_updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStateRoot::<_, A>::from_tx(tx.tx_ref())
             .with_prefix_sets(TriePrefixSets {
                 account_prefix_set: prefix_set.freeze(),
@@ -611,7 +611,7 @@ fn account_and_storage_trie() {
         ]);
 
         let (root, trie_updates) = {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             DbStateRoot::<_, A>::from_tx(tx.tx_ref())
                 .with_prefix_sets(TriePrefixSets {
                     account_prefix_set: account_prefix_set.freeze(),
@@ -669,7 +669,7 @@ fn account_and_storage_trie() {
         ]);
 
         let (root, trie_updates) = {
-            type A = reth_trie::PackedKeyAdapter;
+            type A = base_execution_state_trie::PackedKeyAdapter;
             DbStateRoot::<_, A>::from_tx(tx.tx_ref())
                 .with_prefix_sets(TriePrefixSets {
                     account_prefix_set: account_prefix_set.freeze(),
@@ -718,7 +718,7 @@ fn account_trie_around_extension_node() {
     let expected = extension_node_trie(&tx);
 
     let (got, updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStateRoot::<_, A>::from_tx(tx.tx_ref()).root_with_updates().unwrap()
     };
     assert_eq!(expected, got);
@@ -733,7 +733,7 @@ fn account_trie_around_extension_node_with_dbtrie() {
     let expected = extension_node_trie(&tx);
 
     let (got, updates) = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         DbStateRoot::<_, A>::from_tx(tx.tx_ref()).root_with_updates().unwrap()
     };
     assert_eq!(expected, got);
@@ -774,7 +774,7 @@ proptest! {
                 }
             }
 
-            let (state_root, trie_updates) = { type A = reth_trie::PackedKeyAdapter;  {
+            let (state_root, trie_updates) = { type A = base_execution_state_trie::PackedKeyAdapter;  {
                 DbStateRoot::<_, A>::from_tx(tx.tx_ref())
                     .with_prefix_sets(TriePrefixSets { account_prefix_set: changes.freeze(), ..Default::default() })
                     .root_with_updates()
@@ -800,7 +800,7 @@ fn storage_trie_around_extension_node() {
     let (expected_root, expected_updates) = extension_node_storage_trie(&tx, hashed_address);
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         let (got, _, updates) = DbStorageRoot::<_, A>::from_tx_hashed(tx.tx_ref(), hashed_address)
             .root_with_updates()
             .unwrap();

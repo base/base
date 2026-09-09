@@ -25,7 +25,7 @@ use reth_primitives_traits::{
     proofs::calculate_receipt_root, proofs::calculate_transaction_root,
     proofs::calculate_withdrawals_root,
 };
-use reth_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
+use base_execution_state_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
 use tokio::sync::broadcast::{self, Sender};
 
 use crate::canonical_state::{
@@ -289,7 +289,7 @@ impl TestBlockBuilder {
             .build();
 
         let hashed_state =
-            reth_trie::HashedPostState::from_bundle_state(bundle.state.iter()).into_sorted();
+            base_execution_state_trie::HashedPostState::from_bundle_state(bundle.state.iter()).into_sorted();
 
         let block_receipts = if receipts.is_empty() {
             recovered

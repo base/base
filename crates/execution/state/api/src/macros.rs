@@ -44,23 +44,23 @@ macro_rules! delegate_provider_impls {
                 fn bytecode_by_hash(&self, code_hash: &alloy_primitives::B256) -> base_execution_state_api::ProviderResult<Option<base_execution_state_memory::StoredBytecode>>;
             }
             StateRootProvider $(where [$($generics)*])? {
-                fn state_root(&self, state: reth_trie::HashedPostState) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
-                fn state_root_from_nodes(&self, input: reth_trie::TrieInput) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
-                fn state_root_with_updates(&self, state: reth_trie::HashedPostState) -> base_execution_state_api::ProviderResult<(alloy_primitives::B256, reth_trie::updates::TrieUpdates)>;
-                fn state_root_from_nodes_with_updates(&self, input: reth_trie::TrieInput) -> base_execution_state_api::ProviderResult<(alloy_primitives::B256, reth_trie::updates::TrieUpdates)>;
+                fn state_root(&self, state: base_execution_state_trie::HashedPostState) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
+                fn state_root_from_nodes(&self, input: base_execution_state_trie::TrieInput) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
+                fn state_root_with_updates(&self, state: base_execution_state_trie::HashedPostState) -> base_execution_state_api::ProviderResult<(alloy_primitives::B256, base_execution_state_trie::updates::TrieUpdates)>;
+                fn state_root_from_nodes_with_updates(&self, input: base_execution_state_trie::TrieInput) -> base_execution_state_api::ProviderResult<(alloy_primitives::B256, base_execution_state_trie::updates::TrieUpdates)>;
             }
             StorageRootProvider $(where [$($generics)*])? {
-                fn storage_root(&self, address: alloy_primitives::Address, storage: reth_trie::HashedStorage) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
-                fn storage_proof(&self, address: alloy_primitives::Address, slot: alloy_primitives::B256, storage: reth_trie::HashedStorage) -> base_execution_state_api::ProviderResult<reth_trie::StorageProof>;
-                fn storage_multiproof(&self, address: alloy_primitives::Address, slots: &[alloy_primitives::B256], storage: reth_trie::HashedStorage) -> base_execution_state_api::ProviderResult<reth_trie::StorageMultiProof>;
+                fn storage_root(&self, address: alloy_primitives::Address, storage: base_execution_state_trie::HashedStorage) -> base_execution_state_api::ProviderResult<alloy_primitives::B256>;
+                fn storage_proof(&self, address: alloy_primitives::Address, slot: alloy_primitives::B256, storage: base_execution_state_trie::HashedStorage) -> base_execution_state_api::ProviderResult<base_execution_state_trie::StorageProof>;
+                fn storage_multiproof(&self, address: alloy_primitives::Address, slots: &[alloy_primitives::B256], storage: base_execution_state_trie::HashedStorage) -> base_execution_state_api::ProviderResult<base_execution_state_trie::StorageMultiProof>;
             }
             StateProofProvider $(where [$($generics)*])? {
-                fn proof(&self, input: reth_trie::TrieInput, address: alloy_primitives::Address, slots: &[alloy_primitives::B256]) -> base_execution_state_api::ProviderResult<reth_trie::AccountProof>;
-                fn multiproof(&self, input: reth_trie::TrieInput, targets: reth_trie::MultiProofTargets) -> base_execution_state_api::ProviderResult<reth_trie::MultiProof>;
-                fn witness(&self, input: reth_trie::TrieInput, target: reth_trie::HashedPostState, mode: reth_trie::ExecutionWitnessMode) -> base_execution_state_api::ProviderResult<Vec<alloy_primitives::Bytes>>;
+                fn proof(&self, input: base_execution_state_trie::TrieInput, address: alloy_primitives::Address, slots: &[alloy_primitives::B256]) -> base_execution_state_api::ProviderResult<base_execution_state_trie::AccountProof>;
+                fn multiproof(&self, input: base_execution_state_trie::TrieInput, targets: base_execution_state_trie::MultiProofTargets) -> base_execution_state_api::ProviderResult<base_execution_state_trie::MultiProof>;
+                fn witness(&self, input: base_execution_state_trie::TrieInput, target: base_execution_state_trie::HashedPostState, mode: base_execution_state_trie::ExecutionWitnessMode) -> base_execution_state_api::ProviderResult<Vec<alloy_primitives::Bytes>>;
             }
             HashedPostStateProvider $(where [$($generics)*])? {
-                fn hashed_post_state(&self, bundle_state: &base_execution_state_api::BundleState) -> base_execution_state_api::ProviderResult<reth_trie::HashedPostState>;
+                fn hashed_post_state(&self, bundle_state: &base_execution_state_api::BundleState) -> base_execution_state_api::ProviderResult<base_execution_state_trie::HashedPostState>;
             }
         );
         $crate::impl_state_database!([$($($generics)*)?] $target where []);

@@ -664,7 +664,7 @@ where
         // changes to start processing them before potentially hitting the db in the next step.
         if !account_changes.storage_changes.is_empty() {
             let hashed_address = *hashed_address.get_or_insert_with(|| keccak256(address));
-            let mut storage_map = reth_trie::HashedStorage::new(false);
+            let mut storage_map = base_execution_state_trie::HashedStorage::new(false);
 
             for slot_changes in &account_changes.storage_changes {
                 let hashed_slot = keccak256(slot_changes.slot.to_be_bytes::<32>());
@@ -673,7 +673,7 @@ where
                 }
             }
 
-            let mut hashed_state = reth_trie::HashedPostState::default();
+            let mut hashed_state = base_execution_state_trie::HashedPostState::default();
             hashed_state.storages.insert(hashed_address, storage_map);
             hashed_update_stream.on_hashed_state_update(hashed_state);
         }
@@ -734,7 +734,7 @@ where
         // have to explicitly check for empty storage.
         let account = (!account.is_empty()).then_some(account);
 
-        let mut hashed_state = reth_trie::HashedPostState::default();
+        let mut hashed_state = base_execution_state_trie::HashedPostState::default();
         hashed_state.accounts.insert(hashed_address, account);
         hashed_update_stream.on_hashed_state_update(hashed_state);
     }

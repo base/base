@@ -11,7 +11,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{DatabaseError, StateProofError};
 use crossbeam_channel::Receiver as CrossbeamReceiver;
 use reth_primitives_traits::dashmap::DashMap;
-use reth_trie::{
+use base_execution_state_trie::{
     ProofTrieNodeV2,
     hashed_cursor::HashedStorageCursor,
     proof_v2::{DeferredValueEncoder, LeafValueEncoder, StorageProofCalculator},

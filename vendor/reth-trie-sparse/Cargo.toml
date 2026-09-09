@@ -40,10 +40,10 @@ rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-reth-trie = { workspace = true, features = ["test-utils"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 base-execution-state-memory = {workspace = true, features = ["arbitrary"]}
+base-execution-state-trie = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["test-utils", "arbitrary"] }
 
@@ -83,7 +83,7 @@ test-utils = [
     "std",
     "reth-primitives-traits/test-utils",
     "base-execution-state-types/test-utils",
-    "reth-trie/test-utils",
+    "base-execution-state-trie/test-utils",
     "base-execution-state-memory/test-utils",
 ]
 arbitrary = [

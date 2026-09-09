@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{B256, Bytes, keccak256};
 use base_execution_evm_runtime::database::State;
-use reth_trie::{ExecutionWitnessMode, HashedPostState, HashedStorage};
+use base_execution_state_trie::{ExecutionWitnessMode, HashedPostState, HashedStorage};
 
 /// Borrows finalized execution state for witness generation.
 #[derive(Debug, Clone, Copy)]

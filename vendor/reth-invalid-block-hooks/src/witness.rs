@@ -15,11 +15,11 @@ use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use base_execution_state_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
 use base_common_observability_tracing::tracing::warn;
-use reth_trie::{HashedStorage, updates::TrieUpdates};
+use base_execution_state_trie::{HashedStorage, updates::TrieUpdates};
 use serde::Serialize;
 
 type CollectionResult =
-    (BTreeMap<B256, Bytes>, BTreeMap<B256, Bytes>, reth_trie::HashedPostState, BundleState);
+    (BTreeMap<B256, Bytes>, BTreeMap<B256, Bytes>, base_execution_state_trie::HashedPostState, BundleState);
 
 /// Serializable version of `BundleState` for deterministic comparison
 #[derive(Debug, PartialEq, Eq)]
@@ -151,13 +151,13 @@ fn collect_execution_data(mut db: State<StateProviderBox>) -> eyre::Result<Colle
 fn generate(
     codes: BTreeMap<B256, Bytes>,
     preimages: BTreeMap<B256, Bytes>,
-    hashed_state: reth_trie::HashedPostState,
+    hashed_state: base_execution_state_trie::HashedPostState,
     state_provider: Box<dyn StateProvider>,
 ) -> eyre::Result<ExecutionWitness> {
     let state = state_provider.witness(
         Default::default(),
         hashed_state,
-        reth_trie::ExecutionWitnessMode::Legacy,
+        base_execution_state_trie::ExecutionWitnessMode::Legacy,
     )?;
     Ok(ExecutionWitness {
         state,
@@ -671,7 +671,7 @@ mod tests {
         preimages.insert(B256::from([3u8; 32]), Bytes::from("preimage_1"));
         preimages.insert(B256::from([4u8; 32]), Bytes::from("preimage_2"));
 
-        let hashed_state = reth_trie::HashedPostState::default();
+        let hashed_state = base_execution_state_trie::HashedPostState::default();
 
         // Call generate function
         let result = generate(codes.clone(), preimages.clone(), hashed_state, state_provider);
@@ -749,7 +749,7 @@ mod tests {
         use std::collections::HashSet;
 
         use alloy_primitives::map::HashMap;
-        use reth_trie::{BranchNodeCompact, Nibbles, updates::TrieUpdates};
+        use base_execution_state_trie::{BranchNodeCompact, Nibbles, updates::TrieUpdates};
 
         let mut account_nodes = HashMap::default();
         let nibbles = Nibbles::from_nibbles_unchecked([0x1, 0x2, 0x3]);

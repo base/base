@@ -24,7 +24,7 @@ use reth_node_metrics::{
 };
 use base_execution_state_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
 use reth_stages::StageId;
-use reth_trie::{
+use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,
     StorageTrieEntryLike, TrieTableAdapter,
     verify::{Output, Verifier},
@@ -107,7 +107,7 @@ fn verify_only(tool: &DbTool) -> eyre::Result<()> {
     tx.disable_long_read_transaction_safety();
 
     {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         do_verify_only::<_, A>(&tx)
     }
 }
@@ -207,7 +207,7 @@ fn verify_and_repair(tool: &DbTool) -> eyre::Result<()> {
     verify_checkpoints(provider_rw.as_ref())?;
 
     let inconsistent_nodes = {
-        type A = reth_trie::PackedKeyAdapter;
+        type A = base_execution_state_trie::PackedKeyAdapter;
         do_verify_and_repair::<A>(&mut provider_rw, finish_checkpoint.block_number)?
     };
 
@@ -336,7 +336,7 @@ fn verify_repaired_state_root<A: TrieTableAdapter>(
     provider_rw: &base_execution_state_provider::DatabaseProviderRW,
     block_number: u64,
 ) -> eyre::Result<()> {
-    type DbStateRoot<'a, TX, A> = reth_trie::StateRoot<
+    type DbStateRoot<'a, TX, A> = base_execution_state_trie::StateRoot<
         DatabaseTrieCursorFactory<&'a TX, A>,
         DatabaseHashedCursorFactory<&'a TX>,
     >;

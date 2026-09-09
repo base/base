@@ -46,7 +46,7 @@ use base_execution_state_provider::{
     test_utils::{ExtendedAccount, MockEthProvider, create_test_provider_factory},
 };
 use reth_testing_utils::generators::{self, BlockParams};
-use reth_trie::{HashedPostState, HashedStorage};
+use base_execution_state_trie::{HashedPostState, HashedStorage};
 
 mod protocol;
 
