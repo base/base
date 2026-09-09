@@ -128,8 +128,8 @@ Add an entry to the `rollup_fork_methods!` invocation, after the previous upgrad
 macro generates both `is_X_active(timestamp)` and `is_first_X_block(timestamp, parent_timestamp)`.
 
 Do not hand-write these predicates. In particular, do not derive the parent timestamp as
-`timestamp - block_time`: `block_time` is the legacy 2s cadence and keeps the value `2` once Cobalt
-drops L2 blocks to 200ms, so on a post-Cobalt chain that expression lands ten blocks earlier and
+`timestamp - block_time`: `block_time` is the legacy 2s cadence and keeps the value `2` once Denim
+drops L2 blocks to 200ms, so on a post-Denim chain that expression lands ten blocks earlier and
 `is_first_X_block` fires for every block in between. The generated method takes the real parent
 timestamp as an argument for exactly this reason.
 
