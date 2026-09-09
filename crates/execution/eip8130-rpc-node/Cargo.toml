@@ -23,6 +23,7 @@ tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 # base
+base-protocol.workspace = true
 base-test-utils.workspace = true
 base-common-precompiles.workspace = true
 base-common-consensus.workspace = true
