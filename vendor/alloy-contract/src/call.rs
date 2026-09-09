@@ -11,10 +11,6 @@ use alloy_json_abi::Function;
 use alloy_network_primitives::ReceiptResponse;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
-use alloy_rpc_types_eth::{
-    AccessList, BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlockId,
-    SignedAuthorization, state::StateOverride,
-};
 use alloy_sol_types::SolCall;
 use alloy_transport::{BoxFuture, TransportResult};
 use base_common_consensus::SignableTransaction;
@@ -22,6 +18,10 @@ use base_common_network::{
     Ethereum, IntoWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
     TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
     eip2718::Encodable2718,
+};
+use base_common_rpc_types::{
+    AccessList, BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlockId,
+    SignedAuthorization, state::StateOverride,
 };
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::time::{Timeout, timeout as timeout_future};
@@ -781,10 +781,10 @@ mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
     use alloy_provider::{Provider, ProviderBuilder, WalletProvider};
-    use alloy_rpc_types_eth::{AccessListItem, Authorization};
     use alloy_sol_types::sol;
     use base_common_consensus::Transaction;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
+    use base_common_rpc_types::{AccessListItem, Authorization};
     use futures::Future;
 
     use super::*;

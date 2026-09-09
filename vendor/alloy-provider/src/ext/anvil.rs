@@ -530,11 +530,11 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_network_primitives::BlockResponse as _;
     use alloy_primitives::{B256, address};
-    use alloy_rpc_types_eth::TransactionRequest;
     use alloy_sol_types::{SolCall, sol};
     use alloy_transport::mock::Asserter;
     use base_common_consensus::{BlockHeader, SidecarBuilder, SimpleCoder};
     use base_common_network::{Ethereum, TransactionBuilder, TransactionBuilder4844};
+    use base_common_rpc_types::TransactionRequest;
 
     use super::*;
     use crate::{

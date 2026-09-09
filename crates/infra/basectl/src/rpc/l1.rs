@@ -3,12 +3,12 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, layers::CallBatchLayer};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
 use base_common_consensus::Transaction;
 use base_common_genesis::SystemConfig;
+use base_common_rpc_types::BlockNumberOrTag;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -260,7 +260,7 @@ async fn run_l1_blob_watcher_poll(
 }
 
 fn extract_l1_block_info(
-    block: &alloy_rpc_types_eth::Block<alloy_rpc_types_eth::Transaction>,
+    block: &base_common_rpc_types::Block<base_common_rpc_types::Transaction>,
     batcher_address: Address,
 ) -> L1BlockInfo {
     let mut total_blobs: u64 = 0;

@@ -15,7 +15,7 @@ use crate::{
 ///
 /// The left filler is called before the right filler.
 ///
-/// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+/// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
 #[derive(Clone, Copy, Debug, Default)]
 pub struct JoinFill<L, R> {
     left: L,

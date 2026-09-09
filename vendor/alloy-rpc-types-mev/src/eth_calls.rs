@@ -1,7 +1,7 @@
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, Keccak256, TxHash, U256, keccak256};
-use alloy_rpc_types_eth::TransactionIndex;
 use alloy_serde::OtherFields;
+use base_common_rpc_types::TransactionIndex;
 use serde::{Deserialize, Serialize};
 
 use crate::{Privacy, Validity, u256_numeric_string};

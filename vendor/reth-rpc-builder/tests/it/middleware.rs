@@ -6,8 +6,8 @@ use std::{
     },
 };
 
-use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
+use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_execution_rpc::EthApiClient;
 use jsonrpsee::{
     core::middleware::{Batch, Notification},

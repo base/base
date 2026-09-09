@@ -2,8 +2,8 @@
 
 use std::{future::Future, time::Duration};
 
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_batcher_core::DerivationStatus;
+use base_common_rpc_types::BlockNumberOrTag;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_runtime::Runtime;

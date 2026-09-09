@@ -36,12 +36,12 @@ alloy-serde = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = [
     "derive",
     "alloc",
 ] }
 base-common-consensus = { workspace = true, features = ["serde"] }
+base-common-rpc-types = { workspace = true, features = ["serde"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 [dev-dependencies]
 similar-asserts = { workspace = true, features = ["default"] }
@@ -54,7 +54,7 @@ serde-bincode-compat = [
     "serde_with",
     "alloy-eips/serde-bincode-compat",
     "base-common-consensus/serde-bincode-compat",
-    "alloy-rpc-types-eth/serde-bincode-compat",
+    "base-common-rpc-types/serde-bincode-compat",
 ]
 serde_with = [
     "dep:serde_with",

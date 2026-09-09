@@ -149,9 +149,9 @@ mod test {
     use std::env;
 
     use alloy_primitives::{Address, U256, address, bytes};
-    use alloy_rpc_types_eth::TransactionRequest;
     use alloy_sol_types::{SolCall, sol};
     use base_common_network::TransactionBuilder;
+    use base_common_rpc_types::TransactionRequest;
 
     use super::*;
     use crate::ProviderBuilder;

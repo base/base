@@ -46,7 +46,7 @@ impl EthereumWallet {
     /// [`TransactionRequest`] and [`TypedTransaction`] objects that specify the
     /// signer's address in the `from` field.
     ///
-    /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+    /// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
     /// [`TypedTransaction`]: base_common_consensus::TypedTransaction
     pub fn register_signer<S>(&mut self, signer: S)
     where
@@ -60,7 +60,7 @@ impl EthereumWallet {
     /// [`TypedTransaction`] objects that do not specify a signer address in the
     /// `from` field.
     ///
-    /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+    /// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
     /// [`TypedTransaction`]: base_common_consensus::TypedTransaction
     pub fn register_default_signer<S>(&mut self, signer: S)
     where
@@ -80,7 +80,7 @@ impl EthereumWallet {
     /// If you're looking to add a new signer and set it as default, use
     /// [`EthereumWallet::register_default_signer`].
     ///
-    /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+    /// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
     /// [`TypedTransaction`]: base_common_consensus::TypedTransaction
     pub fn set_default_signer(&mut self, address: Address) -> alloy_signer::Result<()> {
         if self.signers.contains_key(&address) {

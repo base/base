@@ -228,13 +228,12 @@ mod tests {
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, Sealed, b256};
     use alloy_provider::Network;
-    use alloy_rpc_types_eth::{
-        Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
-    };
     use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_genesis::ChainGenesis;
     use base_common_network::Base;
-    use base_common_rpc_types::Transaction as BaseTransaction;
+    use base_common_rpc_types::{
+        BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
+    };
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
@@ -283,7 +282,7 @@ mod tests {
             B256::ZERO,
         ));
         BaseTransaction {
-            inner: alloy_rpc_types_eth::Transaction {
+            inner: base_common_rpc_types::Transaction {
                 inner: Recovered::new_unchecked(envelope, Address::ZERO),
                 block_hash: None,
                 block_number: Some(block_number),

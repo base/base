@@ -136,9 +136,8 @@ impl BaseRevm {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use alloy_rpc_types_eth::state::AccountOverride;
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
-    use base_common_rpc_types::Eip8130Nonce;
+    use base_common_rpc_types::{Eip8130Nonce, state::AccountOverride};
     use serde_json::json;
 
     use super::*;

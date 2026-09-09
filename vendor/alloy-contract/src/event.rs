@@ -2,10 +2,12 @@ use std::{fmt, marker::PhantomData};
 
 use alloy_primitives::{Address, B256, LogData};
 use alloy_provider::{FilterPollerBuilder, Network, Provider};
-use alloy_rpc_types_eth::{BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
 use base_common_network::Ethereum;
+use base_common_rpc_types::{
+    BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray,
+};
 use futures::Stream;
 use futures_util::StreamExt;
 

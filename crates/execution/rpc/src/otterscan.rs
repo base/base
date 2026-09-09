@@ -1,6 +1,5 @@
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
-use alloy_rpc_types_eth::{BlockTransactions, TransactionReceipt};
 use alloy_rpc_types_trace::{
     otterscan::{
         BlockDetails, ContractCreator, InternalOperation, OperationType, OtsBlockTransactions,
@@ -11,7 +10,10 @@ use alloy_rpc_types_trace::{
 use async_trait::async_trait;
 use base_common_consensus::{BlockHeader, Typed2718};
 use base_common_network::{ReceiptResponse, TransactionResponse};
-use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt};
+use base_common_rpc_types::{
+    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BlockTransactions,
+    TransactionReceipt,
+};
 use base_evm_context::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use reth_rpc_api::OtterscanServer;
@@ -59,7 +61,7 @@ impl OtterscanApi<BaseEthApi> {
 }
 
 #[async_trait]
-impl OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
+impl OtterscanServer<base_common_rpc_types::BaseTransaction, BaseHeaderResponse>
     for OtterscanApi<BaseEthApi>
 {
     /// Handler for `ots_getHeaderByNumber` and `erigon_getHeaderByNumber`
@@ -191,7 +193,7 @@ impl OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
         block_number: LenientBlockNumberOrTag,
         page_number: usize,
         page_size: usize,
-    ) -> RpcResult<OtsBlockTransactions<base_common_rpc_types::Transaction, BaseHeaderResponse>>
+    ) -> RpcResult<OtsBlockTransactions<base_common_rpc_types::BaseTransaction, BaseHeaderResponse>>
     {
         let block_number = block_number.into_inner();
         // retrieve full block and its receipts

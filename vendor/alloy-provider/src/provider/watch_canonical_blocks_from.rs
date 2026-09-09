@@ -315,8 +315,8 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, U64};
     use alloy_rpc_client::RpcClient;
-    use alloy_rpc_types_eth::Block;
     use alloy_transport::{TransportError, TransportFut};
+    use base_common_rpc_types::Block;
     use futures::StreamExt;
     use tokio::time::timeout;
 

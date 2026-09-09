@@ -269,7 +269,6 @@ skip = [
     "alloy-hardforks",
     "alloy-json-rpc",
     "alloy-network-primitives",
-    "alloy-rpc-types-eth",
     "cpufeatures",
     "num-bigint",
 

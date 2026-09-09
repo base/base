@@ -51,11 +51,10 @@ backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
-base-common-rpc-types = { workspace = true, features = []}
 tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+base-common-rpc-types = {workspace = true, features = ["std"]}
 derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }

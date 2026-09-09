@@ -1,13 +1,13 @@
 //! Concrete Base transaction, receipt, log, and header conversion.
 
 use alloy_primitives::{Signature, U256};
-use alloy_rpc_types_eth::{Log, TransactionInfo};
 use base_common_consensus::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
     transaction::Recovered,
 };
 use base_common_rpc_types::{
-    BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest,
+    BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest, Log,
+    TransactionInfo,
 };
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmEnvFor, TxEnvFor};
@@ -58,7 +58,7 @@ where
     pub fn fill_pending(
         &self,
         tx: Recovered<BaseTxEnvelope>,
-    ) -> Result<base_common_rpc_types::Transaction, BaseEthApiError> {
+    ) -> Result<base_common_rpc_types::BaseTransaction, BaseEthApiError> {
         self.fill(tx, TransactionInfo::default())
     }
 
@@ -67,11 +67,11 @@ where
         &self,
         tx: Recovered<BaseTxEnvelope>,
         tx_info: TransactionInfo,
-    ) -> Result<base_common_rpc_types::Transaction, BaseEthApiError> {
+    ) -> Result<base_common_rpc_types::BaseTransaction, BaseEthApiError> {
         let (tx, signer) = tx.into_parts();
         let tx_info = self.mapper.try_map(&tx, tx_info)?;
 
-        Ok(base_common_rpc_types::Transaction::from_transaction(
+        Ok(base_common_rpc_types::BaseTransaction::from_transaction(
             Recovered::new_unchecked(tx, signer),
             tx_info,
         ))
@@ -132,7 +132,7 @@ where
         header: reth_primitives_traits::SealedHeader,
         block_size: usize,
     ) -> Result<BaseHeaderResponse, BaseEthApiError> {
-        Ok(BaseHeaderResponse::new(alloy_rpc_types_eth::Header::from_consensus(
+        Ok(BaseHeaderResponse::new(base_common_rpc_types::Header::from_consensus(
             header.into(),
             None,
             Some(U256::from(block_size)),

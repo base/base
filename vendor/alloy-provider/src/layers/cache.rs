@@ -6,12 +6,12 @@ use alloy_network_primitives::TransactionResponse;
 use alloy_primitives::{
     Address, B256, Bytes, StorageKey, StorageValue, TxHash, U64, U256, keccak256,
 };
-use alloy_rpc_types_eth::{
+use alloy_transport::{TransportErrorKind, TransportResult};
+use base_common_network::Network;
+use base_common_rpc_types::{
     BlockNumberOrTag, EIP1186AccountProofResponse, Filter, Log, StorageValuesRequest,
     StorageValuesResponse,
 };
-use alloy_transport::{TransportErrorKind, TransportResult};
-use base_common_network::Network;
 use lru_0_18_2::LruCache;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -600,9 +600,9 @@ impl SharedCache {
 mod tests {
     use alloy_node_bindings::{Anvil, utils::run_with_tempdir};
     use alloy_primitives::{Bytes, FixedBytes, b256, bytes, hex, utils::Unit};
-    use alloy_rpc_types_eth::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
     use alloy_transport::mock::Asserter;
     use base_common_network::TransactionBuilder;
+    use base_common_rpc_types::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
 
     use super::*;
     use crate::ProviderBuilder;

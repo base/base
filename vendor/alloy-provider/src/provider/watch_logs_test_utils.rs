@@ -9,13 +9,13 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_network_primitives::HeaderResponse;
 use alloy_primitives::{B256, U64};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{Block, Filter, Log};
 use alloy_transport::{
     TransportError, TransportFut,
     layers::{RetryBackoffLayer, RetryPolicy},
 };
 use base_common_consensus::BlockHeader;
 use base_common_network::BlockResponse as _;
+use base_common_rpc_types::{Block, Filter, Log};
 
 use crate::{BlockLogs, Provider, ProviderBuilder};
 

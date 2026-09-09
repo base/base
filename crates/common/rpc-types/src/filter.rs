@@ -23,14 +23,13 @@ use crate::{BlockNumberOrTag, Log as RpcLog, Transaction};
 /// position is serialized as `null`; trailing empty positions are omitted. The [`Filter`]
 /// deserializer normalizes `null`, an empty array, or a topic array containing `null` to this
 /// wildcard representation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "HashSet<T>"))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(from = "HashSet<T>")]
 pub struct FilterSet<T: Eq + Hash> {
     set: HashSet<T>,
 
     #[cfg(feature = "std")]
-    #[cfg_attr(feature = "serde", serde(skip, default))]
+    #[serde(skip, default)]
     bloom_filter: std::sync::OnceLock<BloomFilter>,
 }
 
@@ -442,7 +441,7 @@ impl Filter {
     /// Match only a specific block
     ///
     /// ```rust
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(69u64);
     /// # }
@@ -452,8 +451,8 @@ impl Filter {
     /// Match the latest block only
     ///
     /// ```rust
-    /// # use alloy_rpc_types_eth::BlockNumberOrTag;
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::BlockNumberOrTag;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(BlockNumberOrTag::Latest);
     /// # }
@@ -463,7 +462,7 @@ impl Filter {
     ///
     /// ```rust
     /// # use alloy_primitives::B256;
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(B256::ZERO);
     /// # }
@@ -473,7 +472,7 @@ impl Filter {
     /// Match a range of blocks
     ///
     /// ```rust
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(0u64..=100u64);
     /// # }
@@ -482,7 +481,7 @@ impl Filter {
     /// Match all blocks in range `(1337..BlockNumberOrTag::Latest)`
     ///
     /// ```rust
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(1337u64..);
     /// # }
@@ -491,7 +490,7 @@ impl Filter {
     /// Match all blocks in range `(BlockNumberOrTag::Earliest..1337)`
     ///
     /// ```rust
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new().select(..=1337u64);
     /// # }
@@ -557,7 +556,7 @@ impl Filter {
     ///
     /// ```rust
     /// # use alloy_primitives::Address;
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let filter = Filter::new()
     ///     .address("0xAc4b3DacB91461209Ae9d41EC517c2B9Cb1B7DAF".parse::<Address>().unwrap());
@@ -569,7 +568,7 @@ impl Filter {
     ///
     /// ```rust
     /// # use alloy_primitives::Address;
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # fn main() {
     /// let addresses = vec![
     ///     "0xAc4b3DacB91461209Ae9d41EC517c2B9Cb1B7DAF".parse::<Address>().unwrap(),
@@ -919,7 +918,7 @@ impl Filter {
     /// # Example
     ///
     /// ```no_run
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use crate::Filter;
     /// # use base_common_consensus::Receipt;
     /// # use alloy_primitives::{Address, Log, B256};
     /// # fn example(receipts: Vec<Vec<Receipt>>) {
@@ -945,7 +944,6 @@ impl Filter {
     }
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for Filter {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -987,7 +985,6 @@ impl serde::Serialize for Filter {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for Filter {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1151,7 +1148,6 @@ impl From<Vec<B256>> for ValueOrArray<B256> {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<T> serde::Serialize for ValueOrArray<T>
 where
     T: serde::Serialize,
@@ -1167,7 +1163,6 @@ where
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'a, T> serde::Deserialize<'a> for ValueOrArray<T>
 where
     T: serde::de::DeserializeOwned,
@@ -1201,12 +1196,11 @@ where
 /// Response of the `eth_getFilterChanges` RPC.
 ///
 /// `T` is the transaction response type and `L` is the log response type.
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Default, Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
 pub enum FilterChanges<T = Transaction, L = RpcLog> {
     /// Empty result.
-    #[cfg_attr(feature = "serde", serde(with = "empty_array"))]
+    #[serde(with = "empty_array")]
     #[default]
     Empty,
     /// New logs.
@@ -1272,7 +1266,6 @@ impl<T, L> FilterChanges<T, L> {
     }
 }
 
-#[cfg(feature = "serde")]
 mod empty_array {
     use serde::{Serialize, Serializer};
 
@@ -1284,7 +1277,6 @@ mod empty_array {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'de, T, L> serde::Deserialize<'de> for FilterChanges<T, L>
 where
     T: serde::Deserialize<'de>,
@@ -1331,9 +1323,8 @@ where
 }
 
 /// Owned equivalent of a `SubscriptionId`
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum FilterId {
     /// Numeric id
     Num(u64),
@@ -1368,7 +1359,6 @@ pub enum PendingTransactionFilterKind {
     Full,
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for PendingTransactionFilterKind {
     /// Serializes the `PendingTransactionFilterKind` into a boolean value:
     /// - `false` for `Hashes`
@@ -1384,7 +1374,6 @@ impl serde::Serialize for PendingTransactionFilterKind {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'a> serde::Deserialize<'a> for PendingTransactionFilterKind {
     /// Deserializes a boolean value into `PendingTransactionFilterKind`:
     /// - `false` becomes `Hashes`
@@ -1598,13 +1587,11 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{LogData, bloom};
-    #[cfg(feature = "serde")]
     use serde_json::json;
     use similar_asserts::assert_eq;
 
     use super::*;
 
-    #[cfg(feature = "serde")]
     fn serialize<T: serde::Serialize>(t: &T) -> serde_json::Value {
         serde_json::to_value(t).expect("Failed to serialize value")
     }
@@ -1624,7 +1611,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn filter_changes_supports_custom_logs() {
         #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
         struct CustomLog {
@@ -1666,7 +1653,7 @@ mod tests {
 
     // <https://hoodi.etherscan.io/block/400001>
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_any_addresses() {
         let s = r#"{
             "fromBlock": "0x61A80",
@@ -1692,7 +1679,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_empty_filter_topics_list() {
         let s = r#"{"fromBlock": "0xfc359e", "toBlock": "0xfc359e", "topics": [["0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"], [], ["0x0000000000000000000000000c17e776cd218252adfca8d4e761d3fe757e9778"]]}"#;
         let filter = serde_json::from_str::<Filter>(s).unwrap();
@@ -1739,7 +1726,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_block_hash() {
         let s =
             r#"{"blockHash":"0x58dc57ab582b282c143424bd01e8d923cddfdcda9455bad02a29522f6274a948"}"#;
@@ -1755,7 +1742,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_filter_topics_middle_wildcard() {
         let s = r#"{"fromBlock": "0xfc359e", "toBlock": "0xfc359e", "topics": [["0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"], [], [null, "0x0000000000000000000000000c17e776cd218252adfca8d4e761d3fe757e9778"]]}"#;
         let filter = serde_json::from_str::<Filter>(s).unwrap();
@@ -1774,7 +1761,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn can_serde_value_or_array() {
         #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
         struct Item {
@@ -1793,7 +1780,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn filter_serialization_test() {
         let t1 = "0000000000000000000000009729a6fbefefc8f6005933898b13dc45c3a2c8b7"
             .parse::<B256>()
@@ -1996,7 +1983,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn can_convert_to_ethers_filter() {
         let json = json!(
                     {
@@ -2043,7 +2030,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn can_convert_to_ethers_filter_with_null_fields() {
         let json = json!(
                     {
@@ -2069,7 +2056,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_filter_with_null_range_block() {
         let json = json!(
                     {
@@ -2093,7 +2080,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_filter_with_null_block_hash() {
         let json = json!(
                     {
@@ -2113,7 +2100,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_filter_with_null_block_hash_and_null_from_block() {
         let json = json!(
                     {
@@ -2133,7 +2120,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_filter_with_null_block_hash_and_null_to_block() {
         let json = json!(
                     {

@@ -18,11 +18,11 @@ pub use request::{BaseTransactionRequest, Eip8130AuthScheme, Eip8130RequestField
 )]
 #[cfg_attr(all(any(test, feature = "arbitrary"), feature = "k256"), derive(arbitrary::Arbitrary))]
 #[serde(try_from = "tx_serde::TransactionSerdeHelper", into = "tx_serde::TransactionSerdeHelper")]
-pub struct Transaction {
-    /// Ethereum Transaction Types
+pub struct BaseTransaction {
+    /// Ethereum BaseTransaction Types
     #[deref]
     #[deref_mut]
-    pub inner: alloy_rpc_types_eth::Transaction<BaseTxEnvelope>,
+    pub inner: crate::Transaction<BaseTxEnvelope>,
 
     /// Full block timestamp in milliseconds when sub-second timing is available.
     pub block_timestamp_ms: Option<u64>,
@@ -34,13 +34,13 @@ pub struct Transaction {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl Transaction {
-    /// Converts a consensus `tx` with an additional context `tx_info` into an RPC [`Transaction`].
+impl BaseTransaction {
+    /// Converts a consensus `tx` with an additional context `tx_info` into an RPC [`BaseTransaction`].
     pub fn from_transaction(tx: Recovered<BaseTxEnvelope>, tx_info: BaseTransactionInfo) -> Self {
         let base_fee = tx_info.inner.base_fee;
         let effective_gas_price = if tx.is_deposit() {
             // For deposits, we must always set the `gasPrice` field to 0 in rpc
-            // deposit tx don't have a gas price field, but serde of `Transaction` will take care of
+            // deposit tx don't have a gas price field, but serde of `BaseTransaction` will take care of
             // it
             0
         } else {
@@ -52,7 +52,7 @@ impl Transaction {
         };
 
         Self {
-            inner: alloy_rpc_types_eth::Transaction {
+            inner: crate::Transaction {
                 inner: tx,
                 block_hash: tx_info.inner.block_hash,
                 block_number: tx_info.inner.block_number,
@@ -67,13 +67,13 @@ impl Transaction {
     }
 }
 
-impl Typed2718 for Transaction {
+impl Typed2718 for BaseTransaction {
     fn ty(&self) -> u8 {
         self.inner.ty()
     }
 }
 
-impl TransactionTrait for Transaction {
+impl TransactionTrait for BaseTransaction {
     fn chain_id(&self) -> Option<ChainId> {
         self.inner.chain_id()
     }
@@ -147,7 +147,7 @@ impl TransactionTrait for Transaction {
     }
 }
 
-impl alloy_network_primitives::TransactionResponse for Transaction {
+impl alloy_network_primitives::TransactionResponse for BaseTransaction {
     fn tx_hash(&self) -> alloy_primitives::TxHash {
         self.inner.tx_hash()
     }
@@ -196,18 +196,18 @@ impl TryFrom<BaseTransactionFields> for OtherFields {
     }
 }
 
-impl AsRef<BaseTxEnvelope> for Transaction {
+impl AsRef<BaseTxEnvelope> for BaseTransaction {
     fn as_ref(&self) -> &BaseTxEnvelope {
         self.inner.as_ref()
     }
 }
 
 mod tx_serde {
-    //! Helper module for serializing and deserializing Base [`Transaction`].
+    //! Helper module for serializing and deserializing Base [`BaseTransaction`].
     //!
     //! This is needed because we might need to deserialize the `from` field into both
     //! [`base_common_consensus::transaction::Recovered::signer`] which resides in
-    //! [`alloy_rpc_types_eth::Transaction::inner`] and [`base_common_consensus::TxDeposit::from`].
+    //! [`crate::Transaction::inner`] and [`base_common_consensus::TxDeposit::from`].
     //!
     //! Additionally, we need similar logic for the `gasPrice` field
     use base_common_consensus::{
@@ -215,7 +215,7 @@ mod tx_serde {
     };
     use serde::{Deserialize, Serialize, de::Error};
 
-    use super::{Address, BlockHash, Transaction};
+    use super::{Address, BaseTransaction, BlockHash};
 
     /// Helper struct which will be flattened into the transaction and will only contain `from`
     /// field if inner [`BaseTxEnvelope`] did not consume it.
@@ -273,11 +273,11 @@ mod tx_serde {
         other: OptionalFields,
     }
 
-    impl From<Transaction> for TransactionSerdeHelper {
-        fn from(value: Transaction) -> Self {
-            let Transaction {
+    impl From<BaseTransaction> for TransactionSerdeHelper {
+        fn from(value: BaseTransaction) -> Self {
+            let BaseTransaction {
                 inner:
-                    alloy_rpc_types_eth::Transaction {
+                    crate::Transaction {
                         inner,
                         block_hash,
                         block_number,
@@ -309,7 +309,7 @@ mod tx_serde {
         }
     }
 
-    impl TryFrom<TransactionSerdeHelper> for Transaction {
+    impl TryFrom<TransactionSerdeHelper> for BaseTransaction {
         type Error = serde_json::Error;
 
         fn try_from(value: TransactionSerdeHelper) -> Result<Self, Self::Error> {
@@ -341,7 +341,7 @@ mod tx_serde {
             let effective_gas_price = other.effective_gas_price.or_else(|| inner.gas_price());
 
             Ok(Self {
-                inner: alloy_rpc_types_eth::Transaction {
+                inner: crate::Transaction {
                     inner: Recovered::new_unchecked(inner, from),
                     block_hash,
                     block_number,
@@ -372,7 +372,7 @@ mod tests {
         // 0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9
         let rpc_tx = r#"{"blockHash":"0x9d86bb313ebeedf4f9f82bf8a19b426be656a365648a7c089b618771311db9f9","blockNumber":"0x798ad0b","hash":"0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9","transactionIndex":"0x0","type":"0x7e","nonce":"0x152ea95","input":"0x440a5e200000146b000f79c50000000000000003000000006725333f000000000141e287000000000000000000000000000000000000000000000000000000012439ee7e0000000000000000000000000000000000000000000000000000000063f363e973e96e7145ff001c81b9562cba7b6104eeb12a2bc4ab9f07c27d45cd81a986620000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985","mint":"0x0","sourceHash":"0x04e9a69416471ead93b02f0c279ab11ca0b635db5c1726a56faf22623bafde52","r":"0x0","s":"0x0","v":"0x0","yParity":"0x0","gas":"0xf4240","from":"0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001","to":"0x4200000000000000000000000000000000000015","depositReceiptVersion":"0x1","value":"0x0","gasPrice":"0x0"}"#;
 
-        let tx = serde_json::from_str::<Transaction>(rpc_tx).unwrap();
+        let tx = serde_json::from_str::<BaseTransaction>(rpc_tx).unwrap();
 
         let BaseTxEnvelope::Deposit(inner) = tx.as_ref() else {
             panic!("Expected deposit transaction");
@@ -416,7 +416,7 @@ mod tests {
         // default-feature `cargo test` build working.
         let recovered = Recovered::new_unchecked(envelope, Address::with_last_byte(0x11));
         let tx_info = BaseTransactionInfo {
-            inner: alloy_rpc_types_eth::TransactionInfo {
+            inner: crate::TransactionInfo {
                 hash: Some(B256::repeat_byte(0x42)),
                 block_hash: Some(B256::repeat_byte(0x01)),
                 block_number: Some(100),
@@ -427,7 +427,7 @@ mod tests {
             deposit_meta: Default::default(),
             block_timestamp_ms: Some(1_700_000_000_200),
         };
-        let rpc_tx = Transaction::from_transaction(recovered, tx_info);
+        let rpc_tx = BaseTransaction::from_transaction(recovered, tx_info);
 
         assert_eq!(rpc_tx.ty(), 0x79);
         assert_eq!(rpc_tx.deposit_nonce, None);

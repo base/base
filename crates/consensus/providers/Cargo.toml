@@ -48,7 +48,7 @@ alloy-transport-http = { workspace = true, features = ["default", "reqwest", "re
 
 [dev-dependencies]
 reth-db-common = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
+base-common-rpc-types = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 httpmock = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

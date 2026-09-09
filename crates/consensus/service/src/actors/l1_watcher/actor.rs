@@ -11,11 +11,11 @@ use std::{
 
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
-use alloy_rpc_types_eth::{Filter, Log};
 use async_trait::async_trait;
 use base_common_genesis::{
     RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
 };
+use base_common_rpc_types::{Filter, Log};
 use base_protocol::BlockInfo;
 use futures::{Stream, StreamExt};
 use tokio::{
@@ -347,9 +347,9 @@ mod tests {
 
     use alloy_eips::BlockId;
     use alloy_primitives::B256;
-    use alloy_rpc_types_eth::{Block, Filter, Log};
     use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
+    use base_common_rpc_types::{Block, Filter, Log};
     use tokio_util::sync::CancellationToken;
 
     use super::*;

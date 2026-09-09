@@ -6,12 +6,13 @@ use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
-use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, Ethereum, Network};
-use base_common_rpc_types::Transaction as BaseTransaction;
+use base_common_rpc_types::{
+    BaseTransaction, Block, EIP1186AccountProofResponse, Transaction as EthTransaction,
+};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,

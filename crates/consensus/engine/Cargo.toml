@@ -33,10 +33,9 @@ tokio = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
+base-common-rpc-types = {workspace = true, features = ["default", "std"]}
 base-common-rpc-types-engine = {workspace = true, features = ["serde", "std"]}
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }

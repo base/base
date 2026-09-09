@@ -2,11 +2,11 @@ use std::marker::PhantomData;
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, U64, U256};
-use alloy_rpc_types_eth::{
+use base_common_network::Network;
+use base_common_rpc_types::{
     AccessListResult, EIP1186AccountProofResponse, StorageValuesRequest, StorageValuesResponse,
     simulate::{SimulatePayload, SimulatedBlock},
 };
-use base_common_network::Network;
 
 use crate::{EthCall, Provider, ProviderLayer, RootProvider, RpcWithBlock};
 
@@ -102,7 +102,7 @@ impl<P: Provider<N>, N: Network> Provider<N> for BlockIdProvider<P, N> {
     fn get_account_info(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, alloy_rpc_types_eth::AccountInfo> {
+    ) -> RpcWithBlock<Address, base_common_rpc_types::AccountInfo> {
         self.inner.get_account_info(address).block_id(self.block_id)
     }
 

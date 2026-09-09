@@ -30,14 +30,15 @@ serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
+
 [features]
 default = []
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

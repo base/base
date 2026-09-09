@@ -5,11 +5,10 @@ use std::time::Duration;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer::SignerSync;
 use base_common_consensus::SignableTransaction;
 use base_common_network::{Base, PrivateKeySigner, TransactionBuilder};
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseTransactionRequest, BlockNumberOrTag};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
     SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,

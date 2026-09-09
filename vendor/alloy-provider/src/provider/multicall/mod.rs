@@ -1,9 +1,9 @@
 //! A Multicall Builder
 
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, address};
-use alloy_rpc_types_eth::{BlockId, TransactionInputKind, state::StateOverride};
 use alloy_sol_types::SolCall;
 use base_common_network::{Network, TransactionBuilder};
+use base_common_rpc_types::{BlockId, TransactionInputKind, state::StateOverride};
 use bindings::IMulticall3::{
     Call, Call3, Call3Value, blockAndAggregateCall, blockAndAggregateReturn,
     tryBlockAndAggregateCall, tryBlockAndAggregateReturn,

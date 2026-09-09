@@ -1,6 +1,6 @@
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_rpc_types_eth::BlockId;
 use async_trait::async_trait;
+use base_common_rpc_types::BlockId;
 
 use super::{EthClient, HeaderSummary};
 

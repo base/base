@@ -6,9 +6,9 @@ use std::{
 
 use alloy_eips::eip4844::BLOB_TX_MIN_BLOB_GASPRICE;
 use alloy_json_rpc::RpcError;
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport::TransportResult;
 use base_common_network::{Network, TransactionBuilder, TransactionBuilder4844};
+use base_common_rpc_types::BlockNumberOrTag;
 use futures::FutureExt;
 
 use crate::{
@@ -57,7 +57,7 @@ pub enum GasFillable {
 ///
 /// ```
 /// # use base_common_network::{Ethereum};
-/// # use alloy_rpc_types_eth::TransactionRequest;
+/// # use base_common_rpc_types::TransactionRequest;
 /// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
 /// # use base_common_network::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
@@ -345,9 +345,9 @@ where
 mod tests {
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
     use alloy_primitives::{U256, address};
-    use alloy_rpc_types_eth::TransactionRequest;
     use base_common_consensus::{SidecarBuilder, SimpleCoder, Transaction};
     use base_common_network::Ethereum;
+    use base_common_rpc_types::TransactionRequest;
 
     use super::*;
     use crate::ProviderBuilder;

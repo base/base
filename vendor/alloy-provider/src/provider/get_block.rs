@@ -5,10 +5,10 @@ use alloy_json_rpc::RpcRecv;
 use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::{Address, B64, B256, BlockHash};
 use alloy_rpc_client::{ClientRef, RpcCall};
-#[cfg(feature = "pubsub")]
-use alloy_rpc_types_eth::pubsub::SubscriptionKind;
 use alloy_transport::{TransportError, TransportResult};
 use base_common_network::BlockResponse;
+#[cfg(feature = "pubsub")]
+use base_common_rpc_types::pubsub::SubscriptionKind;
 use either::Either;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -490,7 +490,7 @@ impl<N: base_common_network::Network> SubFullBlocks<N> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_rpc_types_eth::Block;
+    use base_common_rpc_types::Block;
 
     use super::*;
     use crate::{Provider, ProviderBuilder};

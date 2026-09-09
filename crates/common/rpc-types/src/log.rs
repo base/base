@@ -1,76 +1,282 @@
-//! Types related to logs for Base chains.
+use alloc::vec::Vec;
 
-use alloy_primitives::Log as PrimitiveLog;
-use alloy_rpc_types_eth::Log;
-use serde::{Deserialize, Serialize};
+use alloy_primitives::{Address, B256, BlockHash, LogData, TxHash};
+use base_common_consensus::transaction::TransactionMeta;
 
-/// Base log response with an optional full block timestamp in milliseconds.
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    derive_more::Deref,
-    derive_more::DerefMut,
-)]
+/// Ethereum Log emitted by a transaction
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "camelCase")]
-pub struct BaseLogResponse {
-    /// Standard Ethereum log response.
-    #[deref]
-    #[deref_mut]
+pub struct Log<T = LogData> {
     #[serde(flatten)]
-    pub inner: Log,
-    /// Full Unix timestamp in milliseconds when sub-second timing is available.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub block_timestamp_ms: Option<u64>,
+    /// Consensus log object
+    pub inner: alloy_primitives::Log<T>,
+    /// Hash of the block the transaction that emitted this log was mined in
+    pub block_hash: Option<BlockHash>,
+    /// Number of the block the transaction that emitted this log was mined in
+    #[serde(with = "alloy_serde::quantity::opt")]
+    pub block_number: Option<u64>,
+    /// The block timestamp in Unix seconds, as proposed in:
+    /// <https://ethereum-magicians.org/t/proposal-for-adding-blocktimestamp-to-logs-object-returned-by-eth-getlogs-and-related-requests>
+    /// <https://github.com/ethereum/execution-apis/issues/295>
+    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt", default)]
+    pub block_timestamp: Option<u64>,
+    /// Transaction Hash
+    #[doc(alias = "tx_hash")]
+    pub transaction_hash: Option<TxHash>,
+    /// Index of the Transaction in the block
+    #[serde(with = "alloy_serde::quantity::opt")]
+    #[doc(alias = "tx_index")]
+    pub transaction_index: Option<u64>,
+    /// Log Index in Block
+    #[serde(with = "alloy_serde::quantity::opt")]
+    pub log_index: Option<u64>,
+    /// Whether a previously emitted log was removed from the canonical chain by a reorganization.
+    ///
+    /// Subscription consumers should reverse any effects previously attributed to a removed log.
+    #[serde(default)]
+    pub removed: bool,
 }
 
-impl AsRef<PrimitiveLog> for BaseLogResponse {
-    fn as_ref(&self) -> &PrimitiveLog {
-        self.inner.as_ref()
+impl<T> Log<T> {
+    /// Getter for the address field. Shortcut for `log.inner.address`.
+    pub const fn address(&self) -> Address {
+        self.inner.address
+    }
+
+    /// Getter for the data field. Shortcut for `log.inner.data`.
+    pub const fn data(&self) -> &T {
+        &self.inner.data
+    }
+
+    /// Consumes the type and returns the wrapped [`alloy_primitives::Log`]
+    pub fn into_inner(self) -> alloy_primitives::Log<T> {
+        self.inner
     }
 }
 
-impl From<Log> for BaseLogResponse {
-    fn from(inner: Log) -> Self {
-        Self { inner, block_timestamp_ms: None }
+impl Log<LogData> {
+    /// Getter for the topics field. Shortcut for `log.inner.topics()`.
+    pub fn topics(&self) -> &[B256] {
+        self.inner.topics()
+    }
+
+    /// Getter for the topic0 field.
+    #[doc(alias = "event_signature")]
+    pub fn topic0(&self) -> Option<&B256> {
+        self.inner.topics().first()
+    }
+
+    /// Get the topic list, mutably. This gives access to the internal
+    /// array, without allowing extension of that array. Shortcut for
+    /// [`LogData::topics_mut`]
+    pub fn topics_mut(&mut self) -> &mut [B256] {
+        self.inner.data.topics_mut()
+    }
+
+    /// Decode the log data into a typed log.
+    pub fn log_decode<T: alloy_sol_types::SolEvent>(&self) -> alloy_sol_types::Result<Log<T>> {
+        let decoded = T::decode_log(&self.inner)?;
+        Ok(Log {
+            inner: decoded,
+            block_hash: self.block_hash,
+            block_number: self.block_number,
+            block_timestamp: self.block_timestamp,
+            transaction_hash: self.transaction_hash,
+            transaction_index: self.transaction_index,
+            log_index: self.log_index,
+            removed: self.removed,
+        })
+    }
+
+    /// Decode the log data with validation into a typed log.
+    pub fn log_decode_validate<T: alloy_sol_types::SolEvent>(
+        &self,
+    ) -> alloy_sol_types::Result<Log<T>> {
+        let decoded = T::decode_log_validate(&self.inner)?;
+        Ok(Log {
+            inner: decoded,
+            block_hash: self.block_hash,
+            block_number: self.block_number,
+            block_timestamp: self.block_timestamp,
+            transaction_hash: self.transaction_hash,
+            transaction_index: self.transaction_index,
+            log_index: self.log_index,
+            removed: self.removed,
+        })
+    }
+
+    /// Creates a collection of RPC logs from transaction receipt logs.
+    ///
+    /// This function takes raw consensus logs and enriches them with RPC metadata
+    /// needed for API responses, including block information and proper indexing.
+    ///
+    /// # Arguments
+    ///
+    /// * `previous_log_count` - The total number of logs from previous transactions in the same
+    ///   block. Used to calculate the correct `log_index` for each log.
+    /// * `meta` - Transaction metadata containing block hash, number, timestamp, and transaction
+    ///   information needed to populate the RPC log fields.
+    /// * `logs` - An iterator of consensus logs to be converted into RPC logs.
+    ///
+    /// # Returns
+    ///
+    /// A vector of RPC logs with all metadata fields populated, ready to be included in the
+    /// transaction receipt.
+    pub fn collect_for_receipt<I, T>(
+        previous_log_count: usize,
+        meta: TransactionMeta,
+        logs: I,
+    ) -> Vec<Log<T>>
+    where
+        I: IntoIterator<Item = alloy_primitives::Log<T>>,
+    {
+        logs.into_iter()
+            .enumerate()
+            .map(|(tx_log_idx, log)| Log {
+                inner: log,
+                block_hash: Some(meta.block_hash),
+                block_number: Some(meta.block_number),
+                block_timestamp: Some(meta.timestamp),
+                transaction_hash: Some(meta.tx_hash),
+                transaction_index: Some(meta.index),
+                log_index: Some((previous_log_count + tx_log_idx) as u64),
+                removed: false,
+            })
+            .collect()
+    }
+}
+
+impl<T> alloy_rlp::Encodable for Log<T>
+where
+    for<'a> &'a T: Into<LogData>,
+{
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        self.reserialize_inner().encode(out)
+    }
+
+    fn length(&self) -> usize {
+        self.reserialize_inner().length()
+    }
+}
+
+impl<T> Log<T>
+where
+    for<'a> &'a T: Into<LogData>,
+{
+    /// Reserialize the inner data, returning an [`alloy_primitives::Log`].
+    pub fn reserialize_inner(&self) -> alloy_primitives::Log {
+        alloy_primitives::Log { address: self.inner.address, data: (&self.inner.data).into() }
+    }
+
+    /// Reserialize the data, returning a new `Log` object wrapping an
+    /// [`alloy_primitives::Log`]. this copies the log metadata, preserving
+    /// the original object.
+    pub fn reserialize(&self) -> Log<LogData> {
+        Log {
+            inner: self.reserialize_inner(),
+            block_hash: self.block_hash,
+            block_number: self.block_number,
+            block_timestamp: self.block_timestamp,
+            transaction_hash: self.transaction_hash,
+            transaction_index: self.transaction_index,
+            log_index: self.log_index,
+            removed: self.removed,
+        }
+    }
+}
+
+impl<T> AsRef<alloy_primitives::Log<T>> for Log<T> {
+    fn as_ref(&self) -> &alloy_primitives::Log<T> {
+        &self.inner
+    }
+}
+
+impl<T> AsMut<alloy_primitives::Log<T>> for Log<T> {
+    fn as_mut(&mut self) -> &mut alloy_primitives::Log<T> {
+        &mut self.inner
+    }
+}
+
+impl<T> AsRef<T> for Log<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner.data
+    }
+}
+
+impl<T> AsMut<T> for Log<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.inner.data
+    }
+}
+
+impl<L> From<Log<L>> for alloy_primitives::Log<L> {
+    fn from(value: Log<L>) -> Self {
+        value.into_inner()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use alloy_primitives::{Address, Bytes};
+    use arbitrary::Arbitrary;
+    use base_common_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
+    use rand_08::Rng;
+    use similar_asserts::assert_eq;
 
     use super::*;
 
+    const fn assert_tx_receipt<T: TxReceipt>() {}
+
     #[test]
-    fn block_timestamp_ms_is_optional_quantity() {
-        let log =
-            BaseLogResponse { block_timestamp_ms: Some(1_700_000_000_200), ..Default::default() };
+    const fn assert_receipt() {
+        assert_tx_receipt::<ReceiptWithBloom<Receipt<Log>>>();
+    }
 
-        let value = serde_json::to_value(&log).unwrap();
-        assert_eq!(value["blockTimestampMs"], "0x18bcfe568c8");
+    #[test]
+    fn log_arbitrary() {
+        let mut bytes = [0u8; 1024];
+        rand_08::thread_rng().fill(bytes.as_mut_slice());
 
-        let round_trip: BaseLogResponse = serde_json::from_value(value).unwrap();
-        assert_eq!(round_trip.block_timestamp_ms, Some(1_700_000_000_200));
+        let _: Log = Log::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+    }
 
+    #[test]
+
+    fn serde_log() {
+        let mut log = Log {
+            inner: alloy_primitives::Log {
+                address: Address::with_last_byte(0x69),
+                data: alloy_primitives::LogData::new_unchecked(
+                    vec![B256::with_last_byte(0x69)],
+                    Bytes::from_static(&[0x69]),
+                ),
+            },
+            block_hash: Some(B256::with_last_byte(0x69)),
+            block_number: Some(0x69),
+            block_timestamp: None,
+            transaction_hash: Some(B256::with_last_byte(0x69)),
+            transaction_index: Some(0x69),
+            log_index: Some(0x69),
+            removed: false,
+        };
+        let serialized = serde_json::to_string(&log).unwrap();
         assert_eq!(
-            serde_json::to_value(BaseLogResponse::default()).unwrap(),
-            json!({
-                "address": "0x0000000000000000000000000000000000000000",
-                "topics": [],
-                "data": "0x",
-                "blockHash": null,
-                "blockNumber": null,
-                "transactionHash": null,
-                "transactionIndex": null,
-                "logIndex": null,
-                "removed": false
-            })
+            serialized,
+            r#"{"address":"0x0000000000000000000000000000000000000069","topics":["0x0000000000000000000000000000000000000000000000000000000000000069"],"data":"0x69","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000069","blockNumber":"0x69","transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000069","transactionIndex":"0x69","logIndex":"0x69","removed":false}"#
         );
+
+        let deserialized: Log = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(log, deserialized);
+
+        log.block_timestamp = Some(0x69);
+        let serialized = serde_json::to_string(&log).unwrap();
+        assert_eq!(
+            serialized,
+            r#"{"address":"0x0000000000000000000000000000000000000069","topics":["0x0000000000000000000000000000000000000000000000000000000000000069"],"data":"0x69","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000069","blockNumber":"0x69","blockTimestamp":"0x69","transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000069","transactionIndex":"0x69","logIndex":"0x69","removed":false}"#
+        );
+
+        let deserialized: Log = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(log, deserialized);
     }
 }

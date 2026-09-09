@@ -5,10 +5,6 @@ use alloy_primitives::{
     Address, B256, BlockHash, Bytes,
     map::{HashMap, HashSet},
 };
-use alloy_rpc_types_eth::{
-    BlockOverrides, Index,
-    state::{EvmOverrides, StateOverride},
-};
 use alloy_rpc_types_trace::{
     filter::TraceFilter,
     opcode::{BlockOpcodeGas, TransactionOpcodeGas},
@@ -17,7 +13,10 @@ use alloy_rpc_types_trace::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BlockHeader as _;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{
+    BaseTransactionRequest, BlockOverrides, Index,
+    state::{EvmOverrides, StateOverride},
+};
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;

@@ -3,9 +3,8 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use alloy_primitives::{B512, U256};
 
 /// Syncing info
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncInfo {
     /// Starting block
     pub starting_block: U256,
@@ -19,26 +18,24 @@ pub struct SyncInfo {
     pub warp_chunks_processed: Option<U256>,
     /// The details of the sync stages as a list of entries; each `Stage` contains the
     /// stage name and the latest processed block for that stage.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stages: Option<Vec<Stage>>,
 }
 
 /// The detail of the sync stages.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Stage {
     /// The name of the sync stage.
-    #[cfg_attr(feature = "serde", serde(alias = "stage_name"))]
+    #[serde(alias = "stage_name")]
     pub name: String,
     /// Indicates the progress of the sync stage.
-    #[cfg_attr(feature = "serde", serde(alias = "block_number", with = "alloy_serde::quantity"))]
+    #[serde(alias = "block_number", with = "alloy_serde::quantity")]
     pub block: u64,
 }
 
 /// Peers info
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Peers {
     /// Number of active peers
     pub active: usize,
@@ -51,8 +48,7 @@ pub struct Peers {
 }
 
 /// Peer connection information
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PeerInfo {
     /// Public node id
     pub id: Option<String>,
@@ -67,9 +63,8 @@ pub struct PeerInfo {
 }
 
 /// Peer network information
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PeerNetworkInfo {
     /// Remote endpoint address
     pub remote_address: String,
@@ -78,19 +73,17 @@ pub struct PeerNetworkInfo {
 }
 
 /// Peer protocols information
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PeerProtocolsInfo {
     /// Ethereum protocol information
     pub eth: Option<PeerEthProtocolInfo>,
     /// PIP protocol information.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pip: Option<PipProtocolInfo>,
 }
 
 /// Peer Ethereum protocol information
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PeerEthProtocolInfo {
     /// Negotiated ethereum protocol version
     pub version: u32,
@@ -101,8 +94,7 @@ pub struct PeerEthProtocolInfo {
 }
 
 /// Peer PIP protocol information
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PipProtocolInfo {
     /// Negotiated PIP protocol version
     pub version: u32,
@@ -121,7 +113,6 @@ pub enum SyncStatus {
     None,
 }
 
-#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for SyncStatus {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -145,7 +136,6 @@ impl<'de> serde::Deserialize<'de> for SyncStatus {
     }
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for SyncStatus {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -159,9 +149,8 @@ impl serde::Serialize for SyncStatus {
 }
 
 /// Propagation statistics for pending transaction.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 #[doc(alias = "TxStats")]
 pub struct TransactionStats {
     /// Block no this transaction was first seen.
@@ -171,9 +160,8 @@ pub struct TransactionStats {
 }
 
 /// Chain status.
-#[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChainStatus {
     /// Describes the gap in the blockchain, if there is one: (first, last)
     pub block_gap: Option<(U256, U256)>,
@@ -184,7 +172,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_sync_info_serialization() {
         let sync_info = SyncInfo {
             starting_block: U256::from(0x3cbed5),
@@ -206,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_peer_info_serialization() {
         let peer_info = PeerInfo {
             id: Some("peer_id_123".to_string()),
@@ -234,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_sync_status_serialization() {
         let sync_status = SyncStatus::Info(Box::new(SyncInfo {
             starting_block: U256::from(0x3cbed5),

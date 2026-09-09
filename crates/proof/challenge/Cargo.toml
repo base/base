@@ -40,10 +40,10 @@ alloy-trie = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 tokio-util = { workspace = true, features = ["default"] }
-alloy-rpc-types-eth = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, optional = false}
 alloy-provider = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
+base-common-rpc-types = { workspace = true, optional = true }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
@@ -56,7 +56,7 @@ base-challenger = { workspace = true, features = ["test-utils"] }
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
 test-utils = [
-    "alloy-rpc-types-eth",
+    "base-common-rpc-types",
     "async-trait",
     "base-protocol/test-utils",
     "base-runtime/test-utils",

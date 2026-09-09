@@ -9,9 +9,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
 use anyhow::{Context, Result, anyhow};
 use base_common_chains::ChainConfig;
+use base_common_rpc_types::SyncStatus as EthSyncStatus;
 use base_consensus_peers::{BootNode, NodeRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

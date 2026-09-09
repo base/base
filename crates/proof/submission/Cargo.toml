@@ -15,8 +15,8 @@ workspace = true
 thiserror = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 base-proof-contracts = { workspace = true }
+base-common-rpc-types = { workspace = true }
 [dev-dependencies]
 base-common-consensus = { workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt", "test-util"] }

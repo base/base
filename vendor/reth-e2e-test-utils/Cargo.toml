@@ -35,8 +35,8 @@ reth-rpc-builder = { workspace = true }
 reth-stages-types = { workspace = true }
 base-node-context = { workspace = true }
 reth-network-peers = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 reth-rpc-server-types = { workspace = true }
+base-common-rpc-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-chainspec = { workspace = true }

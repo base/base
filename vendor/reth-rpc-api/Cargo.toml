@@ -21,11 +21,11 @@ alloy-genesis = { workspace = true }
 alloy-json-rpc = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-network-peers = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
+base-common-rpc-types = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["alloc"] }

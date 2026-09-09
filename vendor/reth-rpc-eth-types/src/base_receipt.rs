@@ -4,7 +4,6 @@ use std::fmt::Debug;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
-use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
@@ -12,7 +11,8 @@ use base_common_consensus::{
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
-    BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
+    BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt,
+    TransactionReceiptFields,
 };
 use base_execution_chainspec::ChainSpecProvider;
 use reth_primitives_traits::SealedBlock;

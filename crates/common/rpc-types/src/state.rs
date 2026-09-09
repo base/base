@@ -136,45 +136,34 @@ impl From<StateOverridesBuilder> for StateOverride {
 /// this type does not enforce that constraint. `state` replaces the complete storage map, so
 /// unspecified slots read as zero, while `state_diff` changes only the listed slots. Storage keys
 /// and values are raw 32-byte EVM slot and value words.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(default, rename_all = "camelCase", deny_unknown_fields))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccountOverride {
     /// Fake balance to set for the account before executing the call, in wei.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balance: Option<U256>,
     /// Fake nonce to set for the account before executing the call.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt"
-        )
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub nonce: Option<u64>,
     /// Fake EVM bytecode to inject into the account before executing the call.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<Bytes>,
     /// Fake key-value mapping to override all slots in the account storage before executing the
     /// call.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<B256HashMap<B256>>,
     /// Fake key-value mapping to override individual slots in the account storage before executing
     /// the call.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_diff: Option<B256HashMap<B256>>,
     /// Moves addresses precompile into the specified address. This move is done before the 'code'
     /// override is set. When the specified address is not a precompile, the behaviour is undefined
     /// and different clients might behave differently.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            rename = "movePrecompileToAddress",
-            alias = "MovePrecompileToAddress"
-        )
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "movePrecompileToAddress",
+        alias = "MovePrecompileToAddress"
     )]
     pub move_precompile_to: Option<Address>,
 }
@@ -361,7 +350,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
     #[should_panic(expected = "invalid type")]
     fn test_invalid_json_structure() {
         let invalid_json = r#"{
@@ -374,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_large_values_in_override() {
         let large_values_json = r#"{
             "0x1234567890123456789012345678901234567890": {
@@ -391,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_state_override() {
         let s = r#"{
             "0x0000000000000000000000000000000000000124": {
@@ -405,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_state_override_state_diff() {
         let s = r#"{
                 "0x1b5212AF6b76113afD94cD2B5a78a73B7d7A8222": {

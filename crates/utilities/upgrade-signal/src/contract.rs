@@ -6,11 +6,11 @@ use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
 use backon::Retryable;
 use base_common_genesis::BaseUpgrade;
+use base_common_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use base_retry::RetryConfig;
 use futures::future::try_join;
 use reqwest::Client;
@@ -410,7 +410,7 @@ impl AlloyUpgradeSignalReader {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use alloy_rpc_types_eth::Block;
+    use base_common_rpc_types::Block;
     use httpmock::prelude::*;
 
     use super::*;

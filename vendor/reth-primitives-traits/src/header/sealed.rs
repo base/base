@@ -246,24 +246,24 @@ mod rpc_compat {
     use super::*;
 
     impl SealedHeader {
-        /// Converts this header into `alloy_rpc_types_eth::Header`.
+        /// Converts this header into `base_common_rpc_types::Header`.
         ///
         /// Note: This does not set the total difficulty or size of the block.
         #[inline]
-        pub fn into_rpc_header(self) -> alloy_rpc_types_eth::Header<Header> {
-            alloy_rpc_types_eth::Header::from_sealed(self.into())
+        pub fn into_rpc_header(self) -> base_common_rpc_types::Header<Header> {
+            base_common_rpc_types::Header::from_sealed(self.into())
         }
 
-        /// Converts an `alloy_rpc_types_eth::Header` into a `SealedHeader`.
+        /// Converts an `base_common_rpc_types::Header` into a `SealedHeader`.
         #[inline]
-        pub fn from_rpc_header(header: alloy_rpc_types_eth::Header<Header>) -> Self {
+        pub fn from_rpc_header(header: base_common_rpc_types::Header<Header>) -> Self {
             Self::new(header.inner, header.hash)
         }
     }
 
-    impl From<alloy_rpc_types_eth::Header<Header>> for SealedHeader {
+    impl From<base_common_rpc_types::Header<Header>> for SealedHeader {
         #[inline]
-        fn from(value: alloy_rpc_types_eth::Header<Header>) -> Self {
+        fn from(value: base_common_rpc_types::Header<Header>) -> Self {
             Self::from_rpc_header(value)
         }
     }

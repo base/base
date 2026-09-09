@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, BlockHash, Bytes, TxHash, U64, U256};
-use alloy_rpc_types_eth::BlockNumHash;
+use base_common_rpc_types::BlockNumHash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
 
 /// Different Trace diagnostic targets.

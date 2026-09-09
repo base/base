@@ -8,14 +8,13 @@ use alloy_primitives::{
 pub use base_common_consensus::TrieAccount as Account;
 
 /// Account information.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AccountInfo {
     /// Account balance
     pub balance: U256,
     /// Account nonce
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub nonce: u64,
     /// Account code
     pub code: Bytes,
@@ -46,10 +45,8 @@ impl AccountInfo {
 }
 
 /// Data structure with proof for one single storage-entry
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg(feature = "serde")]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EIP1186StorageProof {
     /// Storage key.
     pub key: alloy_serde::storage::JsonStorageKey,
@@ -59,7 +56,6 @@ pub struct EIP1186StorageProof {
     pub proof: Vec<Bytes>,
 }
 
-#[cfg(feature = "serde")]
 impl EIP1186StorageProof {
     /// Create a new `EIP1186StorageProof` instance.
     pub const fn new(
@@ -72,10 +68,8 @@ impl EIP1186StorageProof {
 }
 
 /// Response for EIP-1186 account proof `eth_getProof`
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg(feature = "serde")]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EIP1186AccountProofResponse {
     /// The account address.
     pub address: Address,
@@ -84,7 +78,7 @@ pub struct EIP1186AccountProofResponse {
     /// The hash of the code of the account.
     pub code_hash: B256,
     /// The account nonce.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub nonce: u64,
     /// The hash of the storage of the account.
     pub storage_hash: B256,
@@ -94,7 +88,6 @@ pub struct EIP1186AccountProofResponse {
     pub storage_proof: Vec<EIP1186StorageProof>,
 }
 
-#[cfg(feature = "serde")]
 impl EIP1186AccountProofResponse {
     /// After `SpuriousDragon` empty account is defined as account with nonce == 0 && balance == 0
     /// && bytecode = None (or hash is [`KECCAK_EMPTY`](base_common_consensus::constants::KECCAK_EMPTY)).
@@ -111,9 +104,8 @@ impl EIP1186AccountProofResponse {
 /// Maps contract addresses to the storage slot keys to read.
 ///
 /// See also <https://github.com/ethereum/execution-apis/issues/752>.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct StorageValuesRequest(pub AddressHashMap<Vec<StorageKey>>);
 
 impl StorageValuesRequest {
@@ -126,7 +118,7 @@ impl StorageValuesRequest {
     ///
     /// ```
     /// use alloy_primitives::{address, b256};
-    /// use alloy_rpc_types_eth::StorageValuesRequest;
+    /// use crate::StorageValuesRequest;
     ///
     /// let usdt = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
     /// let req = StorageValuesRequest::new().with_keys(
@@ -184,9 +176,8 @@ impl From<AddressHashMap<Vec<StorageKey>>> for StorageValuesRequest {
 /// corresponds positionally 1:1 with the input slots for that address.
 ///
 /// See also <https://github.com/ethereum/execution-apis/issues/752>.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct StorageValuesResponse(pub AddressHashMap<Vec<StorageValue>>);
 
 impl StorageValuesResponse {
@@ -233,24 +224,22 @@ impl From<AddressHashMap<Vec<StorageValue>>> for StorageValuesResponse {
 }
 
 /// Extended account information (used by `parity_allAccountInfo`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExtAccountInfo {
     /// Account name
     pub name: String,
     /// Account meta JSON
     pub meta: String,
     /// Account UUID (`None` for address book entries)
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
 }
 
 /// account derived from a signature
 /// as well as information that tells if it is valid for
 /// the current chain
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecoveredAccount {
     /// address of the recovered account
     pub address: Address,
@@ -263,7 +252,7 @@ pub struct RecoveredAccount {
 }
 
 #[test]
-#[cfg(feature = "serde")]
+
 fn test_eip_1186_account_without_storage_proof() {
     let response = r#"{
        "address":"0xc36442b4a4522e871399cd717abdd847ab11fe88",

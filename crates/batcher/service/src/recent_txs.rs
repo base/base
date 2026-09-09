@@ -2,7 +2,7 @@
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_common_rpc_types::BlockNumberOrTag;
 use tracing::{info, warn};
 
 /// Maximum depth allowed for the recent-transaction startup scan.

@@ -1,8 +1,8 @@
 //! Test [`TxManager`] implementations for controlling submission outcomes in driver tests.
 
 use alloy_primitives::{Address, B256, Bloom};
-use alloy_rpc_types_eth::TransactionReceipt;
 use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+use base_common_rpc_types::TransactionReceipt;
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 use tokio::sync::oneshot;
 

@@ -624,7 +624,6 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256, Bloom, Bytes};
-    use alloy_rpc_types_eth::TransactionReceipt;
     use base_batcher_encoder::{
         BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
     };
@@ -633,6 +632,7 @@ mod tests {
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
     use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use base_common_rpc_types::TransactionReceipt;
     use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,

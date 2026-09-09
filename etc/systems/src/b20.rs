@@ -5,7 +5,6 @@ use std::time::Duration;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::TransactionInput;
 use alloy_signer::SignerSync;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_consensus::SignableTransaction;
@@ -14,7 +13,7 @@ use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,
     IActivationRegistry, IB20, IB20Factory, IB20Stablecoin,
 };
-use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
+use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest, TransactionInput};
 use eyre::{ContextCompat, Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 

@@ -11,28 +11,28 @@ use crate::Log;
 /// consensus data and metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 #[doc(alias = "TxReceipt")]
 pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     /// The receipt envelope, which contains the consensus receipt data.
-    #[cfg_attr(feature = "serde", serde(flatten))]
+    #[serde(flatten)]
     pub inner: T,
     /// Transaction Hash.
     #[doc(alias = "tx_hash")]
     pub transaction_hash: TxHash,
     /// Index within the block.
-    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::quantity::opt"))]
+    #[serde(default, with = "alloy_serde::quantity::opt")]
     #[doc(alias = "tx_index")]
     pub transaction_index: Option<u64>,
     /// Hash of the block this transaction was included within.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub block_hash: Option<BlockHash>,
     /// Number of the block this transaction was included within.
-    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::quantity::opt"))]
+    #[serde(default, with = "alloy_serde::quantity::opt")]
     pub block_number: Option<u64>,
     /// Gas used by this transaction alone.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub gas_used: u64,
     /// The price paid post-execution by the transaction, in wei per gas (base fee plus priority
     /// fee). Both fee fields in EIP-1559 transactions are maximums; the amount actually paid can
@@ -40,29 +40,15 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     ///
     /// Deserialization also accepts the legacy `gasPrice` name and defaults to zero if neither
     /// name is present.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub effective_gas_price: u128,
     /// Blob gas used by the EIP-4844 transaction, in blob gas units.
     ///
     /// This is None for non eip-4844 transactions
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt",
-            default
-        )
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt", default)]
     pub blob_gas_used: Option<u64>,
     /// The price paid by the EIP-4844 transaction, in wei per blob gas.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt",
-            default
-        )
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt", default)]
     pub blob_gas_price: Option<u128>,
     /// Address of the sender
     pub from: Address,
@@ -72,7 +58,6 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     pub contract_address: Option<Address>,
 }
 
-#[cfg(feature = "serde")]
 impl<'de, T> serde::Deserialize<'de> for TransactionReceipt<T>
 where
     T: serde::Deserialize<'de>,
@@ -340,7 +325,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_sanity() {
         let json_str = r#"{"transactionHash":"0x21f6554c28453a01e7276c1db2fc1695bb512b170818bfa98fa8136433100616","blockHash":"0x4acbdefb861ef4adedb135ca52865f6743451bfbfa35db78076f881a40401a5e","blockNumber":"0x129f4b9","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000200000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000800000000000000000000000000000000004000000000000000000800000000100000020000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000010000000000000000000000000000","gasUsed":"0xbde1","contractAddress":null,"cumulativeGasUsed":"0xa42aec","transactionIndex":"0x7f","from":"0x9a53bfba35269414f3b2d20b52ca01b15932c7b2","to":"0xdac17f958d2ee523a2206206994597c13d831ec7","type":"0x2","effectiveGasPrice":"0xfb0f6e8c9","logs":[{"blockHash":"0x4acbdefb861ef4adedb135ca52865f6743451bfbfa35db78076f881a40401a5e","address":"0xdac17f958d2ee523a2206206994597c13d831ec7","logIndex":"0x118","data":"0x00000000000000000000000000000000000000000052b7d2dcc80cd2e4000000","removed":false,"topics":["0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925","0x0000000000000000000000009a53bfba35269414f3b2d20b52ca01b15932c7b2","0x00000000000000000000000039e5dbb9d2fead31234d7c647d6ce77d85826f76"],"blockNumber":"0x129f4b9","transactionIndex":"0x7f","transactionHash":"0x21f6554c28453a01e7276c1db2fc1695bb512b170818bfa98fa8136433100616"}],"status":"0x1"}"#;
 
@@ -386,7 +371,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn deserialize_pre_eip658_receipt() {
         let receipt_json = r#"
         {

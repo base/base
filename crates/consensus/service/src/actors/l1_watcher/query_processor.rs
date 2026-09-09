@@ -258,8 +258,8 @@ mod tests {
 
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Bloom, U256};
-    use alloy_rpc_types_eth::{Block, Header as RpcHeader, Log};
     use base_common_consensus::Header;
+    use base_common_rpc_types::{Block, Header as RpcHeader, Log};
     use tokio::{sync::oneshot, time::Instant};
 
     use super::*;
@@ -311,7 +311,10 @@ mod tests {
     impl L1BlockFetcher for MockFetcher {
         type Error = String;
 
-        async fn get_logs(&self, _: alloy_rpc_types_eth::Filter) -> Result<Vec<Log>, Self::Error> {
+        async fn get_logs(
+            &self,
+            _: base_common_rpc_types::Filter,
+        ) -> Result<Vec<Log>, Self::Error> {
             Ok(vec![])
         }
 

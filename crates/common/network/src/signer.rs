@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
-use alloy_rpc_types_eth::TransactionRequest;
 use async_trait::async_trait;
 use base_common_consensus::{SignableTransaction, TxEnvelope};
+use base_common_rpc_types::TransactionRequest;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
 use url::Url;

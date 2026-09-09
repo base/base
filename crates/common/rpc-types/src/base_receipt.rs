@@ -19,8 +19,7 @@ use crate::BaseLogResponse;
 pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
-    pub inner:
-        alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
+    pub inner: crate::TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,

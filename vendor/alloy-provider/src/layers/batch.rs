@@ -536,9 +536,9 @@ mod tests {
     use alloy_primitives::address;
     #[cfg(feature = "anvil-api")]
     use alloy_primitives::hex;
-    use alloy_rpc_types_eth::{BlockOverrides, TransactionRequest};
     use alloy_transport::mock::Asserter;
     use base_common_network::{Ethereum, TransactionBuilder};
+    use base_common_rpc_types::{BlockOverrides, TransactionRequest};
 
     use super::*;
     use crate::ProviderBuilder;

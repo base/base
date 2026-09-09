@@ -3,13 +3,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use alloy_rpc_types_eth::{
-    Filter,
+use base_common_rpc_types::{
+    BaseHeaderResponse, BaseLogResponse, Filter,
     pubsub::{
         Params, PubSubSyncStatus, SubscriptionKind, SyncStatusMetadata, TransactionReceiptsParams,
     },
 };
-use base_common_rpc_types::{BaseHeaderResponse, BaseLogResponse};
 use base_execution_txpool::{NewTransactionEvent, TransactionPool};
 use futures::StreamExt;
 use jsonrpsee::{
@@ -203,7 +202,7 @@ impl EthPubSub {
 }
 
 #[async_trait::async_trait]
-impl EthPubSubApiServer<base_common_rpc_types::Transaction> for EthPubSub {
+impl EthPubSubApiServer<base_common_rpc_types::BaseTransaction> for EthPubSub {
     /// Handler for `eth_subscribe`
     async fn subscribe(
         &self,

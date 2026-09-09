@@ -27,8 +27,8 @@ use alloy_primitives::{
 };
 use alloy_rpc_client::NoParams;
 #[cfg(feature = "pubsub")]
-use alloy_rpc_types_eth::pubsub::{Params, SubscriptionKind};
-use alloy_rpc_types_eth::{Bundle, Index, SyncStatus};
+use base_common_rpc_types::pubsub::{Params, SubscriptionKind};
+use base_common_rpc_types::{Bundle, Index, SyncStatus};
 pub use chain_id::ChainIdFiller;
 
 mod wallet;
@@ -48,15 +48,15 @@ use std::marker::PhantomData;
 
 use alloy_json_rpc::RpcError;
 use alloy_primitives::{Bytes, U64};
-use alloy_rpc_types_eth::{
+use alloy_transport::{TransportError, TransportResult};
+use async_trait::async_trait;
+use base_common_network::{Ethereum, Network};
+use base_common_rpc_types::{
     AccessListResult, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Filter,
     FilterChanges, Log, StorageValuesRequest, StorageValuesResponse,
     erc4337::TransactionConditional,
     simulate::{SimulatePayload, SimulatedBlock},
 };
-use alloy_transport::{TransportError, TransportResult};
-use async_trait::async_trait;
-use base_common_network::{Ethereum, Network};
 use futures_utils_wasm::impl_future;
 pub use join_fill::JoinFill;
 use serde_json::value::RawValue;
@@ -374,7 +374,7 @@ where
     /// # use base_common_consensus::{TypedTransaction, SignableTransaction};
     /// # use alloy_primitives::{Address, U256};
     /// # use alloy_provider::{Provider, ProviderBuilder};
-    /// # use alloy_rpc_types_eth::TransactionRequest;
+    /// # use base_common_rpc_types::TransactionRequest;
     /// # use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
     ///
     /// # #[cfg(feature = "anvil-node")]
@@ -503,7 +503,7 @@ where
     fn get_account_info(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, alloy_rpc_types_eth::AccountInfo> {
+    ) -> RpcWithBlock<Address, base_common_rpc_types::AccountInfo> {
         self.inner.get_account_info(address)
     }
 

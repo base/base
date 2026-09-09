@@ -14,8 +14,8 @@ use std::{
 };
 
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_network::{Base, PrivateKeySigner};
+use base_common_rpc_types::BlockNumberOrTag;
 use base_load_tests::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
     MetricsSummary, TestConfig,

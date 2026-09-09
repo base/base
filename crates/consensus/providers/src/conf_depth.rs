@@ -110,7 +110,7 @@ mod tests {
     #[tokio::test]
     async fn young_chain_allows_genesis_but_waits_for_confirmations() {
         let server = MockServer::start_async().await;
-        let genesis: alloy_rpc_types_eth::Block = Default::default();
+        let genesis: base_common_rpc_types::Block = Default::default();
         let response = server
             .mock_async(|when, then| {
                 when.method(POST).json_body_includes(

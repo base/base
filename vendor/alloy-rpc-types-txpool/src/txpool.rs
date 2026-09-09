@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use alloy_primitives::{Address, U256};
-use alloy_rpc_types_eth::{Transaction, TransactionTrait};
+use base_common_rpc_types::{Transaction, TransactionTrait};
 use serde::{
     Deserialize, Serialize, Serializer,
     de::{self, Deserializer, Visitor},

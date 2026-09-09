@@ -1,6 +1,5 @@
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
-use alloy_rpc_types_eth::{Log as RpcLog, TransactionReceipt};
 use alloy_signer::SignerSync;
 use base_common_consensus::{
     Header, Receipt, ReceiptEnvelope, SignableTransaction, Transaction, TxEip1559, TxEnvelope,
@@ -8,6 +7,7 @@ use base_common_consensus::{
 };
 use base_common_genesis::SystemConfigUpdate;
 use base_common_network::PrivateKeySigner;
+use base_common_rpc_types::{Log as RpcLog, TransactionReceipt};
 use base_protocol::{BlockInfo, Deposits};
 use tracing::info;
 

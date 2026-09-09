@@ -27,7 +27,7 @@ const MAX_REORG_DEPTH_DEFAULT: usize = 64;
 ///
 /// This wraps a block/log source stream and performs reorg detection like
 /// [`super::WatchCanonicalBlocksFrom`]. Each item represents one canonical block and the logs in
-/// that block matching the configured [`Filter`](alloy_rpc_types_eth::Filter). When the chain tip
+/// that block matching the configured [`Filter`](base_common_rpc_types::Filter). When the chain tip
 /// changes incompatibly, the stream yields [`CanonicalEvent::Removed`] for retained block log
 /// batches followed by
 /// [`CanonicalEvent::Added`] for the new canonical chain segment.
@@ -298,7 +298,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_eips::BlockNumberOrTag;
-    use alloy_rpc_types_eth::Filter;
+    use base_common_rpc_types::Filter;
     use futures::StreamExt;
     use tokio::time::timeout;
 

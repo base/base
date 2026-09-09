@@ -704,10 +704,10 @@ impl<'a> IndexedTx<'a> {
 mod rpc_compat {
     use alloc::vec::Vec;
 
-    use alloy_rpc_types_eth::{Block, BlockTransactions, BlockTransactionsKind, TransactionInfo};
     use base_common_consensus::{
         BaseBlock, BaseTxEnvelope, BlockBody, BlockHeader, transaction::Recovered,
     };
+    use base_common_rpc_types::{Block, BlockTransactions, BlockTransactionsKind, TransactionInfo};
 
     use super::{Block as BlockTrait, BlockBody as BlockBodyTrait, RecoveredBlock};
     use crate::{SealedHeader, block::error::BlockRecoveryError};
@@ -864,11 +864,11 @@ mod rpc_compat {
         ///
         /// # Examples
         /// ```ignore
-        /// let rpc_block: alloy_rpc_types_eth::Block = get_rpc_block();
+        /// let rpc_block: base_common_rpc_types::Block = get_rpc_block();
         /// let recovered = RecoveredBlock::from_rpc_block(rpc_block)?;
         /// ```
         pub fn from_rpc_block<U>(
-            block: alloy_rpc_types_eth::Block<U>,
+            block: base_common_rpc_types::Block<U>,
         ) -> Result<Self, BlockRecoveryError<BaseBlock>>
         where
             BaseTxEnvelope: From<U>,
@@ -881,13 +881,13 @@ mod rpc_compat {
         }
     }
 
-    impl<U> TryFrom<alloy_rpc_types_eth::Block<U>> for RecoveredBlock
+    impl<U> TryFrom<base_common_rpc_types::Block<U>> for RecoveredBlock
     where
         BaseTxEnvelope: From<U>,
     {
         type Error = BlockRecoveryError<BaseBlock>;
 
-        fn try_from(block: alloy_rpc_types_eth::Block<U>) -> Result<Self, Self::Error> {
+        fn try_from(block: base_common_rpc_types::Block<U>) -> Result<Self, Self::Error> {
             Self::from_rpc_block(block)
         }
     }

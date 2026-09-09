@@ -5,17 +5,17 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, U64, U128, U256,
 };
 use alloy_rpc_client::{ClientRef, NoParams, WeakClient};
+use alloy_transport::TransportResult;
+use base_common_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
-use alloy_rpc_types_eth::pubsub::{Params, SubscriptionKind};
-use alloy_rpc_types_eth::{
+use base_common_rpc_types::pubsub::{Params, SubscriptionKind};
+use base_common_rpc_types::{
     AccessListResult, BlockId, BlockNumberOrTag, Bundle, EIP1186AccountProofResponse,
     EthCallResponse, FeeHistory, FillTransaction, Filter, FilterChanges, Index, Log,
     StorageValuesRequest, StorageValuesResponse, SyncStatus,
     erc4337::TransactionConditional,
     simulate::{SimulatePayload, SimulatedBlock},
 };
-use alloy_transport::TransportResult;
-use base_common_network::{Ethereum, Network};
 use serde_json::value::RawValue;
 
 use super::{
@@ -145,7 +145,7 @@ impl<N: Network> Provider<N> for DynProvider<N> {
     fn get_account_info(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, alloy_rpc_types_eth::AccountInfo> {
+    ) -> RpcWithBlock<Address, base_common_rpc_types::AccountInfo> {
         self.0.get_account_info(address)
     }
 

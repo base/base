@@ -63,7 +63,6 @@ alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
 alloy-rpc-types-txpool = { workspace = true, optional = true }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 futures-utils-wasm = { workspace = true, features = ["default"] }
 url = { workspace = true, optional = true, features = ["default"] }
 http = { workspace = true, optional = true, features = ["default"] }
@@ -74,6 +73,7 @@ serde = { workspace = true, features = [
 ] }
 base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
+base-common-rpc-types = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 reqwest = { workspace = true }
 ci_info = { workspace = true }

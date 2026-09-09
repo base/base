@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, BlockHash, Bytes, ChainId, U256};
-use alloy_rpc_types_eth::TransactionRequest;
+use base_common_rpc_types::TransactionRequest;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Represents the params to set forking which can take various forms:

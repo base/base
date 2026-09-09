@@ -404,8 +404,8 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
-    use alloy_rpc_types_eth::Header as RpcHeader;
     use base_common_consensus::Header as ConsensusHeader;
+    use base_common_rpc_types::Header as RpcHeader;
     #[cfg(feature = "metrics")]
     use metrics_util::{
         MetricKind,

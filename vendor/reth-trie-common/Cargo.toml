@@ -28,7 +28,7 @@ alloy-serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-trie = { workspace = true, features = ["ethereum"] }
 itertools = { workspace = true, features = ["use_alloc"] }
-alloy-rpc-types-eth = { workspace = true, optional = true }
+base-common-rpc-types = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, optional = false }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 alloy-rlp = { workspace = true, features = ["core-net", "arrayvec"] }
@@ -62,7 +62,7 @@ std = [
     "alloy-genesis/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
-    "alloy-rpc-types-eth?/std",
+    "base-common-rpc-types?/std",
     "alloy-serde?/std",
     "alloy-trie/std",
     "arrayvec?/std",
@@ -78,7 +78,7 @@ std = [
     "alloy-eips/std",
     "thiserror/std",
 ]
-eip1186 = ["alloy-rpc-types-eth/serde", "dep:alloy-serde"]
+eip1186 = ["base-common-rpc-types/serde", "dep:alloy-serde"]
 serde = [
     "dep:serde",
     "arrayvec?/serde",
@@ -87,7 +87,7 @@ serde = [
     "alloy-primitives/serde",
     "base-common-consensus/serde",
     "alloy-trie/serde",
-    "alloy-rpc-types-eth?/serde",
+    "base-common-rpc-types?/serde",
     "reth-primitives-traits/serde",
     "base-common-consensus/serde",
     "revm/serde",
@@ -99,7 +99,7 @@ serde-bincode-compat = [
     "base-common-consensus/serde-bincode-compat",
     "dep:serde_with",
     "alloy-genesis/serde-bincode-compat",
-    "alloy-rpc-types-eth?/serde-bincode-compat",
+    "base-common-rpc-types?/serde-bincode-compat",
     "alloy-eips/serde-bincode-compat",
 ]
 test-utils = [
@@ -119,7 +119,7 @@ arbitrary = [
     "alloy-primitives/arbitrary",
     "nybbles/arbitrary",
     "base-common-consensus/arbitrary",
-    "alloy-rpc-types-eth?/arbitrary",
+    "base-common-rpc-types?/arbitrary",
     "alloy-eips/arbitrary",
     "revm/arbitrary",
 ]

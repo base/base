@@ -24,13 +24,13 @@ impl Network for Ethereum {
 
     type Header = base_common_consensus::Header;
 
-    type TransactionRequest = alloy_rpc_types_eth::transaction::TransactionRequest;
+    type TransactionRequest = base_common_rpc_types::transaction::TransactionRequest;
 
-    type TransactionResponse = alloy_rpc_types_eth::Transaction;
+    type TransactionResponse = base_common_rpc_types::Transaction;
 
-    type ReceiptResponse = alloy_rpc_types_eth::TransactionReceipt;
+    type ReceiptResponse = base_common_rpc_types::TransactionReceipt;
 
-    type HeaderResponse = alloy_rpc_types_eth::Header;
+    type HeaderResponse = base_common_rpc_types::Header;
 
-    type BlockResponse = alloy_rpc_types_eth::Block;
+    type BlockResponse = base_common_rpc_types::Block;
 }

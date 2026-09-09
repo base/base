@@ -9,12 +9,12 @@ use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
 use alloy_provider::{EthGetBlock, ProviderCall};
-use alloy_rpc_types_eth::{Block, BlockTransactions, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
+use base_common_rpc_types::{Block, BlockTransactions, Transaction as EthTransaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -631,7 +631,7 @@ impl ActionEngineClient {
 
     fn header_to_l1_rpc_block(header: &Header, block_hash: B256) -> Block<EthTransaction> {
         let sealed = Sealed::new_unchecked(header.clone(), block_hash);
-        let rpc_header = alloy_rpc_types_eth::Header::from_sealed(sealed);
+        let rpc_header = base_common_rpc_types::Header::from_sealed(sealed);
         Block {
             header: rpc_header,
             uncles: vec![],

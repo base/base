@@ -43,7 +43,7 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
     "serde",
 ] }
-alloy-rpc-types-eth = { workspace = true, features = [
+base-common-rpc-types = { workspace = true, features = [
     "std",
     "serde",
 ] }

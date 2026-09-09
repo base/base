@@ -4,7 +4,7 @@ use alloy_primitives::{
     Address, B256, TxKind,
     map::{HashMap, HashSet},
 };
-use alloy_rpc_types_eth::{AccessList, AccessListItem};
+use base_common_rpc_types::{AccessList, AccessListItem};
 use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
 use base_evm_handler::JournalExt;
 use revm::{

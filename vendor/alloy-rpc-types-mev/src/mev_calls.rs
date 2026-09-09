@@ -1,6 +1,6 @@
 use alloy_eips::BlockId;
 use alloy_primitives::{Bytes, TxHash, U256};
-use alloy_rpc_types_eth::{BlockOverrides, Log};
+use base_common_rpc_types::{BlockOverrides, Log};
 use serde::{Deserialize, Serialize};
 
 use crate::common::{Privacy, ProtocolVersion, Validity};

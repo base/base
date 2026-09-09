@@ -7,7 +7,6 @@ use std::{
 };
 
 use alloy_eips::eip7840::BlobParams;
-use alloy_rpc_types_eth::TxGasAndReward;
 #[cfg(test)]
 use base_common_consensus::EthereumTxEnvelope;
 #[cfg(test)]
@@ -15,6 +14,7 @@ use base_common_consensus::EthereumTypedTransaction;
 #[cfg(test)]
 use base_common_consensus::TxEip4844;
 use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt};
+use base_common_rpc_types::TxGasAndReward;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures::{
     FutureExt, Stream, StreamExt,

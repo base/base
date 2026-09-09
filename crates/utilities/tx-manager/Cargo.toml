@@ -27,7 +27,7 @@ base-runtime = { workspace = true, features = ["tokio"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-provider = { workspace = true, features = ["default"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "sync", "time"] }
 [dev-dependencies]
 rayon = { workspace = true }

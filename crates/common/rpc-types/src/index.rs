@@ -23,7 +23,6 @@ impl From<usize> for Index {
     }
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for Index {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -33,7 +32,6 @@ impl serde::Serialize for Index {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'a> serde::Deserialize<'a> for Index {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -83,14 +81,13 @@ impl<'a> serde::Deserialize<'a> for Index {
 #[cfg(test)]
 mod tests {
     use rand_08::{Rng, thread_rng};
-    #[cfg(feature = "serde")]
     use serde_json::json;
     use similar_asserts::assert_eq;
 
     use super::*;
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_serde_index_rand() {
         let mut rng = thread_rng();
         for _ in 0..100 {
@@ -102,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_serde_index_serialization() {
         let index = Index::from(0);
         assert_eq!(serde_json::to_string(&index).unwrap(), "\"0x0\"");
@@ -112,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_serde_index_deserialization() {
         // Test decimal index
         let json_data = json!(42);

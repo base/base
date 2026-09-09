@@ -1,7 +1,7 @@
 //! Builder style functions for `trace_call`
 
 use alloy_primitives::map::HashSet;
-use alloy_rpc_types_eth::{
+use base_common_rpc_types::{
     BlockId, BlockOverrides, request::TransactionRequest, state::StateOverride,
 };
 use serde::{Deserialize, Serialize};

@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
-use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
 use base_common_consensus::{TxReceipt, transaction::TxHashRef};
-use base_common_rpc_types::{BaseBlockResponse, BaseTransactionReceipt};
+use base_common_rpc_types::{
+    BaseBlockResponse, BaseTransactionReceipt, Block, BlockTransactions, Index,
+};
 use futures::Future;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,

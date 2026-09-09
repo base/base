@@ -63,7 +63,6 @@ tokio-util = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
@@ -77,12 +76,12 @@ base-common-network = { workspace = true, features = ["mnemonic"] }
 prometheus-scraper = { version = "0.2.0", default-features = false }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+base-common-rpc-types = {workspace = true, features = ["default", "std"]}
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }

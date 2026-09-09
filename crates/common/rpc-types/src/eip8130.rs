@@ -1,7 +1,8 @@
 //! EIP-8130 nonce and RPC activation helpers.
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types_eth::state::StateOverride;
+
+use crate::state::StateOverride;
 
 /// Canonical invalid-params message for EIP-8130 RPC reads before Zenith.
 pub const EIP8130_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 RPC features are not active before the Zenith hard fork; the `nonce_key` parameter is not supported at this block";

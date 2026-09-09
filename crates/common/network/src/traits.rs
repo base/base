@@ -1,7 +1,7 @@
 //! JSON-RPC trait definition for the `eth_signTransaction` endpoint.
 
 use alloy_primitives::Bytes;
-use alloy_rpc_types_eth::TransactionRequest;
+use base_common_rpc_types::TransactionRequest;
 use jsonrpsee::proc_macros::rpc;
 
 /// JSON-RPC interface for the `eth_signTransaction` endpoint.

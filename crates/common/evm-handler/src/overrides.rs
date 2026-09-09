@@ -6,7 +6,7 @@
 use alloc::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256, keccak256, map::HashMap};
-use alloy_rpc_types_eth::{
+use base_common_rpc_types::{
     BlockOverrides,
     state::{AccountOverride, StateOverride},
 };

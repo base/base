@@ -9,13 +9,13 @@ use std::{
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{Address, Bytes};
-use alloy_rpc_types_eth::{
-    BlockOverrides,
-    state::{AccountOverride, StateOverride},
-};
 use alloy_sol_types::SolCall;
 use alloy_transport::TransportResult;
 use base_common_network::Network;
+use base_common_rpc_types::{
+    BlockOverrides,
+    state::{AccountOverride, StateOverride},
+};
 use futures::FutureExt;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::time::{Timeout, timeout as timeout_future};
@@ -259,7 +259,7 @@ where
     /// ```no_run
     /// # async fn example<P: alloy_provider::Provider>(
     /// #     provider: P,
-    /// #     tx: alloy_rpc_types_eth::TransactionRequest,
+    /// #     tx: base_common_rpc_types::TransactionRequest,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_provider::Provider as _;
     /// use std::time::Duration;
@@ -428,8 +428,8 @@ where
 mod test {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{U256, address};
-    use alloy_rpc_types_eth::{TransactionRequest, state::StateOverride};
     use base_common_network::{Ethereum, TransactionBuilder};
+    use base_common_rpc_types::{TransactionRequest, state::StateOverride};
 
     use super::*;
 

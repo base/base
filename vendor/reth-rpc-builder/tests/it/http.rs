@@ -5,12 +5,12 @@ use std::collections::HashSet;
 
 use alloy_eips::{BlockId, BlockNumberOrTag, Encodable2718, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U64, U256};
-use alloy_rpc_types_eth::{
+use alloy_rpc_types_trace::filter::TraceFilter;
+use base_common_consensus::{EthereumReceipt as Receipt, EthereumTxEnvelope, TxEip4844};
+use base_common_rpc_types::{
     Block, FeeHistory, Filter, Header, Index, Log, PendingTransactionFilterKind, SyncStatus,
     Transaction, TransactionReceipt, transaction::TransactionRequest,
 };
-use alloy_rpc_types_trace::filter::TraceFilter;
-use base_common_consensus::{EthereumReceipt as Receipt, EthereumTxEnvelope, TxEip4844};
 use base_execution_rpc::{EthApiClient, EthCallBundleApiClient, EthFilterApiClient};
 use jsonrpsee::{
     core::{

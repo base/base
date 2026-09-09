@@ -14,14 +14,14 @@ mod rpc;
 pub use alloy_rpc_types_admin as admin;
 #[cfg(feature = "debug")]
 pub use alloy_rpc_types_debug as debug;
-#[cfg(feature = "eth")]
-pub use alloy_rpc_types_eth as eth;
 #[cfg(feature = "mev")]
 pub use alloy_rpc_types_mev as mev;
 #[cfg(feature = "trace")]
 pub use alloy_rpc_types_trace as trace;
 #[cfg(feature = "txpool")]
 pub use alloy_rpc_types_txpool as txpool;
+#[cfg(feature = "eth")]
+pub use base_common_rpc_types as eth;
 #[cfg(feature = "engine")]
 pub use base_common_rpc_types_engine as engine;
 #[cfg(feature = "eth")]

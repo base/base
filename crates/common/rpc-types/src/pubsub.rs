@@ -8,9 +8,8 @@ use alloy_serde::WithOtherFields;
 use crate::{Filter, Header, Log, Transaction, TransactionReceipt};
 
 /// Subscription result.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(untagged)]
 pub enum SubscriptionResult<T = Transaction, R = TransactionReceipt> {
     /// New block header.
     Header(Box<WithOtherFields<Header>>),
@@ -27,9 +26,8 @@ pub enum SubscriptionResult<T = Transaction, R = TransactionReceipt> {
 }
 
 /// Response type for a SyncStatus subscription.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum PubSubSyncStatus {
     /// If not currently syncing, this should always be `false`.
     Simple(bool),
@@ -38,31 +36,22 @@ pub enum PubSubSyncStatus {
 }
 
 /// Sync status metadata.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncStatusMetadata {
     /// Whether the node is currently syncing.
     pub syncing: bool,
     /// The starting block.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub starting_block: u64,
     /// The current block.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub current_block: u64,
     /// The highest block.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt"
-        )
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub highest_block: Option<u64>,
 }
 
-#[cfg(feature = "serde")]
 impl<T, R> serde::Serialize for SubscriptionResult<T, R>
 where
     T: serde::Serialize,
@@ -84,9 +73,8 @@ where
 }
 
 /// Subscription kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum SubscriptionKind {
     /// New block headers subscription.
     ///
@@ -152,14 +140,13 @@ pub enum SubscriptionKind {
 ///   "transactionHashes": []
 /// }
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionReceiptsParams {
     /// Optional list of transaction hashes to filter by.
     ///
     /// If not provided or empty, all transaction receipts will be returned.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub transaction_hashes: Option<Vec<B256>>,
 }
 
@@ -218,7 +205,7 @@ impl Params {
     }
 
     /// Creates a new [`Params`] from a [`serde_json::Value`].
-    #[cfg(feature = "serde")]
+
     pub fn from_json_value(v: serde_json::Value) -> Result<Self, serde_json::Error> {
         if v.is_null() {
             return Ok(Self::None);
@@ -256,7 +243,6 @@ impl From<TransactionReceiptsParams> for Params {
     }
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for Params {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -271,7 +257,6 @@ impl serde::Serialize for Params {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'a> serde::Deserialize<'a> for Params {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -290,7 +275,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn params_serde() {
         // Test deserialization of boolean parameter
         let s: Params = serde_json::from_str("true").unwrap();
@@ -391,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn subscription_kind_str_roundtrip() {
         use core::str::FromStr;
 
@@ -415,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn params_serialize_none() {
         let param = Params::None;
         let serialized = serde_json::to_string(&param).unwrap();
@@ -423,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn params_serialize_bool() {
         let param = Params::Bool(true);
         let serialized = serde_json::to_string(&param).unwrap();
@@ -435,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn params_serialize_logs() {
         let filter = Filter::default();
         let param = Params::Logs(Box::new(filter.clone()));
@@ -445,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn params_serialize_transaction_receipts() {
         let params = TransactionReceiptsParams {
             transaction_hashes: Some(vec![B256::from(hex!(
@@ -467,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn sync_status_metadata_serde() {
         let metadata = SyncStatusMetadata {
             syncing: true,

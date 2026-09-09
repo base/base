@@ -12,18 +12,18 @@ use alloy_primitives::{
     U256, hex,
 };
 use alloy_rpc_client::{ClientRef, NoParams, PollerBuilder, WeakClient};
+use alloy_transport::TransportResult;
+use base_common_consensus::BlockHeader;
+use base_common_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
-use alloy_rpc_types_eth::pubsub::{Params, SubscriptionKind};
-use alloy_rpc_types_eth::{
+use base_common_rpc_types::pubsub::{Params, SubscriptionKind};
+use base_common_rpc_types::{
     AccessListResult, BlockId, BlockNumberOrTag, Bundle, EIP1186AccountProofResponse,
     EthCallResponse, FeeHistory, FillTransaction, Filter, FilterChanges, Index, Log,
     StorageValuesRequest, StorageValuesResponse, SyncStatus,
     erc4337::TransactionConditional,
     simulate::{SimulatePayload, SimulatedBlock},
 };
-use alloy_transport::TransportResult;
-use base_common_consensus::BlockHeader;
-use base_common_network::{Ethereum, Network};
 use serde_json::value::RawValue;
 
 #[cfg(feature = "pubsub")]
@@ -170,14 +170,14 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// or block ID is provided, the call will be executed on the pending block
     /// with the current state.
     ///
-    /// [`StateOverride`]: alloy_rpc_types_eth::state::StateOverride
+    /// [`StateOverride`]: base_common_rpc_types::state::StateOverride
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # use alloy_provider::Provider;
     /// # async fn example<P: Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
-    /// # let tx = alloy_rpc_types_eth::transaction::TransactionRequest::default();
+    /// # let tx = base_common_rpc_types::transaction::TransactionRequest::default();
     /// // Execute a call on the latest block, with no state overrides
     /// let output = provider.call(tx).latest().await?;
     /// # Ok(())
@@ -195,8 +195,8 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// This function returns an [`EthCallMany`] builder which is used to execute the call, and also
     /// set the [`StateContext`] and [`StateOverride`].
     ///
-    /// [`StateContext`]: alloy_rpc_types_eth::StateContext
-    /// [`StateOverride`]: alloy_rpc_types_eth::state::StateOverride
+    /// [`StateContext`]: base_common_rpc_types::StateContext
+    /// [`StateOverride`]: base_common_rpc_types::state::StateOverride
     #[doc(alias = "eth_callMany")]
     fn call_many<'req>(
         &self,
@@ -255,7 +255,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// the gas estimate will be computed for the pending block with the
     /// current state.
     ///
-    /// [`StateOverride`]: alloy_rpc_types_eth::state::StateOverride
+    /// [`StateOverride`]: base_common_rpc_types::state::StateOverride
     ///
     /// # Note
     ///
@@ -337,7 +337,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
             .into()
     }
 
-    /// Retrieves account information ([`Account`](alloy_rpc_types_eth::Account)) for the given
+    /// Retrieves account information ([`Account`](base_common_rpc_types::Account)) for the given
     /// [`Address`] at the particular [`BlockId`].
     ///
     /// Note: This is slightly different than `eth_getAccount` and not all clients support this
@@ -345,7 +345,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     fn get_account_info(
         &self,
         address: Address,
-    ) -> RpcWithBlock<Address, alloy_rpc_types_eth::AccountInfo> {
+    ) -> RpcWithBlock<Address, base_common_rpc_types::AccountInfo> {
         self.client().request("eth_getAccountInfo", address).into()
     }
 
@@ -736,7 +736,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_primitives::{address, b256};
-    /// use alloy_rpc_types_eth::Filter;
+    /// use base_common_rpc_types::Filter;
     /// use futures::StreamExt;
     ///
     /// let address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
@@ -903,7 +903,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # use alloy_eips::BlockNumberOrTag;
     /// # use alloy_primitives::address;
     /// # use alloy_provider::{Provider, ProviderBuilder};
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # use futures::StreamExt;
     ///
     /// let provider = ProviderBuilder::new().connect_http("http://localhost:8545".parse()?);
@@ -943,7 +943,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # use alloy_eips::BlockNumberOrTag;
     /// # use alloy_primitives::address;
     /// # use alloy_provider::{CanonicalEvent, Provider, ProviderBuilder};
-    /// # use alloy_rpc_types_eth::Filter;
+    /// # use base_common_rpc_types::Filter;
     /// # use futures::StreamExt;
     ///
     /// let provider = ProviderBuilder::new().connect_http("http://localhost:8545".parse()?);
@@ -1668,7 +1668,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     /// use alloy_primitives::keccak256;
-    /// use alloy_rpc_types_eth::Filter;
+    /// use base_common_rpc_types::Filter;
     ///
     /// let signature = keccak256("Transfer(address,address,uint256)".as_bytes());
     ///
@@ -1773,7 +1773,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     ///
     /// ```no_run
     /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
-    /// use alloy_rpc_types_eth::BlockNumberOrTag;
+    /// use base_common_rpc_types::BlockNumberOrTag;
     /// use alloy_rpc_client::NoParams;
     ///
     /// // No parameters: `()`
@@ -1804,7 +1804,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     ///
     /// ```no_run
     /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
-    /// use alloy_rpc_types_eth::BlockNumberOrTag;
+    /// use base_common_rpc_types::BlockNumberOrTag;
     ///
     /// // No parameters: `()`
     /// let params = serde_json::value::to_raw_value(&())?;
@@ -1886,7 +1886,6 @@ mod tests {
     use alloy_primitives::{address, b256, bytes, keccak256};
     use alloy_rlp::Decodable;
     use alloy_rpc_client::{BuiltInConnectionString, RpcClient};
-    use alloy_rpc_types_eth::{Block, request::TransactionRequest};
     use alloy_transport::layers::{RetryBackoffLayer, RetryPolicy};
     #[cfg(feature = "hyper")]
     use alloy_transport_http::{
@@ -1903,6 +1902,7 @@ mod tests {
     use base_common_network::{
         Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };
+    use base_common_rpc_types::{Block, request::TransactionRequest};
     #[cfg(feature = "hyper")]
     use http_body_util::Full;
     #[cfg(feature = "hyper")]
@@ -2680,7 +2680,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_many_mainnet() {
-        use alloy_rpc_types_eth::{BlockOverrides, StateContext};
+        use base_common_rpc_types::{BlockOverrides, StateContext};
 
         let url = "https://docs-demo.quiknode.pro/";
         let provider = ProviderBuilder::new().connect_http(url.parse().unwrap());

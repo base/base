@@ -1,8 +1,8 @@
 //! In-memory [`L1BlockFetcher`] implementation for action tests.
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_rpc_types_eth::{Block, Filter, Header, Log};
 use async_trait::async_trait;
+use base_common_rpc_types::{Block, Filter, Header, Log};
 use base_consensus_node::L1BlockFetcher;
 
 use crate::{L1Block, SharedL1Chain};
@@ -21,7 +21,7 @@ pub struct ActionL1FetcherError(String);
 ///   emit signer-rotation logs, so this is the correct behaviour for the
 ///   current test suite.
 /// - `get_block` looks the block up by number or hash in the shared chain and
-///   converts it to an [`alloy_rpc_types_eth::Block`].
+///   converts it to an [`base_common_rpc_types::Block`].
 ///
 /// [`L1WatcherActor`]: base_consensus_node::L1WatcherActor
 #[derive(Debug, Clone)]

@@ -5,11 +5,10 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use alloy_rpc_types_eth::{Filter, Log};
 use base_common_consensus::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
-use base_common_rpc_types::BaseLogResponse;
+use base_common_rpc_types::{BaseLogResponse, Filter, Log};
 use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use reth_storage_api::BlockReader;
@@ -229,7 +228,7 @@ pub enum FilterBlockRangeError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_rpc_types_eth::Filter;
+    use base_common_rpc_types::Filter;
 
     use super::*;
 
@@ -327,8 +326,8 @@ mod tests {
         let start_block = info.best_number;
 
         let (from_block_number, to_block_number) = get_filter_block_range(
-            from_block.and_then(alloy_rpc_types_eth::BlockNumberOrTag::as_number),
-            to_block.and_then(alloy_rpc_types_eth::BlockNumberOrTag::as_number),
+            from_block.and_then(base_common_rpc_types::BlockNumberOrTag::as_number),
+            to_block.and_then(base_common_rpc_types::BlockNumberOrTag::as_number),
             start_block,
             info,
         )

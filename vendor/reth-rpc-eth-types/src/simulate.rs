@@ -2,14 +2,13 @@
 
 use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
-use alloy_rpc_types_eth::{
-    BlockId, BlockOverrides, BlockTransactionsKind,
+use base_common_consensus::{BaseTxEnvelope, BlockHeader, Transaction as _};
+use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
+use base_common_rpc_types::{
+    BaseBlockResponse, BaseTransactionRequest, BlockId, BlockOverrides, BlockTransactionsKind,
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
 };
-use base_common_consensus::{BaseTxEnvelope, BlockHeader, Transaction as _};
-use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
-use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_evm_context::{Block, ExecutionResult};
 use base_evm_handler::{PrecompilesMap, TxResult};
 use base_execution_evm::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor};
@@ -289,7 +288,7 @@ pub fn apply_precompile_overrides(
 /// execution. This matches the spec rule `"gasLimit: blockGasLimit - soFarUsedGasInBlock"` and
 /// geth's per-call `sanitizeCall` behavior.
 ///
-/// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+/// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
 #[expect(clippy::type_complexity)]
 pub fn execute_transactions<S, T>(
     mut builder: S,
@@ -412,7 +411,7 @@ where
 ///
 /// This will set the defaults as defined in <https://github.com/ethereum/execution-apis/blob/e56d3208789259d0b09fa68e9d8594aa4d73c725/docs/ethsimulatev1-notes.md#default-values-for-transactions>
 ///
-/// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+/// [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
 pub fn resolve_transaction<DB: Database, T>(
     mut tx: BaseTransactionRequest,
     default_gas_limit: u64,
@@ -565,7 +564,7 @@ where
                     .into_iter()
                     .map(|log| {
                         log_index += 1;
-                        alloy_rpc_types_eth::Log {
+                        base_common_rpc_types::Log {
                             inner: log,
                             log_index: Some(log_index - 1),
                             transaction_index: Some(index as u64),
@@ -596,12 +595,12 @@ where
 mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{U256, address};
-    use alloy_rpc_types_eth::{
+    use base_common_consensus::Header;
+    use base_common_rpc_types::{
         BlockOverrides, TransactionRequest,
         simulate::SimBlock,
         state::{AccountOverride, StateOverride},
     };
-    use base_common_consensus::Header;
     use base_evm_handler::PrecompilesMap;
     use reth_primitives_traits::SealedHeader;
     use revm::precompile::Precompiles;

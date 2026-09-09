@@ -7,9 +7,9 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_common_rpc_types::{EIP1186AccountProofResponse, Header};
 use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
@@ -65,10 +65,10 @@ impl L1Provider for MockL1 {
     async fn header_by_number(
         &self,
         _: BlockNumberOrTag,
-    ) -> RpcResult<alloy_rpc_types_eth::Header> {
+    ) -> RpcResult<base_common_rpc_types::Header> {
         Ok(test_l1_header(B256::repeat_byte(0x11), self.latest_block_number))
     }
-    async fn header_by_hash(&self, hash: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<base_common_rpc_types::Header> {
         self.headers_by_hash
             .get(&hash)
             .cloned()
@@ -77,7 +77,7 @@ impl L1Provider for MockL1 {
     async fn block_receipts(
         &self,
         _: B256,
-    ) -> RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
+    ) -> RpcResult<Vec<base_common_rpc_types::TransactionReceipt>> {
         unimplemented!()
     }
     async fn code_at(&self, _: Address, _: BlockNumberOrTag) -> RpcResult<Bytes> {

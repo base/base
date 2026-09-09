@@ -15,27 +15,20 @@ pub const MAX_SIMULATE_BLOCKS: u64 = 256;
 /// Represents a batch of calls to be simulated sequentially within a block.
 /// This struct includes block and state overrides as well as the transaction requests to be
 /// executed.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-    feature = "serde",
-    serde(
-        rename_all = "camelCase",
-        bound(
-            deserialize = "TxReq: serde::Deserialize<'de>",
-            serialize = "TxReq: serde::Serialize"
-        )
-    )
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all = "camelCase",
+    bound(deserialize = "TxReq: serde::Deserialize<'de>", serialize = "TxReq: serde::Serialize")
 )]
 pub struct SimBlock<TxReq = TransactionRequest> {
     /// Modifications to the default block characteristics.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_overrides: Option<BlockOverrides>,
     /// State modifications to apply before executing the transactions.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_overrides: Option<StateOverride>,
     /// A vector of transactions to be simulated.
-    #[cfg_attr(feature = "serde", serde(default = "Vec::new"))]
+    #[serde(default = "Vec::new")]
     pub calls: Vec<TxReq>,
 }
 
@@ -77,12 +70,11 @@ impl<TxReq> SimBlock<TxReq> {
 }
 
 /// Represents the result of simulating a block.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SimulatedBlock<B = Block> {
     /// The simulated block.
-    #[cfg_attr(feature = "serde", serde(flatten))]
+    #[serde(flatten)]
     pub inner: B,
     /// A vector of results for each call in the block.
     pub calls: Vec<SimCallResult>,
@@ -90,33 +82,25 @@ pub struct SimulatedBlock<B = Block> {
 
 /// Captures the outcome of a transaction simulation.
 /// It includes the return value, logs produced, gas used, and the status of the transaction.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SimCallResult {
     /// The raw bytes returned by the transaction.
     pub return_data: Bytes,
     /// Logs generated during the execution of the transaction.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub logs: Vec<Log>,
     /// The amount of gas used by the transaction.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub gas_used: u64,
     /// Maximum gas consumed during execution, before refunds.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt"
-        )
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub max_used_gas: Option<u64>,
     /// The final status of the transaction, typically indicating success or failure.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[serde(with = "alloy_serde::quantity")]
     pub status: bool,
     /// Error in case the call failed
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<SimulateError>,
 }
 
@@ -126,30 +110,23 @@ pub struct SimCallResult {
 /// validate transaction sequences, and whether to return full transaction objects.
 /// The RPC accepts at most [`MAX_SIMULATE_BLOCKS`] blocks; this type and its builder methods do not
 /// enforce that limit.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-    feature = "serde",
-    serde(
-        rename_all = "camelCase",
-        bound(
-            deserialize = "TxReq: serde::Deserialize<'de>",
-            serialize = "TxReq: serde::Serialize"
-        )
-    )
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all = "camelCase",
+    bound(deserialize = "TxReq: serde::Deserialize<'de>", serialize = "TxReq: serde::Serialize")
 )]
 pub struct SimulatePayload<TxReq = TransactionRequest> {
     /// Array of block state calls to be executed at specific, optional block/state.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub block_state_calls: Vec<SimBlock<TxReq>>,
     /// Flag to determine whether to trace ERC20/ERC721 token transfers within transactions.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub trace_transfers: bool,
     /// Flag to enable or disable validation of the transaction sequence in the blocks.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub validation: bool,
     /// Flag to decide if full transactions should be returned instead of just their hashes.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub return_full_transactions: bool,
 }
 
@@ -197,9 +174,8 @@ impl<TxReq> SimulatePayload<TxReq> {
 }
 
 /// The error response returned by the `eth_simulateV1` method.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SimulateError {
     /// Error code.
     ///
@@ -210,7 +186,7 @@ pub struct SimulateError {
     /// Message error
     pub message: String,
     /// Data for the error, e.g. revert reason.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<Bytes>,
 }
 
@@ -235,14 +211,13 @@ impl SimulateError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, TxKind, bytes};
-    #[cfg(feature = "serde")]
     use serde_json::json;
     use similar_asserts::assert_eq;
 
     use super::*;
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_deserialize_simulate_error_no_data() {
         let error_json = json!({
             "code": -32000,
@@ -253,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_deserialize_simulate_error_with_data() {
         let error_json = json!({
             "code": -32000,
@@ -265,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "serde")]
+
     fn test_eth_simulate_v1_account_not_precompile() {
         let request_json = json!({
             "jsonrpc": "2.0",

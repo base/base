@@ -681,15 +681,14 @@ mod tests {
 
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
-    use alloy_rpc_types_eth::{
-        Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
-    };
     use async_trait::async_trait;
     use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_genesis::{
         BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
     };
-    use base_common_rpc_types::Transaction as BaseTransaction;
+    use base_common_rpc_types::{
+        BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
+    };
     use base_common_rpc_types_engine::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
         PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -1840,7 +1839,7 @@ mod tests {
             B256::ZERO,
         ));
         BaseTransaction {
-            inner: alloy_rpc_types_eth::Transaction {
+            inner: base_common_rpc_types::Transaction {
                 inner: Recovered::new_unchecked(envelope, Address::ZERO),
                 block_hash: None,
                 block_number: Some(block_number),

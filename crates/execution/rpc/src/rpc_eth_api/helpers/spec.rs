@@ -1,9 +1,8 @@
 //! Loads chain metadata.
 
 use alloy_primitives::{U64, U256};
-use alloy_rpc_types_eth::{Stage, SyncInfo, SyncStatus};
 use base_common_consensus::ChainInfo;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus};
 use futures::Future;
 use reth_network_api::NetworkInfo;
 use reth_prune_types::{PruneMode, PruneSegment};

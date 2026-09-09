@@ -4,9 +4,9 @@ use std::convert::Infallible;
 
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
-use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
+use base_common_rpc_types::{BlockError, error::EthRpcErrorCode};
 use base_evm_context::{EVMError, InvalidTransaction};
 use base_execution_evm::{BaseBlockExecutionError, ProviderError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;

@@ -40,7 +40,6 @@ reth-chain-state = { workspace = true }
 reth-storage-errors = {workspace = true}
 base-common-chains = { workspace = true }
 base-execution-evm = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-rpc-server-types = { workspace = true }
@@ -54,8 +53,8 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
+base-common-rpc-types = {workspace = true, features = []}
 tokio-stream = { workspace = true, features = ["default"] }
-base-common-rpc-types = { workspace = true, features = [] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }

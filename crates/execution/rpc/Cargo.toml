@@ -69,7 +69,6 @@ tokio = { workspace = true, features = ["default", "sync"] }
 opentelemetry = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"]}
 reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
@@ -81,11 +80,11 @@ base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
+base-common-rpc-types = {workspace = true, features = ["default", "serde"]}
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-evm-handler = { workspace = true, features = ["overrides", "call-util"] }

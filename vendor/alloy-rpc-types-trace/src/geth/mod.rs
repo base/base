@@ -3,7 +3,7 @@
 use std::{borrow::Cow, collections::BTreeMap, time::Duration};
 
 use alloy_primitives::{B256, Bytes, U256};
-use alloy_rpc_types_eth::{BlockOverrides, state::StateOverride};
+use base_common_rpc_types::{BlockOverrides, state::StateOverride};
 use serde::{Deserialize, Serialize, Serializer, de::DeserializeOwned, ser::SerializeMap};
 
 // re-exports

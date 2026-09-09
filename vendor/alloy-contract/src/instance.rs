@@ -4,9 +4,9 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector};
 use alloy_provider::Provider;
-use alloy_rpc_types_eth::Filter;
 use alloy_sol_types::SolEvent;
 use base_common_network::{Ethereum, Network};
+use base_common_rpc_types::Filter;
 
 use crate::{CallBuilder, Event, Interface, Result};
 
@@ -123,8 +123,8 @@ impl<P, N> std::fmt::Debug for ContractInstance<P, N> {
 mod tests {
     use alloy_primitives::{U256, hex};
     use alloy_provider::ProviderBuilder;
-    use alloy_rpc_types_eth::TransactionRequest;
     use base_common_network::TransactionBuilder;
+    use base_common_rpc_types::TransactionRequest;
 
     use super::*;
 

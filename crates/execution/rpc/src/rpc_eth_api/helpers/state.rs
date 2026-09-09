@@ -5,10 +5,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
-use alloy_rpc_types_eth::{Account, AccountInfo, EIP1186AccountProofResponse};
 use alloy_serde::JsonStorageKey;
 use base_common_consensus::constants::KECCAK_EMPTY;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{
+    Account, AccountInfo, BaseTransactionRequest, EIP1186AccountProofResponse,
+};
 use base_execution_evm::EvmEnvFor;
 use base_execution_txpool::TransactionPool;
 use futures::Future;

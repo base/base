@@ -2,8 +2,8 @@ use alloc::{collections::VecDeque, string::ToString, vec, vec::Vec};
 use core::iter::Peekable;
 
 use alloy_primitives::{Address, U64, U256, map::HashSet};
-use alloy_rpc_types_eth::TransactionInfo;
 use alloy_rpc_types_trace::parity::*;
+use base_common_rpc_types::TransactionInfo;
 use base_evm_context::{ExecutionResult, HaltReasonTr, ResultAndState};
 use revm::{
     DatabaseRef,

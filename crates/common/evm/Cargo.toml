@@ -37,7 +37,7 @@ sha2 = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
+base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
@@ -51,7 +51,6 @@ std = [
     "base-evm-handler/std",
     "alloy-primitives/std",
     "base-common-chains/std",
-    "base-common-consensus/std",
     "base-common-flz/std",
     "base-common-genesis/std",
     "base-common-l1-fees/std",
@@ -68,7 +67,6 @@ serde = [
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-chains/serde",
-    "base-common-consensus/serde",
     "base-common-genesis/serde",
     "dep:serde",
     "revm/serde",

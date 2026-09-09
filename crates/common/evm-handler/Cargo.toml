@@ -43,7 +43,7 @@ revm-database = {workspace = true}
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
-alloy-rpc-types-eth = { workspace = true, optional = true }
+base-common-rpc-types = { workspace = true, optional = true }
 base-common-consensus = {workspace = true, features = ["k256"]}
 [dev-dependencies]
 alloy-signer = { workspace = true }
@@ -87,13 +87,13 @@ std = [
     "alloy-eips/std",
     "derive_more/std",
     "thiserror/std",
-    "alloy-rpc-types-eth?/std",
+    "base-common-rpc-types?/std",
     "tracing/std",
 ]
 tracer = ["std", "serde", "dep:serde", "dep:serde_json"]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
 call-util = ["overrides"]
 gmp = ["revm-precompile/gmp"]
-overrides = ["dep:alloy-rpc-types-eth"]
-rpc = ["dep:alloy-rpc-types-eth"]
+overrides = ["dep:base-common-rpc-types"]
+rpc = ["dep:base-common-rpc-types"]
 secp256k1 = ["std", "base-common-consensus/secp256k1"]

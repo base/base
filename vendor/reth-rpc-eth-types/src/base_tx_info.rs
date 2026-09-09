@@ -2,8 +2,8 @@
 
 use std::fmt::{Debug, Formatter};
 
-use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::{BaseReceipt, BaseTransactionInfo, BaseTxEnvelope, DepositInfo};
+use base_common_rpc_types::TransactionInfo;
 use reth_storage_api::{ReceiptProvider, TransactionsProvider, errors::ProviderError};
 
 use crate::BaseTimeCache;

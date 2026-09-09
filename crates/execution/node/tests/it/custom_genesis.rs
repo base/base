@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::BlockHeader;
+use base_common_rpc_types::BlockNumberOrTag;
 use base_common_rpc_types_engine::ForkchoiceState;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_node_core::NodeConfig;

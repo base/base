@@ -45,11 +45,10 @@ base-common-rpc-types-engine = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 base-node-core = { workspace = true, features = ["default"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-test-utils = { workspace = true, features = ["contracts"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = {workspace = true, features = ["default", "std"]}

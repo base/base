@@ -12,7 +12,9 @@ use reth_e2e_test_utils::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
-use alloy_rpc_types_eth::{Transaction, TransactionInput, TransactionReceipt, TransactionRequest};
+use base_common_rpc_types::{
+    Transaction, TransactionInput, TransactionReceipt, TransactionRequest,
+};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use eyre::Result;
 use fixtures::BaseTestPayload;

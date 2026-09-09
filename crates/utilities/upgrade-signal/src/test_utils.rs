@@ -1,8 +1,8 @@
 //! Shared test utilities for exercising the upgrade signal reader against a mock L1 endpoint.
 
 use alloy_primitives::{B256, Bytes, hex};
-use alloy_rpc_types_eth::Block;
 use alloy_sol_types::SolCall;
+use base_common_rpc_types::Block;
 use httpmock::{Mock, prelude::*};
 
 use crate::contract::IProtocolVersions;

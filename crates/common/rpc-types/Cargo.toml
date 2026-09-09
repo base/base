@@ -14,54 +14,73 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-alloy-serde = { workspace = true }
-alloy-network-primitives = { workspace = true }
-alloy-eips = { workspace = true, features = ["serde"] }
-serde_json = { workspace = true, features = ["alloc"] }
-serde = { workspace = true, features = ["derive", "alloc"] }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
-base-common-consensus = { workspace = true, features = ["serde"] }
-arbitrary = { workspace = true, features = ["derive"], optional = true }
-alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
+alloy-serde = {workspace = true}
+itertools = { workspace = true }
+thiserror = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-eips = {workspace = true, features = ["serde"]}
+serde_json = {workspace = true, features = ["alloc"]}
+serde = {workspace = true, features = ["derive", "alloc"]}
+base-common-consensus = {workspace = true, features = ["serde"]}
+alloy-network-primitives = {workspace = true,features = ["serde"]}
+arbitrary = {workspace = true, features = ["derive"], optional = true}
+alloy-primitives = {workspace = true, features = ["map", "rlp", "serde"]}
+serde_with = { workspace = true, features = ["macros"], optional = true }
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
+alloy-rlp = { workspace = true, features = [
+    "arrayvec",
+    "derive",
+] }
 [dev-dependencies]
+assert_matches_1_5 = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-arbitrary = { workspace = true, features = ["derive"] }
-similar-asserts = { workspace = true, features = ["default"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
-alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
-base-common-consensus = { workspace = true, features = ["arbitrary"] }
+arbitrary = {workspace = true, features = ["derive"]}
+similar-asserts = {workspace = true, features = ["default"]}
+rand_08 = { workspace = true, features = ["default", "serde"] }
+bincode = { workspace = true, features = ["default", "serde"] }
+base-common-consensus = {workspace = true, features = ["arbitrary", "std"]}
+alloy-primitives = {workspace = true, features = ["arbitrary", "rand", "rlp", "serde"]}
+alloy-eips = { workspace = true, features = [
+    "arbitrary",
+    "k256",
+] }
 
 [features]
-default = ["std"]
+default = ["std", "serde"]
 std = [
     "base-common-consensus/std",
     "alloy-eips/std",
     "alloy-network-primitives/std",
     "alloy-primitives/std",
-    "alloy-rpc-types-eth/std",
     "alloy-serde/std",
-    "base-common-consensus/std",
     "derive_more/std",
     "serde/std",
     "serde_json/std",
+    "alloy-rlp/std",
+    "alloy-sol-types/std",
+    "serde_with?/std",
+    "thiserror/std",
 ]
 arbitrary = [
     "base-common-consensus/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
-    "alloy-rpc-types-eth/arbitrary",
     "alloy-serde/arbitrary",
-    "base-common-consensus/arbitrary",
     "dep:arbitrary",
     "std",
+    "alloy-sol-types/arbitrary",
 ]
-k256 = ["alloy-rpc-types-eth/k256", "base-common-consensus/k256"]
+k256 = ["base-common-consensus/k256", "alloy-eips/k256", "alloy-primitives/k256"]
 serde = [
     "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-network-primitives/serde",
     "alloy-primitives/serde",
-    "alloy-rpc-types-eth/serde",
-    "base-common-consensus/serde",
+    "rand_08/serde",
+]
+serde-bincode-compat = [
+    "serde",
+    "dep:serde_with",
+    "alloy-eips/serde-bincode-compat",
+    "base-common-consensus/serde-bincode-compat",
 ]

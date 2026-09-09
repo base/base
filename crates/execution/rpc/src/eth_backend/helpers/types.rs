@@ -3,8 +3,8 @@
 //tests for simulate
 #[cfg(test)]
 mod tests {
-    use alloy_rpc_types_eth::TransactionRequest;
     use base_common_consensus::Transaction;
+    use base_common_rpc_types::TransactionRequest;
     use reth_provider::test_utils::MockEthProvider;
     use reth_rpc_eth_types::simulate::resolve_transaction;
     use revm::database::CacheDB;

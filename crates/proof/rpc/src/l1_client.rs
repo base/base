@@ -6,12 +6,12 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{
-    BlockId, Header, TransactionInput, TransactionReceipt, TransactionRequest,
-};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
+use base_common_rpc_types::{
+    BlockId, Header, TransactionInput, TransactionReceipt, TransactionRequest,
+};
 use base_retry::RetryConfig;
 use url::Url;
 

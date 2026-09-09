@@ -6,10 +6,10 @@ use std::convert::Infallible;
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
+use base_common_rpc_types::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
 use base_evm_handler::{BlockExecutionError, BlockValidationError, CallError, StateOverrideError};
 use base_execution_txpool::{
@@ -183,7 +183,7 @@ pub enum EthApiError {
     /// Bytecode override is invalid.
     ///
     /// This can happen if bytecode provided in an
-    /// [`AccountOverride`](alloy_rpc_types_eth::state::AccountOverride) is malformed, e.g. invalid
+    /// [`AccountOverride`](base_common_rpc_types::state::AccountOverride) is malformed, e.g. invalid
     /// 7702 bytecode.
     #[error("Invalid bytecode: {0}")]
     InvalidBytecode(String),

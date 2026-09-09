@@ -14,57 +14,28 @@ use crate::{Log, TransactionReceipt};
 /// transaction, enforced out-of-protocol by the sequencer.
 ///
 /// See also <https://github.com/ethereum-optimism/op-geth/blob/928070c7fc097362ed2d40a4f72889ba91544931/core/types/transaction_conditional.go#L74-L76>.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionConditional {
     /// A map of account addresses to their expected storage states.
     /// Each account can have a specified storage root or explicit slot-value pairs.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub known_accounts: AddressHashMap<AccountStorage>,
     /// The minimal block number at which the transaction can be included.
     /// `None` indicates no minimum block number constraint.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            with = "alloy_serde::quantity::opt",
-            skip_serializing_if = "Option::is_none"
-        )
-    )]
+    #[serde(default, with = "alloy_serde::quantity::opt", skip_serializing_if = "Option::is_none")]
     pub block_number_min: Option<BlockNumber>,
     /// The maximal block number at which the transaction can be included.
     /// `None` indicates no maximum block number constraint.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            with = "alloy_serde::quantity::opt",
-            skip_serializing_if = "Option::is_none"
-        )
-    )]
+    #[serde(default, with = "alloy_serde::quantity::opt", skip_serializing_if = "Option::is_none")]
     pub block_number_max: Option<BlockNumber>,
     /// The minimal timestamp at which the transaction can be included.
     /// `None` indicates no minimum timestamp constraint.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            with = "alloy_serde::quantity::opt",
-            skip_serializing_if = "Option::is_none"
-        )
-    )]
+    #[serde(default, with = "alloy_serde::quantity::opt", skip_serializing_if = "Option::is_none")]
     pub timestamp_min: Option<u64>,
     /// The maximal timestamp at which the transaction can be included.
     /// `None` indicates no maximum timestamp constraint.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            with = "alloy_serde::quantity::opt",
-            skip_serializing_if = "Option::is_none"
-        )
-    )]
+    #[serde(default, with = "alloy_serde::quantity::opt", skip_serializing_if = "Option::is_none")]
     pub timestamp_max: Option<u64>,
 }
 
@@ -159,9 +130,8 @@ impl TransactionConditional {
 /// the user prefers their transaction to only be included in a block if the account's storage root
 /// matches. If the storage slots are set, then the user prefers their transaction to only be
 /// included if the particular storage slot values from state match.
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum AccountStorage {
     /// Expected storage root hash of the account.
     RootHash(B256),
@@ -185,9 +155,8 @@ impl AccountStorage {
 }
 
 /// [`UserOperation`] in the spec: Entry Point V0.6
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UserOperation {
     /// The address of the smart contract account
     pub sender: Address,
@@ -215,9 +184,8 @@ pub struct UserOperation {
 }
 
 /// [`PackedUserOperation`] in the spec: Entry Point V0.7
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PackedUserOperation {
     /// The account making the operation.
     pub sender: Address,
@@ -226,11 +194,11 @@ pub struct PackedUserOperation {
     pub nonce: U256,
     /// Deployer contract address: Required exclusively for deploying new accounts that don't yet
     /// exist on the blockchain.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub factory: Option<Address>,
     /// Factory data for the account creation process, applicable only when using a deployer
     /// contract.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub factory_data: Option<Bytes>,
     /// The call data.
     pub call_data: Bytes,
@@ -247,24 +215,23 @@ pub struct PackedUserOperation {
     pub max_priority_fee_per_gas: U256,
     /// Paymaster contract address: Needed if a third party is covering transaction costs; left
     /// blank for self-funded accounts.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster: Option<Address>,
     /// The gas limit for the paymaster verification.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster_verification_gas_limit: Option<U256>,
     /// The gas limit for the paymaster post-operation.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster_post_op_gas_limit: Option<U256>,
     /// The paymaster data.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paymaster_data: Option<Bytes>,
     /// The signature of the transaction.
     pub signature: Bytes,
 }
 
 /// Send User Operation
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SendUserOperation {
     /// User Operation
     EntryPointV06(UserOperation),
@@ -273,18 +240,16 @@ pub enum SendUserOperation {
 }
 
 /// Response to sending a user operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SendUserOperationResponse {
     /// The hash of the user operation.
     pub user_op_hash: Bytes,
 }
 
 /// Represents the receipt of a user operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UserOperationReceipt {
     /// The hash of the user operation.
     pub user_op_hash: Bytes,
@@ -311,9 +276,8 @@ pub struct UserOperationReceipt {
 }
 
 /// Represents the gas estimation for a user operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UserOperationGasEstimation {
     /// The gas limit for the pre-verification.
     pub pre_verification_gas: U256,

@@ -354,12 +354,11 @@ impl From<AttributesMismatch> for AttributesMatch {
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
-    use alloy_rpc_types_eth::{Block, BlockTransactions};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_chains::{ChainConfig, rollup_config};
     use base_common_consensus::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_network::TransactionResponse;
-    use base_common_rpc_types::Transaction;
+    use base_common_rpc_types::{BaseTransaction as Transaction, Block, BlockTransactions};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -742,7 +741,7 @@ mod tests {
         // For canyon and above we also need to specify the withdrawal headers
         let block = Block {
             withdrawals: Some(Withdrawals(vec![])),
-            header: alloy_rpc_types_eth::Header {
+            header: base_common_rpc_types::Header {
                 inner: base_common_consensus::Header {
                     withdrawals_root: Some(EMPTY_ROOT_HASH),
                     ..Default::default()

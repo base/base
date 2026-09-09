@@ -3,10 +3,10 @@
 //! Transaction wrapper that labels transaction with its origin.
 
 use alloy_primitives::B256;
-use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::{
     BaseTxEnvelope, EthereumTxEnvelope, TxEip4844, transaction::TxHashRef,
 };
+use base_common_rpc_types::TransactionInfo;
 use reth_primitives_traits::{Recovered, SignedTransaction};
 
 /// Represents from where a transaction was fetched.
@@ -87,7 +87,7 @@ impl TransactionSource<BaseTxEnvelope> {
     pub fn into_transaction<Builder>(
         self,
         resp_builder: &crate::BaseRpcConverter<Builder>,
-    ) -> Result<base_common_rpc_types::Transaction, crate::BaseEthApiError>
+    ) -> Result<base_common_rpc_types::BaseTransaction, crate::BaseEthApiError>
     where
         Builder: reth_storage_api::BlockReader<
                 Block = base_common_consensus::BaseBlock,

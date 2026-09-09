@@ -13,7 +13,6 @@ pub struct Work {
     pub number: Option<u64>,
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for Work {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
@@ -26,7 +25,6 @@ impl serde::Serialize for Work {
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'a> serde::Deserialize<'a> for Work {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

@@ -25,7 +25,6 @@ rand_08 = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"]}
 alloy-eips = { workspace = true, features = ["std", "serde"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
 coins-bip39 = { workspace = true, features = ["english"], optional = true }
 zeroize = { workspace = true, features = [
     "zeroize_derive",
@@ -34,9 +33,9 @@ zeroize = { workspace = true, features = [
 auto_impl = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-common-rpc-types = {workspace = true}
 alloy-network-primitives = { workspace = true }
 futures-utils-wasm = { workspace = true, features = ["default"] }
+base-common-rpc-types = {workspace = true, features = ["std", "serde"]}
 base-common-consensus = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
@@ -53,5 +52,5 @@ k256 = [
     "alloy-primitives/k256",
     "base-common-consensus/k256",
     "alloy-eips/k256",
-    "alloy-rpc-types-eth/k256",
+    "base-common-rpc-types/k256",
 ]

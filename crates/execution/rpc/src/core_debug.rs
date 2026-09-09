@@ -7,15 +7,15 @@ use alloy_primitives::{Address, B256, Bytes, U64, hex::decode, uint};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::BlockTransactionsKind;
 use alloy_rpc_types_debug::ExecutionWitness;
-use alloy_rpc_types_eth::{
-    Account, AccountInfo, BlockError, Bundle, Index, StateContext, state::EvmOverrides,
-};
 use alloy_rpc_types_trace::geth::{
     BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult,
 };
 use async_trait::async_trait;
 use base_common_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{
+    Account, AccountInfo, BaseTransactionRequest, BlockError, Bundle, Index, StateContext,
+    state::EvmOverrides,
+};
 use base_evm_handler::{BlockEnvironment, Evm};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};

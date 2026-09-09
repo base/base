@@ -4,7 +4,7 @@
 //! <https://github.com/otterscan/otterscan/blob/v2.6.1/docs/custom-jsonrpc.md>
 
 use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, U256};
-use alloy_rpc_types_eth::{
+use base_common_rpc_types::{
     Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt, Withdrawals,
 };
 use serde::{

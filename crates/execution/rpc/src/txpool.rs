@@ -46,13 +46,16 @@ where
     fn content(
         &self,
     ) -> Result<
-        TxpoolContent<base_common_rpc_types::Transaction>,
+        TxpoolContent<base_common_rpc_types::BaseTransaction>,
         reth_rpc_eth_types::BaseEthApiError,
     > {
         #[inline]
         fn insert<RpcTxB>(
             tx: &base_execution_txpool::BasePooledTransaction,
-            content: &mut BTreeMap<Address, BTreeMap<String, base_common_rpc_types::Transaction>>,
+            content: &mut BTreeMap<
+                Address,
+                BTreeMap<String, base_common_rpc_types::BaseTransaction>,
+            >,
             resp_builder: &reth_rpc_eth_types::BaseRpcConverter<RpcTxB>,
         ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
         where
@@ -90,7 +93,7 @@ where
 }
 
 #[async_trait]
-impl<Pool, Eth> TxPoolApiServer<base_common_rpc_types::Transaction> for TxPoolApi<Pool, Eth>
+impl<Pool, Eth> TxPoolApiServer<base_common_rpc_types::BaseTransaction> for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
     Eth: reth_storage_api::BlockReader<
@@ -156,7 +159,7 @@ where
     async fn txpool_content_from(
         &self,
         from: Address,
-    ) -> RpcResult<TxpoolContentFrom<base_common_rpc_types::Transaction>> {
+    ) -> RpcResult<TxpoolContentFrom<base_common_rpc_types::BaseTransaction>> {
         trace!(target: "rpc::eth", ?from, "Serving txpool_contentFrom");
         Ok(self.content()?.remove_from(&from))
     }
@@ -166,7 +169,9 @@ where
     ///
     /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
     /// Handler for `txpool_content`
-    async fn txpool_content(&self) -> RpcResult<TxpoolContent<base_common_rpc_types::Transaction>> {
+    async fn txpool_content(
+        &self,
+    ) -> RpcResult<TxpoolContent<base_common_rpc_types::BaseTransaction>> {
         trace!(target: "rpc::eth", "Serving txpool_content");
         Ok(self.content()?)
     }

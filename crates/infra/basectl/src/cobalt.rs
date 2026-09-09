@@ -12,13 +12,13 @@ use alloy_provider::{
     network::{ReceiptResponse, TransactionResponse},
 };
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::SolCall;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_consensus::Predeploys;
 use base_common_evm::BaseTime;
 use base_common_network::Base;
+use base_common_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BaseTimeUpdateTx;
 use futures::{SinkExt, StreamExt};

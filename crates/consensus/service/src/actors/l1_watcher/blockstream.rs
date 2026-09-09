@@ -3,8 +3,8 @@ use std::time::Duration;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::Provider;
 use alloy_rpc_client::PollerBuilder;
-use alloy_rpc_types_eth::Block;
 use async_stream::stream;
+use base_common_rpc_types::Block;
 use base_protocol::BlockInfo;
 use futures::{Stream, StreamExt};
 

@@ -2,9 +2,9 @@ use std::{marker::PhantomData, sync::Arc, task::Poll};
 
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
-use alloy_rpc_types_eth::{Bundle, StateContext, TransactionIndex, state::StateOverride};
 use alloy_transport::TransportResult;
 use base_common_network::Network;
+use base_common_rpc_types::{Bundle, StateContext, TransactionIndex, state::StateOverride};
 use futures::{FutureExt, future};
 
 use super::{Caller, EthCallManyParams};

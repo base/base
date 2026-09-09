@@ -6,13 +6,12 @@ use std::sync::Arc;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
-use alloy_rpc_types_eth::{TransactionInfo, state::EvmOverrides};
 use base_common_consensus::{
     BaseTxEnvelope, BlockHeader, Transaction,
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_common_network::{TransactionBuilder, TransactionBuilder4844};
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseTransactionRequest, TransactionInfo, state::EvmOverrides};
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
 };
@@ -98,7 +97,7 @@ impl BaseEthApi {
     /// Returns all transactions from the local pending pool.
     pub fn pending_transactions(
         &self,
-    ) -> Result<Vec<base_common_rpc_types::Transaction>, BaseEthApiError> {
+    ) -> Result<Vec<base_common_rpc_types::BaseTransaction>, BaseEthApiError> {
         self.pool()
             .pending_transactions()
             .into_iter()
@@ -252,8 +251,9 @@ impl BaseEthApi {
         &self,
         block_id: BlockId,
         index: usize,
-    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, BaseEthApiError>> + Send
-    {
+    ) -> impl Future<
+        Output = Result<Option<base_common_rpc_types::BaseTransaction>, BaseEthApiError>,
+    > + Send {
         async move {
             if let Some(block) = self.recovered_block(block_id).await? {
                 let block_hash = block.hash();
@@ -286,8 +286,9 @@ impl BaseEthApi {
         sender: Address,
         nonce: u64,
         include_pending: bool,
-    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, BaseEthApiError>> + Send
-    {
+    ) -> impl Future<
+        Output = Result<Option<base_common_rpc_types::BaseTransaction>, BaseEthApiError>,
+    > + Send {
         async move {
             // Check the pool first
             if include_pending
@@ -637,8 +638,8 @@ mod tests {
 
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-    use alloy_rpc_types_eth::request::TransactionRequest;
     use base_common_consensus::{Block, Header, Transaction};
+    use base_common_rpc_types::request::TransactionRequest;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_txpool::{
         TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,

@@ -3,8 +3,8 @@
 use std::{collections::HashSet, time::Duration};
 
 use alloy_primitives::{B256, Bytes};
-use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
+use base_common_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use base_common_rpc_types_engine::{
     ExecutionPayloadEnvelopeV3, ForkchoiceState, PayloadAttributes, PayloadStatusEnum,
 };

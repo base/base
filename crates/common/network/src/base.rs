@@ -23,7 +23,7 @@ impl Network for Base {
 
     type TransactionRequest = base_common_rpc_types::BaseTransactionRequest;
 
-    type TransactionResponse = base_common_rpc_types::Transaction;
+    type TransactionResponse = base_common_rpc_types::BaseTransaction;
 
     type ReceiptResponse = base_common_rpc_types::BaseTransactionReceipt;
 

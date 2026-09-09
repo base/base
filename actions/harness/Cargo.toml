@@ -27,13 +27,13 @@ base-test-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
 base-consensus-node = { workspace = true }
 base-batcher-source = { workspace = true }
 base-batcher-encoder = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-safedb = { workspace = true }
+base-common-rpc-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }

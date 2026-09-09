@@ -12,7 +12,7 @@ pub trait BlockApi {
         &self,
         block_number: BlockNumberOrTag,
         include_txs: bool,
-    ) -> RpcResult<Option<alloy_rpc_types_eth::Block>>;
+    ) -> RpcResult<Option<base_common_rpc_types::Block>>;
 }
 
 /// Generates a genesis JSON file from the embedded template, stamped with the current time.

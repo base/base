@@ -119,8 +119,8 @@ impl EthSigner<BaseTxEnvelope, BaseTransactionRequest> for DevSigner {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, TxKind, U256};
-    use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
     use base_common_consensus::Transaction;
+    use base_common_rpc_types::{TransactionInput, TransactionRequest};
 
     use super::*;
 

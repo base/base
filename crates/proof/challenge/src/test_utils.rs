@@ -10,12 +10,12 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
 use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
 use base_common_consensus::{
     Eip658Value, Header as ConsensusHeader, Predeploys, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
+use base_common_rpc_types::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,

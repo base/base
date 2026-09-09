@@ -4,9 +4,9 @@ use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use alloy_provider::{Network, Provider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use async_trait::async_trait;
 use base_common_network::Base;
+use base_common_rpc_types::BlockNumberOrTag;
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};

@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_common_rpc_types::BlockNumberOrTag;
 
 /// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
 #[derive(

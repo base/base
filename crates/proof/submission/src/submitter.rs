@@ -1,7 +1,7 @@
 //! Aggregate verifier proof transaction submitter.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_rpc_types_eth::TransactionReceipt;
+use base_common_rpc_types::TransactionReceipt;
 use base_tx_manager::{TxCandidate, TxManager};
 
 use crate::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
@@ -80,8 +80,8 @@ mod tests {
     use std::sync::Mutex;
 
     use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
-    use alloy_rpc_types_eth::TransactionReceipt;
     use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use base_common_rpc_types::TransactionReceipt;
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 
     use super::AggregateProofSubmitter;

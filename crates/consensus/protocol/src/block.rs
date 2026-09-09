@@ -4,9 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
-use alloy_rpc_types_eth::Block as RpcBlock;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, Block, Transaction};
 use base_common_genesis::ChainGenesis;
+use base_common_rpc_types::Block as RpcBlock;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError, CancunPayloadFields,
     PraguePayloadFields,
@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn test_rpc_block_into_info() {
-        let block: alloy_rpc_types_eth::Block<BaseTxEnvelope> = alloy_rpc_types_eth::Block {
-            header: alloy_rpc_types_eth::Header {
+        let block: base_common_rpc_types::Block<BaseTxEnvelope> = base_common_rpc_types::Block {
+            header: base_common_rpc_types::Header {
                 hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
                 inner: base_common_consensus::Header {
                     number: 1,
@@ -283,7 +283,7 @@ mod tests {
             l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
             ..Default::default()
         };
-        let tx_env = alloy_rpc_types_eth::Transaction {
+        let tx_env = base_common_rpc_types::Transaction {
             inner: base_common_consensus::transaction::Recovered::new_unchecked(
                 base_common_consensus::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
                     base_common_consensus::TxDeposit {
@@ -299,9 +299,9 @@ mod tests {
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };
-        let block: alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction> =
-            alloy_rpc_types_eth::Block {
-                header: alloy_rpc_types_eth::Header {
+        let block: base_common_rpc_types::Block<base_common_rpc_types::BaseTransaction> =
+            base_common_rpc_types::Block {
+                header: base_common_rpc_types::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
                     inner: base_common_consensus::Header {
                         number: 3,
@@ -313,8 +313,8 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
-                    base_common_rpc_types::Transaction {
+                transactions: base_common_rpc_types::BlockTransactions::Full(vec![
+                    base_common_rpc_types::BaseTransaction {
                         inner: tx_env,
                         block_timestamp_ms: None,
                         deposit_nonce: None,

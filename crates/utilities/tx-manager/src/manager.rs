@@ -31,7 +31,7 @@
 //! [`prepare`]: SimpleTxManager::prepare
 //! [`craft_tx`]: SimpleTxManager::craft_tx
 //! [`send_tx`]: SimpleTxManager::send_tx
-//! [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+//! [`TransactionRequest`]: base_common_rpc_types::TransactionRequest
 
 use std::{
     fmt::Debug,
@@ -47,7 +47,6 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::Provider;
-use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
 use base_common_consensus::TxEnvelope;
@@ -55,6 +54,7 @@ use base_common_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
 };
+use base_common_rpc_types::{TransactionReceipt, TransactionRequest};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -2024,7 +2024,7 @@ mod tests {
             let asserter = Asserter::new();
             for _ in 0..5 {
                 asserter.push_success(&1u64);
-                asserter.push_success(&Option::<alloy_rpc_types_eth::TransactionReceipt>::None);
+                asserter.push_success(&Option::<base_common_rpc_types::TransactionReceipt>::None);
             }
             let provider = ProviderBuilder::new().connect_mocked_client(asserter);
             let send_state = SendState::new(3).expect("send state should be valid");

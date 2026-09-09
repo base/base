@@ -4,12 +4,12 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
-use alloy_rpc_types_eth::{BlockId, Log};
 use alloy_rpc_types_mev::{
     BundleItem, Inclusion, MevSendBundle, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
     SimBundleResponse, Validity,
 };
 use base_common_consensus::{BlockHeader, transaction::TxHashRef};
+use base_common_rpc_types::{BlockId, Log};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockEnvironment, apply_block_overrides};
 use base_execution_evm::Evm;

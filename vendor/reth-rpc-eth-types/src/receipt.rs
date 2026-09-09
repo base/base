@@ -2,8 +2,8 @@
 
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, TxKind};
-use alloy_rpc_types_eth::TransactionReceipt;
 use base_common_consensus::{BaseReceipt, Transaction};
+use base_common_rpc_types::TransactionReceipt;
 use reth_primitives_traits::TransactionMeta;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 
