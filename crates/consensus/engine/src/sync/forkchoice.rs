@@ -4,7 +4,7 @@ use std::fmt::Display;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
 use tracing::{error, warn};
 

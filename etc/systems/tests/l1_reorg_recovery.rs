@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_eips::{BlockNumberOrTag, NumHash};
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::{Base, Ethereum};
 use base_protocol::{L2BlockInfo, SyncStatus};
 use base_system_tests::{

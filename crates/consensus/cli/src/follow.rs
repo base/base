@@ -2,7 +2,7 @@
 
 use std::{num::ParseIntError, sync::Arc, time::Duration};
 
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_engine::LocalEngineClient;
 use base_consensus_node::{FollowNode, FollowNodeConfig, L1Config, RemoteL2Client};
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};

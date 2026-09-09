@@ -1,6 +1,6 @@
 //! Contract-backed upgrade ID helpers.
 
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 
 /// Formats the contract-backed upgrade IDs in registration order.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]

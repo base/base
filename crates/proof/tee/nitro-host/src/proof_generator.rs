@@ -354,7 +354,7 @@ mod tests {
 
     use alloy_genesis::ChainConfig;
     use async_trait::async_trait;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_proof_host::ProverConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_proof_worker::ProofSubmitter;

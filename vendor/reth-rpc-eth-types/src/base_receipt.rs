@@ -4,12 +4,12 @@ use std::fmt::Debug;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
+use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
     ReceiptWithBloom, TxReceipt,
 };
-use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_types_rpc::{
     BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt, TransactionReceiptFields,
 };
@@ -391,7 +391,7 @@ impl BaseReceiptBuilder {
 mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
-    use base_common_chains::ChainConfig;
+    use base_common_chain_config::ChainConfig;
     use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, Block, BlockBody, Eip658Value, TxEip7702,
         transaction::TransactionMeta,
@@ -656,7 +656,7 @@ mod tests {
         let upgrades = BaseChainSpec::mainnet();
 
         let receipt = ReceiptFieldsBuilder::new(
-            ChainConfig::mainnet().upgrades[base_common_chains::BaseUpgrade::Jovian]
+            ChainConfig::mainnet().upgrades[base_common_chain_config::BaseUpgrade::Jovian]
                 .as_timestamp()
                 .unwrap_or_default(),
             u64::MAX,
@@ -707,7 +707,7 @@ mod tests {
                 next_log_index: 0,
                 meta: TransactionMeta {
                     timestamp: ChainConfig::mainnet().upgrades
-                        [base_common_chains::BaseUpgrade::Jovian]
+                        [base_common_chain_config::BaseUpgrade::Jovian]
                         .as_timestamp()
                         .unwrap_or_default(),
                     ..Default::default()
@@ -764,7 +764,7 @@ mod tests {
                 next_log_index: 0,
                 meta: TransactionMeta {
                     timestamp: ChainConfig::mainnet().upgrades
-                        [base_common_chains::BaseUpgrade::Isthmus]
+                        [base_common_chain_config::BaseUpgrade::Isthmus]
                         .as_timestamp()
                         .unwrap_or_default(),
                     ..Default::default()

@@ -7,7 +7,7 @@ use std::{fs::File, path::PathBuf};
 
 use alloy_chains::Chain;
 use alloy_genesis::ChainConfig;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use serde_json::from_reader;
 use tracing::debug;
 
@@ -61,7 +61,7 @@ impl L1ConfigFile {
             }
             None => {
                 debug!("loading l1 config from built-in mapping");
-                base_common_chains::L1_CONFIGS
+                base_common_chain_config::L1_CONFIGS
                     .get(&l1_chain_id)
                     .cloned()
                     .ok_or(ConfigError::NotFound(l1_chain_id))
@@ -106,7 +106,7 @@ impl L2ConfigFile {
             }
             None => {
                 debug!("loading l2 config from built-in chain config");
-                base_common_chains::rollup_config!(l2_chain)
+                base_common_chain_config::rollup_config!(l2_chain)
                     .ok_or_else(|| ConfigError::NotFound(l2_chain.id()))
             }
         }

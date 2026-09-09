@@ -4,7 +4,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
 };
 
-use base_common_genesis::UpgradeConfig;
+use base_common_chain_config::UpgradeConfig;
 
 /// A function that activates a single upgrade on a [`UpgradeConfig`].
 pub type ForkSetter = fn(&mut UpgradeConfig);
@@ -150,7 +150,7 @@ impl ForkMatrix {
 mod tests {
     use std::any::Any;
 
-    use base_common_genesis::{RollupConfig, UpgradeConfig};
+    use base_common_chain_config::{RollupConfig, UpgradeConfig};
 
     use super::ForkMatrix;
 

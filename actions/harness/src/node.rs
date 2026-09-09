@@ -3,8 +3,8 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
-use base_common_genesis::RollupConfig;
 use base_common_types_payload::ForkchoiceState;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,

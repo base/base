@@ -9,8 +9,8 @@ use std::{
 
 use alloy_primitives::{Address, B256, utils::parse_ether};
 use alloy_transport::TransportErrorKind;
+use base_common_chain_config::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 use base_common_types_chain::BaseTxEnvelope;
-use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
 };
@@ -168,7 +168,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
-    let rollup_config = Arc::new(base_common_genesis::RollupConfig {
+    let rollup_config = Arc::new(base_common_chain_config::RollupConfig {
         block_time,
         genesis: ChainGenesis {
             l2_time: initial_head
@@ -309,7 +309,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
-    let rollup_config = Arc::new(base_common_genesis::RollupConfig {
+    let rollup_config = Arc::new(base_common_chain_config::RollupConfig {
         block_time,
         genesis: ChainGenesis {
             l2_time: initial_head
@@ -402,7 +402,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
-    let rollup_config = Arc::new(base_common_genesis::RollupConfig {
+    let rollup_config = Arc::new(base_common_chain_config::RollupConfig {
         block_time,
         genesis: ChainGenesis {
             l2_time: initial_head

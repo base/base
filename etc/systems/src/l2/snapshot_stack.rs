@@ -7,7 +7,7 @@ use std::{
 
 use alloy_hardforks::ForkCondition;
 use alloy_provider::{Provider, RootProvider};
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_types_rpc::SyncStatus as EthSyncStatus;
 use base_consensus_node::StandalonePrefund;
@@ -409,8 +409,8 @@ impl SnapshotL2Stack {
 #[cfg(test)]
 mod tests {
     use alloy_hardforks::ForkCondition;
-    use base_common_chains::{ChainConfig, Upgrades};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
+    use base_common_chain_config::{ChainConfig, Upgrades};
     use base_execution_chainspec::BaseChainSpec;
 
     use super::{

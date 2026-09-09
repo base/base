@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use tokio::task::JoinHandle;
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
@@ -296,7 +296,7 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
-    use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeConfig};
+    use base_common_chain_config::{RuntimeUpgradeRegistry, UpgradeConfig};
 
     use super::*;
 
@@ -304,7 +304,7 @@ mod tests {
     fn seconds_until_next_upgrades_returns_future_countdown() {
         let config = RollupConfig {
             upgrades: UpgradeConfig {
-                base: base_common_genesis::BaseUpgradeConfig {
+                base: base_common_chain_config::BaseUpgradeConfig {
                     azul: Some(1_000),
                     beryl: Some(2_000),
                     cobalt: Some(3_000),
@@ -323,7 +323,7 @@ mod tests {
     fn seconds_until_next_upgrades_returns_zero_during_activation_grace() {
         let config = RollupConfig {
             upgrades: UpgradeConfig {
-                base: base_common_genesis::BaseUpgradeConfig {
+                base: base_common_chain_config::BaseUpgradeConfig {
                     beryl: Some(1_000),
                     ..Default::default()
                 },
@@ -340,7 +340,7 @@ mod tests {
     fn seconds_until_next_upgrades_ignores_activations_after_grace() {
         let config = RollupConfig {
             upgrades: UpgradeConfig {
-                base: base_common_genesis::BaseUpgradeConfig {
+                base: base_common_chain_config::BaseUpgradeConfig {
                     beryl: Some(1_000),
                     ..Default::default()
                 },
@@ -359,7 +359,7 @@ mod tests {
     fn seconds_until_next_upgrades_returns_all_simultaneous_next_upgrades() {
         let config = RollupConfig {
             upgrades: UpgradeConfig {
-                base: base_common_genesis::BaseUpgradeConfig {
+                base: base_common_chain_config::BaseUpgradeConfig {
                     azul: Some(1_000),
                     beryl: Some(1_000),
                     cobalt: Some(2_000),
@@ -395,7 +395,7 @@ mod tests {
     fn record_seconds_until_next_upgrade_drains_stale_upgrades() {
         let config = RollupConfig {
             upgrades: UpgradeConfig {
-                base: base_common_genesis::BaseUpgradeConfig {
+                base: base_common_chain_config::BaseUpgradeConfig {
                     beryl: Some(1_000),
                     ..Default::default()
                 },
@@ -420,7 +420,7 @@ mod tests {
         let config = RollupConfig {
             upgrades: UpgradeConfig {
                 canyon_time: Some(900),
-                base: base_common_genesis::BaseUpgradeConfig {
+                base: base_common_chain_config::BaseUpgradeConfig {
                     azul: Some(1000),
                     ..Default::default()
                 },

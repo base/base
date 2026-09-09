@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use base_common_chains::ChainConfig;
+use base_common_chain_config::ChainConfig;
 use base_common_types_rpc::SyncStatus as EthSyncStatus;
 use base_consensus_peers::{BootNode, NodeRecord};
 use serde::{Deserialize, Serialize};

@@ -2,10 +2,10 @@
 
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{
     BlockHeader, EIP1559ParamError, Header, HoloceneExtraData, JovianExtraData,
 };
-use base_common_genesis::RollupConfig;
 use base_common_types_payload::BasePayloadAttributes;
 
 use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
@@ -101,8 +101,8 @@ pub(crate) fn encode_jovian_eip_1559_params(
 #[cfg(all(test, feature = "test-utils"))]
 mod test {
     use alloy_primitives::{B64, b64, bytes};
+    use base_common_chain_config::{FeeConfig, RollupConfig};
     use base_common_types_chain::Header;
-    use base_common_genesis::{FeeConfig, RollupConfig};
     use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 
     use super::decode_holocene_eip_1559_params_block_header;

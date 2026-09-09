@@ -5,7 +5,7 @@ use alloc::{boxed::Box, fmt::Debug};
 
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
@@ -86,8 +86,8 @@ mod tests {
 
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
+    use base_common_chain_config::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_common_types_chain::TxEnvelope;
-    use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_protocol::BlockInfo;
 
     use super::*;

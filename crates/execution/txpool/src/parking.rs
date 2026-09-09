@@ -338,12 +338,12 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::Bytes;
     use alloy_signer::SignerSync;
-    use base_common_chains::ChainConfig;
+    use base_common_chain_config::ChainConfig;
+    use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
         TxEip8130,
     };
-    use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{TransactionId, TransactionOrigin};
     use reth_primitives_traits::Recovered;
 

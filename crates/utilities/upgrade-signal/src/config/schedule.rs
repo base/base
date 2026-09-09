@@ -2,7 +2,7 @@ use core::time::Duration;
 
 use alloy_primitives::{Address, U256};
 use backon::{ConstantBuilder, Retryable};
-use base_common_genesis::UpgradeActivationSink;
+use base_common_chain_config::UpgradeActivationSink;
 use tracing::{error, info};
 use url::Url;
 
@@ -401,7 +401,7 @@ impl UpgradeSignalConfig {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use rstest::rstest;
 
     use super::*;

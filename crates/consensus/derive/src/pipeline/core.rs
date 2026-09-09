@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 
 use crate::{
@@ -71,7 +71,7 @@ where
     {
         let l2_safe_head_ts = l2_safe_head.block_info.timestamp;
         let _l1_origin_ts_lower_bound = l2_safe_head_ts
-            .saturating_sub(base_common_genesis::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
+            .saturating_sub(base_common_chain_config::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
         let channel_timeout = self.rollup_config.granite_channel_timeout;
         let l1_origin_number = l2_safe_head.l1_origin.number;
         let mut current = l2_safe_head;
@@ -258,7 +258,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, address};
-    use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
+    use base_common_chain_config::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
     use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 

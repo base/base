@@ -39,7 +39,7 @@ where
         + Clone
         + 'static,
 {
-    rollup_config: Arc<base_common_genesis::RollupConfig>,
+    rollup_config: Arc<base_common_chain_config::RollupConfig>,
     claimed_l2_block_number: u64,
     claimed_l2_output_root: B256,
     cursor: Arc<RwLock<base_proof_driver::PipelineCursor>>,
@@ -61,7 +61,7 @@ where
 {
     /// Creates a new driver.
     pub const fn new(
-        rollup_config: Arc<base_common_genesis::RollupConfig>,
+        rollup_config: Arc<base_common_chain_config::RollupConfig>,
         claimed_l2_block_number: u64,
         claimed_l2_output_root: B256,
         cursor: Arc<RwLock<base_proof_driver::PipelineCursor>>,

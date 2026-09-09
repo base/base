@@ -9,7 +9,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_sol_types::{SolCall, sol};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};
 use backon::Retryable;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_types_rpc::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use base_retry::RetryConfig;
 use futures::future::try_join;

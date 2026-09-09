@@ -6,7 +6,7 @@ use std::sync::Arc;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
     DerivationPipeline, EthereumDataSource, OriginProvider, Pipeline, PipelineBuilder,
     PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal, Signal,

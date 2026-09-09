@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use core::fmt::Debug;
 
 use alloy_primitives::Address;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::BlockInfo;
 
 use crate::{

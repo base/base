@@ -14,82 +14,82 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 tower = { workspace = true }
-thiserror = { workspace = true }
-itertools = { workspace = true }
 dyn-clone = { workspace = true }
+itertools = { workspace = true }
+thiserror = { workspace = true }
 alloy-serde = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
-base-metrics = { workspace = true }
 alloy-signer = { workspace = true }
+base-metrics = { workspace = true }
 reth-network = { workspace = true }
-reth-provider = { workspace = true }
-alloy-genesis = { workspace = true }
 alloy-eip2124 = { workspace = true }
+alloy-genesis = { workspace = true }
+reth-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
-alloy-hardforks = { workspace = true }
-reth-chain-state = { workspace = true }
 base-evm-context = { workspace = true }
+reth-chain-state = { workspace = true }
 reth-network-api = { workspace = true }
 reth-prune-types = { workspace = true }
+base-node-context = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-storage-errors = {workspace = true}
-base-node-context = { workspace = true }
 opentelemetry-http = { workspace = true }
-reth-rpc-eth-types = { workspace = true }
 reth-network-types = { workspace = true }
+reth-rpc-eth-types = { workspace = true }
 base-execution-trie = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-rpc-server-types = { workspace = true }
-alloy-rpc-types-admin = { workspace = true }
 reth-engine-primitives = { workspace = true }
-metrics = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
+metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
-http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
+http = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
-reth-db-common = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
+reth-db-common = { workspace = true, optional = true }
 reth-tasks = { workspace = true, features = ["rayon"] }
 serde_json = { workspace = true, features = ["alloc"] }
-tracing = { workspace = true, features = ["attributes"]}
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
+tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-tokio = { workspace = true, features = ["default", "sync"] }
 opentelemetry = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "sync"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
-base-common-chains = { workspace = true, features = ["default"] }
+reth-storage-api = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 reth-execution-types = { workspace = true, features = ["serde"] }
-base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
+base-common-network = { workspace = true, features = ["mnemonic"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
-
 base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"]}
-base-execution-txpool = { workspace = true, features = ["default"], optional = false}
 base-evm-handler = { workspace = true, features = ["overrides", "call-util", "optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
+
 [dev-dependencies]
 reth-db-api = { workspace = true }
-reth-db-common = { workspace = true }
 assert_matches = { workspace = true }
+reth-db-common = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }

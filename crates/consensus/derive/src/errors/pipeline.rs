@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
-use base_common_genesis::SystemConfigUpdateError;
+use base_common_chain_config::SystemConfigUpdateError;
 use base_protocol::DepositDecodeError;
 use thiserror::Error;
 
@@ -200,7 +200,7 @@ pub enum PipelineError {
     /// fails due to invalid parameters, version mismatches, or other
     /// configuration-related issues.
     ///
-    /// [`SystemConfig`]: base_common_genesis::SystemConfig
+    /// [`SystemConfig`]: base_common_chain_config::SystemConfig
     #[error("Error updating system config: {0}")]
     SystemConfigUpdate(SystemConfigUpdateError),
     /// Block attributes construction failed with detailed error information.

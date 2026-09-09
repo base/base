@@ -14,13 +14,13 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_types_rpc::BaseBlockResponse;
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,
 };
+use base_common_types_rpc::BaseBlockResponse;
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::L2BlockInfo;
 

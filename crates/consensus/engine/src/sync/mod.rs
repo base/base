@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use alloy_eips::BlockNumberOrTag;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::L2BlockInfo;
 
 mod forkchoice;
@@ -228,9 +228,9 @@ mod tests {
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, Sealed, b256};
     use alloy_provider::Network;
-    use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
-    use base_common_genesis::ChainGenesis;
+    use base_common_chain_config::ChainGenesis;
     use base_common_network::Base;
+    use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_types_rpc::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
@@ -311,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn current_uses_config_genesis_when_finalized_label_is_unavailable() {
-        let rollup_config = base_common_genesis::RollupConfig {
+        let rollup_config = base_common_chain_config::RollupConfig {
             genesis: ChainGenesis {
                 l1: BlockNumHash {
                     number: 10,
@@ -378,7 +378,7 @@ mod tests {
             b256!("1212121212121212121212121212121212121212121212121212121212121212");
         let genesis_hash =
             b256!("2020202020202020202020202020202020202020202020202020202020202020");
-        let rollup_config = base_common_genesis::RollupConfig {
+        let rollup_config = base_common_chain_config::RollupConfig {
             genesis: ChainGenesis {
                 l1: canonical_parent_origin,
                 l2: BlockNumHash { number: 0, hash: genesis_hash },
@@ -464,7 +464,7 @@ mod tests {
             number: 11,
             hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
         };
-        let rollup_config = base_common_genesis::RollupConfig {
+        let rollup_config = base_common_chain_config::RollupConfig {
             genesis: ChainGenesis {
                 l1: genesis_origin,
                 l2: BlockNumHash { number: 0, hash: genesis_hash },
@@ -511,7 +511,7 @@ mod tests {
         };
         let genesis_hash =
             b256!("2020202020202020202020202020202020202020202020202020202020202020");
-        let rollup_config = base_common_genesis::RollupConfig {
+        let rollup_config = base_common_chain_config::RollupConfig {
             genesis: ChainGenesis {
                 l1: canonical_origin,
                 l2: BlockNumHash { number: 0, hash: genesis_hash },
@@ -561,7 +561,7 @@ mod tests {
             number: 12,
             hash: b256!("1212121212121212121212121212121212121212121212121212121212121212"),
         };
-        let rollup_config = base_common_genesis::RollupConfig {
+        let rollup_config = base_common_chain_config::RollupConfig {
             genesis: ChainGenesis {
                 l1: BlockNumHash {
                     number: 10,
@@ -610,7 +610,7 @@ mod tests {
         let parent = l2_block_with_l1_info(1, genesis_hash, parent_origin);
         let parent_hash = parent.clone().into_consensus().hash_slow();
         let unsafe_head = l2_block_with_l1_info(2, parent_hash, unsafe_origin);
-        let rollup_config = base_common_genesis::RollupConfig {
+        let rollup_config = base_common_chain_config::RollupConfig {
             genesis: ChainGenesis {
                 l1: genesis_origin,
                 l2: BlockNumHash { number: 0, hash: genesis_hash },

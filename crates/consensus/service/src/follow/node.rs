@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_engine::{EngineClient, LocalEngineClient};
 use base_consensus_providers::LocalL2Provider;
 use base_consensus_rpc::RpcBuilder;

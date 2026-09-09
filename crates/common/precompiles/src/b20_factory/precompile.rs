@@ -1,6 +1,6 @@
 //! Precompile entry point for the `B20Factory`.
 
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_evm_handler::{DynPrecompile, PrecompilesMap};
 
 use crate::{

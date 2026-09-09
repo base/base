@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, hex};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::NetworkPayloadEnvelope;
 use base_consensus_peers::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;

@@ -715,7 +715,9 @@ pub fn calculate_gas_used_from_headers(
     for entry in provider.fetch_range_iter(
         StaticFileSegment::Headers,
         *range.start()..*range.end() + 1,
-        |cursor, number| cursor.get_one::<HeaderMask<base_common_types_chain::Header>>(number.into()),
+        |cursor, number| {
+            cursor.get_one::<HeaderMask<base_common_types_chain::Header>>(number.into())
+        },
     )? {
         if let Some(entry) = entry? {
             gas_total += entry.gas_used();
@@ -1236,7 +1238,10 @@ mod tests {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
                 .bedrock_activated()
-                .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(15))
+                .with_fork(
+                    base_common_chain_config::BaseUpgrade::Ecotone,
+                    ForkCondition::Timestamp(15),
+                )
                 .build(),
         );
         let factory = create_test_provider_factory_with_chain_spec(chain_spec);

@@ -517,7 +517,7 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
                     .clone()
             })
             .canyon_activated()
-            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
+            .with_fork(base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -640,7 +640,7 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
                     .clone()
             })
             .canyon_activated()
-            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
+            .with_fork(base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -731,7 +731,7 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
                     .clone()
             })
             .canyon_activated()
-            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
+            .with_fork(base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -829,7 +829,7 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
                     .clone()
             })
             .canyon_activated()
-            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
+            .with_fork(base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -982,7 +982,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
                     .clone()
             })
             .canyon_activated()
-            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
+            .with_fork(base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -1181,7 +1181,7 @@ fn build_selfdestruct_chain_spec(
                     .clone()
             })
             .canyon_activated()
-            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
+            .with_fork(base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     )
 }

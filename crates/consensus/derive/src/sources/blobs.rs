@@ -235,7 +235,7 @@ pub(super) mod tests {
     use alloc::vec;
 
     use alloy_primitives::Signature;
-    use base_common_chains::ChainConfig;
+    use base_common_chain_config::ChainConfig;
     use base_common_types_chain::{Blob, Signed, TxEip4844, TxEip4844Variant};
 
     use super::*;

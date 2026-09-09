@@ -17,20 +17,22 @@ async-trait = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
-base-common-genesis = { workspace = true }
+base-common-chain-config = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
+
 [dev-dependencies]
 hex = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["std"] }
 rstest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
+
 [features]
 default = []
 std = [
 	"alloy-chains/std",
 	"alloy-eips/std",
 	"alloy-primitives/std",
-	"base-common-genesis/std",
+	"base-common-chain-config/std",
 	"base-proof-preimage/std",
 	"serde?/std",
 	"thiserror/std",
@@ -39,7 +41,7 @@ serde = [
 	"alloy-chains/serde",
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
-	"base-common-genesis/serde",
+	"base-common-chain-config/serde",
 	"base-proof-preimage/serde",
 	"dep:serde",
 ]

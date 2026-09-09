@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
-use base_common_types_chain::Transaction as _;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_network::Base;
+use base_common_types_chain::Transaction as _;
 use base_protocol::{L1BlockInfoTx, L2BlockInfo, to_system_config};
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use url::Url;

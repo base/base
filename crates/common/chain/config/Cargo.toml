@@ -1,0 +1,53 @@
+[package]
+name = "base-common-chain-config"
+description = "Chain configuration and network upgrade bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+tracing = { workspace = true }
+alloy-eips = {workspace = true}
+auto_impl = { workspace = true }
+thiserror = { workspace = true }
+alloy-chains = {workspace = true}
+alloy-genesis = { workspace = true }
+alloy-hardforks = {workspace = true}
+alloy-sol-types = { workspace = true }
+serde = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true }
+spin = {workspace = true, features = ["default"]}
+alloy-primitives = {workspace = true, features = ["map"]}
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+derive_more = { workspace = true, features = ["display", "from", "try_from"] }
+
+[dev-dependencies]
+alloy-chains = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
+arbitrary = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["parse", "serde"] }
+rand = { workspace = true, features = ["default", "thread_rng"] }
+alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
+
+[[test]]
+name = "upgrade_consistency"
+required-features = ["test-utils"]
+
+[features]
+default = []
+std = ["alloy-chains/std", "alloy-eips/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-sol-types/std", "base-common-types-chain/std", "derive_more/std", "serde?/std", "spin/std", "thiserror/std", "tracing/std"]
+serde = ["alloy-chains/serde", "alloy-eips/serde", "alloy-hardforks/serde", "alloy-primitives/serde", "base-common-types-chain/serde", "dep:serde"]
+test-utils = []
+arbitrary = ["alloy-chains/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "alloy-sol-types/arbitrary", "base-common-types-chain/arbitrary", "dep:arbitrary", "std"]

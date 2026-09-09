@@ -7,9 +7,9 @@ use alloy_provider::{Provider, RootProvider, network::primitives::BlockTransacti
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};
-use base_common_types_chain::Header;
+use base_common_chain_config::RollupConfig;
 use base_common_evm::BaseEvmFactory;
-use base_common_genesis::RollupConfig;
+use base_common_types_chain::Header;
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_proof_mpt::{NoopTrieHinter, TrieNode, TrieProvider};
 use rocksdb::{DB, Options};
@@ -110,7 +110,7 @@ impl ExecutorTestFixtureCreator {
     pub async fn create_static_fixture(self) {
         let chain_id = self.provider.get_chain_id().await.expect("Failed to get chain ID");
         let rollup_config =
-            base_common_chains::rollup_config!(chain_id).expect("Rollup config not found");
+            base_common_chain_config::rollup_config!(chain_id).expect("Rollup config not found");
 
         let executing_block = self
             .provider

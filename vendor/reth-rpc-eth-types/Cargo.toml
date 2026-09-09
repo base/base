@@ -19,8 +19,8 @@ workspace = true
 lru = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
-thiserror = { workspace = true }
 itertools = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 alloy-serde = { workspace = true }
@@ -28,31 +28,31 @@ alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
 alloy-json-rpc = { workspace = true }
-base-common-flz = { workspace = true }
-base-common-evm = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-evm = { workspace = true }
+base-common-flz = { workspace = true }
 jsonrpsee-types = { workspace = true }
 base-evm-context = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
+reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
-base-common-chains = { workspace = true }
 base-execution-evm = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-types = { workspace = true }
-reth-rpc-server-types = { workspace = true }
 base-execution-txpool = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-execution-chainspec = { workspace = true }
 url = { workspace = true, features = ["serde"] }
-serde = { workspace = true, features = ["derive"] }
 rand = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive"] }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
-tracing = { workspace = true, features = ["attributes"] }
 base-common-types-rpc = {workspace = true, features = []}
+tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 revm-inspectors = { workspace = true, features = ["default"] }

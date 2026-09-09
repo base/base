@@ -189,7 +189,7 @@ impl UpgradeSignalConfig {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
 
     use super::*;
     use crate::UpgradeSignalDefaults;

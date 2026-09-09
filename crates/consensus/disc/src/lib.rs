@@ -10,8 +10,6 @@
 // Logging
 #[macro_use]
 extern crate tracing;
-// Used in tests
-use base_common_genesis as _;
 
 mod builder;
 pub use builder::{Discv5Builder, LocalNode};

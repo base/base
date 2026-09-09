@@ -22,23 +22,21 @@ alloy-trie = { workspace = true }
 base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
-base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
-
-base-common-genesis = { workspace = true }
+base-evm-handler = { workspace = true }
 serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 getrandom_0_2_17 = { workspace = true, features = ["custom"] }
 base-common-types-chain = { workspace = true, features = ["k256"]}
-serde = { workspace = true, features = ["derive"], optional = true }
 rand = { workspace = true, optional = true, features = ["default"] }
+serde = { workspace = true, features = ["derive"], optional = true }
+base-common-chain-config = {workspace = true,  features = ["default"]}
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
-tokio = { workspace = true, features = ["default", "full"], optional = true }
 base-common-types-payload = {workspace = true, features = ["serde", "k256"]}
+tokio = { workspace = true, features = ["default", "full"], optional = true }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
-base-common-chains = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"], optional = true }
 
@@ -51,27 +49,24 @@ std = [
     "alloy-rlp/std",
     "base-common-types-payload/std",
     "alloy-trie/std",
-    "base-common-chains?/std",
+    "base-common-chain-config/std",
     "base-common-evm/std",
-    "base-common-genesis/std",
     "base-proof-mpt/std",
     "base-protocol/std",
     "getrandom_0_2_17/std",
-    "base-evm-handler/std",
     "serde?/std",
     "serde_json?/std",
     "thiserror/std",
     "tracing/std",
 ]
 test-utils = [
-    "base-common-chains?/test-utils",
-    "base-common-genesis/test-utils",
+    "base-common-chain-config/test-utils",
     "base-protocol/test-utils",
     "dep:alloy-provider",
     "dep:alloy-rpc-client",
     "dep:alloy-transport",
     "dep:alloy-transport-http",
-    "dep:base-common-chains",
+
     "dep:rand",
     "dep:rocksdb",
     "dep:serde",

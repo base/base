@@ -72,7 +72,7 @@ base-common-precompiles = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::BasePrecompiles;
 
 let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Jovian);
@@ -83,7 +83,7 @@ Use `install()` when you need the complete execution map, including Beryl native
 
 ```rust,ignore
 use alloy_primitives::address;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::BasePrecompiles;
 
 let activation_admin = address!("0000000000000000000000000000000000000001");
@@ -96,7 +96,7 @@ Downstream EVM crates that use a wrapper spec can pass that wrapper directly as 
 to and from `BaseUpgrade`:
 
 ```rust,ignore
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_evm::BaseSpecId;
 use base_common_precompiles::BasePrecompiles;
 

@@ -13,7 +13,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_engine::EngineState;
 use base_consensus_gossip::Metrics;
 use base_consensus_safedb::{SafeDBError, SafeDBReader, SafeHeadResponse};

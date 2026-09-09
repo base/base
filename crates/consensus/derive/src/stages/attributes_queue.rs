@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_payload::BasePayloadAttributes;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo, SingleBatch};
 
@@ -202,7 +202,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, Bytes, b256};
-    use base_common_genesis::SystemConfig;
+    use base_common_chain_config::SystemConfig;
     use base_common_types_payload::PayloadAttributes;
 
     use super::*;

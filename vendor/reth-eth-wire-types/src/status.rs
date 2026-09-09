@@ -776,12 +776,12 @@ mod tests {
 
         // Exercise both block-based and timestamp-based Base activations.
         let hardforks = vec![
-            (base_common_genesis::BaseUpgrade::Bedrock, ForkCondition::Block(1)),
-            (base_common_genesis::BaseUpgrade::Regolith, ForkCondition::Timestamp(2)),
-            (base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(3)),
-            (base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(5)),
-            (base_common_genesis::BaseUpgrade::Fjord, ForkCondition::Timestamp(8)),
-            (base_common_genesis::BaseUpgrade::Granite, ForkCondition::Timestamp(13)),
+            (base_common_chain_config::BaseUpgrade::Bedrock, ForkCondition::Block(1)),
+            (base_common_chain_config::BaseUpgrade::Regolith, ForkCondition::Timestamp(2)),
+            (base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Timestamp(3)),
+            (base_common_chain_config::BaseUpgrade::Ecotone, ForkCondition::Timestamp(5)),
+            (base_common_chain_config::BaseUpgrade::Fjord, ForkCondition::Timestamp(8)),
+            (base_common_chain_config::BaseUpgrade::Granite, ForkCondition::Timestamp(13)),
         ];
 
         let mut chainspec = base_execution_chainspec::BaseChainSpecBuilder::default()

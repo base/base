@@ -1,7 +1,7 @@
 //! Dynamic lookup for Beryl-native precompiles.
 
 use alloy_primitives::Address;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_evm_handler::{DynPrecompile, PrecompileLookup, PrecompilesMap};
 
 use crate::{

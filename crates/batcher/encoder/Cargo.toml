@@ -22,10 +22,11 @@ alloy-eips = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-common-genesis = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["default", "std", "small_rng"] }
 clap = { workspace = true, features = ["default", "derive"], optional = true }
+
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }

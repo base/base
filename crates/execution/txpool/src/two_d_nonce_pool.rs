@@ -629,12 +629,12 @@ mod tests {
 
     use alloy_primitives::Bytes;
     use alloy_signer::SignerSync;
-    use base_common_chains::ChainConfig;
+    use base_common_chain_config::ChainConfig;
+    use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, Transaction, TxEip8130,
         transaction::Recovered,
     };
-    use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{PriceBumpConfig, TransactionOrigin};
 
     use super::*;

@@ -1,7 +1,7 @@
 //! Macros and helper traits for ergonomic chain config access.
 
+use crate::RollupConfig;
 use alloy_chains::Chain;
-use base_common_genesis::RollupConfig;
 
 use crate::ChainConfig;
 

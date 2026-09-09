@@ -823,9 +823,11 @@ mod tests {
         let genesis = Genesis::default().with_timestamp(GENESIS_TIME);
 
         let active_fork =
-            (base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(GENESIS_TIME));
-        let future_fork =
-            (base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(GENESIS_TIME + 1));
+            (base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Timestamp(GENESIS_TIME));
+        let future_fork = (
+            base_common_chain_config::BaseUpgrade::Ecotone,
+            ForkCondition::Timestamp(GENESIS_TIME + 1),
+        );
 
         let chain_spec = BaseChainSpecBuilder::default()
             .chain(Chain::dev())
@@ -882,7 +884,7 @@ mod tests {
             .chain(Chain::from_id(3151908))
             .genesis(genesis)
             .with_fork(
-                base_common_genesis::BaseUpgrade::Canyon,
+                base_common_chain_config::BaseUpgrade::Canyon,
                 ForkCondition::Timestamp(GENESIS_TIME),
             )
             .build();

@@ -10,7 +10,7 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_common_chains::rollup_config;
+use base_common_chain_config::rollup_config;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
@@ -119,7 +119,7 @@ impl ProverRuntimeArgs {
         let rollup_config = rollup_config!(self.l2_chain_id)
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
 
-        let l1_config = base_common_chains::L1_CONFIGS
+        let l1_config = base_common_chain_config::L1_CONFIGS
             .get(&rollup_config.l1_chain_id)
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();

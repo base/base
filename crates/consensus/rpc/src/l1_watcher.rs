@@ -1,4 +1,4 @@
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::BlockInfo;
 use tokio::sync::oneshot::Sender;
 

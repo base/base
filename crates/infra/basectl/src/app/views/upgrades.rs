@@ -8,8 +8,8 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, hex};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_sol_types::SolCall;
-use base_common_chains::{BaseUpgrade, ChainConfig};
-use base_common_genesis::UpgradeConfig;
+use base_common_chain_config::UpgradeConfig;
+use base_common_chain_config::{BaseUpgrade, ChainConfig};
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use base_common_types_rpc::{
     BlockId, BlockNumberOrTag, Filter, TransactionInput, TransactionRequest,
@@ -149,7 +149,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Delta,
             name: "Delta",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Delta]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Delta]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -158,7 +158,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Canyon,
             name: "Canyon",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Canyon]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Canyon]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -167,7 +167,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Ecotone,
             name: "Ecotone",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Ecotone]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Ecotone]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -176,7 +176,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Fjord,
             name: "Fjord",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Fjord]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Fjord]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -185,7 +185,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Granite,
             name: "Granite",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Granite]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Granite]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -194,7 +194,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Holocene,
             name: "Holocene",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Holocene]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Holocene]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -203,7 +203,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Isthmus,
             name: "Isthmus",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Isthmus]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -212,7 +212,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             upgrade: BaseUpgrade::Jovian,
             name: "Jovian",
             timestamp: Some(
-                cfg.upgrades[base_common_chains::BaseUpgrade::Jovian]
+                cfg.upgrades[base_common_chain_config::BaseUpgrade::Jovian]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -220,17 +220,17 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
         UpgradeSpec {
             upgrade: BaseUpgrade::Azul,
             name: "Azul",
-            timestamp: cfg.upgrades[base_common_chains::BaseUpgrade::Azul].as_timestamp(),
+            timestamp: cfg.upgrades[base_common_chain_config::BaseUpgrade::Azul].as_timestamp(),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Beryl,
             name: "Beryl",
-            timestamp: cfg.upgrades[base_common_chains::BaseUpgrade::Beryl].as_timestamp(),
+            timestamp: cfg.upgrades[base_common_chain_config::BaseUpgrade::Beryl].as_timestamp(),
         },
         UpgradeSpec {
             upgrade: BaseUpgrade::Cobalt,
             name: "Cobalt",
-            timestamp: cfg.upgrades[base_common_chains::BaseUpgrade::Cobalt].as_timestamp(),
+            timestamp: cfg.upgrades[base_common_chain_config::BaseUpgrade::Cobalt].as_timestamp(),
         },
         UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
         UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
@@ -2833,7 +2833,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
 mod tests {
     use alloy_primitives::{Log as PrimitiveLog, address};
     use alloy_sol_types::SolEvent;
-    use base_common_genesis::BaseUpgradeConfig;
+    use base_common_chain_config::BaseUpgradeConfig;
     use crossterm::event::KeyModifiers;
     use ratatui::{Terminal, backend::TestBackend};
 

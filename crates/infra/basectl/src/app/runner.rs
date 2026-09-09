@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use base_common_genesis::SystemConfig;
+use base_common_chain_config::SystemConfig;
 use tokio::sync::mpsc;
 use url::Url;
 

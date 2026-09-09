@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_genesis::SystemConfig;
+use base_common_chain_config::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
@@ -26,7 +26,7 @@ pub trait L1RetrievalProvider {
     /// [`PollingTraversal`]: crate::PollingTraversal
     async fn next_l1_block(&mut self) -> PipelineResult<Option<BlockInfo>>;
 
-    /// Returns the batcher [`Address`] from the [`base_common_genesis::SystemConfig`].
+    /// Returns the batcher [`Address`] from the [`base_common_chain_config::SystemConfig`].
     fn batcher_addr(&self) -> Address;
 }
 
@@ -171,7 +171,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Bytes, address};
-    use base_common_genesis::SystemConfig;
+    use base_common_chain_config::SystemConfig;
 
     use super::*;
     use crate::test_utils::{TestDAP, TraversalTestHelper};

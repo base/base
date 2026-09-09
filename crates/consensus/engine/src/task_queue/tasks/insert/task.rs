@@ -4,8 +4,8 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use async_trait::async_trait;
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::BaseBlock;
-use base_common_genesis::RollupConfig;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields,
@@ -365,8 +365,8 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
+    use base_common_chain_config::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ForkchoiceUpdated, PayloadStatus,
         PayloadStatusEnum,
@@ -509,7 +509,7 @@ mod tests {
 
         InsertTask::new(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
             InsertPayloadSafety::Unsafe,
         )
@@ -537,7 +537,7 @@ mod tests {
 
         InsertTask::new(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
             InsertPayloadSafety::Unsafe,
         )
@@ -565,7 +565,7 @@ mod tests {
 
         InsertTask::unsafe_payload(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
         )
         .execute(&mut state)
@@ -589,7 +589,7 @@ mod tests {
 
         InsertTask::safe_payload(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
         )
         .execute(&mut state)
@@ -613,7 +613,7 @@ mod tests {
 
         InsertTask::unsafe_payload(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
         )
         .execute(&mut state)
@@ -718,7 +718,7 @@ mod tests {
 
         InsertTask::unsafe_payload(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
         )
         .execute(&mut state)
@@ -744,7 +744,7 @@ mod tests {
 
         InsertTask::unsafe_payload(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
         )
         .execute(&mut state)
@@ -776,7 +776,7 @@ mod tests {
 
         let inserted_head = InsertTask::authoritative_payload(
             Arc::clone(&client),
-            Arc::new(base_common_genesis::RollupConfig::default()),
+            Arc::new(base_common_chain_config::RollupConfig::default()),
             envelope,
         )
         .execute_with_result(&mut state)
@@ -800,7 +800,7 @@ mod tests {
     #[tokio::test]
     async fn engine_inserts_authoritative_payloads_in_order() {
         let client = test_client();
-        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let config = Arc::new(base_common_chain_config::RollupConfig::default());
         let current_unsafe = l2_block_info(10, B256::with_last_byte(10), B256::with_last_byte(9));
         let canonical_anchor = l2_block_info(7, B256::with_last_byte(7), B256::with_last_byte(6));
         let initial_state = TestEngineStateBuilder::new()
@@ -840,7 +840,7 @@ mod tests {
 
     #[tokio::test]
     async fn authoritative_duplicate_payload_forces_forkchoice_acknowledgement() {
-        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let config = Arc::new(base_common_chain_config::RollupConfig::default());
         let envelope = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: bedrock_payload(1),
@@ -872,7 +872,7 @@ mod tests {
     #[tokio::test]
     async fn engine_rejects_empty_authoritative_payloads() {
         let client = test_client();
-        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let config = Arc::new(base_common_chain_config::RollupConfig::default());
         let initial_state = TestEngineStateBuilder::new().build();
         let (state_tx, _) = tokio::sync::watch::channel(initial_state);
         let (queue_tx, _) = tokio::sync::watch::channel(0usize);

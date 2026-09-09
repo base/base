@@ -2,9 +2,9 @@
 use std::sync::LazyLock;
 
 use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
-use base_common_chains::ChainConfig;
+use base_common_chain_config::ChainConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_evm::BaseEvmFactory;
-use base_common_genesis::RollupConfig;
 use base_common_network::PrivateKeySigner;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;
@@ -300,7 +300,7 @@ mod tests {
     fn config_hashes_match_chain_configs() {
         for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
-            let rollup = base_common_chains::rollup_config!(cfg);
+            let rollup = base_common_chain_config::rollup_config!(cfg);
             let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) else {
                 continue;
             };
@@ -320,7 +320,7 @@ mod tests {
     fn print_real_config_hashes() {
         for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
-            let rollup = base_common_chains::rollup_config!(cfg);
+            let rollup = base_common_chain_config::rollup_config!(cfg);
             let mut per_chain = match PerChainConfig::from_rollup_config(&rollup) {
                 Some(pc) => pc,
                 None => {

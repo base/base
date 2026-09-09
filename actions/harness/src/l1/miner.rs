@@ -1,12 +1,12 @@
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
 use alloy_signer::SignerSync;
+use base_common_chain_config::SystemConfigUpdate;
+use base_common_network::PrivateKeySigner;
 use base_common_types_chain::{
     Header, Receipt, ReceiptEnvelope, SignableTransaction, Transaction, TxEip1559, TxEnvelope,
     transaction::{SignerRecoverable, TransactionMeta},
 };
-use base_common_genesis::SystemConfigUpdate;
-use base_common_network::PrivateKeySigner;
 use base_common_types_rpc::{Log as RpcLog, TransactionReceipt};
 use base_protocol::{BlockInfo, Deposits};
 use tracing::info;
@@ -303,7 +303,7 @@ impl L1Miner {
     /// pipeline reads this from L1 receipts and updates its internal
     /// [`SystemConfig`] for subsequent L2 blocks.
     ///
-    /// [`SystemConfig`]: base_common_genesis::SystemConfig
+    /// [`SystemConfig`]: base_common_chain_config::SystemConfig
     pub fn enqueue_batcher_update(&mut self, l1_sys_cfg_addr: Address, new_batcher: Address) {
         let mut data = [0u8; 96];
         data[31] = 0x20; // pointer → offset 32
@@ -820,8 +820,8 @@ impl Action for L1Miner {
 mod tests {
     use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData};
-    use base_common_types_chain::{Transaction, transaction::SignerRecoverable};
     use base_common_network::PrivateKeySigner;
+    use base_common_types_chain::{Transaction, transaction::SignerRecoverable};
 
     use super::{L1Miner, L1TxBuilder, ReorgError};
     use crate::Action;

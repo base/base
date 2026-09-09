@@ -2,7 +2,7 @@
 
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId, PayloadStatusEnum};
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
@@ -531,7 +531,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::FixedBytes;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_common_types_payload::{
         ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
     };

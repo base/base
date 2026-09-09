@@ -2,10 +2,10 @@
 
 use alloy_eips::{Encodable2718, eip1559::BaseFeeParams, eip4895::Withdrawals};
 use alloy_primitives::{Address, B256, Bytes};
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, JovianExtraData, decode_2718_canonical,
 };
-use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
 use reth_primitives_traits::SealedBlock;
 
@@ -19,7 +19,7 @@ use reth_primitives_traits::SealedBlock;
 ///
 /// ```rust,ignore
 /// use base_consensus_engine::AttributesMatch;
-/// use base_common_genesis::RollupConfig;
+/// use base_common_chain_config::RollupConfig;
 /// use base_protocol::AttributesWithParent;
 ///
 /// let config = RollupConfig::default();
@@ -355,11 +355,11 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use arbitrary::{Arbitrary, Unstructured};
-    use base_common_chains::{ChainConfig, rollup_config};
-    use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
+    use base_common_chain_config::{ChainConfig, rollup_config};
     use base_common_network::TransactionResponse;
-    use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactions};
+    use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_types_payload::BasePayloadAttributes;
+    use base_common_types_rpc::{BaseTransaction as Transaction, Block, BlockTransactions};
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;

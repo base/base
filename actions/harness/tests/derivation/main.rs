@@ -12,7 +12,7 @@ use base_action_harness::{
     block_info_from,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::SystemConfigUpdate;
+use base_common_chain_config::SystemConfigUpdate;
 use base_common_network::PrivateKeySigner;
 use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
@@ -834,7 +834,7 @@ async fn failed_receipt_deposit_log_is_ignored() {
 ///   L1 block 5:    batcher B submits  → DERIVED (1 derived)
 ///
 ///
-/// [`SystemConfig`]: base_common_genesis::SystemConfig
+/// [`SystemConfig`]: base_common_chain_config::SystemConfig
 #[tokio::test]
 async fn batcher_key_rotation_accepts_new_batcher() {
     // Use a dedicated L1 system config address so the pipeline's log filter

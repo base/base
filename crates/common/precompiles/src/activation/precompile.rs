@@ -1,7 +1,7 @@
 //! Precompile entry point for the activation registry.
 
 use alloy_primitives::Address;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_evm_handler::{DynPrecompile, PrecompilesMap};
 use base_precompile_macros::precompile;
 
@@ -89,7 +89,7 @@ impl ActivationRegistry {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_evm_handler::PrecompilesMap;
     use base_evm_handler::precompile::Precompiles;
 

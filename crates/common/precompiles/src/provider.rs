@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_evm_handler::PrecompilesMap;
 use base_evm_handler::{
     precompile,
@@ -236,7 +236,7 @@ mod tests {
     use std::vec;
 
     use alloy_primitives::{Address, B256};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_evm_handler::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,

@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::EthGetBlock;
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,

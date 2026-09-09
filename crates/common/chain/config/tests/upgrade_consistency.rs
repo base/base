@@ -1,15 +1,15 @@
 //! Integration tests verifying that the derived rollup configs agree with chain upgrade
 //! schedules for every [`BaseUpgrade`] variant.
 
-use base_common_chains::{
+use base_common_chain_config::BaseUpgrade;
+use base_common_chain_config::{
     Upgrades,
     test_utils::{BASE_MAINNET_ROLLUP_CONFIG, BASE_SEPOLIA_ROLLUP_CONFIG},
 };
-use base_common_genesis::BaseUpgrade;
 
 #[test]
 fn mainnet_rollup_config_matches_chain_upgrades() {
-    let chain = base_common_chains::ChainConfig::mainnet().upgrades.clone();
+    let chain = base_common_chain_config::ChainConfig::mainnet().upgrades.clone();
     for fork in BaseUpgrade::VARIANTS {
         assert_eq!(
             BASE_MAINNET_ROLLUP_CONFIG.fork_condition(*fork),
@@ -21,7 +21,7 @@ fn mainnet_rollup_config_matches_chain_upgrades() {
 
 #[test]
 fn sepolia_rollup_config_matches_chain_upgrades() {
-    let chain = base_common_chains::ChainConfig::sepolia().upgrades.clone();
+    let chain = base_common_chain_config::ChainConfig::sepolia().upgrades.clone();
     for fork in BaseUpgrade::VARIANTS {
         assert_eq!(
             BASE_SEPOLIA_ROLLUP_CONFIG.fork_condition(*fork),

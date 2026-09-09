@@ -4,11 +4,11 @@ use core::fmt::Debug;
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
-use base_common_chains::Upgrades;
-use base_common_types_chain::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
+use base_common_chain_config::Upgrades;
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
 };
+use base_common_types_chain::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
 #[cfg(not(feature = "std"))]
 use base_common_types_payload as _;
 #[cfg(feature = "std")]
@@ -391,9 +391,9 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
+    use base_common_chain_config::BaseUpgrade;
     use base_common_evm::BaseSpecId;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
     use base_evm_context::{BlockEnv, CfgEnv};
     use base_evm_handler::NoOpInspector;
     use base_evm_handler::{

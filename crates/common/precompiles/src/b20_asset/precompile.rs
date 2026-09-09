@@ -1,7 +1,7 @@
 //! Precompile entry point for the asset B-20 variant.
 
 use alloy_primitives::{Address, Bytes};
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_evm_handler::DynPrecompile;
 use base_precompile_storage::BasePrecompileError;
 

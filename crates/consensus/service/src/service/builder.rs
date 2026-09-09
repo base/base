@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use alloy_transport::{TransportErrorKind, TransportResult};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::UpgradeSignalConfig;
@@ -276,7 +276,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256};
-    use base_common_chains::Upgrades;
+    use base_common_chain_config::Upgrades;
     use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
     use base_consensus_disc::LocalNode as DiscoveryNode;
     use base_consensus_engine::{EngineClient, LocalEngineClient};

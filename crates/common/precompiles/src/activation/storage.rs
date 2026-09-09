@@ -248,7 +248,7 @@ impl ActivationRegistryStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
     use alloy_sol_types::{SolCall, SolEvent};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, PrecompileOutput, Result, StorageCtx,
         StorageKey,

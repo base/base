@@ -16,8 +16,8 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-strum = { workspace = true }
 rayon = { workspace = true }
+strum = { workspace = true }
 metrics = { workspace = true }
 smallvec = { workspace = true }
 itertools = { workspace = true }
@@ -29,16 +29,16 @@ reth-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-tokio-util = { workspace = true }
 base-evm-handler = { workspace = true }
-reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
+reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-storage-overlay = { workspace = true }
 base-execution-chainspec = { workspace = true }
-reth-db = { workspace = true, features = ["mdbx"] }
-eyre = { workspace = true, features = ["default"] }
 base-common-types-payload = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["mdbx"] }
 serde_json = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
@@ -48,19 +48,20 @@ tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
 reth-nippy-jar = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync"], optional = true }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-storage-api = { workspace = true, features = ["std", "db-api"] }
 reth-primitives-traits = { workspace = true, features = ["reth-codec", "secp256k1", "dashmap"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-common-genesis = { workspace = true }
+base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }

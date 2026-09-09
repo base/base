@@ -1,7 +1,7 @@
 //! Metrics for upgrade signal schedule reads.
 
 use alloy_primitives::U256;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 
 use crate::{UpgradeSignal, UpgradeSignalSchedule};
 

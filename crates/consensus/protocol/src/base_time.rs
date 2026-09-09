@@ -3,11 +3,11 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{
     BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
     TxDeposit,
 };
-use base_common_genesis::RollupConfig;
 
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
@@ -288,11 +288,11 @@ pub enum BaseTimeScheduleError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Signature, TxKind, U256};
+    use base_common_chain_config::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
     use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, Predeploys, Sealable, SystemAddresses,
         TxDeposit, TxLegacy,
     };
-    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 
     use super::{
         BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError,

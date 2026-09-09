@@ -8,7 +8,7 @@ use std::{
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;

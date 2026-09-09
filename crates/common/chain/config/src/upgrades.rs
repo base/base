@@ -1,6 +1,6 @@
+use crate::{BaseUpgrade, ChainUpgrades, RollupConfig};
 use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_common_genesis::{BaseUpgrade, ChainUpgrades, RollupConfig};
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
@@ -129,7 +129,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn rollup_config_upgrade_activation_uses_runtime_overrides() {
-        use base_common_genesis::RuntimeUpgradeRegistry;
+        use crate::RuntimeUpgradeRegistry;
 
         const CHAIN_ID: u64 = 9_777_001;
         const ACTIVATION: u64 = 42;

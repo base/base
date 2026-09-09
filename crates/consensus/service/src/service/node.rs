@@ -10,8 +10,8 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
-use base_common_chains::ChainConfig;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::ChainConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{

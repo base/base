@@ -27,9 +27,9 @@ use base_builder_core::{
         ChainDriver, EngineApi, LocalInstance, LocalInstanceBuilder, node_config_with_chain_spec,
     },
 };
-use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::Base;
+use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_node::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
@@ -284,7 +284,7 @@ impl SequencerEngineBackend for BuilderBackedEngineClient {
 mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
-    use base_common_genesis::UpgradeConfig;
+    use base_common_chain_config::UpgradeConfig;
     use base_protocol::BlockInfo;
 
     use super::*;

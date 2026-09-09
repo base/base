@@ -4,12 +4,10 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, b256};
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
-use base_common_genesis::RollupConfig;
+use base_common_types_payload::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
 use base_common_types_rpc::{BaseTransaction, Block as RpcBlock, BlockTransactions};
-use base_common_types_payload::{
-    ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
-};
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{sync::watch, time::timeout};
 

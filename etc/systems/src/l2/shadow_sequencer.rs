@@ -19,7 +19,7 @@ use std::{num::NonZeroU64, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_node::NodeMode;
 use eyre::{Result, WrapErr};
 use url::Url;

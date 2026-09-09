@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_engine::{EngineClient, EngineState};
 use derive_more::Constructor;
 use tokio::sync::{Semaphore, mpsc, watch};

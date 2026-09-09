@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
 use base_evm_handler::Database;
 use base_evm_handler::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 

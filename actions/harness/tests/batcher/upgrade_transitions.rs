@@ -5,7 +5,7 @@ use base_action_harness::{
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
+use base_common_chain_config::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
 
 // ---------------------------------------------------------------------------
 // A. Span batch with non-empty upgrade transition block is rejected

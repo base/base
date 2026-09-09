@@ -27,11 +27,13 @@ uuid = { workspace = true, features = ["default", "v4"] }
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }
 base-proof-host = { workspace = true, features = ["metrics"] }
-base-common-chains = { workspace = true, features = ["default"] }
-clap = { workspace = true, features = ["default", "derive", "env"] }
 base-proof-tee-nitro-enclave = { workspace = true, optional = true }
+clap = { workspace = true, features = ["default", "derive", "env"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-host = { workspace = true, features = ["metrics"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 base-proof-tee-nitro-enclave = { workspace = true }
+
 [features]
 local = [ "dep:base-proof-tee-nitro-enclave" ]

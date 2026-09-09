@@ -8,7 +8,7 @@ use std::{
 };
 
 use base_builder_core::test_utils::get_available_port;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_node::{FollowNode, FollowNodeConfig, RemoteL2Client};
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;

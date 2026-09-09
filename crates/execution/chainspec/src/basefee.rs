@@ -86,8 +86,8 @@ mod tests {
 
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::Bytes;
+    use base_common_chain_config::BaseUpgrade;
     use base_common_types_chain::JovianExtraData;
-    use base_common_genesis::BaseUpgrade;
 
     use super::*;
     use crate::BaseChainSpec;
@@ -101,7 +101,7 @@ mod tests {
             .upgrades
             .insert(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         Arc::new(BaseChainSpec {
-            config: base_common_chains::ChainConfig {
+            config: base_common_chain_config::ChainConfig {
                 chain_id: base_sepolia_spec.chain().id(),
                 ..Default::default()
             },

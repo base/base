@@ -16,17 +16,17 @@ thiserror = { workspace = true }
 base-proof = { workspace = true }
 base-protocol = { workspace = true }
 base-common-evm = { workspace = true }
-base-evm-handler = { workspace = true }
-base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-
+base-evm-context = { workspace = true }
+base-evm-handler = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
-base-common-genesis = { workspace = true }
-base-common-types-chain = { workspace = true }
 base-consensus-derive = { workspace = true }
+base-common-types-chain = { workspace = true }
+base-common-chain-config = { workspace = true }
 spin = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
@@ -36,9 +36,8 @@ std = [
     "base-common-types-chain/std",
     "base-evm-handler/std",
     "alloy-primitives/std",
-    "base-common-types-chain/std",
     "base-common-evm/std",
-    "base-common-genesis/std",
+    "base-common-chain-config/std",
     "base-proof-driver/std",
     "base-proof-executor/std",
     "base-proof-preimage/std",

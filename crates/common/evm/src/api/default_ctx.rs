@@ -1,5 +1,5 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_evm_context::CfgEnv;
 use base_evm_handler::{Context, MainContext, database::EmptyDB};
 

@@ -14,18 +14,19 @@ workspace = true
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-base-evm-handler = { workspace = true }
-base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-
-base-common-genesis = { workspace = true }
+base-evm-context = { workspace = true }
+base-evm-handler = { workspace = true }
 base-precompile-macros = { workspace = true }
 base-precompile-storage = { workspace = true }
+base-common-chain-config = { workspace = true }
+
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
+
 [[bench]]
 name = "base_precompiles"
 harness = false
@@ -61,9 +62,8 @@ std = [
     "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-sol-types/std",
-    "base-common-genesis/std",
+    "base-common-chain-config/std",
     "base-precompile-storage/std",
-    "base-evm-handler/std",
 ]
 bn = [ "base-evm-handler/bn" ]
 blst = [ "base-evm-handler/blst" ]
@@ -78,6 +78,6 @@ optional_fee_charge = [ "base-evm-handler/optional_fee_charge" ]
 optional_balance_check = [ "base-evm-handler/optional_balance_check" ]
 optional_block_gas_limit = [ "base-evm-handler/optional_block_gas_limit" ]
 test-utils = [
-    "base-common-genesis/test-utils",
+    "base-common-chain-config/test-utils",
     "base-precompile-storage/test-utils",
 ]

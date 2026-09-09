@@ -4,7 +4,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alloy_primitives::Bytes;
 use alloy_rlp::Encodable;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_comp::CompressionStream;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame, SingleBatch,

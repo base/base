@@ -1,5 +1,5 @@
 use alloy_primitives::{B256, U256, keccak256};
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_chain_config::{BaseUpgrade, RollupConfig};
 
 /// Computes the locally derived schedule ID for the effective hardfork activation schedule.
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
@@ -67,7 +67,7 @@ impl ScheduleId {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
-    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
+    use base_common_chain_config::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
 
     use super::*;
 

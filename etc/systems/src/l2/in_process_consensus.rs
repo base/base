@@ -14,7 +14,7 @@ use std::{
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use base_builder_core::test_utils::get_available_port;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::PrivateKeySigner;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{

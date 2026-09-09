@@ -22,18 +22,19 @@ tower = { workspace = true, features = ["util"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
-base-common-genesis = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }

@@ -3,7 +3,7 @@
 use std::{num::ParseIntError, time::Duration};
 
 use alloy_primitives::Address;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_providers::L1_RPC_TIMEOUT;
 use tracing::warn;
 use url::Url;

@@ -4,10 +4,10 @@
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
+use base_common_chain_config::SystemConfig;
 use base_common_types_chain::{
     DepositSourceDomain, Header, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
 };
-use base_common_genesis::SystemConfig;
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -384,7 +384,7 @@ mod tests {
     use alloc::{string::ToString, vec::Vec};
 
     use alloy_primitives::{address, b256};
-    use base_common_chains::Sepolia;
+    use base_common_chain_config::Sepolia;
 
     use super::*;
     use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};

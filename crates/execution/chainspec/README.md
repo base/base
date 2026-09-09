@@ -18,7 +18,7 @@ The genesis header is derived at startup from the genesis JSON using
 other fields for Base.
 
 Chain names are resolved from CLI strings via `SUPPORTED_CHAINS`, which maps `"base"`,
-`"base_sepolia"`, `"base-sepolia"`, and `"dev"` to specs built from `base-common-chains`.
+`"base_sepolia"`, `"base-sepolia"`, and `"dev"` to specs built from `base-common-chain-config`.
 
 ### Base fee computation
 
@@ -32,7 +32,7 @@ Two helpers handle upgrade-specific base fee logic:
   next-block fee calculation.
 
 Gas limits and other chain parameters are sourced from
-[`base_common_chains::ChainConfig`](../../../crates/common/chains/src/config.rs).
+[`base_common_chain_config::ChainConfig`](../../../crates/common/chain/config/src/config.rs).
 
 ## Usage
 

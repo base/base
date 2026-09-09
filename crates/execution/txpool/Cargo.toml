@@ -14,11 +14,12 @@ workspace = true
 [dependencies]
 imbl = { workspace = true }
 bitflags = { workspace = true }
+metrics = { workspace = true  }
 smallvec = { workspace = true }
-thiserror = { workspace = true }
 auto_impl = { workspace = true }
-rustc-hash = { workspace = true }
+thiserror = { workspace = true }
 reth-tasks = { workspace = true }
+rustc-hash = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 base-metrics = { workspace = true }
@@ -26,43 +27,42 @@ futures-util = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
-base-common-flz = { workspace = true }
-base-common-evm = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-evm-handler = { workspace = true }
+base-common-evm = { workspace = true }
+base-common-flz = { workspace = true }
 base-evm-context = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
-base-common-genesis = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 paste = { workspace = true, optional = true }
-base-precompile-storage = { workspace = true }
+reth-primitives-traits = { workspace = true }
 base-common-precompiles = { workspace = true }
+base-precompile-storage = { workspace = true }
 base-execution-chainspec = { workspace = true }
-metrics = { workspace = true, optional = false }
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
-serde_json = { workspace = true, features = ["alloc"]}
 futures = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"]}
+schnellru = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "rc"]}
 tracing = { workspace = true, features = ["attributes"]}
-schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
-base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-reth-eth-wire-types = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
+reth-eth-wire-types = { workspace = true, features = ["default"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
+base-common-chain-config = {workspace = true, features = ["default"]}
 proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 base-common-types-chain = { workspace = true, features = ["reth", "kzg", "serde"] }
+
 [dev-dependencies]
 paste = { workspace = true }
 reth-tasks = { workspace = true }

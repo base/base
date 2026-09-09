@@ -20,7 +20,7 @@ pub enum BuilderError {
     BlockMismatchEpochReset(BlockNumHash, BlockNumHash, B256),
     /// [`SystemConfig`] update failed.
     ///
-    /// [`SystemConfig`]: base_common_genesis::SystemConfig
+    /// [`SystemConfig`]: base_common_chain_config::SystemConfig
     #[error("System config update failed")]
     SystemConfigUpdate,
     /// Broken time invariant between L2 and L1.

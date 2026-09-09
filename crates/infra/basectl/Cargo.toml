@@ -24,36 +24,36 @@ base-prover-service-client = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
-chrono = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
-ratatui = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
 arboard = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+ratatui = { workspace = true, features = ["default"] }
 crossterm = { workspace = true, features = ["default"] }
-toml = { workspace = true, features = ["parse", "serde"] }
-base-common-evm = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
+base-common-evm = { workspace = true, features = ["std"] }
+toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["default", "serde"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 base-common-types-rpc = {workspace = true, features = ["std"]}
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-base-common-chains = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-common-types-chain = { workspace = true, features = ["k256", "std"] }
-base-prover-service-protocol = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
+base-prover-service-protocol = { workspace = true, features = ["default"] }
+base-common-chain-config = {workspace = true, features = ["default", "serde", "std"]}
 tokio = { workspace = true, features = ["default", "macros", "net", "process", "time"] }
 tokio-tungstenite = { workspace = true, features = ["default", "rustls-tls-webpki-roots"] }
 alloy-provider = { workspace = true, features = ["default", "admin-api", "net-api", "pubsub", "txpool-api", "ws"] }
+
 [dev-dependencies]
-tempfile = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
+tempfile = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }

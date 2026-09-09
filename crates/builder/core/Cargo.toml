@@ -15,106 +15,106 @@ workspace = true
 tower = { workspace = true }
 either = { workspace = true }
 dashmap = { workspace = true }
-reth-trie = { workspace = true }
-jsonrpsee = { workspace = true }
 dirs-next = { workspace = true }
+jsonrpsee = { workspace = true }
+reth-trie = { workspace = true }
 reth-tasks = { workspace = true }
 async-trait = { workspace = true }
-base-metrics = { workspace = true }
-base-bundles = { workspace = true }
 alloy-signer = { workspace = true }
-reth-provider = { workspace = true }
+base-bundles = { workspace = true }
+base-metrics = { workspace = true }
 reth-cli-util = { workspace = true }
-reth-rpc-layer = { workspace = true }
+reth-provider = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
-base-txpool-rpc = { workspace = true }
+reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-flz = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-flz = { workspace = true }
+base-txpool-rpc = { workspace = true }
 jsonrpsee-types = { workspace = true }
-base-evm-handler = { workspace = true }
 alloy-primitives = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
-
-reth-payload-util = { workspace = true }
-reth-cli-commands = { workspace = true }
 base-node-context = { workspace = true }
+reth-cli-commands = { workspace = true }
+reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-cache = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
-rlimit = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true }
 nanoid = { workspace = true, optional = true }
+rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
-hex = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+http = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 sha3 = { workspace = true, features = ["default"] }
 time = { workspace = true, features = ["default"] }
-http = { workspace = true, features = ["default"] }
-eyre = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
-testcontainers = { workspace = true, optional = true }
-reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["default"] }
+testcontainers = { workspace = true, optional = true }
 base-node-runner = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"] }
 secp256k1 = { workspace = true, features = ["default"] }
-tokio-util = { workspace = true, features = ["default"] }
 serde_with = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
 base-common-evm = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 clap_builder = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
+base-node-core = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
+reth-storage-api = { workspace = true, features = ["default"] }
 reth-tracing-otlp = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
-reth-network-peers = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-base-common-chains = { workspace = true, features = ["default"] }
+reth-network-peers = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
-reth-execution-types = { workspace = true, features = ["default"] }
+base-common-types-payload = {workspace = true, features = ["std"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
+reth-execution-types = { workspace = true, features = ["default"] }
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
-base-common-types-payload = {workspace = true, features = ["std"]}
 hyper = { workspace = true, optional = true, features = ["default"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
+base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
-base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
+base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "json"] }
+
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true, features = ["default"] }
 
 [dev-dependencies]
-rlimit = { workspace = true }
 nanoid = { workspace = true }
+rlimit = { workspace = true }
 base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-testing-utils = { workspace = true }
@@ -157,7 +157,7 @@ min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
     "base-bundles/test-utils",
-    "base-common-chains/test-utils",
+    "base-common-chain-config/test-utils",
     "base-execution-eip8130/test-utils",
     "base-execution-rpc/client",
     "base-node-core/test-utils",

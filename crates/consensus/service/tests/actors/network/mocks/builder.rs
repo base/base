@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_signer::k256;
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{

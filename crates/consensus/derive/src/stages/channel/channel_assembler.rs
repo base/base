@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::{BlockInfo, Channel};
 
 use super::{ChannelReaderProvider, NextFrameProvider};
@@ -201,7 +201,7 @@ where
     async fn reset(
         &mut self,
         l1_origin: alloy_eips::BlockNumHash,
-        system_config: base_common_genesis::SystemConfig,
+        system_config: base_common_chain_config::SystemConfig,
     ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.channel = None;
@@ -225,7 +225,7 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_common_genesis::{RollupConfig, UpgradeConfig};
+    use base_common_chain_config::{RollupConfig, UpgradeConfig};
     use base_protocol::BlockInfo;
     use tracing::Level;
 

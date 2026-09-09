@@ -19,16 +19,16 @@ reth-db = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-reth-provider = { workspace = true }
-base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
+base-protocol = { workspace = true }
+reth-provider = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-transport = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 base-common-network = {workspace = true}
-base-common-genesis = { workspace = true }
 base-consensus-derive = { workspace = true }
+base-common-chain-config = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 lru = { workspace = true, features = ["default"] }
@@ -41,8 +41,8 @@ alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
 tokio = { workspace = true, features = ["default", "time"] }
 http-body-util = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["std"]}
 alloy-rpc-client = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["std"]}
 alloy-provider = { workspace = true, features = ["default", "ws", "reqwest"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 

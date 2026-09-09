@@ -4,7 +4,7 @@ use std::hint::black_box;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetV1, B20AssetStorage, B20AssetToken, B20FactoryStorage, B20TokenRole, B20Variant,
     IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,

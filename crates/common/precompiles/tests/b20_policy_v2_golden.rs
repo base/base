@@ -31,7 +31,7 @@
 use IPolicyRegistry::PolicyType;
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
     PolicyRegistryStorage, PolicyVersion, PolicyVersions, UpgradeGatedStorageFeatures,

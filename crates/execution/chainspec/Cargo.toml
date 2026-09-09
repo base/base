@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 thiserror = { workspace = true }
-alloy-trie = { workspace = true }
 alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
 serde_json = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
@@ -23,13 +23,12 @@ alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-base-common-genesis = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true }
 reth-network-peers = { workspace = true, features = ["default"] }
-base-common-chains = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
+base-common-chain-config = {workspace = true, features = ["default", "std"]}
 
 [features]
 default = [ "std" ]
@@ -39,8 +38,7 @@ std = [
     "alloy-eips/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
-    "base-common-chains/std",
-    "base-common-genesis/std",
+    "base-common-chain-config/std",
     "base-common-types-rpc/std",
     "base-protocol/std",
     "reth-network-peers/std",
@@ -55,8 +53,7 @@ serde = [
     "alloy-eips/serde",
     "alloy-hardforks/serde",
     "alloy-primitives/serde",
-    "base-common-chains/serde",
-    "base-common-genesis/serde",
+    "base-common-chain-config/serde",
     "base-common-types-rpc/serde",
     "base-protocol/serde",
     "reth-primitives-traits/serde",

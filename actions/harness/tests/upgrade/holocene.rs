@@ -5,7 +5,7 @@ use base_action_harness::{
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::UpgradeConfig;
+use base_common_chain_config::UpgradeConfig;
 
 // ---------------------------------------------------------------------------
 // A. Basic derivation through the Holocene activation boundary

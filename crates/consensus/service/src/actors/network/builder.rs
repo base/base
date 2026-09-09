@@ -3,7 +3,7 @@
 use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig, GossipDriverBuilder};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};

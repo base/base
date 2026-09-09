@@ -1246,7 +1246,7 @@ mod tests {
         .unwrap();
 
         // actual, expected
-        assert_eq!(genesis_hash, base_common_chains::ChainConfig::mainnet().genesis.l2.hash);
+        assert_eq!(genesis_hash, base_common_chain_config::ChainConfig::mainnet().genesis.l2.hash);
     }
 
     #[test]
@@ -1257,7 +1257,7 @@ mod tests {
         .unwrap();
 
         // actual, expected
-        assert_eq!(genesis_hash, base_common_chains::ChainConfig::sepolia().genesis.l2.hash);
+        assert_eq!(genesis_hash, base_common_chain_config::ChainConfig::sepolia().genesis.l2.hash);
     }
 
     #[test]
@@ -1268,7 +1268,7 @@ mod tests {
         .unwrap();
 
         // actual, expected
-        assert_eq!(genesis_hash, base_common_chains::ChainConfig::zeronet().genesis.l2.hash);
+        assert_eq!(genesis_hash, base_common_chain_config::ChainConfig::zeronet().genesis.l2.hash);
     }
 
     #[test]
@@ -1296,8 +1296,8 @@ mod tests {
             genesis_hash.unwrap_err(),
             InitStorageError::GenesisHashMismatch {
                 chainspec_hash, storage_hash
-            } if chainspec_hash == base_common_chains::ChainConfig::mainnet().genesis.l2.hash
-                && storage_hash == base_common_chains::ChainConfig::sepolia().genesis.l2.hash
+            } if chainspec_hash == base_common_chain_config::ChainConfig::mainnet().genesis.l2.hash
+                && storage_hash == base_common_chain_config::ChainConfig::sepolia().genesis.l2.hash
         ))
     }
 
@@ -1326,7 +1326,7 @@ mod tests {
         let returned = result.expect("skip_genesis_validation should suppress mismatch error");
         assert_eq!(
             returned,
-            base_common_chains::ChainConfig::sepolia().genesis.l2.hash,
+            base_common_chain_config::ChainConfig::sepolia().genesis.l2.hash,
             "bypass returns the DB-resident hash, not the chainspec hash",
         );
     }
@@ -1337,7 +1337,7 @@ mod tests {
         let address_with_storage = Address::with_last_byte(2);
         let storage_key = B256::with_last_byte(1);
         let chain_spec = Arc::new(BaseChainSpec {
-            config: base_common_chains::ChainConfig { chain_id: 1, ..Default::default() },
+            config: base_common_chain_config::ChainConfig { chain_id: 1, ..Default::default() },
             genesis: Genesis {
                 alloc: BTreeMap::from([
                     (

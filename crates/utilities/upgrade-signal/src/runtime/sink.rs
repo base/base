@@ -1,4 +1,4 @@
-use base_common_genesis::{
+use base_common_chain_config::{
     BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationOverrides,
     UpgradeActivationSink,
 };
@@ -115,7 +115,7 @@ impl UpgradeSignalRuntimeApplier {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use base_common_genesis::{
+    use base_common_chain_config::{
         BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
     };
 

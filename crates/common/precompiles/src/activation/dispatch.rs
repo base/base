@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
@@ -105,7 +105,7 @@ impl ActivationRegistryStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{ActivationAdminConfig, ActivationRegistryStorage, IActivationRegistry};

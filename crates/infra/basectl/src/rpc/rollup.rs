@@ -6,7 +6,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
-use base_common_genesis::UpgradeConfig;
+use base_common_chain_config::UpgradeConfig;
 use base_common_network::Base;
 use base_common_types_rpc::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use base_consensus_rpc::{BaseApiClient, BaseP2PApiClient, RollupNodeApiClient};

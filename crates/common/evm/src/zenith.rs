@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes};
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
 use base_common_precompiles::NonceManagerStorage;
 use base_evm_handler::Database;
 use base_evm_handler::{DatabaseCommit, primitives::HashMap, state::Bytecode};
@@ -82,7 +82,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::{BaseUpgrade, RollupConfig};
+    use base_common_chain_config::{BaseUpgrade, RollupConfig};
     use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
 
     use super::*;

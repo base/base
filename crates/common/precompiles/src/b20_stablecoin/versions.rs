@@ -7,7 +7,7 @@
 //! execution path, and lets the dispatcher route calls without ever matching on
 //! the version itself.
 
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 
 use crate::{
     B20Abi, PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2,
@@ -75,7 +75,7 @@ impl StablecoinVersions {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
 
     use crate::{StablecoinVersion, StablecoinVersions};
 

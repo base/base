@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-pub use base_common_genesis::BaseUpgrade;
+pub use base_common_chain_config::BaseUpgrade;
 
 mod spec;
 pub use spec::BaseSpecId;

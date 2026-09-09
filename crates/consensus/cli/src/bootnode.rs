@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
 use clap::Args;

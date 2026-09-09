@@ -16,8 +16,8 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-itertools = { workspace = true }
 auto_impl = { workspace = true }
+itertools = { workspace = true }
 alloy-trie = { workspace = true }
 reth-db-api = { workspace = true }
 base-evm-handler = { workspace = true }
@@ -35,20 +35,21 @@ reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
 base-evm-handler = { workspace = true }
 reth-stages-types = { workspace = true }
-base-common-chains = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-execution-chainspec = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-triehash = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
-reth-db = { workspace = true, features = ["test-utils"] }
+triehash = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-db = { workspace = true, features = ["test-utils"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -57,6 +58,7 @@ similar-asserts = { workspace = true, features = ["default", "serde"] }
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["test-utils", "arbitrary"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
+
 [[bench]]
 name = "proof_v2"
 required-features = ["test-utils"]

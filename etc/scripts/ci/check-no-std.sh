@@ -8,13 +8,13 @@ no_std_packages=(
   # common crates (ported from op-alloy)
   base-common-types-chain
   base-common-evm
-  base-common-chains
+  base-common-chain-config
   base-common-types-rpc
   base-common-types-payload
 
   # consensus protocol crates
   base-metrics
-  base-common-genesis
+  base-common-chain-config
   base-consensus-derive
   base-protocol
 

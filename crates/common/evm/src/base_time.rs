@@ -1,7 +1,7 @@
 //! `BaseTime` predeploy artifacts, deployment, storage layout, and ABI surface.
 
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
 use base_common_types_chain::Predeploys;
 use base_evm_handler::{
     DatabaseCommit,
@@ -185,7 +185,7 @@ impl BaseTime {
 mod tests {
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{address, keccak256};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
     use base_evm_handler::{database::State, state::EvmState};
     use std::sync::{Arc, Mutex};

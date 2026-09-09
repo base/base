@@ -12,7 +12,7 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
@@ -618,7 +618,7 @@ mod tests {
 
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
     use crate::{

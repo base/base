@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::BaseBlock;
-use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
 use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 

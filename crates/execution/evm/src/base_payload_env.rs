@@ -1,6 +1,6 @@
 //! Builds Base execution environments from payload attributes.
 
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::{

@@ -161,7 +161,7 @@ impl BatchReader {
 #[cfg(test)]
 mod tests {
     use alloy_rlp::Encodable;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use miniz_oxide::{
         deflate::{CompressionLevel, compress_to_vec_zlib},
         inflate::decompress_to_vec_zlib,

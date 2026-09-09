@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 tracing = { workspace = true }
 thiserror = { workspace = true }
-alloy-trie = { workspace = true }
 alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-evm-handler = { workspace = true }
@@ -24,22 +24,23 @@ reth-primitives-traits = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
-base-common-chains = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
+base-common-types-chain = { workspace = true, features = ["reth"] }
+reth-execution-types = { workspace = true, features = ["default"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"], optional = false}
-reth-execution-types = { workspace = true, features = ["default"], optional = false}
+
 [dev-dependencies]
 reth-trie = { workspace = true }
 alloy-chains = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-genesis = { workspace = true }
+base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 
 [features]
 default = ["std"]
@@ -49,8 +50,7 @@ std = [
     "alloy-eips/std",
     "alloy-primitives/std",
     "alloy-trie/std",
-    "base-common-chains/std",
-    "base-common-types-chain/std",
+    "base-common-chain-config/std",
     "base-execution-chainspec/std",
     "base-protocol/std",
     "reth-execution-types/std",

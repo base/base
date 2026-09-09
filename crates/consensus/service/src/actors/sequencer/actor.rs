@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{L2BlockInfo, to_system_config_from_payload};
@@ -781,8 +781,8 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Sealed};
+    use base_common_chain_config::{RollupConfig, SystemConfig};
     use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{RollupConfig, SystemConfig};
     use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock};
 

@@ -19,26 +19,26 @@ workspace = true
 rayon = { workspace = true }
 metrics = { workspace = true }
 smallvec = { workspace = true }
-thiserror = { workspace = true }
-itertools = { workspace = true }
 auto_impl = { workspace = true }
+itertools = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-rustc-hash = { workspace = true }
+aquamarine = { workspace = true }
 reth-ecies = { workspace = true }
 reth-tasks = { workspace = true }
-aquamarine = { workspace = true }
-reth-discv5 = { workspace = true }
+rustc-hash = { workspace = true }
 discv5-reth = { workspace = true }
 pin-project = { workspace = true }
+reth-discv5 = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-eth-wire = { workspace = true }
 reth-tokio-util = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-net-banlist = { workspace = true }
 reth-network-api = { workspace = true }
-reth-dns-discovery = { workspace = true }
+reth-storage-api = { workspace = true }
 base-execution-evm = { workspace = true }
+reth-dns-discovery = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -51,8 +51,8 @@ rand_08 = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
-reth-discv4 = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
+reth-discv4 = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, features = ["common"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["net"] }
@@ -77,7 +77,7 @@ alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-testing-utils = { workspace = true }
-base-common-genesis = { workspace = true }
+base-common-chain-config = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-tracing = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, features = ["test-utils"] }

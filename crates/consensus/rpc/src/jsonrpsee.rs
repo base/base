@@ -4,7 +4,7 @@ use core::net::IpAddr;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_consensus_safedb::SafeHeadResponse;
@@ -389,7 +389,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use async_trait::async_trait;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_common_types_payload::BaseExecutionPayloadEnvelope;
     use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
     use base_consensus_safedb::SafeHeadResponse;

@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_common_genesis::SystemConfig;
+use base_common_chain_config::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{PipelineResult, Signal};

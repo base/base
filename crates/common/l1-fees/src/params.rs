@@ -1,8 +1,8 @@
 //! Engine-neutral OP-stack L1 fee parameters and cost math.
 
 use alloy_primitives::U256;
+use base_common_chain_config::BaseUpgrade;
 use base_common_flz::{NON_ZERO_BYTE_COST, tx_estimated_size_fjord};
-use base_common_genesis::BaseUpgrade;
 
 /// Gas per calldata token (EIP-2028 standard token cost).
 pub const STANDARD_TOKEN_COST: u64 = 4;

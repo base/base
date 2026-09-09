@@ -486,7 +486,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_hardforks::{EthereumHardfork, ForkCondition};
     use alloy_primitives::Address;
-    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_common_chain_config::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
     use base_execution_chainspec::BaseChainSpec;
     use base_upgrade_signal::UpgradeSignalDefaults;
 
@@ -530,9 +530,9 @@ mod tests {
     fn applies_positive_schedule_to_chain_spec() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Never);
+        chain_spec.set_fork(base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Never);
-        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never);
+        chain_spec.set_fork(base_common_chain_config::BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -552,9 +552,11 @@ mod tests {
     fn zero_signal_clears_existing_chain_spec_forks() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(40));
+        chain_spec
+            .set_fork(base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Timestamp(40));
         chain_spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Timestamp(40));
-        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Timestamp(42));
+        chain_spec
+            .set_fork(base_common_chain_config::BaseUpgrade::Azul, ForkCondition::Timestamp(42));
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(42));
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -574,7 +576,7 @@ mod tests {
     fn ignores_unsupported_signal_for_chain_spec() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never);
+        chain_spec.set_fork(base_common_chain_config::BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -676,7 +678,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Default::default())
-            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
+            .with_fork(base_common_chain_config::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
@@ -746,7 +748,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Default::default())
-            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
+            .with_fork(base_common_chain_config::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
@@ -795,7 +797,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Default::default())
-            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
+            .with_fork(base_common_chain_config::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
@@ -862,7 +864,10 @@ mod tests {
             BaseChainSpecBuilder::default()
                 .chain(alloy_chains::Chain::from_id(9_100_200))
                 .genesis(Default::default())
-                .with_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(10))
+                .with_fork(
+                    base_common_chain_config::BaseUpgrade::Canyon,
+                    ForkCondition::Timestamp(10),
+                )
                 .build(),
         );
         let startup_fork_id = chain_spec.fork_filter(Head::default()).current();

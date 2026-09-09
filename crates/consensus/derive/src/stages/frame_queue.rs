@@ -179,7 +179,7 @@ where
     async fn reset(
         &mut self,
         l1_origin: alloy_eips::BlockNumHash,
-        system_config: base_common_genesis::SystemConfig,
+        system_config: base_common_chain_config::SystemConfig,
     ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.queue = VecDeque::default();
@@ -204,7 +204,7 @@ pub(super) mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use base_common_genesis::SystemConfig;
+    use base_common_chain_config::SystemConfig;
 
     use super::*;
     use crate::test_utils::TestFrameQueueProvider;

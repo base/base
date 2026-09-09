@@ -21,23 +21,25 @@ serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
 discv5 = { workspace = true, features = ["libp2p"] }
+thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 secp256k1 = { workspace = true, features = ["default"] }
 unsigned-varint = { workspace = true, features = ["std"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
-base-common-chains = { workspace = true, features = ["default"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
 libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
+
 [dev-dependencies]
 arbtest = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 multihash = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
+
 [features]
 default = []
 arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary" ]

@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealable;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
     ChainProvider, DataAvailabilityProvider, DerivationPipeline, EthereumDataSource,
     L2ChainProvider, OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,

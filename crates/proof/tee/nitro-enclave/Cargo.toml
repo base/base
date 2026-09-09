@@ -29,12 +29,12 @@ parking_lot = { workspace = true, features = ["default"] }
 base-proof-client = { workspace = true, features = ["std"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 base-proof-preimage = { workspace = true, features = ["serde"] }
-base-common-genesis = { workspace = true, features = ["serde"] }
-base-common-chains = { workspace = true, features = ["default"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }
 aws-nitro-enclaves-nsm-api = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa", "arithmetic"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "io-util"] }
+base-common-chain-config = {workspace = true, features = ["default", "serde"]}
+
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
@@ -43,5 +43,6 @@ tokio = { workspace = true, features = ["default", "rt-multi-thread"] }
 serde_json = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt"] }
+
 [package.metadata.cargo-udeps.ignore]
 normal = ["aws-nitro-enclaves-nsm-api"]

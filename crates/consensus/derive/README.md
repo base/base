@@ -22,7 +22,7 @@ The intended way of working with `base-consensus-derive` is to use the [`Derivat
 
 ```rust,ignore
 use std::sync::Arc;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_derive::EthereumDataSource;
 use base_consensus_derive::PipelineBuilder;
 use base_consensus_derive::StatefulAttributesBuilder;

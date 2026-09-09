@@ -324,7 +324,7 @@ impl DaEgress {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Bytes};
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_protocol::SingleBatch;
 
     use super::*;

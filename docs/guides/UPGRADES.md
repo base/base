@@ -20,7 +20,7 @@ Upgrade activation flows through three layers:
 
 ### 1. Add the variant to the `BaseUpgrade` enum
 
-**File:** [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs)
+**File:** [`crates/common/chain/config/src/upgrade.rs`](../../crates/common/chain/config/src/upgrade.rs)
 
 Inside the `upgrade!` macro, append the new variant after the current last entry:
 
@@ -62,7 +62,7 @@ Update `check_base_upgrade_from_str` in the test module to include the new upgra
 
 ### 2. Add the `BaseChainUpgrades` index arm
 
-**File:** [`crates/common/chains/src/chain.rs`](../../crates/common/chains/src/chain.rs)
+**File:** [`crates/common/chain/config/src/chain.rs`](../../crates/common/chain/config/src/chain.rs)
 
 Add `Azul` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
 
@@ -86,7 +86,7 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
 
 ### 3. Add the config field and nested struct
 
-**File:** [`crates/common/genesis/src/chain/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/chain/upgrade.rs)
+**File:** [`crates/common/chain/config/src/chain/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/src/chain/upgrade.rs)
 
 For standard upgrades (flat timestamp field), add directly to `UpgradeConfig`:
 
@@ -116,13 +116,13 @@ pub struct UpgradeConfig {
 }
 ```
 
-Also update `UpgradeConfig::iter()` to include the new entry, and re-export any new public types from `crates/common/genesis/src/chain/mod.rs` and `crates/common/genesis/src/lib.rs`.
+Also update `UpgradeConfig::iter()` to include the new entry, and re-export any new public types from `crates/common/chain/config/src/chain/mod.rs` and `crates/common/chain/config/src/lib.rs`.
 
 ---
 
 ### 4. Add activation methods to `RollupConfig`
 
-**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
+**File:** [`crates/common/chain/config/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/src/rollup.rs)
 
 Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
 
@@ -184,7 +184,7 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 
 ### 5. Add the trait method
 
-**File:** [`crates/common/chains/src/upgrades.rs`](../../crates/common/chains/src/upgrades.rs)
+**File:** [`crates/common/chain/config/src/upgrades.rs`](../../crates/common/chain/config/src/upgrades.rs)
 
 ```rust
 /// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
@@ -198,9 +198,9 @@ fn is_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
 ### 6. Update timestamp constants and test fixtures
 
 **Files:**
-- [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs) (mainnet, sepolia, devnet constants)
-- [`crates/common/chains/src/lib.rs`](../../crates/common/chains/src/lib.rs)
-- [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
+- [`crates/common/chain/config/src/upgrade.rs`](../../crates/common/chain/config/src/upgrade.rs) (mainnet, sepolia, devnet constants)
+- [`crates/common/chain/config/src/lib.rs`](../../crates/common/chain/config/src/lib.rs)
+- [`crates/common/chain/config/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/src/test_utils.rs)
 
 Add named constants once an activation timestamp is confirmed:
 
@@ -232,7 +232,7 @@ Until an activation timestamp is confirmed, leave `base: None` and the chain arr
 
 ### 7. Update the default rollup config
 
-**File:** [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
+**File:** [`crates/common/chain/config/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/src/test_utils.rs)
 
 The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
 
@@ -248,7 +248,7 @@ upgrades: UpgradeConfig {
 
 ### 8. Verify the upgrade consistency tests
 
-**File:** [`crates/common/chains/tests/upgrade_consistency.rs`](https://github.com/base/base/blob/main/crates/common/chains/tests/upgrade_consistency.rs)
+**File:** [`crates/common/chain/config/tests/upgrade_consistency.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/tests/upgrade_consistency.rs)
 
 These tests assert that `BaseChainConfig::mainnet().upgrade_activation(fork)` matches `BaseChainUpgrades::mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
 
@@ -317,7 +317,7 @@ BaseUpgrade::Beryl => Self::beryl(),
 
 ### 11. Update spec resolution
 
-**File:** [`crates/common/chains/src/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/upgrade.rs)
+**File:** [`crates/common/chain/config/src/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/src/upgrade.rs)
 
 Add the new upgrade as the first check (newest upgrade wins):
 
@@ -337,7 +337,7 @@ pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
 
 ### 12. Update the reth upgrade schedule builder
 
-**File:** [`crates/common/chains/src/chain.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/chain.rs)
+**File:** [`crates/common/chain/config/src/chain.rs`](https://github.com/base/base/blob/main/crates/common/chain/config/src/chain.rs)
 
 Append the new upgrade in `to_chain_upgrades()`. If it pairs with a new Ethereum upgrade (like Canyon→Shanghai), push both; if not, push only the Base upgrade entry:
 

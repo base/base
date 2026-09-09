@@ -12,7 +12,7 @@ use std::{
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_genesis::{
+use base_common_chain_config::{
     RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
 };
 use base_common_types_rpc::{Filter, Log};
@@ -348,7 +348,7 @@ mod tests {
     use alloy_eips::BlockId;
     use alloy_primitives::B256;
     use async_trait::async_trait;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_common_types_rpc::{Block, Filter, Log};
     use tokio_util::sync::CancellationToken;
 

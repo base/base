@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt,
 };
@@ -246,11 +246,11 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
+    use base_common_chain_config::BaseUpgrade;
     use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, DepositReceipt, Header, Receipt, Sealable, TxDeposit,
         TxReceipt,
     };
-    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 

@@ -7,8 +7,8 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B64, B256, Bytes};
 use alloy_rlp::Encodable;
 use async_trait::async_trait;
+use base_common_chain_config::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_types_chain::{Eip658Value, Predeploys, Receipt};
-use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
@@ -276,12 +276,12 @@ mod tests {
 
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address, hex};
-    use base_common_chains::Sepolia;
-    use base_common_types_chain::{BaseTxEnvelope, Header, SystemAddresses};
-    use base_common_genesis::{
+    use base_common_chain_config::Sepolia;
+    use base_common_chain_config::{
         BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, SystemConfigUpdateKind,
         UpgradeConfig,
     };
+    use base_common_types_chain::{BaseTxEnvelope, Header, SystemAddresses};
     use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;

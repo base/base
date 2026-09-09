@@ -12,7 +12,7 @@ use std::{
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
 use backon::Retryable;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::PrivateKeySigner;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
@@ -808,7 +808,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, b256};
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_consensus_peers::NodeRecord;
     use base_consensus_providers::L1_RPC_TIMEOUT;
     use clap::Parser;

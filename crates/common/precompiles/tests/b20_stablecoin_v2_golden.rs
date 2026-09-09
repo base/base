@@ -30,7 +30,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
     B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,

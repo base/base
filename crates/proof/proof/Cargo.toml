@@ -20,27 +20,26 @@ alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
-base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
+base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
-base-evm-handler = { workspace = true }
-base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-
+base-evm-context = { workspace = true }
+base-evm-handler = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-consensus-derive = { workspace = true }
-base-common-types-chain = { workspace = true }
 c-kzg = { workspace = true, optional = true }
-lru = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true }
 base-common-types-payload = { workspace = true }
+lru = { workspace = true, features = ["default"] }
 spin = { workspace = true, features = ["default"] }
-base-common-genesis = { workspace = true, features = ["serde"] }
 ark-bls12-381 = { workspace = true, features = ["scalar_field"] }
-base-common-chains = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"], optional = true }
+base-common-chain-config = {workspace = true, features = ["default", "serde"]}
+
 [dev-dependencies]
 rayon = { workspace = true }
 c-kzg = { workspace = true, features = [] }
@@ -61,9 +60,8 @@ std = [
     "alloy-trie/std",
     "ark-bls12-381/std",
     "ark-ff/std",
-    "base-common-chains/std",
+    "base-common-chain-config/std",
     "base-common-evm/std",
-    "base-common-genesis/std",
     "base-common-types-payload/std",
     "base-proof-driver/std",
     "base-proof-executor/std",

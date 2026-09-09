@@ -14,14 +14,14 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 tracing = { workspace = true }
-thiserror = { workspace = true }
 humantime = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 base-retry = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-base-proof-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
+base-proof-rpc = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
@@ -43,13 +43,14 @@ base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
-base-common-types-chain = { workspace = true }
 base-common-types-rpc = { workspace = true }
+base-common-types-chain = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-common-genesis = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
+base-common-chain-config = { workspace = true, features = ["serde"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

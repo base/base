@@ -1,7 +1,7 @@
 //! Append-only business-logic interface for the B-20 token factory precompile.
 
 use alloy_primitives::{Address, B256};
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_precompile_storage::Result;
 
 use crate::{B20FactoryStorage, IB20Factory};

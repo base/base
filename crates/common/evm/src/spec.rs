@@ -1,7 +1,7 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
-use base_common_chains::{BaseUpgradeExt, Upgrades};
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
+use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_evm_handler::primitives::hardfork::SpecId;
 

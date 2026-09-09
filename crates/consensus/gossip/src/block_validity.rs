@@ -2,8 +2,8 @@ use std::time::SystemTime;
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Address, B256};
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseTxEnvelope, Block};
-use base_common_genesis::RollupConfig;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, ExecutionPayloadV3,
     NetworkPayloadEnvelope, PayloadError,
@@ -325,8 +325,8 @@ pub(crate) mod tests {
     use alloy_primitives::{Address, B256, Bytes, Signature};
     use alloy_rlp::BufMut;
     use arbitrary::{Arbitrary, Unstructured};
+    use base_common_chain_config::RollupConfig;
     use base_common_types_chain::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
-    use base_common_genesis::RollupConfig;
     use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV1, ExecutionPayloadV2,
         ExecutionPayloadV3, PayloadHash,

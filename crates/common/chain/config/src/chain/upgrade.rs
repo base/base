@@ -651,7 +651,7 @@ impl Display for UpgradeConfig {
 impl UpgradeConfig {
     /// Base Mainnet upgrade schedule used by [`BaseUpgrade::from_chain_and_timestamp`].
     ///
-    /// This schedule lives here because `base-common-chains` already depends on this crate;
+    /// This schedule lives here because `base-common-chain-config` already depends on this crate;
     /// importing its `ChainConfig` would create a circular crate dependency.
     pub const BASE_MAINNET: Self = Self {
         regolith_time: Some(1_686_789_347),
@@ -675,7 +675,7 @@ impl UpgradeConfig {
 
     /// Base Sepolia upgrade schedule used by [`BaseUpgrade::from_chain_and_timestamp`].
     ///
-    /// This schedule lives here because `base-common-chains` already depends on this crate;
+    /// This schedule lives here because `base-common-chain-config` already depends on this crate;
     /// importing its `ChainConfig` would create a circular crate dependency.
     pub const BASE_SEPOLIA: Self = Self {
         regolith_time: Some(1_695_768_288),
@@ -833,6 +833,8 @@ impl UpgradeConfig {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
 
     #[test]

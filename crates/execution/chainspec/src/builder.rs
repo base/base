@@ -2,8 +2,8 @@ use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::Address;
-use base_common_chains::ChainUpgrades;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
+use base_common_chain_config::ChainUpgrades;
 
 use crate::{BaseChainSpec, BaseChainSpecError};
 
@@ -11,7 +11,7 @@ use crate::{BaseChainSpec, BaseChainSpecError};
 #[derive(Debug, Default)]
 pub struct BaseChainSpecBuilder {
     /// Canonical configuration being built.
-    pub config: base_common_chains::ChainConfig,
+    pub config: base_common_chain_config::ChainConfig,
     /// Parsed genesis boundary.
     pub genesis: Option<Genesis>,
 }
@@ -19,7 +19,7 @@ pub struct BaseChainSpecBuilder {
 impl BaseChainSpecBuilder {
     /// Construct a new builder from the Base Mainnet chain spec.
     pub fn base_mainnet() -> Self {
-        let config = base_common_chains::ChainConfig::mainnet().clone();
+        let config = base_common_chain_config::ChainConfig::mainnet().clone();
         let genesis =
             serde_json::from_str(config.genesis_json).expect("Base mainnet genesis must be valid");
         Self { config, genesis: Some(genesis) }

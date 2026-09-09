@@ -63,7 +63,7 @@ impl UpgradeSignalRefresher {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_common_chain_config::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
 
     use super::*;
     use crate::{UpgradeSignal, UpgradeSignalDefaults};

@@ -4,8 +4,8 @@ use std::{collections::VecDeque, fmt, sync::Arc};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
-use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, ChannelId};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};

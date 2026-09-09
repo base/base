@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_consensus_node::{StandalonePrefund, StandaloneSequencerNode};
 use base_protocol::L1BlockInfoTx;
 use eyre::Result;

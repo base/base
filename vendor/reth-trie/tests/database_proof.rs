@@ -32,7 +32,7 @@ type DbProof<'a, TX, A> =
 */
 static TEST_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
     BaseChainSpec {
-        config: base_common_chains::ChainConfig { chain_id: 12345, ..Default::default() },
+        config: base_common_chain_config::ChainConfig { chain_id: 12345, ..Default::default() },
         genesis: serde_json::from_str(include_str!("../testdata/proof-genesis.json"))
             .expect("Can't deserialize test genesis json"),
         ..Default::default()

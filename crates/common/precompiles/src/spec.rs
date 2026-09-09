@@ -1,4 +1,4 @@
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_precompile_storage::StorageFeatures;
 
 /// Resolves Base upgrades into fork-dependent persistent-storage features.

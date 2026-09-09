@@ -107,7 +107,7 @@ impl fmt::Display for BrotliLevel {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     #[cfg(feature = "std")]
     use base_protocol::Brotli;
 

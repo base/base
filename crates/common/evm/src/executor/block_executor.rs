@@ -3,12 +3,12 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::{Encodable2718, Typed2718};
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
+use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip658Value, Eip8130Receipt, Header, OpTxType,
     Predeploys, Transaction, TransactionEnvelope, TxReceipt,
 };
-use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{
     BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError, Database,
@@ -350,12 +350,12 @@ mod tests {
     use alloy_eips::eip2718::WithEncoded;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Bytes, Signature, U256, uint};
-    use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
+    use base_common_chain_config::BaseUpgrade;
+    use base_common_chain_config::ChainUpgrades;
     use base_common_types_chain::{
         BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, SignableTransaction,
         TxEip8130, TxLegacy, transaction::Recovered,
     };
-    use base_common_genesis::BaseUpgrade;
     use base_evm_context::BlockEnv;
     use base_evm_handler::{
         BlockExecutorFactory, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap, ToTxEnv,
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn test_with_encoded() {
         let executor_factory = BaseBlockExecutorFactory::new(
-            base_common_chains::ChainConfig::mainnet().upgrades.clone(),
+            base_common_chain_config::ChainConfig::mainnet().upgrades.clone(),
             BaseEvmFactory::default(),
         );
         let mut db = base_evm_handler::database::State::builder()
@@ -719,7 +719,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn committed_receipts_preserve_phase_statuses_deposit_fields_and_cumulative_gas() {
         let factory = BaseBlockExecutorFactory::new(
-            base_common_chains::ChainConfig::mainnet().upgrades.clone(),
+            base_common_chain_config::ChainConfig::mainnet().upgrades.clone(),
             BaseEvmFactory::default(),
         );
         let mut db =

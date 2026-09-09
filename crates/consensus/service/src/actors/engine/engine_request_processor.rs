@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::BaseTxEnvelope;
-use base_common_genesis::RollupConfig;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
@@ -682,16 +682,16 @@ mod tests {
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use async_trait::async_trait;
-    use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
-    use base_common_genesis::{
+    use base_common_chain_config::{
         BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
     };
-    use base_common_types_rpc::{
-        BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
-    };
+    use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
         PayloadId, PayloadStatus, PayloadStatusEnum,
+    };
+    use base_common_types_rpc::{
+        BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
     use base_consensus_derive::Signal;
     use base_consensus_engine::{

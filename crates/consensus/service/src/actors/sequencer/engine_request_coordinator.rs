@@ -678,7 +678,7 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_consensus_engine::{
         Engine, EngineState,
         test_utils::{MockEngineClient, test_engine_client_builder},

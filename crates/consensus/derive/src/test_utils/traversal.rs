@@ -3,8 +3,8 @@
 use alloc::{sync::Arc, vec};
 
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, hex};
+use base_common_chain_config::{RollupConfig, SystemConfigUpdate};
 use base_common_types_chain::Receipt;
-use base_common_genesis::{RollupConfig, SystemConfigUpdate};
 use base_protocol::BlockInfo;
 
 use crate::{PollingTraversal, test_utils::TestChainProvider};

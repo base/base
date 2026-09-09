@@ -3563,7 +3563,7 @@ mod tests {
     #[test]
     fn base_body_roundtrip_across_withdrawals_activation() {
         let chain_spec = BaseChainSpecBuilder::base_mainnet()
-            .with_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(100))
+            .with_fork(base_common_chain_config::BaseUpgrade::Canyon, ForkCondition::Timestamp(100))
             .build();
         let factory =
             crate::test_utils::create_test_provider_factory_with_chain_spec(Arc::new(chain_spec));

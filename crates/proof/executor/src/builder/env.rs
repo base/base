@@ -2,9 +2,9 @@
 
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::U256;
-use base_common_types_chain::{BlockHeader, Header};
+use base_common_chain_config::RollupConfig;
 use base_common_evm::{BaseSpecId, BaseUpgrade};
-use base_common_genesis::RollupConfig;
+use base_common_types_chain::{BlockHeader, Header};
 use base_common_types_payload::BasePayloadAttributes;
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_evm_handler::{EvmEnv, EvmFactory};
@@ -162,9 +162,9 @@ where
 mod tests {
     use alloy_eips::eip1559::BaseFeeParams;
     use alloy_primitives::Sealable;
-    use base_common_types_chain::Header;
+    use base_common_chain_config::RollupConfig;
     use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
-    use base_common_genesis::RollupConfig;
+    use base_common_types_chain::Header;
     use base_common_types_payload::BasePayloadAttributes;
     use base_evm_context::BlobExcessGasAndPrice;
     use base_proof_mpt::NoopTrieHinter;

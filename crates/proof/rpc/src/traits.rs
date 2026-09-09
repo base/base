@@ -3,7 +3,7 @@
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_rpc::{EIP1186AccountProofResponse, Header, TransactionReceipt};
 use base_optimism_rpc::{OutputAtBlock, SyncStatus};
 

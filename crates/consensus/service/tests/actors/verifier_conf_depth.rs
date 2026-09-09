@@ -18,8 +18,8 @@ use std::{
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, Bloom, U256};
 use async_trait::async_trait;
+use base_common_chain_config::RollupConfig;
 use base_common_types_chain::Header;
-use base_common_genesis::RollupConfig;
 use base_common_types_rpc::{Block, Filter, Header as RpcHeader, Log};
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
 use base_consensus_node::{

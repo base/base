@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BasePayloadAttributes;
 use base_protocol::BlockInfo;
 
@@ -39,7 +39,8 @@ impl PoolActivation {
         // If the next L2 block is beyond the sequencer drift threshold, we must produce an empty
         // block.
         if attributes.payload_attributes.timestamp
-            > l1_origin.timestamp + base_common_genesis::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT
+            > l1_origin.timestamp
+                + base_common_chain_config::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT
         {
             warn!(
                 target: "sequencer",

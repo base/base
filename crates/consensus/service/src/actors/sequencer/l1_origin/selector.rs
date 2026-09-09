@@ -5,7 +5,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_primitives::B256;
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
@@ -168,7 +168,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             return Ok(next.clone());
         }
 
-        let max_seq_drift = base_common_genesis::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT;
+        let max_seq_drift = base_common_chain_config::RollupConfig::FJORD_MAX_SEQUENCER_DRIFT;
         let past_seq_drift =
             next_l2_timestamp.saturating_sub(current.header.timestamp) > max_seq_drift;
 

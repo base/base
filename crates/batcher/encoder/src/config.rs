@@ -1,6 +1,6 @@
 //! Encoder configuration and its validation error type.
 
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, Frame,
@@ -289,7 +289,7 @@ pub enum EncoderConfigError {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::UpgradeConfig;
+    use base_common_chain_config::UpgradeConfig;
     use rstest::rstest;
 
     use super::*;

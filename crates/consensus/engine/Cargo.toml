@@ -12,39 +12,40 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-reth-network = { workspace = true }
 base-metrics = { workspace = true }
+reth-network = { workspace = true }
 reth-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
-reth-network-api = { workspace = true }
 alloy-primitives = { workspace = true }
-base-execution-trie = { workspace = true }
-base-common-genesis = { workspace = true }
+reth-network-api = { workspace = true }
 base-common-network = { workspace = true }
-reth-primitives-traits = { workspace = true }
+base-execution-trie = { workspace = true }
 reth-engine-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
+base-common-chain-config = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
-base-execution-payload-builder = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
+base-execution-payload-builder = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
-base-common-types-chain = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
-derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
+derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
+
 [dev-dependencies]
 arbitrary = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-base-common-chains = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default", "thread_rng"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default", "arbitrary", "k256"] }
 
 [features]
@@ -53,4 +54,4 @@ metrics = [
 	"base-metrics/metrics",
 	"dep:metrics",
 ]
-test-utils = [ "base-common-genesis/test-utils", "base-protocol/test-utils" ]
+test-utils = [ "base-common-chain-config/test-utils", "base-protocol/test-utils" ]

@@ -3,8 +3,8 @@ use std::{cmp::Ordering, path::PathBuf};
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
-use base_common_chains::{ChainConfig, rollup_config};
-use base_common_genesis::{RollupConfig, UpgradeConfig};
+use base_common_chain_config::{ChainConfig, rollup_config};
+use base_common_chain_config::{RollupConfig, UpgradeConfig};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use url::Url;
@@ -373,7 +373,7 @@ pub struct MonitoringConfig {
     /// L1 batcher address for blob attribution.
     ///
     /// This is the current live batcher address, not necessarily the genesis
-    /// batcher. It may differ from the value in `base-common-chains` if
+    /// batcher. It may differ from the value in `base-common-chain-config` if
     /// the batcher was updated via a `SystemConfig` transaction after genesis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batcher_address: Option<Address>,

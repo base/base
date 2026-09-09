@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_proof_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
 use serde::{Deserialize, Serialize};
 
@@ -287,7 +287,9 @@ impl BootInfo {
         );
 
         let activation_admin_address =
-            base_common_chains::ChainConfig::beryl_activation_admin_address_by_chain_id(chain_id);
+            base_common_chain_config::ChainConfig::beryl_activation_admin_address_by_chain_id(
+                chain_id,
+            );
 
         let ser_cfg = oracle
             .get(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
@@ -308,9 +310,9 @@ impl BootInfo {
         // Fixed built-in chains must execute with their compiled static derivation parameters. Only
         // contract-backed activation timestamps may come from the node, because ScheduleId commits
         // them separately. The local devnet is mutable, so its live node-served config is required.
-        let trusted_chain_config =
-            base_common_chains::ChainConfig::by_chain_id(chain_id).filter(|chain_config| {
-                chain_config.chain_id != base_common_chains::ChainConfig::DEVNET.chain_id
+        let trusted_chain_config = base_common_chain_config::ChainConfig::by_chain_id(chain_id)
+            .filter(|chain_config| {
+                chain_config.chain_id != base_common_chain_config::ChainConfig::DEVNET.chain_id
             });
         let mut rollup_config = if let Some(chain_config) = trusted_chain_config {
             let mut trusted_rollup_config = chain_config.rollup_config();
@@ -333,7 +335,7 @@ impl BootInfo {
         // Attempt to load the L1 config from the rollup config's L1 chain ID. If there is no config
         // for the chain, fall back to loading the config from the preimage oracle.
         let l1_config = if let Some(config) =
-            base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id)
+            base_common_chain_config::L1_CONFIGS.get(&rollup_config.l1_chain_id)
         {
             config.clone()
         } else {
@@ -491,8 +493,8 @@ mod tests {
 
     use alloy_primitives::B256;
     use async_trait::async_trait;
-    use base_common_chains::ChainConfig as BaseChainConfig;
-    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
+    use base_common_chain_config::ChainConfig as BaseChainConfig;
+    use base_common_chain_config::{BaseUpgradeConfig, UpgradeConfig};
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -590,7 +592,7 @@ mod tests {
 
         assert_eq!(
             boot_info.activation_admin_address,
-            Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
+            Some(base_common_chain_config::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
     }
 
@@ -654,7 +656,7 @@ mod tests {
         oracle.insert(
             L1_CONFIG_KEY,
             serde_json::to_vec(
-                base_common_chains::L1_CONFIGS
+                base_common_chain_config::L1_CONFIGS
                     .get(&1)
                     .expect("mainnet L1 config should be available"),
             )
@@ -1064,7 +1066,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_oracle_rollup_config_with_mismatched_chain_id() {
-        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let rollup_config = base_common_chain_config::rollup_config!(BaseChainConfig::SEPOLIA);
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());

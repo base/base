@@ -11,14 +11,14 @@ use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
 use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_types_rpc::{Block, BlockTransactions, Transaction as EthTransaction};
+use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
+use base_common_types_rpc::{Block, BlockTransactions, Transaction as EthTransaction};
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_node::{
     EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
@@ -911,7 +911,7 @@ impl crate::SequencerEngineBackend for ActionEngineClient {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
+    use base_common_chain_config::{BaseUpgradeConfig, UpgradeConfig};
 
     use super::*;
 

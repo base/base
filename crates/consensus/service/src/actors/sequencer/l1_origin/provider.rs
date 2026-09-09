@@ -209,7 +209,7 @@ mod tests {
 
     use alloy_eips::NumHash;
     use alloy_rpc_client::RpcClient;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_common_types_rpc::{Block as RpcBlock, Header as RpcHeader};
     use base_protocol::L2BlockInfo;
     use httpmock::prelude::*;

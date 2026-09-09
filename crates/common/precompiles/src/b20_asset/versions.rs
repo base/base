@@ -17,7 +17,7 @@
 use alloc::string::ToString;
 
 use alloy_sol_types::SolInterface;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
@@ -206,7 +206,7 @@ mod tests {
 
     use alloy_primitives::{Address, U256};
     use alloy_sol_types::{SolCall, SolInterface};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use base_precompile_storage::BasePrecompileError;
 
     use super::{AssetAbiPair, AssetCall};

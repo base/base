@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use alloy_primitives::Address;
-use base_common_chains::ChainConfig;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::ChainConfig;
+use base_common_chain_config::RollupConfig;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
@@ -578,7 +578,7 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_primitives::{B256, U256, address};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
     use clap::{Args, Parser};
     use rstest::rstest;
 

@@ -20,18 +20,19 @@ ambassador = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
 alloc-no-stdlib = { workspace = true }
-base-common-genesis = { workspace = true }
-base-common-types-chain = { workspace = true }
 base-common-types-rpc = { workspace = true }
 serde = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true }
 base-common-types-payload = {workspace = true}
+base-common-chain-config = { workspace = true }
+tracing = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["display"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 spin = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"], optional = true }
+
 [dev-dependencies]
 tracing = { workspace = true }
 serde_json = { workspace = true }
@@ -44,10 +45,11 @@ criterion = { workspace = true, features = ["default"] }
 iai-callgrind = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
-base-common-chains = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default", "std", "std_rng"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"] }
+
 [[bench]]
 name = "batch_transaction"
 harness = false
@@ -67,7 +69,7 @@ harness = false
 [features]
 default = [ "std" ]
 test-utils = [
-	"base-common-genesis/test-utils",
+	"base-common-chain-config/test-utils",
 	"dep:spin",
     "dep:tracing",
 	"dep:tracing-subscriber",
@@ -80,7 +82,7 @@ std = [
     "alloy-rlp/std",
     "base-common-types-payload/std",
     "base-common-types-rpc/std",
-    "base-common-genesis/std",
+    "base-common-chain-config/std",
     "brotli/std",
     "derive_more/std",
     "miniz_oxide/std",
@@ -95,7 +97,7 @@ serde = [
     "alloy-primitives/serde",
     "base-common-types-payload/serde",
     "base-common-types-rpc/serde",
-    "base-common-genesis/serde",
+    "base-common-chain-config/serde",
     "dep:serde",
     "miniz_oxide/serde",
     "tracing-subscriber?/serde",
@@ -107,7 +109,7 @@ arbitrary = [
     "alloy-primitives/rand",
     "base-common-types-payload/arbitrary",
     "base-common-types-rpc/arbitrary",
-    "base-common-genesis/arbitrary",
+    "base-common-chain-config/arbitrary",
     "dep:arbitrary",
     "std",
 ]

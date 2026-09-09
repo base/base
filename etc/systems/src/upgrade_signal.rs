@@ -5,7 +5,7 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_test_utils::MockProtocolVersions;
@@ -230,7 +230,7 @@ impl MockProtocolVersionsClient {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::{ChainGenesis, UpgradeActivation};
+    use base_common_chain_config::{ChainGenesis, UpgradeActivation};
 
     use super::*;
 

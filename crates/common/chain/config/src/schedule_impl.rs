@@ -1,5 +1,5 @@
+use crate::{BaseUpgrade, ChainUpgrades};
 use alloy_hardforks::ForkCondition;
-use base_common_genesis::{BaseUpgrade, ChainUpgrades};
 
 use crate::Upgrades;
 

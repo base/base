@@ -124,7 +124,7 @@ impl From<Infallible> for Event {
 mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::Address;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use libp2p::gossipsub::{IdentTopic, TopicHash};
 
     use super::*;

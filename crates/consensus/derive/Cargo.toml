@@ -16,17 +16,18 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
-base-common-genesis = { workspace = true }
+base-protocol = { workspace = true }
 serde = { workspace = true, optional = true }
-metrics = { workspace = true, optional = true }
 base-common-types-payload = {workspace = true}
+base-common-chain-config = { workspace = true }
+metrics = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["derive"] }
 base-common-types-chain = { workspace = true, features = ["k256"] }
 spin = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"], optional = true }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
@@ -34,11 +35,9 @@ spin = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 base-protocol = { workspace = true, features = ["test-utils"] }
-base-common-chains = { workspace = true, features = ["default"] }
-base-common-genesis = { workspace = true, features = ["test-utils"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt"] }
+base-common-chain-config = {workspace = true, features = ["default", "test-utils"]}
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitrary"] }
-
 
 [features]
 default = []
@@ -48,13 +47,13 @@ serde = [
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-types-payload/serde",
-    "base-common-genesis/serde",
+    "base-common-chain-config/serde",
     "base-protocol/serde",
     "dep:serde",
     "tracing-subscriber?/serde",
 ]
 test-utils = [
-	"base-common-genesis/test-utils",
+	"base-common-chain-config/test-utils",
 	"base-protocol/test-utils",
 	"dep:spin",
 	"dep:tracing-subscriber",

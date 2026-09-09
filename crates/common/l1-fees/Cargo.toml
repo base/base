@@ -15,11 +15,12 @@ workspace = true
 [dependencies]
 base-common-flz = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-genesis = { workspace = true }
+base-common-chain-config = { workspace = true }
+
 [features]
 default = [ "std" ]
 std = [
 	"alloy-primitives/std",
 	"base-common-flz/std",
-	"base-common-genesis/std",
+	"base-common-chain-config/std",
 ]

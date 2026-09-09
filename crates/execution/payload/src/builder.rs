@@ -8,11 +8,11 @@ use std::{
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_chains::Upgrades;
+use base_common_chain_config::Upgrades;
+use base_common_evm::L1BlockInfo;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
-use base_common_evm::L1BlockInfo;
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_evm_context::{Block, BlockEnv};
 use base_evm_handler::database::State;
@@ -1361,11 +1361,11 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
-    use base_common_chains::BaseUpgrade;
+    use base_common_chain_config::BaseUpgrade;
+    use base_common_evm::BaseTime;
     use base_common_types_chain::{
         BaseTxEnvelope, Header, Predeploys, SignableTransaction, TxEip1559,
     };
-    use base_common_evm::BaseTime;
     use base_common_types_payload::PayloadId;
     use base_evm_handler::{database::State, state::EvmState};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};

@@ -16,24 +16,24 @@ tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
+base-state = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
-base-runtime = { workspace = true }
 alloy-signer = { workspace = true }
-base-state = { workspace = true }
+base-runtime = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-transport = { workspace = true }
 base-test-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
+base-batcher-source = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-node = { workspace = true }
-base-batcher-source = { workspace = true }
 base-batcher-encoder = { workspace = true }
-base-consensus-gossip = { workspace = true }
-base-consensus-engine = { workspace = true }
-base-consensus-safedb = { workspace = true }
 base-common-types-rpc = { workspace = true }
+base-consensus-engine = { workspace = true }
+base-consensus-gossip = { workspace = true }
+base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
@@ -42,23 +42,23 @@ base-protocol = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
-base-common-genesis = { workspace = true, features = ["std"] }
-reth-trie-common = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-common-types-chain = { workspace = true, features = ["std"] }
-base-common-chains = { workspace = true, features = ["default"] }
-base-execution-evm = { workspace = true, features = ["default"] }
+reth-trie-common = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
-reth-execution-types = { workspace = true, features = ["default"] }
+base-execution-evm = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-types-payload = {workspace = true, features = ["std"]}
 base-batcher-core = { workspace = true, features = ["test-utils"] }
+reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
-base-common-types-payload = {workspace = true, features = ["std"]}
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }
+base-common-chain-config = {workspace = true, features = ["default", "std"]}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
+
 [dev-dependencies]
 base-blobs = { workspace = true }
 base-common-precompiles = { workspace = true }

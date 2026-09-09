@@ -4,7 +4,7 @@ Engine-neutral OP-stack L1 fee schedule.
 
 Holds the L1 fee parameters ([`L1FeeParams`]) and the pure L1 data-cost and
 operator-fee math (Bedrock / Ecotone / Fjord, plus the Isthmus operator fee),
-parameterized by [`base_common_genesis::BaseUpgrade`]. It has no execution-engine
+parameterized by [`base_common_chain_config::BaseUpgrade`]. It has no execution-engine
 dependency. `base-common-evm` supplies the state loading and caching used during
 execution.
 

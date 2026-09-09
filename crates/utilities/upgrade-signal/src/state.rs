@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
-use base_common_genesis::{
+use base_common_chain_config::{
     BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationOverrides,
 };
 use tracing::{debug, error, info};
@@ -456,7 +456,7 @@ impl UpgradeSignalMonitor {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_common_chain_config::{RuntimeUpgradeRegistry, UpgradeActivation};
 
     use super::*;
     use crate::UpgradeSignalConfig;

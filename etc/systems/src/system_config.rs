@@ -10,8 +10,8 @@ use std::{
 
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
-use base_common_chains::ChainConfig;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::ChainConfig;
+use base_common_chain_config::RollupConfig;
 use base_execution_chainspec::BaseChainSpec;
 use clap::ValueEnum;
 use eyre::{Result, WrapErr, bail, ensure};
@@ -407,7 +407,7 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     use alloy_genesis::Genesis;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use tempfile::TempDir;
 
     use super::{

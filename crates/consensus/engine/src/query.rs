@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_protocol::{L2BlockInfo, OutputRoot};
 use tokio::sync::oneshot::Sender;
 

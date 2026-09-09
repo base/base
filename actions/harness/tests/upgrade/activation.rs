@@ -5,7 +5,7 @@ use base_action_harness::{
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::UpgradeConfig;
+use base_common_chain_config::UpgradeConfig;
 
 // ---------------------------------------------------------------------------
 // Section 1: Base mainnet config — upgrade boundary tests

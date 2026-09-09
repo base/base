@@ -20,11 +20,11 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
+base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
-base-common-evm = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-evm = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
 base-common-network = { workspace = true }
@@ -39,11 +39,12 @@ base-proof-client = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
-base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
+base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }
 base-evm-handler = { workspace = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"], optional = true }
+
 [dev-dependencies]
 proptest = { workspace = true, features = ["default"] }
 

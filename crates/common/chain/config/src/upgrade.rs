@@ -1,48 +1,41 @@
 use alloy_hardforks::ForkCondition;
-pub use base_common_genesis::BaseUpgrade;
 
-use crate::{ChainConfig, Upgrades};
+use crate::{BaseUpgrade, ChainConfig, Upgrades};
 
 /// Chain schedule queries for [`BaseUpgrade`].
 ///
 /// EVM spec selection belongs to the execution layer; this interface only resolves
 /// configured upgrade activation.
-pub trait BaseUpgradeExt: Sized {
+impl BaseUpgrade {
     /// Returns the execution fork ladder with activation conditions for the given chain config.
-    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13];
+    pub fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13] {
+        BaseUpgrade::EXECUTION_VARIANTS.map(|fork| (fork, cfg.upgrades[fork]))
+    }
 
     /// Base mainnet list of execution upgrades.
-    fn mainnet() -> [(BaseUpgrade, ForkCondition); 13] {
+    pub fn mainnet() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::mainnet())
     }
 
     /// Base Sepolia list of execution upgrades.
-    fn sepolia() -> [(BaseUpgrade, ForkCondition); 13] {
+    pub fn sepolia() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::sepolia())
     }
 
     /// Devnet list of execution upgrades.
-    fn devnet() -> [(BaseUpgrade, ForkCondition); 13] {
+    pub fn devnet() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::devnet())
     }
 
     /// Base Zeronet list of execution upgrades.
-    fn zeronet() -> [(BaseUpgrade, ForkCondition); 13] {
+    pub fn zeronet() -> [(BaseUpgrade, ForkCondition); 13] {
         Self::forks_for(ChainConfig::zeronet())
     }
 
     /// Returns the active Base upgrade at the given timestamp.
     ///
     /// This is intended for post-Bedrock timestamp-based fork resolution.
-    fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade;
-}
-
-impl BaseUpgradeExt for BaseUpgrade {
-    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13] {
-        BaseUpgrade::EXECUTION_VARIANTS.map(|fork| (fork, cfg.upgrades[fork]))
-    }
-
-    fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade {
+    pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade {
         if chain_spec.is_denim_active_at_timestamp(timestamp) {
             Self::Denim
         } else if chain_spec.is_cobalt_active_at_timestamp(timestamp) {

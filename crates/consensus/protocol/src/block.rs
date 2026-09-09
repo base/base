@@ -4,13 +4,13 @@ use alloc::vec::Vec;
 
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
+use base_common_chain_config::ChainGenesis;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, Block, Transaction};
-use base_common_genesis::ChainGenesis;
-use base_common_types_rpc::Block as RpcBlock;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError, CancunPayloadFields,
     PraguePayloadFields,
 };
+use base_common_types_rpc::Block as RpcBlock;
 use derive_more::Display;
 
 use crate::{DecodeError, L1BlockInfoTx};

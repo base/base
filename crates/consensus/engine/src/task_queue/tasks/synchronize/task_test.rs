@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 
 use crate::{

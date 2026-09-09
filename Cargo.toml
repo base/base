@@ -41,13 +41,12 @@ members = [
   "crates/builder/cli",
   "crates/builder/core",
   "crates/common/bundles",
-  "crates/common/chains",
+  "crates/common/chain/config",
   "crates/common/types/chain",
   "crates/common/evm",
   "crates/common/evm-context",
   "crates/common/evm-handler",
   "crates/common/flz",
-  "crates/common/genesis",
   "crates/common/l1-fees",
   "crates/common/network",
   "crates/common/observability-events",
@@ -348,9 +347,8 @@ base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-bundles = { path = "crates/common/bundles", default-features = false }
 base-common-network = { path = "crates/common/network", default-features = false }
-base-common-chains = { path = "crates/common/chains", default-features = false }
+base-common-chain-config = { path = "crates/common/chain/config", default-features = false }
 base-common-l1-fees = { path = "crates/common/l1-fees", default-features = false }
-base-common-genesis = { path = "crates/common/genesis", default-features = false }
 base-common-types-rpc = { path = "crates/common/types/rpc", default-features = false }
 base-common-types-chain = { path = "crates/common/types/chain", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }

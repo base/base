@@ -5,8 +5,8 @@ use std::sync::Arc;
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use async_trait::async_trait;
+use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::{Predeploys, TxDeposit};
-use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_consensus_derive::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
@@ -323,8 +323,8 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
 mod tests {
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, U256};
+    use base_common_chain_config::{RollupConfig, SystemConfig};
     use base_common_types_chain::{BaseTxEnvelope, Transaction as _};
-    use base_common_genesis::{RollupConfig, SystemConfig};
     use base_consensus_derive::AttributesBuilder;
     use base_protocol::{
         BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L1BlockInfoTx, L2BlockInfo,
@@ -423,7 +423,8 @@ mod tests {
     async fn subsecond_descendants_include_base_time_progression() {
         let (l1_info, parent) = snapshot_boundary();
         let mut rollup = anchored_rollup(parent, 2_002);
-        rollup.set_upgrade_activation_timestamp(base_common_genesis::BaseUpgrade::Cobalt, 2_002);
+        rollup
+            .set_upgrade_activation_timestamp(base_common_chain_config::BaseUpgrade::Cobalt, 2_002);
         let mut builder = StandaloneAttributesBuilder::new(
             std::sync::Arc::new(rollup),
             l1_info,

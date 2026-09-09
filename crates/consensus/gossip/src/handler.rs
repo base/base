@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
-use base_common_genesis::RollupConfig;
+use base_common_chain_config::RollupConfig;
 use base_common_types_payload::NetworkPayloadEnvelope;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
@@ -148,8 +148,8 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
     use alloy_primitives::{B256, Signature};
+    use base_common_chain_config::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit, proofs::calculate_transaction_root};
-    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV2, ExecutionPayloadV3,
         PayloadHash,

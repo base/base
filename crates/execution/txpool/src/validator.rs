@@ -11,15 +11,15 @@ use std::{
 
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::Upgrades;
+use base_common_chain_config::DaFootprintGasScalarUpdate;
+use base_common_chain_config::Upgrades;
+use base_common_evm::{BaseSpecId, L1BlockInfo};
+use base_common_precompiles::NonceManagerStorage;
 use base_common_types_chain::{
     AccountChange, BaseBlock, BlockHeader, ChangeType, Eip8130Constants, Eip8130Contracts,
     Eip8130Signed, Eip8130TimestampError, InitialActor, SignedChange, Transaction,
     constants::KECCAK_EMPTY,
 };
-use base_common_evm::{BaseSpecId, L1BlockInfo};
-use base_common_genesis::DaFootprintGasScalarUpdate;
-use base_common_precompiles::NonceManagerStorage;
 use base_evm_context::JournalCheckpoint;
 use base_evm_handler::state::{AccountInfo, Bytecode};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
@@ -2162,14 +2162,14 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
-    use base_common_chains::ChainConfig;
+    use base_common_chain_config::ChainConfig;
+    use base_common_network::PrivateKeySigner;
     use base_common_types_chain::{
         AccountChange, AccountChangeChannel, BaseTransactionSigned, BaseTxEnvelope, ChangeType,
         CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
         SignableTransaction, SignedAccountChanges, SignedChange, TxDeposit, TxEip1559, TxEip8130,
         transaction::SignerRecoverable,
     };
-    use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
@@ -3442,7 +3442,7 @@ mod tests {
             &encoded,
             BaseSpecId::from_timestamp(
                 Arc::clone(&chain_spec),
-                chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                chain_config.upgrades[base_common_chain_config::BaseUpgrade::Isthmus]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -3452,7 +3452,7 @@ mod tests {
             U256::from(gas_limit),
             BaseSpecId::from_timestamp(
                 Arc::clone(&chain_spec),
-                chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+                chain_config.upgrades[base_common_chain_config::BaseUpgrade::Isthmus]
                     .as_timestamp()
                     .unwrap_or_default(),
             ),
@@ -3484,7 +3484,7 @@ mod tests {
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
         let header = base_common_types_chain::Header {
-            timestamp: chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+            timestamp: chain_config.upgrades[base_common_chain_config::BaseUpgrade::Isthmus]
                 .as_timestamp()
                 .unwrap_or_default(),
             ..Default::default()
@@ -3552,7 +3552,7 @@ mod tests {
 
         let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
         let header = base_common_types_chain::Header {
-            timestamp: chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+            timestamp: chain_config.upgrades[base_common_chain_config::BaseUpgrade::Isthmus]
                 .as_timestamp()
                 .unwrap_or_default(),
             ..Default::default()
@@ -3580,7 +3580,7 @@ mod tests {
         );
         let spec_id = BaseSpecId::from_timestamp(
             &chain_spec,
-            chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
+            chain_config.upgrades[base_common_chain_config::BaseUpgrade::Isthmus]
                 .as_timestamp()
                 .unwrap_or_default(),
         );

@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
-use base_common_chains::Upgrades;
-use base_common_types_chain::Header;
+use base_common_chain_config::Upgrades;
 use base_common_evm::BaseSpecId;
+use base_common_types_chain::Header;
 #[cfg(feature = "std")]
 use base_common_types_payload::ExecutionData;
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};

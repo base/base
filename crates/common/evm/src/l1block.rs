@@ -1,7 +1,7 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
-use base_common_types_chain::Predeploys;
-use base_common_genesis::BaseUpgrade;
+use base_common_chain_config::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
+use base_common_types_chain::Predeploys;
 use base_evm_handler::{
     database::Database,
     interpreter::Gas,

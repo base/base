@@ -1,8 +1,8 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
 
+use base_common_chain_config::BaseUpgrade;
 use base_common_types_chain::Predeploys;
-use base_common_genesis::BaseUpgrade;
 use base_evm_context::{
     Block, Cfg, ContextTr, Database, EVMError, ExecutionResult, InitialAndFloorGas,
     InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr, LocalContextTr,

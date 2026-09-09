@@ -207,7 +207,7 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_genesis::ChainConfig;
-    use base_common_genesis::RollupConfig;
+    use base_common_chain_config::RollupConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 
     use super::*;

@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_common_genesis::UpgradeActivationSink;
+use base_common_chain_config::UpgradeActivationSink;
 use url::Url;
 
 use super::{UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode};

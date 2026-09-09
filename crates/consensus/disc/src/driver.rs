@@ -380,7 +380,7 @@ impl Discv5Driver {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use base_common_chains::ChainConfig;
+    use base_common_chain_config::ChainConfig;
     use discv5::{
         ConfigBuilder,
         enr::{CombinedKey, CombinedPublicKey},
