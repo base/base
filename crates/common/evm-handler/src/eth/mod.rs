@@ -18,7 +18,7 @@ use base_evm_handler::{
 };
 use base_evm_handler::{EthPrecompiles, NoOpInspector, PrecompileProvider};
 
-use crate::{Database, Evm, env::EvmEnv, evm_api::EvmFactory, precompiles::PrecompilesMap};
+use crate::{Database, Evm, EvmEnv, evm_api::EvmFactory, precompiles::PrecompilesMap};
 
 mod tx_result;
 pub use tx_result::*;

@@ -107,8 +107,7 @@ pub use evm_api::*;
 mod eth;
 pub use eth::*;
 
-mod env;
-pub use env::*;
+pub use base_evm_context::{BlockEnvironment, EvmEnv, EvmLimitParams, TransactionEnvMut};
 
 mod error;
 pub use error::*;

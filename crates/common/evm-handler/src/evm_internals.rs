@@ -14,7 +14,7 @@ use base_evm_handler::{
     state::{Account, AccountInfo, Bytecode},
 };
 
-use crate::{Database, env::BlockEnvironment};
+use crate::{BlockEnvironment, Database};
 
 /// Erased error type.
 #[derive(thiserror::Error, Debug)]

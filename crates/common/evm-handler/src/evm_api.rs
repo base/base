@@ -11,7 +11,7 @@ use base_evm_handler::NoOpInspector;
 use base_evm_handler::{DatabaseCommit, Inspector};
 pub use base_state::Database;
 
-use crate::{EvmEnv, EvmError, IntoTxEnv, env::BlockEnvironment, tracing::TxTracer};
+use crate::{BlockEnvironment, EvmEnv, EvmError, IntoTxEnv, tracing::TxTracer};
 
 /// An instance of an ethereum virtual machine.
 ///

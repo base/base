@@ -6,8 +6,7 @@ use base_evm_context::{TxEnv, either::Either};
 use thiserror::Error;
 
 use crate::{
-    EvmEnv,
-    env::BlockEnvironment,
+    BlockEnvironment, EvmEnv,
     rpc::{CallFees, CallFeesError},
 };
 

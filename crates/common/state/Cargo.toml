@@ -37,12 +37,13 @@ alloy-primitives = { workspace = true }
 bytes = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref", "debug"] }
-base-common-types-chain = { workspace = true, features = ["alloy"]}
+base-common-types-chain = { workspace = true }
 arbitrary = { workspace = true, optional = true, features = ["derive"]}
 serde = { workspace = true, optional = true, features = ["derive", "rc"] }
 tokio = { workspace = true, optional = true, features = ["default", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
 serde_json = { workspace = true, features = ["alloc"] }
 
 mockall = { workspace = true }
@@ -82,7 +83,7 @@ std = [
     "serde_json/std",
 ]
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
-reth-codec = ["dep:bytes", "dep:modular-bitfield"]
+reth-codec = ["dep:bytes", "dep:modular-bitfield", "base-common-types-chain/alloy"]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils"]
 alloydb = ["std", "asyncdb", "dep:tokio", "dep:alloy-provider", "dep:alloy-eips", "dep:alloy-transport"]
 map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]

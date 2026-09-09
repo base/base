@@ -20,7 +20,7 @@ pub const EIP7702_BYTECODE_ID: u8 = 4;
 /// An Ethereum account.
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "reth-codec", derive(base_common_types_chain::Compact))]
 #[cfg_attr(feature = "reth-codec", base_common_types_chain::add_arbitrary_tests(compact))]
 pub struct Account {

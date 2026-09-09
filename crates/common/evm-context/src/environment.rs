@@ -2,13 +2,13 @@
 
 use core::{any::Any, fmt::Debug};
 
-use alloy_primitives::U256;
-use base_evm_context::{AccessList, BlockEnv, CfgEnv, TransactionType, TxEnv};
-use base_evm_handler::primitives::hardfork::SpecId;
+use crate::{AccessList, BlockEnv, CfgEnv, TransactionType, TxEnv};
+use revm_primitives::U256;
+use revm_primitives::hardfork::SpecId;
 
 /// Container type that holds both the configuration and block environment for EVM execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvmEnv<Spec = SpecId, BlockEnv = base_evm_context::BlockEnv> {
+pub struct EvmEnv<Spec = SpecId, BlockEnv = crate::BlockEnv> {
     /// The configuration environment with handler settings
     pub cfg_env: CfgEnv<Spec>,
     /// The block environment containing block-specific data
@@ -158,14 +158,14 @@ impl<Spec, BlockEnv> From<(CfgEnv<Spec>, BlockEnv)> for EvmEnv<Spec, BlockEnv> {
 
 /// Trait for types that can be used as a block environment.
 ///
-/// Assumes that the type wraps an inner [`base_evm_context::BlockEnv`].
-pub trait BlockEnvironment: base_evm_context::Block + Any + Debug + Send + Sync + 'static {
-    /// Returns a mutable reference to the inner [`base_evm_context::BlockEnv`].
-    fn inner_mut(&mut self) -> &mut base_evm_context::BlockEnv;
+/// Assumes that the type wraps an inner [`crate::BlockEnv`].
+pub trait BlockEnvironment: crate::Block + Any + Debug + Send + Sync + 'static {
+    /// Returns a mutable reference to the inner [`crate::BlockEnv`].
+    fn inner_mut(&mut self) -> &mut crate::BlockEnv;
 }
 
 impl BlockEnvironment for BlockEnv {
-    fn inner_mut(&mut self) -> &mut base_evm_context::BlockEnv {
+    fn inner_mut(&mut self) -> &mut crate::BlockEnv {
         self
     }
 }
@@ -173,10 +173,8 @@ impl BlockEnvironment for BlockEnv {
 /// Abstraction over mutable transaction environment.
 ///
 /// Provides setters for common transaction fields, complementing
-/// the read-only accessors on `base_evm_context::Transaction`.
-pub trait TransactionEnvMut:
-    base_evm_context::Transaction + Debug + Clone + Send + Sync + 'static
-{
+/// the read-only accessors on `crate::Transaction`.
+pub trait TransactionEnvMut: crate::Transaction + Debug + Clone + Send + Sync + 'static {
     /// Sets the gas limit.
     fn set_gas_limit(&mut self, gas_limit: u64);
 
@@ -245,16 +243,16 @@ impl EvmLimitParams {
     /// Returns the Osaka EVM limit params.
     pub const fn osaka() -> Self {
         Self {
-            max_code_size: base_evm_handler::primitives::eip170::MAX_CODE_SIZE,
-            max_initcode_size: base_evm_handler::primitives::eip3860::MAX_INITCODE_SIZE,
-            tx_gas_limit_cap: Some(base_evm_handler::primitives::eip7825::TX_GAS_LIMIT_CAP),
+            max_code_size: revm_primitives::eip170::MAX_CODE_SIZE,
+            max_initcode_size: revm_primitives::eip3860::MAX_INITCODE_SIZE,
+            tx_gas_limit_cap: Some(revm_primitives::eip7825::TX_GAS_LIMIT_CAP),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::{Block, Cfg};
+    use crate::{Block, Cfg};
 
     use super::*;
 
@@ -279,18 +277,12 @@ mod tests {
         let limits = EvmLimitParams::osaka();
         let evm_env: EvmEnv<SpecId> = EvmEnv::default().with_limits(limits);
 
-        assert_eq!(
-            evm_env.cfg_env.max_code_size(),
-            base_evm_handler::primitives::eip170::MAX_CODE_SIZE
-        );
+        assert_eq!(evm_env.cfg_env.max_code_size(), revm_primitives::eip170::MAX_CODE_SIZE);
         assert_eq!(
             evm_env.cfg_env.max_initcode_size(),
-            base_evm_handler::primitives::eip3860::MAX_INITCODE_SIZE
+            revm_primitives::eip3860::MAX_INITCODE_SIZE
         );
-        assert_eq!(
-            evm_env.cfg_env.tx_gas_limit_cap(),
-            base_evm_handler::primitives::eip7825::TX_GAS_LIMIT_CAP
-        );
+        assert_eq!(evm_env.cfg_env.tx_gas_limit_cap(), revm_primitives::eip7825::TX_GAS_LIMIT_CAP);
     }
 
     #[test]
@@ -304,15 +296,12 @@ mod tests {
     #[test]
     fn test_evm_env_with_osaka_limits() {
         // osaka() has tx_gas_limit_cap set to EIP-7825's cap.
-        use base_evm_context::{BlockEnv, CfgEnv};
+        use crate::{BlockEnv, CfgEnv};
 
         let limits = EvmLimitParams::osaka();
         let cfg_env = CfgEnv::new_with_spec(SpecId::OSAKA);
         let evm_env = EvmEnv::new(cfg_env, BlockEnv::default()).with_limits(limits);
 
-        assert_eq!(
-            evm_env.cfg_env.tx_gas_limit_cap(),
-            base_evm_handler::primitives::eip7825::TX_GAS_LIMIT_CAP
-        );
+        assert_eq!(evm_env.cfg_env.tx_gas_limit_cap(), revm_primitives::eip7825::TX_GAS_LIMIT_CAP);
     }
 }
