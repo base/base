@@ -22,7 +22,6 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-evm-handler = { workspace = true }
 base-common-genesis = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"] }
@@ -40,7 +39,6 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"base-common-genesis/std",
-	"base-evm-handler/std",
 	"spin/std",
 ]
 serde = [
@@ -49,6 +47,5 @@ serde = [
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
 	"base-common-genesis/serde",
-	"base-evm-handler/serde",
 ]
 test-utils = [ "base-common-genesis/test-utils" ]

@@ -1,8 +1,8 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
 use base_common_chains::{BaseUpgradeExt, Upgrades};
-use base_common_types_chain::BlockHeader;
 use base_common_genesis::BaseUpgrade;
+use base_common_types_chain::BlockHeader;
 use base_evm_handler::primitives::hardfork::SpecId;
 
 /// EVM-facing Base spec id.
@@ -25,8 +25,20 @@ impl BaseSpecId {
     }
 
     /// Converts the [`BaseSpecId`] into a [`SpecId`].
-    pub fn into_eth_spec(self) -> SpecId {
-        self.0.into_eth_spec()
+    pub const fn into_eth_spec(self) -> SpecId {
+        match self.0 {
+            BaseUpgrade::Bedrock | BaseUpgrade::Regolith => SpecId::MERGE,
+            BaseUpgrade::Canyon | BaseUpgrade::Delta => SpecId::SHANGHAI,
+            BaseUpgrade::Ecotone
+            | BaseUpgrade::Fjord
+            | BaseUpgrade::Granite
+            | BaseUpgrade::Holocene
+            | BaseUpgrade::PectraBlobSchedule => SpecId::CANCUN,
+            BaseUpgrade::Isthmus | BaseUpgrade::Jovian => SpecId::PRAGUE,
+            // Azul, Beryl, Cobalt, Denim, Zenith, and newer Base upgrades inherit the latest
+            // known Ethereum spec until explicitly mapped.
+            _ => SpecId::OSAKA,
+        }
     }
 
     /// Checks if the given Base upgrade is enabled in this spec.
@@ -274,5 +286,30 @@ mod tests {
     #[test]
     fn default_base_spec_id() {
         assert_eq!(BaseSpecId::default().upgrade(), BaseUpgrade::LATEST);
+    }
+    #[test]
+    fn check_base_upgrade_eth_spec_mapping() {
+        let test_cases = [
+            (BaseUpgrade::Bedrock, SpecId::MERGE),
+            (BaseUpgrade::Regolith, SpecId::MERGE),
+            (BaseUpgrade::Canyon, SpecId::SHANGHAI),
+            (BaseUpgrade::Delta, SpecId::SHANGHAI),
+            (BaseUpgrade::Ecotone, SpecId::CANCUN),
+            (BaseUpgrade::Fjord, SpecId::CANCUN),
+            (BaseUpgrade::Granite, SpecId::CANCUN),
+            (BaseUpgrade::Holocene, SpecId::CANCUN),
+            (BaseUpgrade::PectraBlobSchedule, SpecId::CANCUN),
+            (BaseUpgrade::Isthmus, SpecId::PRAGUE),
+            (BaseUpgrade::Jovian, SpecId::PRAGUE),
+            (BaseUpgrade::Azul, SpecId::OSAKA),
+            (BaseUpgrade::Beryl, SpecId::OSAKA),
+            (BaseUpgrade::Cobalt, SpecId::OSAKA),
+            (BaseUpgrade::Denim, SpecId::OSAKA),
+            (BaseUpgrade::Zenith, SpecId::OSAKA),
+        ];
+
+        for (base_upgrade, eth_spec) in test_cases {
+            assert_eq!(BaseSpecId::new(base_upgrade).into_eth_spec(), eth_spec);
+        }
     }
 }

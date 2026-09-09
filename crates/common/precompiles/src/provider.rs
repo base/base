@@ -1,5 +1,4 @@
 use alloy_primitives::Address;
-use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
 use base_evm_handler::PrecompilesMap;
 use base_evm_handler::{
@@ -42,8 +41,8 @@ impl BasePrecompiles {
             BaseUpgrade::Bedrock
             | BaseUpgrade::Regolith
             | BaseUpgrade::Canyon
-            | BaseUpgrade::Delta
-            | BaseUpgrade::Ecotone => Precompiles::new(spec.into_eth_spec().into()),
+            | BaseUpgrade::Delta => Precompiles::berlin(),
+            BaseUpgrade::Ecotone => Precompiles::cancun(),
             BaseUpgrade::Fjord => Self::fjord(),
             BaseUpgrade::Granite | BaseUpgrade::Holocene | BaseUpgrade::PectraBlobSchedule => {
                 Self::granite()

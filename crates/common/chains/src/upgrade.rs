@@ -1,21 +1,13 @@
 use alloy_hardforks::ForkCondition;
 pub use base_common_genesis::BaseUpgrade;
-use base_evm_handler::primitives::hardfork::SpecId;
 
 use crate::{ChainConfig, Upgrades};
 
-/// Execution-layer extension methods for [`BaseUpgrade`].
+/// Chain schedule queries for [`BaseUpgrade`].
 ///
-/// [`BaseUpgrade`] is defined in `base-common-genesis`, which cannot depend on `revm` or
-/// [`ChainConfig`]. These helpers, which map upgrades onto revm specs and Base chain schedules,
-/// therefore live here in `base-common-chains`. Bring this trait into scope to call them.
+/// EVM spec selection belongs to the execution layer; this interface only resolves
+/// configured upgrade activation.
 pub trait BaseUpgradeExt: Sized {
-    /// Converts the Base upgrade into its matching Ethereum execution spec.
-    ///
-    /// The contract-only upgrades inherit the execution spec of the surrounding era: `Delta`
-    /// behaves like `Canyon` (Shanghai) and `PectraBlobSchedule` like `Holocene` (Cancun).
-    fn into_eth_spec(self) -> SpecId;
-
     /// Returns the execution fork ladder with activation conditions for the given chain config.
     fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13];
 
@@ -46,22 +38,6 @@ pub trait BaseUpgradeExt: Sized {
 }
 
 impl BaseUpgradeExt for BaseUpgrade {
-    fn into_eth_spec(self) -> SpecId {
-        match self {
-            Self::Bedrock | Self::Regolith => SpecId::MERGE,
-            Self::Canyon | Self::Delta => SpecId::SHANGHAI,
-            Self::Ecotone
-            | Self::Fjord
-            | Self::Granite
-            | Self::Holocene
-            | Self::PectraBlobSchedule => SpecId::CANCUN,
-            Self::Isthmus | Self::Jovian => SpecId::PRAGUE,
-            // Azul, Beryl, Cobalt, Denim, Zenith, and newer Base upgrades inherit the latest
-            // known Ethereum spec until explicitly mapped.
-            _ => SpecId::OSAKA,
-        }
-    }
-
     fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 13] {
         BaseUpgrade::EXECUTION_VARIANTS.map(|fork| (fork, cfg.upgrades[fork]))
     }
@@ -192,32 +168,6 @@ mod tests {
         assert_eq!(BaseUpgrade::from_contract_fork_name("  shAnGhAi  "), Some(BaseUpgrade::Canyon));
         assert_eq!(BaseUpgrade::from_contract_fork_name("\tbase_azul\n"), Some(BaseUpgrade::Azul));
         assert_eq!(BaseUpgrade::from_contract_fork_name("\n bERyl\t"), Some(BaseUpgrade::Beryl));
-    }
-
-    #[test]
-    fn check_base_upgrade_eth_spec_mapping() {
-        let test_cases = [
-            (BaseUpgrade::Bedrock, SpecId::MERGE),
-            (BaseUpgrade::Regolith, SpecId::MERGE),
-            (BaseUpgrade::Canyon, SpecId::SHANGHAI),
-            (BaseUpgrade::Delta, SpecId::SHANGHAI),
-            (BaseUpgrade::Ecotone, SpecId::CANCUN),
-            (BaseUpgrade::Fjord, SpecId::CANCUN),
-            (BaseUpgrade::Granite, SpecId::CANCUN),
-            (BaseUpgrade::Holocene, SpecId::CANCUN),
-            (BaseUpgrade::PectraBlobSchedule, SpecId::CANCUN),
-            (BaseUpgrade::Isthmus, SpecId::PRAGUE),
-            (BaseUpgrade::Jovian, SpecId::PRAGUE),
-            (BaseUpgrade::Azul, SpecId::OSAKA),
-            (BaseUpgrade::Beryl, SpecId::OSAKA),
-            (BaseUpgrade::Cobalt, SpecId::OSAKA),
-            (BaseUpgrade::Denim, SpecId::OSAKA),
-            (BaseUpgrade::Zenith, SpecId::OSAKA),
-        ];
-
-        for (base_upgrade, eth_spec) in test_cases {
-            assert_eq!(base_upgrade.into_eth_spec(), eth_spec);
-        }
     }
 
     #[test]

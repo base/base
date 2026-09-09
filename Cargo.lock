@@ -2673,7 +2673,6 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
- "base-evm-handler",
  "spin 0.10.1",
 ]
 
@@ -2784,7 +2783,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "base-common-chains",
  "base-common-genesis",
  "base-evm-context",
  "base-evm-handler",
