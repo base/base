@@ -27,7 +27,7 @@ use base_execution_evm::{
 use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{
-    BasePooledTx, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
+    BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PoolTransaction, PredicateContext, TransactionPool,
 };
 use base_observability_events::{
@@ -152,7 +152,7 @@ impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs> {
 
 impl<Pool, Client, T> BasePayloadBuilder<Pool, Client, T>
 where
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + Clone,
+    Pool: TransactionPool<Transaction = BasePooledTransaction> + Clone,
     Client: StateProviderFactory + ChainSpecProvider + BlockReader,
 {
     /// Constructs a Base payload from the transactions sent via the
@@ -173,9 +173,7 @@ where
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome, PayloadBuilderError>
     where
-        Txs: ParkablePayloadTransactions<
-            Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
-        >,
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction>,
     {
         let BuildArguments {
             mut cached_reads,
@@ -257,7 +255,7 @@ where
 impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs>
 where
     Client: StateProviderFactory + ChainSpecProvider + BlockReader + Clone,
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>>,
+    Pool: TransactionPool<Transaction = BasePooledTransaction>,
     Txs: BasePayloadTransactions<Pool>,
 {
     pub fn try_build(&self, args: BuildArguments) -> Result<BuildOutcome, PayloadBuilderError> {
@@ -333,9 +331,7 @@ impl<Txs> Builder<'_, Txs> {
         ctx: BasePayloadBuilderCtx,
     ) -> Result<BuildOutcomeKind, PayloadBuilderError>
     where
-        Txs: ParkablePayloadTransactions<
-            Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
-        >,
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction>,
     {
         let Self { best, evict_permanently_rejected } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
@@ -507,7 +503,7 @@ impl<Txs> Builder<'_, Txs> {
 pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
 where
     Pool: TransactionPool,
-    Pool::Transaction: BasePooledTx,
+    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
 {
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
@@ -523,7 +519,7 @@ where
 impl<Pool> BasePayloadTransactions<Pool> for ()
 where
     Pool: ParkableTransactionPool,
-    Pool::Transaction: BasePooledTx,
+    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
 {
     fn best_transactions(
         &self,
@@ -539,7 +535,7 @@ where
 impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
 where
     Pool: TransactionPool,
-    Pool::Transaction: BasePooledTx,
+    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
     F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
     Transactions: ParkablePayloadTransactions<Transaction = Pool::Transaction>,
 {
@@ -840,9 +836,7 @@ impl BasePayloadBuilderCtx {
         &self,
         info: &mut ExecutionInfo,
         builder: &mut Builder,
-        mut best_txs: impl ParkablePayloadTransactions<
-            Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
-        >,
+        mut best_txs: impl ParkablePayloadTransactions<Transaction = BasePooledTransaction>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder,

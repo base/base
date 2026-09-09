@@ -17,30 +17,32 @@ use base_execution_txpool::{
 };
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTransaction, BestTransactionPriority};
 
 type LaneId = (Address, U256);
 
 #[derive(Debug)]
-struct NonceLane<T: BasePooledTx> {
+struct NonceLane {
     next_nonce: u64,
-    transactions: BTreeMap<u64, Arc<ValidPoolTransaction<T>>>,
+    transactions: BTreeMap<u64, Arc<ValidPoolTransaction<BasePooledTransaction>>>,
 }
 
-impl<T: BasePooledTx> Default for NonceLane<T> {
+impl Default for NonceLane {
     fn default() -> Self {
         Self { next_nonce: 0, transactions: BTreeMap::new() }
     }
 }
 
-impl<T: BasePooledTx> NonceLane<T> {
-    fn live_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+impl NonceLane {
+    fn live_transactions(
+        &self,
+    ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         self.transactions.range(self.next_nonce..).map(|(_, transaction)| transaction)
     }
 
     fn consecutive_pending_transactions(
         &self,
-    ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+    ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         self.live_transactions()
             .enumerate()
             .take_while(|(offset, transaction)| {
@@ -55,23 +57,25 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.consecutive_pending_transactions().count()
     }
 
-    fn queued_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+    fn queued_transactions(
+        &self,
+    ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         self.live_transactions().skip(self.consecutive_pending_len())
     }
 }
 
 /// Outcome returned after inserting into the 2D nonce sidecar.
 #[derive(Debug)]
-pub struct InsertOutcome<T: BasePooledTx> {
+pub struct InsertOutcome {
     pub outcome: AddedTransactionOutcome,
-    pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
-    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    pub replaced: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    pub promoted: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
 }
 
 /// Outcome returned after pruning mined transactions from the 2D nonce sidecar.
 #[derive(Debug)]
-pub struct PruneMinedOutcome<T: BasePooledTx> {
-    pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
+pub struct PruneMinedOutcome {
+    pub removed: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
 }
 
 /// EIP-8130 sidecar for finite non-zero nonce channels and nonce-free transactions.
@@ -80,15 +84,15 @@ pub struct PruneMinedOutcome<T: BasePooledTx> {
 /// transactions have no sequencing relationship, so they are stored separately
 /// by replay id and compete independently in the best-transactions iterator.
 #[derive(Debug)]
-pub struct TwoDNoncePool<T: BasePooledTx> {
-    lanes: HashMap<LaneId, NonceLane<T>>,
-    nonce_free: B256Map<Arc<ValidPoolTransaction<T>>>,
-    hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
+pub struct TwoDNoncePool {
+    lanes: HashMap<LaneId, NonceLane>,
+    nonce_free: B256Map<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    hashes: B256Map<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
     senders: SenderIdentifiers,
     price_bump_config: PriceBumpConfig,
 }
 
-impl<T: BasePooledTx> TwoDNoncePool<T> {
+impl TwoDNoncePool {
     /// Creates a new 2D nonce sidecar pool.
     pub fn new(price_bump_config: PriceBumpConfig) -> Self {
         Self {
@@ -120,7 +124,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all pending transactions.
-    pub fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
             for transaction in lane.consecutive_pending_transactions() {
@@ -132,7 +136,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all queued transactions.
-    pub fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
             for transaction in lane.queued_transactions() {
@@ -143,7 +147,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns all transactions in the sidecar.
-    pub fn all_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn all_transactions(&self) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
             transactions.extend(lane.live_transactions().cloned());
@@ -163,12 +167,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns the transaction for the given hash.
-    pub fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<T>>> {
+    pub fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         self.hashes.get(hash).cloned()
     }
 
     /// Returns transactions for the given sender.
-    pub fn transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut transactions = Vec::new();
         for ((lane_sender, _), lane) in &self.lanes {
             if *lane_sender == sender {
@@ -185,7 +192,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub fn pending_transactions_by_sender(
         &self,
         sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut transactions: Vec<_> = self
             .lanes
             .iter()
@@ -203,7 +210,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub fn queued_transactions_by_sender(
         &self,
         sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         self.lanes
             .iter()
             .filter(|((lane_sender, _), _)| *lane_sender == sender)
@@ -233,9 +240,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// replacement semantics.
     pub fn insert_validated(
         &mut self,
-        mut transaction: ValidPoolTransaction<T>,
+        mut transaction: ValidPoolTransaction<BasePooledTransaction>,
         state_nonce: u64,
-    ) -> PoolResult<InsertOutcome<T>> {
+    ) -> PoolResult<InsertOutcome> {
         let hash = *transaction.hash();
         if self.contains(&hash) {
             return Err(PoolError::new(hash, PoolErrorKind::AlreadyImported));
@@ -300,7 +307,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             ));
         }
 
-        let replaced: Option<Arc<ValidPoolTransaction<T>>> =
+        let replaced: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> =
             if let Some(existing) = lane.transactions.get(&nonce) {
                 if existing.is_underpriced(&transaction, &self.price_bump_config) {
                     return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
@@ -343,7 +350,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Removes the exact transactions by hash without advancing lane state.
-    pub fn remove_transactions(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn remove_transactions(
+        &mut self,
+        hashes: &[TxHash],
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut removed = Vec::new();
         for hash in hashes {
             if let Some(transaction) = self.remove_hash(*hash, false) {
@@ -357,7 +367,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub fn remove_transactions_and_descendants(
         &mut self,
         hashes: &[TxHash],
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let mut removed = Vec::new();
         for hash in hashes {
             if self
@@ -393,7 +403,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Prunes mined transactions and advances the matching lane heads.
-    pub fn prune_mined(&mut self, hashes: &[TxHash]) -> PruneMinedOutcome<T> {
+    pub fn prune_mined(&mut self, hashes: &[TxHash]) -> PruneMinedOutcome {
         let mut removed = Vec::new();
         for hash in hashes {
             if self
@@ -431,7 +441,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// its structural validation rule. Finite channels are unaffected; their
     /// optional window is handled by normal transaction validation until the
     /// state-keyed expiry index is introduced.
-    pub fn remove_expired_nonce_free(&mut self, now: u64) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn remove_expired_nonce_free(
+        &mut self,
+        now: u64,
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let expired: Vec<TxHash> = self
             .nonce_free
             .values()
@@ -447,16 +460,16 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub fn remove_transactions_by_sender(
         &mut self,
         sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         let hashes: Vec<_> =
             self.hashes.values().filter(|tx| tx.sender() == sender).map(|tx| *tx.hash()).collect();
         self.remove_transactions(&hashes)
     }
 
     /// Returns a best-transactions iterator snapshot.
-    pub fn best_transactions<O>(&self, ordering: O, base_fee: u64) -> BestTwoDTransactions<T, O>
+    pub fn best_transactions<O>(&self, ordering: O, base_fee: u64) -> BestTwoDTransactions<O>
     where
-        O: TransactionOrdering<Transaction = T>,
+        O: TransactionOrdering<Transaction = BasePooledTransaction>,
     {
         BestTwoDTransactions::new(&self.lanes, &self.nonce_free, ordering, base_fee)
     }
@@ -465,7 +478,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         &mut self,
         hash: TxHash,
         advance_lane: bool,
-    ) -> Option<Arc<ValidPoolTransaction<T>>> {
+    ) -> Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
         if let Some(transaction) = self.hashes.get(&hash)
             && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
         {
@@ -502,11 +515,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 /// Each finite channel contributes its contiguous head and each nonce-free
 /// transaction contributes an independent one-item candidate.
 #[derive(Debug)]
-pub struct BestTwoDTransactions<T: BasePooledTx, O>
+pub struct BestTwoDTransactions<O>
 where
-    O: TransactionOrdering<Transaction = T>,
+    O: TransactionOrdering<Transaction = BasePooledTransaction>,
 {
-    lanes: Vec<LaneIterator<T>>,
+    lanes: Vec<LaneIterator>,
     candidates: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, usize)>,
     lane_indexes: HashMap<LaneId, usize>,
     nonce_free_indexes: HashMap<TxHash, usize>,
@@ -515,20 +528,20 @@ where
 }
 
 #[derive(Debug)]
-struct LaneIterator<T: BasePooledTx> {
+struct LaneIterator {
     id: LaneId,
-    transactions: Vec<Arc<ValidPoolTransaction<T>>>,
+    transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
     index: usize,
     invalidated: bool,
 }
 
-impl<T: BasePooledTx, O> BestTwoDTransactions<T, O>
+impl<O> BestTwoDTransactions<O>
 where
-    O: TransactionOrdering<Transaction = T>,
+    O: TransactionOrdering<Transaction = BasePooledTransaction>,
 {
     fn new(
-        lanes: &HashMap<LaneId, NonceLane<T>>,
-        nonce_free: &B256Map<Arc<ValidPoolTransaction<T>>>,
+        lanes: &HashMap<LaneId, NonceLane>,
+        nonce_free: &B256Map<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
         ordering: O,
         base_fee: u64,
     ) -> Self {
@@ -586,7 +599,7 @@ where
 
     fn priority_key(
         &self,
-        transaction: &Arc<ValidPoolTransaction<T>>,
+        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
     ) -> BestTransactionPriority<O::PriorityValue> {
         BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
     }
@@ -601,11 +614,11 @@ where
     }
 }
 
-impl<T: BasePooledTx, O> Iterator for BestTwoDTransactions<T, O>
+impl<O> Iterator for BestTwoDTransactions<O>
 where
-    O: TransactionOrdering<Transaction = T>,
+    O: TransactionOrdering<Transaction = BasePooledTransaction>,
 {
-    type Item = Arc<ValidPoolTransaction<T>>;
+    type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -622,9 +635,9 @@ where
     }
 }
 
-impl<T: BasePooledTx, O> BestTransactions for BestTwoDTransactions<T, O>
+impl<O> BestTransactions for BestTwoDTransactions<O>
 where
-    O: TransactionOrdering<Transaction = T>,
+    O: TransactionOrdering<Transaction = BasePooledTransaction>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
         let index = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {

@@ -1,9 +1,9 @@
 //! Build-time check that a declared EIP-8130 coinbase tip is payable.
 
 use alloy_primitives::{Address, U256};
-use base_common_consensus::CoinbaseTip;
+use base_common_consensus::{CoinbaseTip, Transaction};
 use base_execution_eip8130::FeeCheck;
-use base_execution_txpool::BasePooledTx;
+use base_execution_txpool::{BasePooledTransaction, PoolTransaction};
 use revm::Database;
 
 /// Whether a statically decoded coinbase tip can be paid with worst-case gas.
@@ -53,9 +53,8 @@ impl CoinbaseTipAffordability {
     /// the sender and gas payer cannot cover together with worst-case gas.
     ///
     /// Transactions without a statically decoded tip are treated as affordable.
-    pub fn unaffordable<T, DB>(tx: &T, payer_auth: u64, db: &mut DB) -> bool
+    pub fn unaffordable<DB>(tx: &BasePooledTransaction, payer_auth: u64, db: &mut DB) -> bool
     where
-        T: BasePooledTx,
         DB: Database,
     {
         let Some(signed) = tx.as_eip8130() else {

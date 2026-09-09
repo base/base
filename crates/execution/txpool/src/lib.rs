@@ -42,9 +42,7 @@ mod block_expiry;
 pub use block_expiry::BlockExpiryIndex;
 
 mod transaction;
-pub use transaction::{
-    BasePooledTransaction, BasePooledTx, TimestampedTransaction, unix_time_millis,
-};
+pub use transaction::{BasePooledTransaction, unix_time_millis};
 
 mod base_ordering;
 pub use base_ordering::{

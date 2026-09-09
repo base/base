@@ -18,6 +18,7 @@ use base_execution_payload_types::{
     PayloadKind,
 };
 use base_execution_trie::PayloadStateRootHandle;
+use base_execution_txpool::BasePooledTransaction;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
@@ -215,11 +216,8 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool<
-            Transaction: base_execution_txpool::BasePooledTx<
-                Consensus = base_common_consensus::BaseTxEnvelope,
-            >,
-        > + Unpin
+    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>
+        + Unpin
         + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
@@ -258,11 +256,8 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool<
-            Transaction: base_execution_txpool::BasePooledTx<
-                Consensus = base_common_consensus::BaseTxEnvelope,
-            >,
-        > + Unpin
+    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>
+        + Unpin
         + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
@@ -417,11 +412,8 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool<
-            Transaction: base_execution_txpool::BasePooledTx<
-                Consensus = base_common_consensus::BaseTxEnvelope,
-            >,
-        > + Unpin
+    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>
+        + Unpin
         + 'static,
     Txs: BasePayloadTransactions<Pool>,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,

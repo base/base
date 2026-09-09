@@ -4,11 +4,10 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::BasePayloadBuilder;
-use base_execution_txpool::{BasePooledTx, TransactionPool};
+use base_execution_txpool::{BasePooledTransaction, TransactionPool};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
@@ -68,7 +67,7 @@ where
 impl<Pool, Provider> DebugExecutionWitnessApiServer<BasePayloadAttributes>
     for BaseDebugWitnessApi<Pool, Provider>
 where
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + 'static,
+    Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
     Provider: BlockReaderIdExt + StateProviderFactory + ChainSpecProvider + Clone + 'static,
 {
     async fn execute_payload(

@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
+use base_common_consensus::Transaction;
 use base_execution_txpool::{
-    BasePooledTx, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
+    BasePooledTransaction, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
     PoolTransaction, PoolTransactionError, ValidPoolTransaction,
 };
 pub use reth_payload_util::NoopPayloadTransactions;
@@ -140,18 +141,12 @@ where
 }
 
 /// Converts a parkable best iterator into the payload-transaction interface used by the builder.
-pub struct ParkableBestPayloadTransactions<T>
-where
-    T: BasePooledTx,
-{
-    inner: Box<dyn ParkableBestTransactions<T>>,
-    current: Option<Arc<ValidPoolTransaction<T>>>,
+pub struct ParkableBestPayloadTransactions {
+    inner: Box<dyn ParkableBestTransactions<BasePooledTransaction>>,
+    current: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
 }
 
-impl<T> std::fmt::Debug for ParkableBestPayloadTransactions<T>
-where
-    T: BasePooledTx,
-{
+impl std::fmt::Debug for ParkableBestPayloadTransactions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParkableBestPayloadTransactions")
             .field("has_current", &self.current.is_some())
@@ -159,21 +154,15 @@ where
     }
 }
 
-impl<T> ParkableBestPayloadTransactions<T>
-where
-    T: BasePooledTx,
-{
+impl ParkableBestPayloadTransactions {
     /// Creates a payload adapter over a parkable best iterator.
-    pub fn new(inner: Box<dyn ParkableBestTransactions<T>>) -> Self {
+    pub fn new(inner: Box<dyn ParkableBestTransactions<BasePooledTransaction>>) -> Self {
         Self { inner, current: None }
     }
 }
 
-impl<T> PayloadTransactions for ParkableBestPayloadTransactions<T>
-where
-    T: BasePooledTx,
-{
-    type Transaction = T;
+impl PayloadTransactions for ParkableBestPayloadTransactions {
+    type Transaction = BasePooledTransaction;
 
     fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
         debug_assert!(
@@ -203,10 +192,7 @@ where
     }
 }
 
-impl<T> ParkablePayloadTransactions for ParkableBestPayloadTransactions<T>
-where
-    T: BasePooledTx,
-{
+impl ParkablePayloadTransactions for ParkableBestPayloadTransactions {
     fn park_current(&mut self) -> bool {
         let Some(transaction) = self.current.take() else {
             return false;

@@ -26,10 +26,9 @@ use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTransaction, BasePooledTx, BaseTransactionValidator, GuardLimits,
-    GuardMetrics, InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard,
-    ParkableBestTransactions, ParkableTransactionPool, ParkedBestTransactions,
-    StateDiffInvalidation, ValidityPoolMetrics,
+    Admission, BasePooledTransaction, BaseTransactionValidator, GuardLimits, GuardMetrics,
+    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -74,7 +73,7 @@ impl AccountStateDiff {
 }
 
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
-pub struct BaseTransactionPool<Client, S, O = crate::BaseOrdering<BasePooledTransaction>>
+pub struct BaseTransactionPool<Client, S, O = crate::BaseOrdering>
 where
     BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
     O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
@@ -82,8 +81,8 @@ where
 {
     protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, O, S>,
     ordering: O,
-    nonce_pool: Arc<RwLock<TwoDNoncePool<BasePooledTransaction>>>,
-    listeners: Arc<RwLock<SidecarListeners<BasePooledTransaction>>>,
+    nonce_pool: Arc<RwLock<TwoDNoncePool>>,
+    listeners: Arc<RwLock<SidecarListeners>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
     /// Block-height expiry index for validity-predicate transactions, evicted as
@@ -141,7 +140,6 @@ impl<Client, S, O> BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    BasePooledTransaction: BasePooledTx + base_execution_txpool::EthPoolTransaction + 'static,
     O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
     S: BlobStore + Clone,
 {
@@ -734,7 +732,7 @@ where
         origin: TransactionOrigin,
         propagate: bool,
         authorities: Option<Vec<Address>>,
-        nonce_pool: &mut TwoDNoncePool<BasePooledTransaction>,
+        nonce_pool: &mut TwoDNoncePool,
     ) -> ValidPoolTransaction<BasePooledTransaction> {
         let transaction = transaction.into_transaction();
         let sender_id = nonce_pool.sender_id_or_create(transaction.sender());
@@ -809,7 +807,6 @@ impl<Client, S, O> StateDiffInvalidation for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    BasePooledTransaction: BasePooledTx + base_execution_txpool::EthPoolTransaction + 'static,
     O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
     S: BlobStore + Clone,
 {
@@ -826,7 +823,6 @@ impl<Client, S, O> TransactionPool for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    BasePooledTransaction: BasePooledTx + base_execution_txpool::EthPoolTransaction + 'static,
     O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
     S: BlobStore + Clone,
 {
@@ -1438,7 +1434,6 @@ impl<Client, S, O> ParkableTransactionPool for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    BasePooledTransaction: BasePooledTx + base_execution_txpool::EthPoolTransaction + 'static,
     O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
     S: BlobStore + Clone,
 {
@@ -1461,7 +1456,6 @@ impl<Client, S, O> TransactionPoolExt for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
     BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    BasePooledTransaction: BasePooledTx + base_execution_txpool::EthPoolTransaction + 'static,
     O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
     S: BlobStore + Clone,
 {
@@ -1570,16 +1564,16 @@ where
 }
 
 #[derive(Debug)]
-struct SidecarListeners<T: BasePooledTx> {
+struct SidecarListeners {
     by_hash: HashMap<TxHash, Vec<mpsc::UnboundedSender<TransactionEvent>>>,
-    all_events: Vec<mpsc::Sender<FullTransactionEvent<T>>>,
+    all_events: Vec<mpsc::Sender<FullTransactionEvent<BasePooledTransaction>>>,
     pending_all: Vec<mpsc::Sender<TxHash>>,
     pending_propagate: Vec<mpsc::Sender<TxHash>>,
-    new_all: Vec<mpsc::Sender<NewTransactionEvent<T>>>,
-    new_propagate: Vec<mpsc::Sender<NewTransactionEvent<T>>>,
+    new_all: Vec<mpsc::Sender<NewTransactionEvent<BasePooledTransaction>>>,
+    new_propagate: Vec<mpsc::Sender<NewTransactionEvent<BasePooledTransaction>>>,
 }
 
-impl<T: BasePooledTx> Default for SidecarListeners<T> {
+impl Default for SidecarListeners {
     fn default() -> Self {
         Self {
             by_hash: HashMap::new(),
@@ -1592,7 +1586,7 @@ impl<T: BasePooledTx> Default for SidecarListeners<T> {
     }
 }
 
-impl<T: BasePooledTx> SidecarListeners<T> {
+impl SidecarListeners {
     fn subscribe_hash(
         &mut self,
         tx_hash: TxHash,
@@ -1616,7 +1610,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         }
     }
 
-    fn subscribe_all(&mut self) -> AllTransactionsEvents<T> {
+    fn subscribe_all(&mut self) -> AllTransactionsEvents<BasePooledTransaction> {
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         self.all_events.push(tx);
         AllTransactionsEvents::new(rx)
@@ -1635,7 +1629,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     fn subscribe_new_transactions(
         &mut self,
         kind: TransactionListenerKind,
-    ) -> mpsc::Receiver<NewTransactionEvent<T>> {
+    ) -> mpsc::Receiver<NewTransactionEvent<BasePooledTransaction>> {
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         if kind.is_propagate_only() {
             self.new_propagate.push(tx);
@@ -1645,7 +1639,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         rx
     }
 
-    fn on_inserted(&mut self, nonce_pool: &TwoDNoncePool<T>, outcome: &InsertOutcome<T>) {
+    fn on_inserted(&mut self, nonce_pool: &TwoDNoncePool, outcome: &InsertOutcome) {
         let hash = outcome.outcome.hash;
         let Some(transaction) = nonce_pool.get(&hash) else {
             return;
@@ -1675,7 +1669,11 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         }
     }
 
-    fn on_mined(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>], block_hash: B256) {
+    fn on_mined(
+        &mut self,
+        transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>],
+        block_hash: B256,
+    ) {
         for transaction in transactions {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Mined(block_hash));
@@ -1683,7 +1681,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         }
     }
 
-    fn on_discarded(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
+    fn on_discarded(&mut self, transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>]) {
         for transaction in transactions {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Discarded);
@@ -1701,11 +1699,14 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         }
     }
 
-    fn broadcast_all(&mut self, event: FullTransactionEvent<T>) {
+    fn broadcast_all(&mut self, event: FullTransactionEvent<BasePooledTransaction>) {
         self.all_events.retain(|listener| listener.try_send(event.clone()).is_ok());
     }
 
-    fn broadcast_pending_transaction(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
+    fn broadcast_pending_transaction(
+        &mut self,
+        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+    ) {
         let hash = *transaction.hash();
         self.broadcast_hash_event(&hash, TransactionEvent::Pending);
         self.broadcast_all(FullTransactionEvent::Pending(hash));
@@ -1713,7 +1714,10 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         self.broadcast_new(NewTransactionEvent::pending(Arc::clone(transaction)));
     }
 
-    fn broadcast_pending(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
+    fn broadcast_pending(
+        &mut self,
+        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+    ) {
         self.pending_all.retain(|listener| listener.try_send(*transaction.hash()).is_ok());
         if transaction.propagate {
             self.pending_propagate
@@ -1721,7 +1725,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         }
     }
 
-    fn broadcast_new(&mut self, event: NewTransactionEvent<T>) {
+    fn broadcast_new(&mut self, event: NewTransactionEvent<BasePooledTransaction>) {
         self.new_all.retain(|listener| listener.try_send(event.clone()).is_ok());
         if event.transaction.propagate {
             self.new_propagate.retain(|listener| listener.try_send(event.clone()).is_ok());
@@ -1761,9 +1765,9 @@ fn merge_receivers<T: Send + 'static>(
     rx
 }
 
-fn pooled_element<T: BasePooledTx>(
-    transaction: &Arc<ValidPoolTransaction<T>>,
-) -> Option<(<T as PoolTransaction>::Pooled, usize)> {
+fn pooled_element(
+    transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+) -> Option<(<BasePooledTransaction as PoolTransaction>::Pooled, usize)> {
     transaction
         .transaction
         .clone()

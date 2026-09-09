@@ -45,8 +45,8 @@ use reth_storage_api::{
 use revm::state::{AccountInfo, Bytecode};
 
 use crate::{
-    BasePooledTransaction, BasePooledTx, ConfigSlot, DataAvailabilitySized, InvalidationKey,
-    LimitClass, PoolTransaction, ValidatorMetrics, WatchManifest, WatchSet,
+    BasePooledTransaction, ConfigSlot, DataAvailabilitySized, InvalidationKey, LimitClass,
+    PoolTransaction, ValidatorMetrics, WatchManifest, WatchSet,
 };
 
 /// Base-specific transaction pool validation errors.
@@ -2159,6 +2159,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use BasePooledTransaction;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
@@ -2181,7 +2182,6 @@ mod tests {
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
-    use crate::BasePooledTransaction;
 
     type TestValidator = BaseTransactionValidator<MockEthProvider>;
 

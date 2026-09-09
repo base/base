@@ -1,37 +1,29 @@
 //! Trait bounds for Base builder components.
 
-use base_common_consensus::BaseTransactionSigned;
 use base_execution_payload_builder::ParkablePayloadTransactions;
 use base_execution_txpool::{
-    BasePooledTx, StateDiffInvalidation, TimestampedTransaction, TransactionPool,
-    TransactionPoolExt,
+    BasePooledTransaction, StateDiffInvalidation, TransactionPool, TransactionPoolExt,
 };
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
-    TransactionPool<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
-    > + TransactionPoolExt
+    TransactionPool<Transaction = BasePooledTransaction>
+    + TransactionPoolExt
     + base_execution_txpool::ParkableTransactionPool
     + StateDiffInvalidation
     + Unpin
     + 'static
-where
-    <Self as TransactionPool>::Transaction: BasePooledTx + TimestampedTransaction,
 {
 }
 
-impl<T> PoolBounds for T
-where
-    T: TransactionPool<
-            Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
-        > + TransactionPoolExt
+impl<T> PoolBounds for T where
+    T: TransactionPool<Transaction = BasePooledTransaction>
+        + TransactionPoolExt
         + base_execution_txpool::ParkableTransactionPool
         + StateDiffInvalidation
         + Unpin
-        + 'static,
-    <Self as TransactionPool>::Transaction: BasePooledTx + TimestampedTransaction,
+        + 'static
 {
 }
 
@@ -48,15 +40,11 @@ impl<T> ClientBounds for T where
 
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
-    ParkablePayloadTransactions<
-    Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
->
+    ParkablePayloadTransactions<Transaction = BasePooledTransaction>
 {
 }
 
 impl<T> PayloadTxsBounds for T where
-    T: ParkablePayloadTransactions<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
-    >
+    T: ParkablePayloadTransactions<Transaction = BasePooledTransaction>
 {
 }

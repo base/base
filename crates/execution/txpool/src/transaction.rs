@@ -1,8 +1,5 @@
 use core::fmt::Debug;
-use std::{
-    borrow::Cow,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
@@ -316,102 +313,26 @@ impl EthPoolTransaction for BasePooledTransaction {
     }
 }
 
-/// Helper trait to provide payload builder with access to encoded bytes of
-/// transaction.
-pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
-    /// Returns the EIP-2718 encoded bytes of the transaction.
-    fn encoded_2718(&self) -> Cow<'_, Bytes>;
-
-    /// Returns state predicates required for this transaction's inclusion.
-    ///
-    /// Defaults to an empty slice for transaction types that do not carry
-    /// validity predicates.
-    fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        &[]
-    }
-
-    /// Returns the signed EIP-8130 payload when this transaction carries one.
-    ///
-    /// Required for the mempool validator's structural admission checks; the
-    /// default returns `None` for implementers that never carry EIP-8130
-    /// (account abstraction) transactions.
-    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
-        None
-    }
-
-    /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
-    /// finite non-zero nonce channel handled by the 2D nonce pool.
-    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
-        None
-    }
-
-    /// Returns the EIP-8130 replay identifier, if applicable.
-    fn eip8130_replay_id(&self) -> Option<B256> {
-        None
-    }
-
-    /// Returns the invalidation watch set computed during validation, if set.
-    ///
-    /// Defaults to `None` for implementers that do not track invalidation
-    /// surfaces.
-    fn watch_set(&self) -> Option<&crate::WatchSet> {
-        None
-    }
-
-    /// Records the invalidation watch set computed during validation.
-    ///
-    /// Defaults to a no-op for implementers that do not track invalidation
-    /// surfaces.
-    fn set_watch_set(&self, _watch_set: crate::WatchSet) {}
-
-    /// Returns the admission limit classification computed during validation, if
-    /// set. Defaults to `None`.
-    fn limit_class(&self) -> Option<&crate::LimitClass> {
-        None
-    }
-
-    /// Records the admission limit classification computed during validation.
-    /// Defaults to a no-op.
-    fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
-
-    /// Returns build-time predicates captured during EIP-8130 authorization.
-    ///
-    /// Defaults to `None` for transaction types that do not carry a manifest.
-    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
-        None
-    }
-
-    /// Records build-time predicates captured during EIP-8130 authorization.
-    ///
-    /// Defaults to a no-op for transaction types that do not carry a manifest.
-    fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
-
-    /// Returns whether this transaction belongs in the EIP-8130 sidecar.
-    fn is_eip8130_sidecar_transaction(&self) -> bool {
+impl BasePooledTransaction {
+    /// Whether this transaction uses a nonstandard nonce channel or replay identifier.
+    pub fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
     }
-}
 
-impl BasePooledTx for BasePooledTransaction {
-    fn encoded_2718(&self) -> Cow<'_, Bytes> {
-        Cow::Borrowed(self.encoded_2718())
-    }
-
-    fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        &self.validity_predicates
-    }
-
-    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+    /// Returns the signed EIP-8130 payload, when present.
+    pub fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.transaction.inner().as_eip8130()
     }
 
-    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
+    /// Returns the finite nonzero nonce channel managed by the 2D nonce pool.
+    pub fn eip8130_nonce_channel_key(&self) -> Option<U256> {
         let signed = self.as_eip8130()?;
         let nonce_key = signed.tx().nonce_key;
         (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
     }
 
-    fn eip8130_replay_id(&self) -> Option<B256> {
+    /// Returns the replay identifier for a nonce-free EIP-8130 transaction.
+    pub fn eip8130_replay_id(&self) -> Option<B256> {
         let signed = self.as_eip8130()?;
         // `replay_id` keys mempool dedup/replacement only for nonce-free
         // (`nonce_key == NONCE_KEY_MAX`) transactions, which have no nonce slot.
@@ -425,39 +346,40 @@ impl BasePooledTx for BasePooledTransaction {
         Some(signed.tx().replay_id(self.sender()))
     }
 
-    fn watch_set(&self) -> Option<&crate::WatchSet> {
+    /// Returns the invalidation watch set recorded during validation.
+    pub fn watch_set(&self) -> Option<&crate::WatchSet> {
         self.watch_set.get()
     }
 
-    fn set_watch_set(&self, watch_set: crate::WatchSet) {
+    /// Records the invalidation watch set once during validation.
+    pub fn set_watch_set(&self, watch_set: crate::WatchSet) {
         let _ = self.watch_set.set(watch_set);
     }
 
-    fn limit_class(&self) -> Option<&crate::LimitClass> {
+    /// Returns the admission classification recorded during validation.
+    pub fn limit_class(&self) -> Option<&crate::LimitClass> {
         self.limit_class.get()
     }
 
-    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+    /// Returns the build-time predicates captured during authorization.
+    pub fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
         self.watch_manifest.get()
     }
 
-    fn set_watch_manifest(&self, watch_manifest: crate::WatchManifest) {
+    /// Records the build-time predicates once during authorization.
+    pub fn set_watch_manifest(&self, watch_manifest: crate::WatchManifest) {
         let _ = self.watch_manifest.set(watch_manifest);
     }
 
-    fn set_limit_class(&self, limit_class: crate::LimitClass) {
+    /// Records the admission classification once during validation.
+    pub fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
     }
 }
 
-/// Trait for transactions that expose their received-at timestamp.
-pub trait TimestampedTransaction {
-    /// Returns the time (millis since Unix epoch) when this transaction was received.
-    fn received_at(&self) -> u128;
-}
-
-impl TimestampedTransaction for BasePooledTransaction {
-    fn received_at(&self) -> u128 {
+impl BasePooledTransaction {
+    /// Returns the receipt timestamp in milliseconds since the Unix epoch.
+    pub fn received_at(&self) -> u128 {
         self.received_at
     }
 }
@@ -485,7 +407,7 @@ mod tests {
     use reth_provider::test_utils::MockEthProvider;
 
     use crate::{
-        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
+        BasePooledTransaction, BaseTransactionValidator, ConfigSlot, InvalidationKey,
         ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
     };
 
@@ -611,9 +533,6 @@ mod tests {
             eip8130_pooled(U256::ZERO).with_validity_predicates(vec![predicate.clone()]);
 
         assert_eq!(transaction.validity_predicates(), core::slice::from_ref(&predicate));
-        assert_eq!(
-            BasePooledTx::validity_predicates(&transaction),
-            core::slice::from_ref(&predicate)
-        );
+        assert_eq!(transaction.validity_predicates(), core::slice::from_ref(&predicate));
     }
 }

@@ -6,16 +6,15 @@
 
 use std::{
     cmp::{Ordering, Reverse},
-    marker::PhantomData,
     sync::Arc,
     time::Instant,
 };
 
 use alloy_primitives::{TxHash, U256};
-use base_common_consensus::CoinbaseTip;
+use base_common_consensus::{CoinbaseTip, Transaction};
 use base_execution_txpool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
 
-use crate::{BasePooledTransaction, BasePooledTx, TimestampedTransaction};
+use crate::BasePooledTransaction;
 
 /// Complete priority key used when merging best-transaction sources.
 ///
@@ -51,14 +50,14 @@ impl<P: Ord + Clone> BestTransactionPriority<P> {
 ///
 /// Each variant holds only the ordering implementation it needs.
 #[derive(Debug)]
-pub enum BaseOrdering<T> {
+pub enum BaseOrdering {
     /// Order by unified tip-per-gas, with fewer validity predicates winning ties.
-    CoinbaseTip(UnifiedTipOrdering<T>),
+    CoinbaseTip(UnifiedTipOrdering),
     /// Order by receive timestamp (FIFO, earlier = higher priority).
-    Timestamp(TimestampOrdering<T>),
+    Timestamp(TimestampOrdering),
 }
 
-impl<T> BaseOrdering<T> {
+impl BaseOrdering {
     /// Creates unified tip-per-gas ordering (default pool ranking).
     pub fn coinbase_tip() -> Self {
         Self::CoinbaseTip(UnifiedTipOrdering::default())
@@ -70,7 +69,7 @@ impl<T> BaseOrdering<T> {
     }
 }
 
-impl<T> Clone for BaseOrdering<T> {
+impl Clone for BaseOrdering {
     fn clone(&self) -> Self {
         match self {
             Self::CoinbaseTip(ordering) => Self::CoinbaseTip(ordering.clone()),
@@ -79,7 +78,7 @@ impl<T> Clone for BaseOrdering<T> {
     }
 }
 
-impl<T> Default for BaseOrdering<T> {
+impl Default for BaseOrdering {
     fn default() -> Self {
         Self::coinbase_tip()
     }
@@ -155,26 +154,23 @@ impl Ord for UnifiedTipPriority {
 /// standard transactions beat equally priced advanced transactions.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct UnifiedTipOrdering<T = BasePooledTransaction>(PhantomData<T>);
+pub struct UnifiedTipOrdering;
 
-impl<T> Default for UnifiedTipOrdering<T> {
+impl Default for UnifiedTipOrdering {
     fn default() -> Self {
-        Self(PhantomData)
+        Self
     }
 }
 
-impl<T> Clone for UnifiedTipOrdering<T> {
+impl Clone for UnifiedTipOrdering {
     fn clone(&self) -> Self {
         Self::default()
     }
 }
 
-impl<T> TransactionOrdering for UnifiedTipOrdering<T>
-where
-    T: BasePooledTx + 'static,
-{
+impl TransactionOrdering for UnifiedTipOrdering {
     type PriorityValue = UnifiedTipPriority;
-    type Transaction = T;
+    type Transaction = BasePooledTransaction;
 
     fn priority(
         &self,
@@ -236,26 +232,23 @@ impl Ord for BasePriority {
 /// Uses a timestamp assigned at insertion time for deterministic ordering.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct TimestampOrdering<T = BasePooledTransaction>(PhantomData<T>);
+pub struct TimestampOrdering;
 
-impl<T> Default for TimestampOrdering<T> {
+impl Default for TimestampOrdering {
     fn default() -> Self {
-        Self(PhantomData)
+        Self
     }
 }
 
-impl<T> Clone for TimestampOrdering<T> {
+impl Clone for TimestampOrdering {
     fn clone(&self) -> Self {
         Self::default()
     }
 }
 
-impl<T> TransactionOrdering for TimestampOrdering<T>
-where
-    T: PoolTransaction + TimestampedTransaction + 'static,
-{
+impl TransactionOrdering for TimestampOrdering {
     type PriorityValue = u128;
-    type Transaction = T;
+    type Transaction = BasePooledTransaction;
 
     fn priority(
         &self,
@@ -269,12 +262,9 @@ where
     }
 }
 
-impl<T> TransactionOrdering for BaseOrdering<T>
-where
-    T: BasePooledTx + TimestampedTransaction + 'static,
-{
+impl TransactionOrdering for BaseOrdering {
     type PriorityValue = BasePriority;
-    type Transaction = T;
+    type Transaction = BasePooledTransaction;
 
     fn priority(
         &self,
@@ -464,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_older_tx_has_higher_priority() {
-        let ordering = TimestampOrdering::<BasePooledTransaction>::default();
+        let ordering = TimestampOrdering::default();
 
         let older_tx = create_test_tx_with_timestamp(1, 1000);
         let newer_tx = create_test_tx_with_timestamp(2, 2000);
@@ -479,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_priority_value_is_max_minus_timestamp() {
-        let ordering = TimestampOrdering::<BasePooledTransaction>::default();
+        let ordering = TimestampOrdering::default();
         let tx = create_test_tx(1);
 
         let priority = ordering.priority(&tx, 0);
@@ -493,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_base_ordering_coinbase_tip_mode() {
-        let ordering = BaseOrdering::<BasePooledTransaction>::coinbase_tip();
+        let ordering = BaseOrdering::coinbase_tip();
 
         let higher_tip = create_test_tx(1);
         let lower_tip = {
@@ -525,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_base_ordering_timestamp_mode() {
-        let ordering = BaseOrdering::<BasePooledTransaction>::timestamp();
+        let ordering = BaseOrdering::timestamp();
 
         let older_tx = create_test_tx_with_timestamp(1, 1000);
         let newer_tx = create_test_tx_with_timestamp(2, 2000);
@@ -537,8 +527,8 @@ mod tests {
 
     #[test]
     fn test_base_ordering_default_is_unified_tip() {
-        let ordering = BaseOrdering::<BasePooledTransaction>::default();
-        let unified = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let ordering = BaseOrdering::default();
+        let unified = UnifiedTipOrdering::default();
         let tx = create_test_tx(1);
         match (ordering.priority(&tx, 0), unified.priority(&tx, 0)) {
             (Priority::Value(BasePriority::Unified(base)), Priority::Value(inner)) => {
@@ -562,7 +552,7 @@ mod tests {
     // regardless of nonce.
     #[test]
     fn test_same_sender_timestamp_ordering() {
-        let ordering = BaseOrdering::<BasePooledTransaction>::timestamp();
+        let ordering = BaseOrdering::timestamp();
 
         let tx_nonce_0 = create_test_tx_from(Account::Alice, 0, 1000, 1);
         let tx_nonce_1 = create_test_tx_from(Account::Alice, 1, 2000, 1);
@@ -578,7 +568,7 @@ mod tests {
 
     #[test]
     fn standard_tx_ranking_matches_reth_coinbase_tip_order() {
-        let unified = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let unified = UnifiedTipOrdering::default();
         let reth = CoinbaseTipOrdering::<BasePooledTransaction>::default();
         let higher = eip1559_pooled(1, 10, 2, 21_000);
         let lower = eip1559_pooled(2, 10, 1, 21_000);
@@ -592,7 +582,7 @@ mod tests {
 
     #[test]
     fn coinbase_tip_per_gas_competes_with_priority_fee() {
-        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let ordering = UnifiedTipOrdering::default();
         let standard = eip1559_pooled(1, 10, 2, 21_000);
         let cheaper_at = eip8130_pooled(10, 0, 21_000, Some(U256::from(21_000)));
         let richer_at = eip8130_pooled(10, 0, 21_000, Some(U256::from(63_000)));
@@ -603,7 +593,7 @@ mod tests {
 
     #[test]
     fn fewer_predicates_win_equal_bid() {
-        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let ordering = UnifiedTipOrdering::default();
         let standard = eip1559_pooled(1, 10, 2, 21_000);
         let one_predicate = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)))
             .with_validity_predicates(vec![block_number_predicate()]);
@@ -616,7 +606,7 @@ mod tests {
 
     #[test]
     fn eip8130_without_static_tip_uses_priority_fee() {
-        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let ordering = UnifiedTipOrdering::default();
         let standard = eip1559_pooled(1, 10, 3, 21_000);
         let aa = eip8130_pooled(10, 3, 50_000, None);
 
@@ -641,14 +631,14 @@ mod tests {
 
     #[test]
     fn below_base_fee_standard_tx_has_no_priority() {
-        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let ordering = UnifiedTipOrdering::default();
         let tx = eip1559_pooled(1, 10, 1, 21_000);
         assert_eq!(ordering.priority(&tx, 20), Priority::None);
     }
 
     #[test]
     fn below_base_fee_coinbase_tip_has_no_priority() {
-        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let ordering = UnifiedTipOrdering::default();
         let tx = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)));
         assert_eq!(ordering.priority(&tx, 20), Priority::None);
     }

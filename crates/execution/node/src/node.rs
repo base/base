@@ -20,9 +20,8 @@ use base_execution_payload_builder::{
 };
 use base_execution_payload_types::PayloadAttributesBuilder;
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, BaseTransactionPool, BaseTransactionValidator,
-    DiskFileBlobStore, GuardLimits, TransactionValidationTaskExecutor,
-    maintain_state_diff_invalidation,
+    BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
+    TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
@@ -264,7 +263,7 @@ pub struct BasePoolBuilder {
     /// Enforced overrides that are applied to the pool config.
     pub pool_config_overrides: PoolBuilderConfigOverrides,
     /// The ordering strategy for the transaction pool.
-    pub ordering: BaseOrdering<BasePooledTransaction>,
+    pub ordering: BaseOrdering,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
     pub max_inflight_delegated_slots: usize,
     /// Per-account EIP-8130 admission caps.
@@ -310,7 +309,7 @@ impl BasePoolBuilder {
     }
 
     /// Sets the ordering strategy for the transaction pool.
-    pub const fn with_ordering(mut self, ordering: BaseOrdering<BasePooledTransaction>) -> Self {
+    pub const fn with_ordering(mut self, ordering: BaseOrdering) -> Self {
         self.ordering = ordering;
         self
     }
@@ -343,13 +342,8 @@ impl BasePoolBuilder {
         self,
         ctx: &BuilderContext,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<
-        BaseTransactionPool<
-            BlockchainProvider,
-            DiskFileBlobStore,
-            BaseOrdering<BasePooledTransaction>,
-        >,
-    > {
+    ) -> eyre::Result<BaseTransactionPool<BlockchainProvider, DiskFileBlobStore, BaseOrdering>>
+    {
         let Self {
             pool_config_overrides,
             ordering,
