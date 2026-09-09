@@ -15,7 +15,7 @@ pub use alloy_rpc_types_admin as admin;
 #[cfg(feature = "debug")]
 pub use alloy_rpc_types_debug as debug;
 #[cfg(feature = "mev")]
-pub use alloy_rpc_types_mev as mev;
+pub use base_common_rpc_types as mev;
 #[cfg(feature = "trace")]
 pub use base_common_rpc_types as trace;
 #[cfg(feature = "txpool")]

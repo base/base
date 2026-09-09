@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Keccak256, U256, uint};
-use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_common_consensus::{Transaction as _, transaction::TxHashRef};
+use base_common_rpc_types::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
 use base_execution_chainspec::ChainSpecProvider;

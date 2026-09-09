@@ -14,8 +14,8 @@ pub use core::EthApiClient;
 pub use core::EthApiServer;
 
 #[cfg(feature = "client")]
-pub use bundle::{EthBundleApiClient, EthCallBundleApiClient};
-pub use bundle::{EthBundleApiServer, EthCallBundleApiServer};
+pub use bundle::EthCallBundleApiClient;
+pub use bundle::EthCallBundleApiServer;
 #[cfg(feature = "client")]
 pub use ext::L2EthApiExtClient;
 pub use ext::L2EthApiExtServer;

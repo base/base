@@ -1,4 +1,7 @@
-use std::str::FromStr;
+//! Bundle simulation RPC schemas.
+
+use alloc::string::ToString;
+use core::str::FromStr;
 
 use alloy_primitives::U256;
 use serde::{Deserialize, Serializer, de};

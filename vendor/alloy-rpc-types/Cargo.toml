@@ -34,7 +34,6 @@ path = "src/lib.rs"
 [dependencies]
 alloy-serde = { workspace = true }
 alloy-primitives = { workspace = true, features = ["map"] }
-alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 serde = { workspace = true, features = [
@@ -72,7 +71,7 @@ k256 = [
     "alloy-primitives/k256",
 ]
 kzg = ["base-common-rpc-types-engine?/kzg"]
-mev = ["dep:alloy-rpc-types-mev"]
+mev = ["dep:base-common-rpc-types"]
 ssz = [
     "base-common-rpc-types-engine?/ssz",
 ]

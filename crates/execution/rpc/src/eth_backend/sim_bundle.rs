@@ -4,12 +4,11 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
-use alloy_rpc_types_mev::{
-    BundleItem, Inclusion, MevSendBundle, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
-    SimBundleResponse, Validity,
-};
 use base_common_consensus::{BlockHeader, transaction::TxHashRef};
-use base_common_rpc_types::{BlockId, Log};
+use base_common_rpc_types::{
+    BlockId, BundleItem, Inclusion, Log, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
+    SimBundleRequest, SimBundleResponse, Validity,
+};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockEnvironment, apply_block_overrides};
 use base_execution_evm::Evm;
@@ -79,11 +78,11 @@ impl EthSimBundle {
 
     /// Builds a hierarchical `SimBundleLogs` structure from flattened transaction logs.
     fn build_bundle_logs(
-        bundle: &MevSendBundle,
+        bundle: &SimBundleRequest,
         flat_logs: &[Vec<Log>],
     ) -> Result<Vec<SimBundleLogs>, EthApiError> {
         struct BundleFrame<'a> {
-            bundle: &'a MevSendBundle,
+            bundle: &'a SimBundleRequest,
             next_idx: usize,
             logs: Vec<SimBundleLogs>,
         }
@@ -146,7 +145,7 @@ impl EthSimBundle {
     /// inclusion, validity and privacy settings from parent bundles.
     fn parse_and_flatten_bundle(
         &self,
-        request: &MevSendBundle,
+        request: &SimBundleRequest,
     ) -> Result<Vec<FlattenedBundleItem<ProviderTx<BlockchainProvider>>>, EthApiError> {
         let mut items = Vec::new();
 
@@ -275,7 +274,7 @@ impl EthSimBundle {
 
     async fn sim_bundle_inner(
         &self,
-        request: MevSendBundle,
+        request: SimBundleRequest,
         overrides: SimBundleOverrides,
         logs: bool,
     ) -> Result<SimBundleResponse, BaseEthApiError> {
@@ -469,7 +468,7 @@ impl EthSimBundle {
 impl MevSimApiServer for EthSimBundle {
     async fn sim_bundle(
         &self,
-        request: MevSendBundle,
+        request: SimBundleRequest,
         overrides: SimBundleOverrides,
     ) -> RpcResult<SimBundleResponse> {
         trace!("mev_simBundle called, request: {:?}, overrides: {:?}", request, overrides);
@@ -549,14 +548,14 @@ pub enum EthSimBundleError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Bytes;
-    use alloy_rpc_types_mev::{Inclusion, ProtocolVersion};
+    use base_common_rpc_types::{Inclusion, ProtocolVersion};
 
     use super::*;
 
-    fn create_test_bundle(tx_bytes: Vec<Bytes>) -> MevSendBundle {
+    fn create_test_bundle(tx_bytes: Vec<Bytes>) -> SimBundleRequest {
         let body: Vec<BundleItem> =
             tx_bytes.into_iter().map(|tx| BundleItem::Tx { tx, can_revert: false }).collect();
-        MevSendBundle {
+        SimBundleRequest {
             bundle_body: body,
             inclusion: Inclusion { block: 1, max_block: None },
             validity: None,
@@ -565,9 +564,9 @@ mod tests {
         }
     }
 
-    fn create_nested_bundle(outer_tx: Bytes, inner_txs: Vec<Bytes>) -> MevSendBundle {
+    fn create_nested_bundle(outer_tx: Bytes, inner_txs: Vec<Bytes>) -> SimBundleRequest {
         let inner_bundle = create_test_bundle(inner_txs);
-        MevSendBundle {
+        SimBundleRequest {
             bundle_body: vec![
                 BundleItem::Tx { tx: outer_tx, can_revert: false },
                 BundleItem::Bundle { bundle: inner_bundle },
@@ -579,8 +578,8 @@ mod tests {
         }
     }
 
-    fn create_bundle_with_body(bundle_body: Vec<BundleItem>) -> MevSendBundle {
-        MevSendBundle {
+    fn create_bundle_with_body(bundle_body: Vec<BundleItem>) -> SimBundleRequest {
+        SimBundleRequest {
             bundle_body,
             inclusion: Inclusion { block: 1, max_block: None },
             validity: None,

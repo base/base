@@ -34,17 +34,9 @@ pub use servers::*;
 pub mod servers {
 
     pub use crate::{
-        admin::AdminApiServer,
-        debug::DebugApiServer,
-        mev::{MevFullApiServer, MevSimApiServer},
-        miner::MinerApiServer,
-        net::NetApiServer,
-        otterscan::OtterscanServer,
-        reth::RethApiServer,
-        rpc::RpcApiServer,
-        trace::TraceApiServer,
-        txpool::TxPoolApiServer,
-        web3::Web3ApiServer,
+        admin::AdminApiServer, debug::DebugApiServer, mev::MevSimApiServer, miner::MinerApiServer,
+        net::NetApiServer, otterscan::OtterscanServer, reth::RethApiServer, rpc::RpcApiServer,
+        trace::TraceApiServer, txpool::TxPoolApiServer, web3::Web3ApiServer,
     };
 }
 
@@ -57,16 +49,8 @@ pub use clients::*;
 pub mod clients {
 
     pub use crate::{
-        admin::AdminApiClient,
-        debug::DebugApiClient,
-        mev::{MevFullApiClient, MevSimApiClient},
-        miner::MinerApiClient,
-        net::NetApiClient,
-        otterscan::OtterscanClient,
-        reth::RethApiClient,
-        rpc::RpcApiClient,
-        trace::TraceApiClient,
-        txpool::TxPoolApiClient,
-        web3::Web3ApiClient,
+        admin::AdminApiClient, debug::DebugApiClient, mev::MevSimApiClient, miner::MinerApiClient,
+        net::NetApiClient, otterscan::OtterscanClient, reth::RethApiClient, rpc::RpcApiClient,
+        trace::TraceApiClient, txpool::TxPoolApiClient, web3::Web3ApiClient,
     };
 }

@@ -733,6 +733,8 @@ pub struct BlockStorageAccess {
 
 #[cfg(test)]
 mod tests {
+    use base_common_rpc_types::TransactionTrace;
+
     use super::*;
 
     fn localized_transaction_trace(

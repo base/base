@@ -1,3 +1,7 @@
+//! Bundle simulation RPC schemas.
+
+use alloc::{string::String, vec::Vec};
+
 use alloy_primitives::Address;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeSeq};
 
@@ -11,26 +15,6 @@ pub enum ProtocolVersion {
     /// The 0.1 version of the API.
     #[serde(rename = "v0.1")]
     V0_1,
-}
-
-/// Represents information about when a bundle was considered by a builder.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConsideredByBuildersAt {
-    /// The public key of the builder.
-    pub pubkey: String,
-    /// The timestamp indicating when the bundle was considered by the builder.
-    pub timestamp: String,
-}
-
-/// Represents information about when a bundle was sealed by a builder.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SealedByBuildersAt {
-    /// The public key of the builder.
-    pub pubkey: String,
-    /// The timestamp indicating when the bundle was sealed by the builder.
-    pub timestamp: String,
 }
 
 /// Requirements for the bundle to be included in the block.

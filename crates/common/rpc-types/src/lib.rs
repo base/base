@@ -113,3 +113,14 @@ pub use trace_parity::*;
 
 mod trace_tracerequest;
 pub use trace_tracerequest::*;
+
+mod bundle_call;
+pub use bundle_call::*;
+
+mod bundle_common;
+pub use bundle_common::*;
+
+mod bundle_sim;
+pub use bundle_sim::*;
+
+mod u256_numeric_string;

@@ -1,16 +1,20 @@
+//! Bundle simulation RPC schemas.
+
+use alloc::{string::String, vec::Vec};
+
 use alloy_eips::BlockId;
 use alloy_primitives::{Bytes, TxHash, U256};
-use base_common_rpc_types::{BlockOverrides, Log};
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Privacy, ProtocolVersion, Validity};
+use crate::{
+    BlockOverrides, Log,
+    bundle_common::{Privacy, ProtocolVersion, Validity},
+};
 
-/// A bundle of transactions to send to the matchmaker.
-///
-/// Note: this is for `mev_sendBundle` and not `eth_sendBundle`.
+/// A bundle of transactions to simulate with `mev_simBundle`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct MevSendBundle {
+pub struct SimBundleRequest {
     /// The version of the MEV-share API to use.
     #[serde(rename = "version")]
     pub protocol_version: ProtocolVersion,
@@ -28,7 +32,7 @@ pub struct MevSendBundle {
     pub privacy: Option<Privacy>,
 }
 
-impl MevSendBundle {
+impl SimBundleRequest {
     /// Create a new bundle request.
     pub const fn new(
         block_num: u64,
@@ -42,118 +46,6 @@ impl MevSendBundle {
             bundle_body,
             validity: None,
             privacy: None,
-        }
-    }
-}
-
-/// Bincode-compatible [MevSendBundle] serde implementation.
-#[cfg(feature = "serde-bincode-compat")]
-pub(super) mod serde_bincode_compat {
-    use std::borrow::Cow;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use serde_with::{DeserializeAs, SerializeAs};
-
-    use crate::{BundleItem, Inclusion, Privacy, ProtocolVersion, Validity};
-
-    /// Bincode-compatible [super::MevSendBundle] serde implementation.
-    ///
-    /// Intended to use with the [serde_with::serde_as] macro in the following way:
-    /// ```rust
-    /// use alloy_rpc_types_mev::{serde_bincode_compat, MevSendBundle};
-    /// use serde::{Deserialize, Serialize};
-    /// use serde_with::serde_as;
-    ///
-    /// #[serde_as]
-    /// #[derive(Serialize, Deserialize)]
-    /// struct Data {
-    ///     #[serde_as(as = "serde_bincode_compat::MevSendBundle")]
-    ///     request: MevSendBundle,
-    /// }
-    /// ```
-    #[derive(Debug, Serialize, Eq, PartialEq, Deserialize)]
-    pub struct MevSendBundle<'a> {
-        /// The version of the MEV-share API to use.
-        pub protocol_version: Cow<'a, ProtocolVersion>,
-        /// Data used by block builders to check if the bundle should be considered for inclusion.
-        pub inclusion_block: u64,
-        /// The maximum block number for inclusion, if any.
-        pub inclusion_max_block: Option<u64>,
-        /// The transactions to include in the bundle.
-        pub bundle_body: Vec<Cow<'a, BundleItem>>,
-        /// Requirements for the bundle to be included in the block.
-        pub validity: Option<Cow<'a, Validity>>,
-        /// Preferences on what data should be shared about the bundle and its transactions
-        pub privacy: Option<Cow<'a, Privacy>>,
-    }
-
-    impl<'a> From<&'a super::MevSendBundle> for MevSendBundle<'a> {
-        fn from(value: &'a super::MevSendBundle) -> Self {
-            Self {
-                protocol_version: Cow::Borrowed(&value.protocol_version),
-                inclusion_block: value.inclusion.block,
-                inclusion_max_block: value.inclusion.max_block,
-                bundle_body: value.bundle_body.iter().map(Cow::Borrowed).collect(),
-                validity: value.validity.as_ref().map(Cow::Borrowed),
-                privacy: value.privacy.as_ref().map(Cow::Borrowed),
-            }
-        }
-    }
-
-    impl<'a> From<MevSendBundle<'a>> for super::MevSendBundle {
-        fn from(value: MevSendBundle<'a>) -> Self {
-            Self {
-                protocol_version: value.protocol_version.into_owned(),
-                inclusion: Inclusion {
-                    block: value.inclusion_block,
-                    max_block: value.inclusion_max_block,
-                },
-                bundle_body: value.bundle_body.into_iter().map(|item| item.into_owned()).collect(),
-                validity: value.validity.map(Cow::into_owned),
-                privacy: value.privacy.map(Cow::into_owned),
-            }
-        }
-    }
-
-    impl SerializeAs<super::MevSendBundle> for MevSendBundle<'_> {
-        fn serialize_as<S>(source: &super::MevSendBundle, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            MevSendBundle::from(source).serialize(serializer)
-        }
-    }
-
-    impl<'de> DeserializeAs<'de, super::MevSendBundle> for MevSendBundle<'de> {
-        fn deserialize_as<D>(deserializer: D) -> Result<super::MevSendBundle, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            MevSendBundle::deserialize(deserializer).map(Into::into)
-        }
-    }
-    #[cfg(test)]
-    mod tests {
-        use bincode::config;
-        use serde::{Deserialize, Serialize};
-        use serde_with::serde_as;
-
-        use super::super::serde_bincode_compat;
-        use crate::MevSendBundle;
-        #[test]
-        fn test_send_bundle_request_bincode_roundtrip() {
-            #[serde_as]
-            #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-            struct Data {
-                #[serde_as(as = "serde_bincode_compat::MevSendBundle")]
-                request: MevSendBundle,
-            }
-
-            let data = Data { request: MevSendBundle::default() };
-            let encoded = bincode::serde::encode_to_vec(&data, config::legacy()).unwrap();
-            let (decoded, _) =
-                bincode::serde::decode_from_slice::<Data, _>(&encoded, config::legacy()).unwrap();
-            assert_eq!(decoded, data);
         }
     }
 }
@@ -210,8 +102,8 @@ pub enum BundleItem {
     /// A nested bundle request.
     #[serde(rename_all = "camelCase")]
     Bundle {
-        /// A bundle request of type MevSendBundle
-        bundle: MevSendBundle,
+        /// A bundle request of type SimBundleRequest
+        bundle: SimBundleRequest,
     },
 }
 
@@ -278,13 +170,13 @@ pub struct SimBundleLogs {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     use alloy_primitives::Bytes;
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::{RefundConfig, common::PrivacyHint};
+    use crate::{RefundConfig, bundle_common::PrivacyHint};
 
     #[test]
     fn can_deserialize_simple() {
@@ -300,7 +192,7 @@ mod tests {
             }]
         }]
         "#;
-        let res: Result<Vec<MevSendBundle>, _> = serde_json::from_str(str);
+        let res: Result<Vec<SimBundleRequest>, _> = serde_json::from_str(str);
         assert!(res.is_ok());
     }
 
@@ -331,7 +223,7 @@ mod tests {
               }
         }]
         "#;
-        let res: Result<Vec<MevSendBundle>, _> = serde_json::from_str(str);
+        let res: Result<Vec<SimBundleRequest>, _> = serde_json::from_str(str);
         assert!(res.is_ok());
     }
 
@@ -380,14 +272,14 @@ mod tests {
             ..Default::default()
         });
 
-        let bundle = MevSendBundle {
+        let bundle = SimBundleRequest {
             protocol_version: ProtocolVersion::V0_1,
             inclusion: Inclusion { block: 1, max_block: None },
             bundle_body,
             validity,
             privacy,
         };
-        let expected = serde_json::from_str::<Vec<MevSendBundle>>(str).unwrap();
+        let expected = serde_json::from_str::<Vec<SimBundleRequest>>(str).unwrap();
         assert_eq!(bundle, expected[0]);
     }
 
@@ -413,7 +305,7 @@ mod tests {
             }]
         }]
         "#;
-        let res: Result<Vec<MevSendBundle>, _> = serde_json::from_str(str);
+        let res: Result<Vec<SimBundleRequest>, _> = serde_json::from_str(str);
         assert!(res.is_ok());
     }
 

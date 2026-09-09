@@ -45,15 +45,6 @@ mod tenderly_admin;
 #[cfg(feature = "tenderly-admin-api")]
 pub use tenderly_admin::TenderlyAdminApi;
 
-#[cfg(feature = "mev-api")]
-mod mev;
-
-#[cfg(feature = "mev-api")]
-pub use mev::{
-    FLASHBOTS_SIGNATURE_HEADER, FlashbotsSignatureError, MevApi, MevBuilder,
-    sign_flashbots_payload, verify_flashbots_signature,
-};
-
 /// Reth related apis.
 pub mod reth;
 
