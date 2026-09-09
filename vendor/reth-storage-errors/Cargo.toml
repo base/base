@@ -22,7 +22,7 @@ reth-prune-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-execution-evm-runtime = { workspace = true }
+base-execution-state-memory = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -38,7 +38,7 @@ std = [
     "thiserror/std",
     "reth-prune-types/std",
     "reth-static-file-types/std",
-    "base-execution-evm-runtime/std",
+    "base-execution-state-memory/std",
     "base-common-types-chain/std",
     "reth-trie-common/std",
 ]

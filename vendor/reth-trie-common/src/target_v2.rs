@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{B256, keccak256, map::B256Map};
-use base_execution_evm_runtime::state::EvmState;
+use base_execution_state_memory::EvmState;
 
 use crate::Nibbles;
 

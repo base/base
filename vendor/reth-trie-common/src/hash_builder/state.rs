@@ -154,6 +154,8 @@ impl base_common_types_chain::Compact for HashBuilderState {
 #[cfg(test)]
 mod tests {
     use base_common_types_chain::Compact;
+    #[cfg(feature = "arbitrary")]
+    use proptest::{arbitrary::any, collection::vec};
 
     use super::*;
 
@@ -170,7 +172,20 @@ mod tests {
     #[cfg(feature = "arbitrary")]
     proptest::proptest! {
         #[test]
-        fn hash_builder_state_roundtrip(state in proptest_arbitrary_interop::arb::<HashBuilderState>()) {
+        fn hash_builder_state_roundtrip(
+            key in vec(0..16u8, 0..=64),
+            value in any::<HashBuilderValue>(),
+            stack in vec(any::<RlpNode>(), 0..=64),
+            groups in vec(any::<TrieMask>(), 0..=64),
+            tree_masks in vec(any::<TrieMask>(), 0..=64),
+            hash_masks in vec(any::<TrieMask>(), 0..=64),
+            stored_in_database in any::<bool>(),
+        ) {
+            // Generate typed values directly: the byte-oriented arbitrary bridge can
+            // exhaust its input while constructing variable-length node lists.
+            let state = HashBuilderState {
+                key, value, stack, groups, tree_masks, hash_masks, stored_in_database,
+            };
             let mut buf = vec![];
             let len = state.to_compact(&mut buf);
             let (decoded, _) = HashBuilderState::from_compact(&buf, len);
