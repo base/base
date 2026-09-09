@@ -1,12 +1,5 @@
 use alloy_primitives::{Address, B256, map::HashMap};
-use revm::{
-    Inspector,
-    bytecode::opcode,
-    interpreter::{
-        Interpreter,
-        interpreter_types::{InputsTr, Jumps},
-    },
-};
+use revm::{Inspector, bytecode::opcode, interpreter::Interpreter};
 
 /// An Inspector that tracks warm and cold storage slot accesses.
 #[derive(Debug, Default, Clone)]
@@ -54,7 +47,7 @@ impl<CTX> Inspector<CTX> for StorageInspector {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         if interp.bytecode.opcode() == opcode::SLOAD {
             if let Ok(slot) = interp.stack.peek(0) {
-                let address = interp.input.target_address();
+                let address = interp.input.target_address;
                 let slot = B256::from(slot.to_be_bytes());
 
                 let slot_access_count =

@@ -23,8 +23,6 @@ pub mod interpreter;
 /// Types for interpreter actions like calls and contract creation.
 pub mod interpreter_action;
 /// Type traits and definitions for interpreter customization.
-pub mod interpreter_types;
-
 pub use base_evm_context as host;
 // Reexport primary types.
 pub use base_evm_context::CreateScheme;

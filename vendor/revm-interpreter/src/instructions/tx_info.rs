@@ -1,7 +1,4 @@
-use crate::{
-    Host, InstructionContext as Ictx, InstructionExecResult as Result,
-    interpreter_types::RuntimeFlag,
-};
+use crate::{Host, InstructionContext as Ictx, InstructionExecResult as Result};
 
 /// Implements the GASPRICE instruction.
 ///

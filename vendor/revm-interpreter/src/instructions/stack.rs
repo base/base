@@ -1,9 +1,6 @@
 use revm_primitives::U256;
 
-use crate::{
-    InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
-    interpreter_types::{Immediates, Jumps, RuntimeFlag},
-};
+use crate::{InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult};
 
 /// Implements the POP instruction.
 ///
@@ -132,7 +129,6 @@ mod tests {
         host::DummyHost,
         instructions::{gas_table, instruction_table},
         interpreter::{ExtBytecode, InputsImpl, SharedMemory},
-        interpreter_types::LoopControl,
     };
 
     fn run_bytecode(code: &[u8]) -> Interpreter {

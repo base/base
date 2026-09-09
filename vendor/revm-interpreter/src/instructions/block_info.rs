@@ -1,9 +1,6 @@
 use revm_primitives::hardfork::SpecId::*;
 
-use crate::{
-    Host, InstructionContext as Ictx, InstructionExecResult as Result,
-    interpreter_types::RuntimeFlag,
-};
+use crate::{Host, InstructionContext as Ictx, InstructionExecResult as Result};
 
 /// EIP-1344: ChainID opcode
 pub fn chainid<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
@@ -40,7 +37,7 @@ pub fn block_number<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 ///
 /// Pushes the block difficulty (pre-merge) or prevrandao (post-merge) onto the stack.
 pub fn difficulty<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
-    if context.interpreter.runtime_flag.spec_id().is_enabled_in(MERGE) {
+    if context.interpreter.runtime_flag.spec_id.is_enabled_in(MERGE) {
         // Unwrap is safe as this fields is checked in validation handler.
         push!(context.interpreter, context.host.prevrandao().unwrap());
     } else {

@@ -1,5 +1,5 @@
 //! CountInspector - Inspector that counts all opcodes that were called.
-use revm_interpreter::interpreter_types::Jumps;
+
 use revm_primitives::Log;
 
 use crate::inspector::Inspector;

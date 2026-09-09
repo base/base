@@ -9,7 +9,6 @@ use revm_primitives::{
 use crate::{
     Gas, Host, InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
     instructions::utility::{IntoAddress, IntoU256},
-    interpreter_types::{InputsTr, RuntimeFlag},
 };
 
 /// Loads an account, handling cold load gas accounting.
@@ -47,7 +46,7 @@ pub fn selfbalance<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 
     let balance = context
         .host
-        .balance(context.interpreter.input.target_address())
+        .balance(context.interpreter.input.target_address)
         .ok_or(InstructionResult::FatalExternalError)?;
     push!(context.interpreter, balance.data);
     Ok(())
@@ -146,8 +145,8 @@ pub fn blockhash<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 /// Loads a word from storage.
 pub fn sload<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], index, context.interpreter);
-    let spec_id = context.interpreter.runtime_flag.spec_id();
-    let target = context.interpreter.input.target_address();
+    let spec_id = context.interpreter.runtime_flag.spec_id;
+    let target = context.interpreter.input.target_address;
 
     if spec_id.is_enabled_in(BERLIN) {
         let additional_cold_cost = context.host.gas_params().cold_storage_additional_cost();
@@ -190,8 +189,8 @@ where
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
 
-    let target = context.interpreter.input.target_address();
-    let spec_id = context.interpreter.runtime_flag.spec_id();
+    let target = context.interpreter.input.target_address;
+    let spec_id = context.interpreter.runtime_flag.spec_id;
 
     // EIP-2200: Structured Definitions for Net Gas Metering
     // If gasleft is less than or equal to gas stipend, fail the current call frame with 'out of gas' exception.
@@ -223,7 +222,7 @@ pub fn sstore_default_gas_accounting<H>(
 where
     H: Host + ?Sized,
 {
-    let spec_id = context.interpreter.runtime_flag.spec_id();
+    let spec_id = context.interpreter.runtime_flag.spec_id;
     let is_istanbul = spec_id.is_enabled_in(ISTANBUL);
 
     // dynamic gas
@@ -268,7 +267,7 @@ pub fn tstore<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
 
-    context.host.tstore(context.interpreter.input.target_address(), index, value);
+    context.host.tstore(context.interpreter.input.target_address, index, value);
     Ok(())
 }
 
@@ -278,7 +277,7 @@ pub fn tload<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, CANCUN);
     popn_top!([], index, context.interpreter);
 
-    *index = context.host.tload(context.interpreter.input.target_address(), *index);
+    *index = context.host.tload(context.interpreter.input.target_address, *index);
     Ok(())
 }
 
@@ -304,7 +303,7 @@ pub fn log<const N: usize, H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     };
 
     let log = Log {
-        address: context.interpreter.input.target_address(),
+        address: context.interpreter.input.target_address,
         data: LogData::new(topics.into_iter().map(B256::from).collect(), data)
             .expect("LogData should have <=4 topics"),
     };
@@ -320,13 +319,13 @@ pub fn selfdestruct<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     require_non_staticcall!(context.interpreter);
     popn!([target], context.interpreter);
     let target = target.into_address();
-    let spec = context.interpreter.runtime_flag.spec_id();
+    let spec = context.interpreter.runtime_flag.spec_id;
 
     let cold_load_gas = context.host.gas_params().selfdestruct_cold_cost();
 
     let skip_cold_load = context.interpreter.gas.remaining() < cold_load_gas;
     let res = context.host.selfdestruct(
-        context.interpreter.input.target_address(),
+        context.interpreter.input.target_address,
         target,
         skip_cold_load,
     )?;

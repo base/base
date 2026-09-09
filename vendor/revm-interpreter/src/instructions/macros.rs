@@ -5,7 +5,7 @@
 #[collapse_debuginfo(yes)]
 macro_rules! require_non_staticcall {
     ($interpreter:expr) => {
-        if $interpreter.runtime_flag.is_static() {
+        if $interpreter.runtime_flag.is_static {
             $crate::primitives::hints_util::cold_path();
             return Err($crate::InstructionResult::StateChangeDuringStaticCall);
         }
@@ -17,10 +17,7 @@ macro_rules! require_non_staticcall {
 #[collapse_debuginfo(yes)]
 macro_rules! check {
     ($interpreter:expr, $min:ident) => {
-        if !$interpreter
-            .runtime_flag
-            .spec_id()
-            .is_enabled_in(revm_primitives::hardfork::SpecId::$min)
+        if !$interpreter.runtime_flag.spec_id.is_enabled_in(revm_primitives::hardfork::SpecId::$min)
         {
             $crate::primitives::hints_util::cold_path();
             return Err($crate::InstructionResult::NotActivated);
@@ -91,7 +88,7 @@ macro_rules! popn_top {
             $crate::primitives::hints_util::cold_path();
             return Err($crate::InstructionResult::StackUnderflow);
         }
-        let ([$( $x ),*], $top) = unsafe { $crate::interpreter_types::StackTr::popn_top(&mut $interpreter.stack).unwrap_unchecked() };
+        let ([$( $x ),*], $top) = unsafe { $interpreter.stack.popn_top().unwrap_unchecked() };
     };
 }
 

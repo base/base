@@ -3,7 +3,6 @@ use std::vec::Vec;
 
 use revm_primitives::{U256, hints_util::cold_path};
 
-use super::StackTr;
 use crate::InstructionResult;
 
 /// EVM interpreter stack limit.
@@ -48,50 +47,11 @@ impl Clone for Stack {
     }
 }
 
-impl StackTr for Stack {
+impl Stack {
+    /// Clears the stack.
     #[inline]
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    #[inline]
-    fn data(&self) -> &[U256] {
-        &self.data
-    }
-
-    #[inline]
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.data.clear();
-    }
-
-    #[inline]
-    fn popn<const N: usize>(&mut self) -> Option<[U256; N]> {
-        self.popn()
-    }
-
-    #[inline]
-    fn popn_top<const POPN: usize>(&mut self) -> Option<([U256; POPN], &mut U256)> {
-        self.popn_top()
-    }
-
-    #[inline]
-    fn exchange(&mut self, n: usize, m: usize) -> bool {
-        self.exchange(n, m)
-    }
-
-    #[inline]
-    fn dup(&mut self, n: usize) -> bool {
-        self.dup(n)
-    }
-
-    #[inline]
-    fn push(&mut self, value: U256) -> bool {
-        self.push(value)
-    }
-
-    #[inline]
-    fn push_slice(&mut self, slice: &[u8]) -> bool {
-        self.push_slice_(slice)
     }
 }
 

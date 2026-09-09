@@ -4,10 +4,7 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 
-use revm_interpreter::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
-    interpreter_types::{Jumps, MemoryTr},
-};
+use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 use revm_primitives::{Address, Log, U256};
 
 use crate::Inspector;
@@ -87,7 +84,7 @@ impl TestInspector {
         InterpreterState {
             pc: interp.bytecode.pc(),
             stack_len: interp.stack.len(),
-            memory_size: interp.memory.size(),
+            memory_size: interp.memory.len(),
         }
     }
 

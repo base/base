@@ -104,10 +104,7 @@ mod tests {
     use base_evm_context::{CfgEnv, Context, TxEnv};
     use base_evm_handler::{MainBuilder, MainContext};
     use base_state::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use revm_interpreter::{
-        CallInputs, CreateInputs, Interpreter, InterpreterResult,
-        interpreter_types::{Jumps, ReturnData},
-    };
+    use revm_interpreter::{CallInputs, CreateInputs, Interpreter, InterpreterResult};
     use revm_primitives::{Address, Bytes, TxKind, hardfork::SpecId};
     use revm_state::bytecode::{Bytecode, opcode};
 
@@ -213,7 +210,7 @@ mod tests {
         }
 
         fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
-            let this_buffer = interpreter.return_data.buffer();
+            let this_buffer = &interpreter.return_data;
             let Some(buffer) = self.return_buffer.last() else {
                 self.return_buffer.push(this_buffer.clone());
                 return;

@@ -3,9 +3,7 @@ use core::cmp::Ordering;
 use revm_primitives::U256;
 
 use super::i256::i256_cmp;
-use crate::{
-    InstructionContext as Ictx, InstructionExecResult as Result, interpreter_types::RuntimeFlag,
-};
+use crate::{InstructionContext as Ictx, InstructionExecResult as Result};
 
 /// Implements the LT instruction - less than comparison.
 pub fn lt<H: ?Sized>(context: Ictx<'_, H>) -> Result {

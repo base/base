@@ -4,8 +4,6 @@ use base_evm_context::{ContextTr, LocalContextTr};
 use revm_primitives::{Address, B256, Bytes, U256};
 use revm_state::Bytecode;
 
-use crate::interpreter_types::MemoryTr;
-
 /// Input enum for a call.
 ///
 /// As CallInput uses shared memory buffer it can get overridden if not used directly when call happens.
@@ -65,14 +63,14 @@ impl CallInput {
 
     /// Returns the bytes of the call input from the given memory.
     #[inline]
-    pub fn as_bytes_memory<'a, M: MemoryTr>(
+    pub fn as_bytes_memory<'a>(
         &'a self,
-        memory: &'a M,
+        memory: &'a crate::SharedMemory,
     ) -> impl core::ops::Deref<Target = [u8]> + 'a {
         match self {
             Self::Bytes(bytes) => CallInputRef::Bytes(bytes.as_ref()),
             Self::SharedBuffer(range) => {
-                CallInputRef::SharedBuffer(Some(memory.global_slice(range.clone())))
+                CallInputRef::SharedBuffer(Some(memory.global_slice_range(range.clone())))
             }
         }
     }

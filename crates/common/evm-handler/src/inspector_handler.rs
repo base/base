@@ -6,7 +6,6 @@ use revm_interpreter::{
     FrameInput, GasTracker, Host, InitialAndFloorGas, InstructionResult, Interpreter,
     InterpreterAction,
     instructions::{GasTable, InstructionTable},
-    interpreter_types::LoopControl,
 };
 use revm_primitives::hints_util::cold_path;
 

@@ -7,14 +7,7 @@ use alloy_primitives::{
 use base_common_rpc_types::{AccessList, AccessListItem};
 use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
 use base_evm_handler::JournalExt;
-use revm::{
-    Inspector,
-    bytecode::opcode,
-    interpreter::{
-        Interpreter,
-        interpreter_types::{InputsTr, Jumps},
-    },
-};
+use revm::{Inspector, bytecode::opcode, interpreter::Interpreter};
 
 /// An [Inspector] that collects touched accounts and storage slots.
 ///
@@ -116,7 +109,7 @@ where
         match interp.bytecode.opcode() {
             opcode::SLOAD | opcode::SSTORE => {
                 if let Ok(slot) = interp.stack.peek(0) {
-                    let cur_contract = interp.input.target_address();
+                    let cur_contract = interp.input.target_address;
                     self.touched_slots
                         .entry(cur_contract)
                         .or_default()

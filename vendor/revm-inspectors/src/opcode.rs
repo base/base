@@ -7,9 +7,7 @@ use revm::{
     Inspector,
     bytecode::{opcode, opcode::OpCode},
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme,
-        Interpreter,
-        interpreter_types::{Immediates, Jumps},
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
     },
 };
 
@@ -136,11 +134,11 @@ where
     }
 }
 
-/// Accepts Bytecode that implements [Immediates] and returns the size of immediate
+/// Reads the interpreter bytecode and returns the size of immediate
 /// value.
 ///
 /// Primarily needed to handle a special case of RJUMPV opcode.
-pub fn immediate_size(bytecode: &impl Immediates) -> u8 {
+pub fn immediate_size(bytecode: &revm::interpreter::interpreter::ExtBytecode) -> u8 {
     let opcode = bytecode.read_u8();
     let Some(opcode) = OpCode::new(opcode) else { return 0 };
     opcode.info().immediate_size()

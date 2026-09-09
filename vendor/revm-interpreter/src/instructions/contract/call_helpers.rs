@@ -7,11 +7,7 @@ use revm_primitives::{
 };
 use revm_state::Bytecode;
 
-use crate::{
-    InstructionContext as Ictx, InstructionResult,
-    interpreter::Interpreter,
-    interpreter_types::{MemoryTr, RuntimeFlag},
-};
+use crate::{InstructionContext as Ictx, InstructionResult, interpreter::Interpreter};
 
 /// Gets memory input and output ranges for call instructions.
 #[inline]
@@ -88,7 +84,7 @@ pub fn load_acc_and_calc_gas<H: Host + ?Sized>(
     let host = &mut context.host;
 
     // EIP-150: Gas cost changes for IO-heavy operations
-    let mut gas_limit = if interpreter.runtime_flag.spec_id().is_enabled_in(TANGERINE) {
+    let mut gas_limit = if interpreter.runtime_flag.spec_id.is_enabled_in(TANGERINE) {
         // On mainnet this will take return 63/64 of gas_limit.
         let reduced_gas_limit =
             host.gas_params().call_stipend_reduction(interpreter.gas.remaining());
@@ -120,7 +116,7 @@ pub fn load_account_delegated_handle_error<H: Host + ?Sized>(
     let remaining_gas = context.interpreter.gas.remaining();
     Ok(load_account_delegated(
         context.host,
-        context.interpreter.runtime_flag.spec_id(),
+        context.interpreter.runtime_flag.spec_id,
         remaining_gas,
         to,
         transfers_value,

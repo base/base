@@ -3,8 +3,7 @@ use core::ops::Deref;
 use revm_bytecode::{Bytecode, utils::read_u16};
 use revm_primitives::B256;
 
-use super::{Immediates, Jumps, LegacyBytecode};
-use crate::{InterpreterAction, interpreter_types::LoopControl};
+use crate::{InstructionResult, InterpreterAction};
 
 #[cfg(feature = "serde")]
 mod serde;
@@ -96,19 +95,22 @@ impl ExtBytecode {
     }
 }
 
-impl LoopControl for ExtBytecode {
+impl ExtBytecode {
+    /// Returns `true` if the loop should continue.
     #[inline]
-    fn is_not_end(&self) -> bool {
+    pub fn is_not_end(&self) -> bool {
         self.continue_execution
     }
 
+    /// Sets the `end` flag internally. Action should be taken after.
     #[inline]
-    fn reset_action(&mut self) {
+    pub fn reset_action(&mut self) {
         self.continue_execution = true;
     }
 
+    /// Set return action.
     #[inline]
-    fn set_action(&mut self, action: InterpreterAction) {
+    pub fn set_action(&mut self, action: InterpreterAction) {
         debug_assert_eq!(
             !self.continue_execution,
             self.action.is_some(),
@@ -123,62 +125,87 @@ impl LoopControl for ExtBytecode {
         self.action = Some(action);
     }
 
+    /// Returns the current action.
     #[inline]
-    fn action(&mut self) -> &mut Option<InterpreterAction> {
+    pub fn action(&mut self) -> &mut Option<InterpreterAction> {
         &mut self.action
+    }
+
+    /// Is end of the loop.
+    #[inline]
+    pub fn is_end(&self) -> bool {
+        !self.is_not_end()
+    }
+
+    /// Returns instruction result
+    #[inline]
+    pub fn instruction_result(&mut self) -> Option<InstructionResult> {
+        self.action().as_ref().and_then(|action| action.instruction_result())
     }
 }
 
-impl Jumps for ExtBytecode {
+impl ExtBytecode {
+    /// Relative jumps does not require checking for overflow.
     #[inline]
-    fn relative_jump(&mut self, offset: isize) {
+    pub fn relative_jump(&mut self, offset: isize) {
         self.instruction_pointer = unsafe { self.instruction_pointer.offset(offset) };
     }
 
+    /// Absolute jumps require checking for overflow and if target is a jump destination
+    /// from jump table.
     #[inline]
-    fn absolute_jump(&mut self, offset: usize) {
+    pub fn absolute_jump(&mut self, offset: usize) {
         self.instruction_pointer = unsafe { self.base.bytes_ref().as_ptr().add(offset) };
     }
 
+    /// Check legacy jump destination from jump table.
     #[inline]
-    fn is_valid_legacy_jump(&mut self, offset: usize) -> bool {
+    pub fn is_valid_legacy_jump(&mut self, offset: usize) -> bool {
         let jt = self.base.legacy_jump_table();
         // SAFETY: Only called by legacy bytecode. Panics in debug mode.
         unsafe { jt.unwrap_unchecked() }.is_valid(offset)
     }
 
+    /// Returns instruction opcode.
     #[inline]
-    fn opcode(&self) -> u8 {
+    pub fn opcode(&self) -> u8 {
         // SAFETY: `instruction_pointer` always points to bytecode.
         unsafe { *self.instruction_pointer }
     }
 
+    /// Returns current program counter.
     #[inline]
-    fn pc(&self) -> usize {
+    pub fn pc(&self) -> usize {
         // SAFETY: `instruction_pointer` should be at an offset from the start of the bytes.
         // In practice this is always true unless a caller modifies the `instruction_pointer` field manually.
         unsafe { self.instruction_pointer.offset_from_unsigned(self.base.bytes_ref().as_ptr()) }
     }
 }
 
-impl Immediates for ExtBytecode {
+impl ExtBytecode {
+    /// Reads next 16 bits as unsigned integer from the bytecode.
     #[inline]
-    fn read_u16(&self) -> u16 {
+    pub fn read_u16(&self) -> u16 {
         unsafe { read_u16(self.instruction_pointer) }
     }
 
+    /// Reads next 8 bits as unsigned integer from the bytecode.
     #[inline]
-    fn read_u8(&self) -> u8 {
+    pub fn read_u8(&self) -> u8 {
         unsafe { *self.instruction_pointer }
     }
 
+    /// Reads next `len` bytes from the bytecode.
+    ///
+    /// Used by PUSH opcode.
     #[inline]
-    fn read_slice(&self, len: usize) -> &[u8] {
+    pub fn read_slice(&self, len: usize) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self.instruction_pointer, len) }
     }
 
+    /// Reads next 16 bits as unsigned integer from the bytecode at given offset.
     #[inline]
-    fn read_offset_u16(&self, offset: isize) -> u16 {
+    pub fn read_offset_u16(&self, offset: isize) -> u16 {
         unsafe {
             read_u16(
                 self.instruction_pointer
@@ -189,12 +216,14 @@ impl Immediates for ExtBytecode {
     }
 }
 
-impl LegacyBytecode for ExtBytecode {
-    fn bytecode_len(&self) -> usize {
+impl ExtBytecode {
+    /// Returns current bytecode original length. Used in [`revm_bytecode::opcode::CODESIZE`] opcode.
+    pub fn bytecode_len(&self) -> usize {
         self.base.len()
     }
 
-    fn bytecode_slice(&self) -> &[u8] {
+    /// Returns current bytecode original slice. Used in [`revm_bytecode::opcode::CODECOPY`] opcode.
+    pub fn bytecode_slice(&self) -> &[u8] {
         self.base.original_byte_slice()
     }
 }

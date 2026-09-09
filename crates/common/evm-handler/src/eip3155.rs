@@ -3,7 +3,6 @@ use std::io::Write;
 use base_evm_context::{Cfg, ContextTr, JournalTr, Transaction};
 use revm_interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterResult,
-    interpreter_types::{Jumps, LoopControl, MemoryTr},
 };
 use revm_primitives::{B256, HashMap, U256, hex};
 use revm_state::bytecode::opcode::OpCode;
@@ -235,13 +234,13 @@ where
         self.stack.clear();
         self.stack.extend_from_slice(interp.stack.data());
         self.memory = if self.include_memory {
-            Some(hex::encode_prefixed(&*interp.memory.slice(0..interp.memory.size())))
+            Some(hex::encode_prefixed(&*interp.memory.slice_range(0..interp.memory.len())))
         } else {
             None
         };
         self.pc = interp.bytecode.pc() as u64;
         self.opcode = interp.bytecode.opcode();
-        self.mem_size = interp.memory.size();
+        self.mem_size = interp.memory.len();
         self.gas = interp.gas.remaining();
         self.reservoir = interp.gas.reservoir();
         // Clamp to 0: EIP-8037 allows state_gas_spent to briefly go negative

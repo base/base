@@ -4,9 +4,7 @@ use base_evm_context::Host;
 use revm_primitives::U256;
 
 use crate::{
-    InstructionContext as Ictx, InstructionExecResult as Result,
-    interpreter::resize_memory,
-    interpreter_types::{MemoryTr, RuntimeFlag},
+    InstructionContext as Ictx, InstructionExecResult as Result, interpreter::resize_memory,
 };
 
 /// Implements the MLOAD instruction.
@@ -53,7 +51,7 @@ pub fn mstore8<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 ///
 /// Gets the size of active memory in bytes.
 pub fn msize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
-    push!(context.interpreter, U256::from(context.interpreter.memory.size()));
+    push!(context.interpreter, U256::from(context.interpreter.memory.len()));
     Ok(())
 }
 

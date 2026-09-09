@@ -2,8 +2,6 @@ use revm_primitives::hardfork::SpecId;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use super::RuntimeFlag;
-
 /// Runtime flags that control interpreter execution behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -12,14 +10,4 @@ pub struct RuntimeFlags {
     pub is_static: bool,
     /// The current EVM specification ID.
     pub spec_id: SpecId,
-}
-
-impl RuntimeFlag for RuntimeFlags {
-    fn is_static(&self) -> bool {
-        self.is_static
-    }
-
-    fn spec_id(&self) -> SpecId {
-        self.spec_id
-    }
 }

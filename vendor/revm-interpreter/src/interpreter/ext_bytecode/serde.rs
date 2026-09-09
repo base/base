@@ -4,7 +4,6 @@ use revm_primitives::B256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::ExtBytecode;
-use crate::interpreter::Jumps;
 
 #[derive(Serialize, Deserialize)]
 struct ExtBytecodeSerde<'a> {

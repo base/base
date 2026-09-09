@@ -9,7 +9,6 @@ use revm_interpreter::{
     CallInput, CallInputs, CallOutcome, CallValue, CreateInputs, CreateOutcome, CreateScheme,
     FrameInput, Gas, GasTracker, InputsImpl, InstructionResult, Interpreter, InterpreterAction,
     InterpreterResult, SharedMemory, interpreter::ExtBytecode, interpreter_action::FrameInit,
-    interpreter_types::ReturnData,
 };
 use revm_primitives::{
     Address, Bytes, U256,
@@ -460,7 +459,7 @@ impl EthFrame {
                 let interpreter = &mut self.interpreter;
                 let mem_length = outcome.memory_length();
                 let mem_start = outcome.memory_start();
-                interpreter.return_data.set_buffer(outcome.result.output);
+                interpreter.return_data = outcome.result.output;
 
                 let target_len = min(mem_length, returned_len);
 
@@ -474,9 +473,7 @@ impl EthFrame {
 
                 // Copy returned data into the parent's memory on success or revert.
                 if ins_result.is_ok_or_revert() {
-                    interpreter
-                        .memory
-                        .set(mem_start, &interpreter.return_data.buffer()[..target_len]);
+                    interpreter.memory.set(mem_start, &(&interpreter.return_data)[..target_len]);
                 }
 
                 // Settle the child's gas and merge it into the parent (returns
@@ -494,7 +491,7 @@ impl EthFrame {
 
                 if instruction_result == InstructionResult::Revert {
                     // Save data to return data buffer if the create reverted
-                    interpreter.return_data.set_buffer(outcome.output().to_owned());
+                    interpreter.return_data = outcome.output().to_owned();
                 } else {
                     // Otherwise clear it. Note that RETURN opcode should abort.
                     interpreter.return_data.clear();

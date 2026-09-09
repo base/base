@@ -7,9 +7,7 @@ use base_evm_context::ContextTr;
 use revm::{
     Inspector,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme,
-        Interpreter,
-        interpreter_types::{InputsTr, Jumps},
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
     },
 };
 use revm_bytecode::opcode::{self, OpCode};
@@ -44,7 +42,7 @@ struct OpcodeFrame {
 
 /// EVM inspector that tracks per-contract opcode gas usage and precompile call costs.
 ///
-/// Opcode gas is keyed by the current EVM target address (`interp.input.target_address()`), which
+/// Opcode gas is keyed by the current EVM target address (`interp.input.target_address`), which
 /// is also the address used by storage opcodes. This keeps storage-related opcode costs separated
 /// by the contract whose storage context is being executed.
 ///
@@ -117,7 +115,7 @@ where
         }
 
         let Some(opcode) = OpCode::new(interp.bytecode.opcode()) else { return };
-        let contract_address = interp.input.target_address();
+        let contract_address = interp.input.target_address;
         if !self.metered_opcodes.opcodes.contains(&opcode) {
             return;
         }

@@ -9,7 +9,6 @@ use std::{rc::Rc, vec::Vec};
 use base_evm_context::GasParams;
 use revm_primitives::{B256, U256, hex};
 
-use super::MemoryTr;
 use crate::InstructionResult;
 
 trait RefcellExt<T> {
@@ -70,67 +69,17 @@ impl Default for SharedMemory {
     }
 }
 
-impl MemoryTr for SharedMemory {
-    fn set_data(&mut self, memory_offset: usize, data_offset: usize, len: usize, data: &[u8]) {
-        self.set_data(memory_offset, data_offset, len, data);
-    }
-
-    fn set(&mut self, memory_offset: usize, data: &[u8]) {
-        self.set(memory_offset, data);
-    }
-
-    fn size(&self) -> usize {
-        self.len()
-    }
-
-    fn copy(&mut self, destination: usize, source: usize, len: usize) {
-        self.copy(destination, source, len);
-    }
-
-    fn slice(&self, range: Range<usize>) -> Ref<'_, [u8]> {
-        self.slice_range(range)
-    }
-
-    fn local_memory_offset(&self) -> usize {
+impl SharedMemory {
+    /// Offset of local context of memory.
+    pub fn local_memory_offset(&self) -> usize {
         self.my_checkpoint
-    }
-
-    fn set_data_from_global(
-        &mut self,
-        memory_offset: usize,
-        data_offset: usize,
-        len: usize,
-        data_range: Range<usize>,
-    ) {
-        self.global_to_local_set_data(memory_offset, data_offset, len, data_range);
-    }
-
-    /// Returns a byte slice of the memory region at the given offset.
-    ///
-    /// # Panics
-    ///
-    /// Panics on out of bounds access in debug builds only.
-    ///
-    /// # Safety
-    ///
-    /// In release builds, calling this method with an out-of-bounds range triggers undefined
-    /// behavior. Callers must ensure that the range is within the bounds of the buffer.
-    #[inline]
-    #[cfg_attr(debug_assertions, track_caller)]
-    fn global_slice(&self, range: Range<usize>) -> Ref<'_, [u8]> {
-        self.global_slice_range(range)
-    }
-
-    fn resize(&mut self, new_size: usize) -> bool {
-        self.resize(new_size);
-        true
     }
 
     /// Returns `true` if the `new_words` for the current context memory will
     /// make the shared buffer length exceed the `memory_limit`.
     #[cfg(feature = "memory_limit")]
     #[inline]
-    fn limit_reached(&self, new_words: usize) -> bool {
+    pub fn limit_reached(&self, new_words: usize) -> bool {
         self.my_checkpoint.saturating_add(new_words.saturating_mul(32)) as u64 > self.memory_limit
     }
 }
@@ -547,9 +496,9 @@ pub const fn num_words(len: usize) -> usize {
 
 /// Performs EVM memory resize.
 #[inline]
-pub fn resize_memory<Memory: MemoryTr>(
+pub fn resize_memory(
     gas: &mut crate::Gas,
-    memory: &mut Memory,
+    memory: &mut SharedMemory,
     gas_table: &GasParams,
     offset: usize,
     len: usize,
@@ -564,9 +513,9 @@ pub fn resize_memory<Memory: MemoryTr>(
 
 #[cold]
 #[inline(never)]
-fn resize_memory_cold<Memory: MemoryTr>(
+fn resize_memory_cold(
     gas: &mut crate::Gas,
-    memory: &mut Memory,
+    memory: &mut SharedMemory,
     gas_table: &GasParams,
     new_num_words: usize,
 ) -> Result<(), InstructionResult> {

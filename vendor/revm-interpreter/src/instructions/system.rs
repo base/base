@@ -6,7 +6,6 @@ use revm_primitives::{B256, KECCAK_EMPTY, U256};
 use crate::{
     CallInput, InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
     interpreter::{Interpreter, resize_memory},
-    interpreter_types::{InputsTr, LegacyBytecode, MemoryTr, ReturnData, RuntimeFlag},
 };
 
 /// Implements the KECCAK256 instruction.
@@ -37,7 +36,7 @@ pub fn keccak256<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 ///
 /// Pushes the current contract's address onto the stack.
 pub fn address<H: ?Sized>(context: Ictx<'_, H>) -> Result {
-    push!(context.interpreter, context.interpreter.input.target_address().into_word().into());
+    push!(context.interpreter, context.interpreter.input.target_address.into_word().into());
     Ok(())
 }
 
@@ -45,7 +44,7 @@ pub fn address<H: ?Sized>(context: Ictx<'_, H>) -> Result {
 ///
 /// Pushes the caller's address onto the stack.
 pub fn caller<H: ?Sized>(context: Ictx<'_, H>) -> Result {
-    push!(context.interpreter, context.interpreter.input.caller_address().into_word().into());
+    push!(context.interpreter, context.interpreter.input.caller_address.into_word().into());
     Ok(())
 }
 
@@ -91,7 +90,7 @@ pub fn calldataload<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     popn_top!([], offset_ptr, context.interpreter);
     let mut word = B256::ZERO;
     let offset = as_usize_saturated!(*offset_ptr);
-    let input = context.interpreter.input.input();
+    let input = &context.interpreter.input.input;
     let input_len = input.len();
     if offset < input_len {
         let count = 32.min(input_len - offset);
@@ -110,7 +109,7 @@ pub fn calldataload<H: ?Sized>(context: Ictx<'_, H>) -> Result {
 ///
 /// Pushes the size of input data onto the stack.
 pub fn calldatasize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
-    push!(context.interpreter, U256::from(context.interpreter.input.input().len()));
+    push!(context.interpreter, U256::from((&context.interpreter.input.input).len()));
     Ok(())
 }
 
@@ -118,7 +117,7 @@ pub fn calldatasize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
 ///
 /// Pushes the value sent with the current call onto the stack.
 pub fn callvalue<H: ?Sized>(context: Ictx<'_, H>) -> Result {
-    push!(context.interpreter, context.interpreter.input.call_value());
+    push!(context.interpreter, context.interpreter.input.call_value);
     Ok(())
 }
 
@@ -139,12 +138,12 @@ pub fn calldatacopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
     };
 
     let data_offset = as_usize_saturated!(data_offset);
-    match context.interpreter.input.input() {
+    match &context.interpreter.input.input {
         CallInput::Bytes(bytes) => {
             context.interpreter.memory.set_data(memory_offset, data_offset, len, bytes.as_ref());
         }
         CallInput::SharedBuffer(range) => {
-            context.interpreter.memory.set_data_from_global(
+            context.interpreter.memory.global_to_local_set_data(
                 memory_offset,
                 data_offset,
                 len,
@@ -158,7 +157,7 @@ pub fn calldatacopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
 pub fn returndatasize<H: ?Sized>(context: Ictx<'_, H>) -> Result {
     check!(context.interpreter, BYZANTIUM);
-    push!(context.interpreter, U256::from(context.interpreter.return_data.buffer().len()));
+    push!(context.interpreter, U256::from(context.interpreter.return_data.len()));
     Ok(())
 }
 
@@ -172,7 +171,7 @@ pub fn returndatacopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
 
     // Old legacy behavior is to panic if data_end is out of scope of return buffer.
     let data_end = data_offset.saturating_add(len);
-    if data_end > context.interpreter.return_data.buffer().len() {
+    if data_end > context.interpreter.return_data.len() {
         return Err(InstructionResult::OutOfOffset);
     }
 
@@ -191,7 +190,7 @@ pub fn returndatacopy<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
         memory_offset,
         data_offset,
         len,
-        context.interpreter.return_data.buffer(),
+        &context.interpreter.return_data,
     );
     Ok(())
 }

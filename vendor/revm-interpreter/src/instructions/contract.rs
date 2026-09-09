@@ -12,9 +12,7 @@ use revm_primitives::{Bytes, U256, hardfork::SpecId};
 use crate::{
     CallInput, CallInputs, CallScheme, CallValue, CreateInputs, Host, InstructionContext as Ictx,
     InstructionExecResult as Result, InstructionResult, InterpreterAction,
-    instructions::utility::IntoAddress,
-    interpreter_action::FrameInput,
-    interpreter_types::{InputsTr, LoopControl, ReturnData, RuntimeFlag},
+    instructions::utility::IntoAddress, interpreter_action::FrameInput,
 };
 
 /// Implements the CREATE/CREATE2 instruction.
@@ -37,7 +35,7 @@ pub fn create<const IS_CREATE2: bool, H: Host + ?Sized>(context: Ictx<'_, H>) ->
     let mut code = Bytes::new();
     if len != 0 {
         // EIP-3860: Limit and meter initcode
-        if context.interpreter.runtime_flag.spec_id().is_enabled_in(SpecId::SHANGHAI) {
+        if context.interpreter.runtime_flag.spec_id.is_enabled_in(SpecId::SHANGHAI) {
             // Limit is set as double of max contract bytecode size
             if len > context.host.max_initcode_size() {
                 return Err(InstructionResult::CreateInitCodeSizeLimit);
@@ -66,7 +64,7 @@ pub fn create<const IS_CREATE2: bool, H: Host + ?Sized>(context: Ictx<'_, H>) ->
     // Build the inputs before the gas split so the created address (and the
     // CREATE2 init-code hash) is computed once and cached for frame creation.
     let mut create_inputs =
-        CreateInputs::new(context.interpreter.input.target_address(), scheme, value, code, 0, 0);
+        CreateInputs::new(context.interpreter.input.target_address, scheme, value, code, 0, 0);
 
     // State gas for account creation + contract metadata (EIP-8037).
     if context.host.is_amsterdam_eip8037_enabled() {
@@ -101,7 +99,7 @@ pub fn create<const IS_CREATE2: bool, H: Host + ?Sized>(context: Ictx<'_, H>) ->
     let mut gas_limit = context.interpreter.gas.remaining();
 
     // EIP-150: Gas cost changes for IO-heavy operations
-    if context.interpreter.runtime_flag.spec_id().is_enabled_in(SpecId::TANGERINE) {
+    if context.interpreter.runtime_flag.spec_id.is_enabled_in(SpecId::TANGERINE) {
         // Take remaining gas and deduce l64 part of it.
         gas_limit = context.host.gas_params().call_stipend_reduction(gas_limit);
     }
@@ -142,7 +140,7 @@ pub fn call<const KIND: u8, H: Host + ?Sized>(mut context: Ictx<'_, H>) -> Resul
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
     let has_transfer = !value.is_zero();
 
-    if KIND == CALL && context.interpreter.runtime_flag.is_static() && has_transfer {
+    if KIND == CALL && context.interpreter.runtime_flag.is_static && has_transfer {
         return Err(InstructionResult::CallNotAllowedInsideStatic);
     }
 
@@ -154,17 +152,17 @@ pub fn call<const KIND: u8, H: Host + ?Sized>(mut context: Ictx<'_, H>) -> Resul
         load_acc_and_calc_gas(&mut context, to, has_transfer, is_call, local_gas_limit)?;
 
     let target_address = if matches!(KIND, CALLCODE | DELEGATECALL) {
-        context.interpreter.input.target_address()
+        context.interpreter.input.target_address
     } else {
         to
     };
     let caller = if KIND == DELEGATECALL {
-        context.interpreter.input.caller_address()
+        context.interpreter.input.caller_address
     } else {
-        context.interpreter.input.target_address()
+        context.interpreter.input.target_address
     };
     let value = if KIND == DELEGATECALL {
-        CallValue::Apparent(context.interpreter.input.call_value())
+        CallValue::Apparent(context.interpreter.input.call_value)
     } else {
         CallValue::Transfer(value)
     };
@@ -175,7 +173,7 @@ pub fn call<const KIND: u8, H: Host + ?Sized>(mut context: Ictx<'_, H>) -> Resul
         STATICCALL => CallScheme::StaticCall,
         _ => unreachable!(),
     };
-    let is_static = context.interpreter.runtime_flag.is_static() || KIND == STATICCALL;
+    let is_static = context.interpreter.runtime_flag.is_static || KIND == STATICCALL;
 
     // Call host to interact with target contract
     context.interpreter.bytecode.set_action(InterpreterAction::NewFrame(FrameInput::Call(

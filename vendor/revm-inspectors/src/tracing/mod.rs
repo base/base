@@ -9,7 +9,6 @@ use revm::{
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Interpreter,
         InterpreterResult,
-        interpreter_types::{Immediates, Jumps, LoopControl, ReturnData, RuntimeFlag},
     },
     primitives::{Address, B256, Bytes, Log, U256, hardfork::SpecId},
 };
@@ -461,13 +460,13 @@ impl TracingInspector {
             None
         };
         let returndata = if self.config.record_returndata_snapshots {
-            interp.return_data.buffer().clone()
+            interp.return_data.clone()
         } else {
             Bytes::new()
         };
 
         let gas_used = gas_used(
-            interp.runtime_flag.spec_id(),
+            interp.runtime_flag.spec_id,
             interp.gas.total_gas_spent(),
             interp.gas.refunded() as u64,
         );

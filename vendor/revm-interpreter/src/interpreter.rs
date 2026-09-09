@@ -3,7 +3,6 @@
 /// Extended bytecode functionality.
 pub mod ext_bytecode;
 mod input;
-mod return_data;
 mod runtime_flags;
 mod shared_memory;
 mod stack;
@@ -12,7 +11,6 @@ mod stack;
 use base_evm_context::{GasParams, LoadError};
 pub use ext_bytecode::ExtBytecode;
 pub use input::InputsImpl;
-pub use return_data::ReturnDataImpl;
 use revm_bytecode::Bytecode;
 use revm_primitives::{Bytes, hardfork::SpecId, hints_util::cold_path};
 pub use runtime_flags::RuntimeFlags;
@@ -22,7 +20,7 @@ pub use stack::{STACK_LIMIT, Stack};
 // imports
 use crate::{
     Gas, GasTable, Host, InstructionExecResult, InstructionResult, InstructionTable,
-    InterpreterAction, instruction_context::InstructionContext, interpreter_types::*,
+    InterpreterAction, instruction_context::InstructionContext,
 };
 
 /// EVM interpreter with its stack, memory, bytecode, and execution state.
@@ -36,7 +34,7 @@ pub struct Interpreter {
     /// EVM stack for computation.
     pub stack: Stack,
     /// Buffer for return data from calls.
-    pub return_data: ReturnDataImpl,
+    pub return_data: Bytes,
     /// EVM memory for data storage.
     pub memory: SharedMemory,
     /// Input data for current execution context.
@@ -115,7 +113,7 @@ impl Interpreter {
         } else {
             self.stack.clear();
         }
-        self.return_data.0.clear();
+        self.return_data.clear();
         self.memory = memory;
         self.input = input;
         self.runtime_flag = RuntimeFlags { spec_id, is_static };
