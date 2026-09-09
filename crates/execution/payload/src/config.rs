@@ -118,23 +118,28 @@ impl Default for ResourceMeteringConfig {
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
     ///
-    /// Enabling metering without a non-empty schedule file fails closed so
-    /// operators cannot boot with `--enable-metering` and silently admit every
-    /// transaction.
+    /// `--enable-metering` turns on `base_meterBundle`. Payload admission
+    /// runs only when that flag is set and a non-empty schedule file is
+    /// loaded. A missing schedule leaves admission inactive so mempool
+    /// clients can serve meterBundle without a builder schedule. An empty
+    /// schedule file fails closed because the operator asked to load
+    /// admission config and it has no dimensions.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
         provider: SharedMeteringProvider,
     ) -> Result<Self, ResourceMeteringError> {
         let schedule = if enabled {
-            let Some(path) = schedule_path else {
-                return Err(ResourceMeteringError::MissingSchedule);
-            };
-            let schedule = ResourceMeteringSchedule::from_file(path)?;
-            if schedule.is_empty() {
-                return Err(ResourceMeteringError::EmptySchedule);
+            match schedule_path {
+                Some(path) => {
+                    let schedule = ResourceMeteringSchedule::from_file(path)?;
+                    if schedule.is_empty() {
+                        return Err(ResourceMeteringError::EmptySchedule);
+                    }
+                    schedule
+                }
+                None => ResourceMeteringSchedule::default(),
             }
-            schedule
         } else {
             if let Some(path) = schedule_path {
                 warn!(
@@ -463,10 +468,12 @@ mod tests {
     }
 
     #[test]
-    fn enabled_metering_without_schedule_fails_closed() {
-        let err = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
-            .expect_err("enable-metering without a schedule must fail");
-        assert!(matches!(err, ResourceMeteringError::MissingSchedule));
+    fn enabled_metering_without_schedule_leaves_admission_inactive() {
+        let config = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
+            .expect("enable-metering without a schedule must still boot");
+        assert!(config.enabled);
+        assert!(config.schedule.is_empty());
+        assert!(!config.is_active());
     }
 
     #[test]

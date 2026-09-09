@@ -585,9 +585,6 @@ pub enum ResourceMeteringError {
     /// The schedule file was not valid JSON.
     #[error("failed to parse resource metering schedule JSON: {0}")]
     ParseJson(String),
-    /// Metering is enabled but no schedule file was provided.
-    #[error("resource metering is enabled but no schedule file was provided")]
-    MissingSchedule,
     /// Metering is enabled but the schedule file has no dimensions.
     #[error("resource metering is enabled but the schedule has no dimensions")]
     EmptySchedule,

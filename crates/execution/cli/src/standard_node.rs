@@ -47,9 +47,9 @@ use crate::upgrade_signal::{
 pub struct MeteringArgs {
     /// Enable metering RPC for transaction bundle simulation.
     ///
-    /// Native kill switch for payload resource metering: a loaded schedule is
-    /// evaluated only when this is set. The Flashblocks builder uses
-    /// `--builder.enable-resource-metering` instead.
+    /// Turns on `base_meterBundle`. Native payload admission also requires a
+    /// non-empty `--payload.resource-metering-schedule`. The Flashblocks
+    /// builder uses `--builder.enable-resource-metering` instead.
     #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
@@ -82,7 +82,7 @@ pub struct MeteringArgs {
     )]
     pub metering_target_flashblocks_per_block: Option<usize>,
 
-    /// Resource-metering schedule. Evaluated when `--enable-metering` is set.
+    /// Resource-metering schedule for native payload admission.
     #[command(flatten)]
     pub resource_metering: ResourceMeteringArgs,
 }
@@ -888,7 +888,6 @@ fn is_inspector_opcode_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_execution_payload_builder::ResourceMeteringError;
     use clap::{Args, Parser};
 
     use super::*;
@@ -1356,13 +1355,14 @@ mod tests {
         assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
         assert!(args.metering.resource_metering.resource_metering_schedule.is_none());
 
-        let err = ResourceMeteringConfig::from_parts(
+        let config = ResourceMeteringConfig::from_parts(
             args.metering.enable_metering,
             args.metering.resource_metering.resource_metering_schedule.as_deref(),
             Arc::new(NoopMeteringProvider),
         )
-        .expect_err("enable-metering without a schedule must fail closed");
-        assert!(matches!(err, ResourceMeteringError::MissingSchedule));
+        .expect("enable-metering without a schedule must still boot");
+        assert!(config.enabled);
+        assert!(!config.is_active());
     }
 
     #[test]
