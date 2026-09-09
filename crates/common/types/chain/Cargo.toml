@@ -28,7 +28,7 @@ modular-bitfield = { workspace = true, optional = false }
 reth-zstd-compressors = { workspace = true, optional = true }
 c-kzg = { workspace = true, features = ["serde"], optional = true }
 borsh = { workspace = true, features = ["derive"], optional = true }
-bytes = { workspace = true, optional = false, features = ["default"] }
+bytes = { workspace = true }
 rand_08 = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
