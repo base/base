@@ -287,6 +287,7 @@ alloy-signer = { version = "=2.4.1", default-features = false }
 alloy-eip2124 = { version = "=0.2.0", default-features = false }
 alloy-eip2930 = { version = "=0.2.3", default-features = false }
 alloy-eip7702 = { version = "=0.6.3", default-features = false }
+alloy-dyn-abi = { version = "=1.6.1", default-features = false }
 alloy-json-abi = { version = "=1.6.1", default-features = false }
 alloy-sol-macro = { version = "=1.6.1", default-features = false }
 alloy-sol-types = { version = "=1.6.1", default-features = false }
@@ -300,7 +301,6 @@ alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
 alloy-pubsub = { path = "vendor/alloy-pubsub", default-features = false }
 alloy-chains = { path = "vendor/alloy-chains", default-features = false }
 alloy-genesis = { path = "vendor/alloy-genesis", default-features = false }
-alloy-dyn-abi = { path = "vendor/alloy-dyn-abi", default-features = false }
 alloy-eip7928 = { path = "vendor/alloy-eip7928", default-features = false }
 alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
 alloy-provider = { path = "vendor/alloy-provider", default-features = false }

@@ -171,19 +171,16 @@ dependencies = [
 
 [[package]]
 name = "alloy-dyn-abi"
-version = "0.0.0"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a04eb4abc2b5074a18e687ee63918f407cc7990083cba9b999445f839796060"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-type-parser",
  "alloy-sol-types",
- "arbitrary",
- "criterion 0.7.0",
  "derive_more",
- "ethabi",
  "itoa",
- "proptest",
- "rand 0.9.5",
  "serde",
  "serde_json",
  "winnow 1.0.4",
@@ -2690,7 +2687,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_builder",
- "criterion 0.8.2",
+ "criterion",
  "ctor",
  "dashmap",
  "derive_more",
@@ -2959,7 +2956,7 @@ dependencies = [
 name = "base-common-flz"
 version = "0.0.0"
 dependencies = [
- "criterion 0.8.2",
+ "criterion",
  "hex-literal 1.1.0",
  "iai-callgrind",
  "rstest",
@@ -3043,7 +3040,7 @@ dependencies = [
  "base-evm-handler",
  "base-precompile-macros",
  "base-precompile-storage",
- "criterion 0.8.2",
+ "criterion",
  "k256",
  "revm",
  "rstest",
@@ -3168,7 +3165,7 @@ dependencies = [
  "base-consensus-upgrades",
  "base-metrics",
  "base-protocol",
- "criterion 0.8.2",
+ "criterion",
  "iai-callgrind",
  "metrics",
  "proptest",
@@ -3983,7 +3980,7 @@ dependencies = [
  "base-metrics",
  "bincode 2.0.1",
  "bytes",
- "criterion 0.8.2",
+ "criterion",
  "crossbeam-channel",
  "crossbeam-utils",
  "derive_more",
@@ -4279,7 +4276,7 @@ dependencies = [
  "base-txpool-tracing",
  "base-upgrade-signal",
  "clap",
- "criterion 0.8.2",
+ "criterion",
  "eyre",
  "fdlimit",
  "futures",
@@ -4365,7 +4362,7 @@ dependencies = [
  "base-test-utils",
  "base-tx-forwarding",
  "base-txpool-rpc",
- "criterion 0.8.2",
+ "criterion",
  "eyre",
  "futures",
  "reth-db",
@@ -4628,7 +4625,7 @@ dependencies = [
  "alloy-trie",
  "base-common-consensus",
  "base-common-rpc-types-engine",
- "criterion 0.8.2",
+ "criterion",
  "proptest",
  "rand 0.9.5",
  "reqwest",
@@ -4940,7 +4937,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "brotli",
- "criterion 0.8.2",
+ "criterion",
  "derive_more",
  "iai-callgrind",
  "miniz_oxide 0.9.1",
@@ -7138,29 +7135,6 @@ dependencies = [
 
 [[package]]
 name = "criterion"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1c047a62b0cc3e145fa84415a3191f628e980b194c2755aa12300a4e6cbd928"
-dependencies = [
- "anes",
- "cast",
- "ciborium",
- "clap",
- "criterion-plot 0.6.0",
- "itertools 0.13.0",
- "num-traits",
- "oorandom",
- "plotters",
- "rayon",
- "regex",
- "serde",
- "serde_json",
- "tinytemplate",
- "walkdir",
-]
-
-[[package]]
-name = "criterion"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "950046b2aa2492f9a536f5f4f9a3de7b9e2476e575e05bd6c333371add4d98f3"
@@ -7193,16 +7167,6 @@ checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
  "itertools 0.10.5",
-]
-
-[[package]]
-name = "criterion-plot"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b1bcc0dc7dfae599d84ad0b1a55f80cde8af3725da8313b528da95ef783e338"
-dependencies = [
- "cast",
- "itertools 0.13.0",
 ]
 
 [[package]]
@@ -8112,50 +8076,6 @@ dependencies = [
  "cfg-if",
  "home",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "ethabi"
-version = "18.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7413c5f74cc903ea37386a8965a936cbeb334bd270862fdece542c1b2dcbc898"
-dependencies = [
- "ethereum-types",
- "hex",
- "once_cell",
- "regex",
- "serde",
- "serde_json",
- "sha3 0.10.9",
- "thiserror 1.0.69",
- "uint 0.9.5",
-]
-
-[[package]]
-name = "ethbloom"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c22d4b5885b6aa2fe5e8b9329fb8d232bf739e434e6b87347c63bdd00c120f60"
-dependencies = [
- "crunchy",
- "fixed-hash",
- "impl-rlp",
- "impl-serde",
- "tiny-keccak",
-]
-
-[[package]]
-name = "ethereum-types"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02d215cbf040552efcbe99a38372fe80ab9d00268e20012b79fcd0f073edd8ee"
-dependencies = [
- "ethbloom",
- "fixed-hash",
- "impl-rlp",
- "impl-serde",
- "primitive-types",
- "uint 0.9.5",
 ]
 
 [[package]]
@@ -10001,24 +9921,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba6a270039626615617f3f36d15fc827041df3b78c439da2cadfa47455a77f2f"
 dependencies = [
  "parity-scale-codec",
-]
-
-[[package]]
-name = "impl-rlp"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f28220f89297a075ddc7245cd538076ee98b01f2a9c23a53a4f1105d5a322808"
-dependencies = [
- "rlp",
-]
-
-[[package]]
-name = "impl-serde"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebc88fc67028ae3db0c853baa36269d398d5f45b6982f95549ff5def78c935cd"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -13168,8 +13070,6 @@ checksum = "0b34d9fd68ae0b74a41b21c03c2f62847aa0ffea044eee893b4c140b37e244e2"
 dependencies = [
  "fixed-hash",
  "impl-codec",
- "impl-rlp",
- "impl-serde",
  "uint 0.9.5",
 ]
 
@@ -16071,7 +15971,7 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "colorchoice",
- "criterion 0.8.2",
+ "criterion",
  "revm",
  "serde",
  "serde_json",
@@ -18457,15 +18357,6 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
-]
-
-[[package]]
-name = "tiny-keccak"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
-dependencies = [
- "crunchy",
 ]
 
 [[package]]
