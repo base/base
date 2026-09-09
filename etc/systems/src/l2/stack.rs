@@ -18,7 +18,7 @@ use base_common_client_ethereum::{Base, Ethereum, PrivateKeySigner, TransactionB
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
-use base_consensus_node::NodeMode;
+use base_consensus_driver_service::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};

@@ -21,7 +21,7 @@ use base_common_types_payload::{
 };
 use base_common_types_rpc::{Block, BlockTransactions, Transaction as EthTransaction};
 use base_consensus_engine::{EngineClient, EngineClientError};
-use base_consensus_node::{
+use base_consensus_driver_service::{
     EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
 };
 use base_execution_evm_blocks::{BaseEvmConfig, CancelOnDrop};

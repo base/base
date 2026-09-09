@@ -10,7 +10,7 @@ use std::{
 
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_consensus_engine::EngineQueries;
-use base_consensus_node::{
+use base_consensus_driver_service::{
     BuildRequest, EngineActor, EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor,
     QueuedEngineRpcClient,
 };

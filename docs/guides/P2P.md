@@ -493,12 +493,12 @@ libp2p, e.g. `/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initi
 ### Putting it all together: the Network Actor
 
 The
-[`NetworkActor`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/actor.rs)
+[`NetworkActor`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/actor.rs)
 in the service crate ties everything together. It follows the actor pattern, a concurrency design
 where each component runs as an independent task that communicates with other components exclusively
 through message channels, avoiding shared mutable state. It is the top-level component that the
 consensus node's main loop interacts with. The actor is generic over a
-[`GossipTransport`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/transport.rs)
+[`GossipTransport`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/transport.rs)
 trait, which allows swapping out the real networking stack for an in-process test transport:
 
 ```rust
@@ -514,7 +514,7 @@ pub trait GossipTransport: Send + 'static {
 ```
 
 The production implementation is
-[`NetworkHandler`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/handler.rs),
+[`NetworkHandler`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/handler.rs),
 which composes the `GossipDriver` and `Discv5Handler` together. It runs a `tokio::select!` loop that
 simultaneously handles several things: receiving ENRs from discovery and dialing them as new gossip
 peers, receiving blocks from gossip and forwarding them to the consensus engine, publishing blocks
@@ -523,7 +523,7 @@ banning low-scoring peers (disconnecting them from gossip and banning their addr
 and handling administrative RPC requests.
 
 The
-[`NetworkDriver`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/driver.rs)
+[`NetworkDriver`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/driver.rs)
 handles the startup sequence. It starts the gossip swarm first, gets back the actual listen address,
 optionally updates the local ENR with that address (so that other nodes discover the correct port),
 and then starts the discovery service. This ordering matters because the ENR needs to contain the
@@ -531,7 +531,7 @@ real TCP port that gossip is listening on.
 
 The `NetworkActor` communicates with the rest of the consensus node through `mpsc` channels bundled
 in a
-[`NetworkInboundData`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/actor.rs)
+[`NetworkInboundData`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/actor.rs)
 struct:
 
 ```rust
@@ -787,16 +787,16 @@ networks are completely separate and serve different purposes.
 **Consensus layer orchestration:**
 
 -
-  [`crates/consensus/service/src/actors/network/actor.rs`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/actor.rs)
+  [`crates/consensus/driver/service/src/actors/network/actor.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/actor.rs)
   — NetworkActor definition
 -
-  [`crates/consensus/service/src/actors/network/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/handler.rs)
+  [`crates/consensus/driver/service/src/actors/network/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/handler.rs)
   — Production NetworkHandler transport
 -
-  [`crates/consensus/service/src/actors/network/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/driver.rs)
+  [`crates/consensus/driver/service/src/actors/network/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/driver.rs)
   — Network startup sequence
 -
-  [`crates/consensus/service/src/actors/network/transport.rs`](https://github.com/base/base/blob/main/crates/consensus/service/src/actors/network/transport.rs)
+  [`crates/consensus/driver/service/src/actors/network/transport.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/transport.rs)
   — GossipTransport trait
 
 **Execution layer node and networking:**

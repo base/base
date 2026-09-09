@@ -1,6 +1,6 @@
 //! In-process consensus node for L2 system test stacks.
 //!
-//! Runs `base-consensus-node` directly in the test process, eliminating the Docker
+//! Runs `base-consensus-driver-service` directly in the test process, eliminating the Docker
 //! dependency for the consensus layer. Mirrors the pattern used by
 //! [`InProcessBuilder`](super::InProcessBuilder) and [`InProcessClient`](super::InProcessClient).
 
@@ -26,7 +26,7 @@ use base_common_client_rollup::RollupNodeApiClient;
 use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::PeerScoreLevel;
 use base_consensus_network_service::SecretKeyLoader;
-use base_consensus_node::{
+use base_consensus_driver_service::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,
 };

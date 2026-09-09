@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use base_consensus_node::{L1OriginSelector, OriginSelector};
+use base_consensus_driver_service::{L1OriginSelector, OriginSelector};
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::SharedL1Chain;
@@ -28,7 +28,7 @@ impl OriginSelector for ActionOriginSelector {
     async fn next_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
-    ) -> Result<BlockInfo, base_consensus_node::L1OriginSelectorError> {
+    ) -> Result<BlockInfo, base_consensus_driver_service::L1OriginSelectorError> {
         if let Some(pin) = *self.pin.lock().expect("L1 origin pin lock poisoned") {
             return Ok(pin);
         }

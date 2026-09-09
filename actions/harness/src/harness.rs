@@ -8,7 +8,7 @@ use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use base_consensus_derive::{
     DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
 };
-use base_consensus_node::GossipTransport;
+use base_consensus_driver_service::GossipTransport;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{

@@ -54,7 +54,7 @@ members = [
   "crates/consensus/source/providers",
   "crates/consensus/rpc",
   "crates/consensus/safedb",
-  "crates/consensus/service",
+  "crates/consensus/driver/service",
   "crates/execution/cli",
   "crates/execution/eip8130-rpc",
   "crates/execution/evm/blocks",
@@ -324,7 +324,7 @@ base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
 base-consensus-rpc = { path = "crates/consensus/rpc", default-features = false }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-network-service = { path = "crates/consensus/network/service", default-features = false }
-base-consensus-node = { path = "crates/consensus/service", default-features = false }
+base-consensus-driver-service = { path = "crates/consensus/driver/service", default-features = false }
 base-consensus-safedb = { path = "crates/consensus/safedb", default-features = false }
 base-consensus-derive = { path = "crates/consensus/derive", default-features = false }
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }

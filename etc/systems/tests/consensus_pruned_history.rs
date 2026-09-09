@@ -18,7 +18,7 @@ use base_consensus_engine::{
     ForkchoiceCheckpointReader,
     test_utils::{MockEngineClient, test_engine_client_builder},
 };
-use base_consensus_node::{
+use base_consensus_driver_service::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
     EngineProcessor, NoopCheckpointWriter, ValidatorEngineRequestHandler,
 };
@@ -158,7 +158,7 @@ impl PrunedHistoryStartup {
         );
         let (request_tx, request_rx) = mpsc::channel(8);
         let handler = ValidatorEngineRequestHandler::new(processor);
-        let handle = base_consensus_node::EngineRequestReceiver::start(handler, request_rx);
+        let handle = base_consensus_driver_service::EngineRequestReceiver::start(handler, request_rx);
 
         RunningValidatorProcessor {
             state_rx,

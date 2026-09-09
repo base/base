@@ -32,7 +32,7 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Identity, ProviderBuilder};
 use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
-use base_consensus_node::{
+use base_consensus_driver_service::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };
 use base_execution_payload_builder::BasePayloadBuilderAttributes;

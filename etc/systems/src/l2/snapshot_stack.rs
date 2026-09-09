@@ -11,7 +11,7 @@ use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_rpc::SyncStatus as EthSyncStatus;
-use base_consensus_node::StandalonePrefund;
+use base_consensus_driver_service::StandalonePrefund;
 use eyre::{Result, WrapErr, ensure};
 use url::Url;
 

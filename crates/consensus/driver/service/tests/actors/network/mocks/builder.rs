@@ -8,7 +8,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_network_service::BootNode;
 use base_consensus_network_service::LocalNode;
-use base_consensus_node::{
+use base_consensus_driver_service::{
     EngineClientResult, NetworkActor, NetworkBuilder, NetworkEngineClient, NodeActor,
 };
 use base_consensus_source_providers::BlockSigner;

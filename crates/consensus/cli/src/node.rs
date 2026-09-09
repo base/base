@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use alloy_primitives::Address;
 use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
-use base_consensus_node::{
+use base_consensus_driver_service::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };

@@ -1,4 +1,4 @@
-use base_consensus_node::ConductorError;
+use base_consensus_driver_service::ConductorError;
 
 /// Error type returned by [`crate::L2Sequencer`].
 #[derive(Debug, thiserror::Error)]

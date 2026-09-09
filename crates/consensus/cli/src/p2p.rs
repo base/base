@@ -26,7 +26,7 @@ use base_consensus_network_service::GaterConfig;
 use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::PeerMonitoring;
 use base_consensus_network_service::PeerScoreLevel;
-use base_consensus_node::NetworkConfig;
+use base_consensus_driver_service::NetworkConfig;
 use base_consensus_source_providers::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;

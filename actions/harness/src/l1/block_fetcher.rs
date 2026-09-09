@@ -3,7 +3,7 @@
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use async_trait::async_trait;
 use base_common_types_rpc::{Block, Filter, Header, Log};
-use base_consensus_node::L1BlockFetcher;
+use base_consensus_driver_service::L1BlockFetcher;
 
 use crate::{L1Block, SharedL1Chain};
 
@@ -23,7 +23,7 @@ pub struct ActionL1FetcherError(String);
 /// - `get_block` looks the block up by number or hash in the shared chain and
 ///   converts it to an [`base_common_types_rpc::Block`].
 ///
-/// [`L1WatcherActor`]: base_consensus_node::L1WatcherActor
+/// [`L1WatcherActor`]: base_consensus_driver_service::L1WatcherActor
 #[derive(Debug, Clone)]
 pub struct ActionL1BlockFetcher {
     chain: SharedL1Chain,

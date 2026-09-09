@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_node::{Conductor, ConductorError};
+use base_consensus_driver_service::{Conductor, ConductorError};
 
 /// Shared mutable state backing a [`TestConductorHandle`].
 #[derive(Debug)]

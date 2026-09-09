@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_node::{Conductor, ConductorError};
+use base_consensus_driver_service::{Conductor, ConductorError};
 
 /// Conductor adapter that allows the actor to own a cloneable conductor handle.
 #[derive(Debug, Clone)]

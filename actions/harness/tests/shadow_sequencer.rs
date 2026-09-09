@@ -6,7 +6,7 @@ use base_action_harness::{
 };
 use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-use base_consensus_node::CanonicalUnsafeCatchup;
+use base_consensus_driver_service::CanonicalUnsafeCatchup;
 
 /// A late sequencer retains future unsafe gossip while deriving safe blocks, then applies the
 /// contiguous unsafe suffix in canonical order.

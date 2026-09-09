@@ -9,7 +9,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_consensus_derive::StatefulAttributesBuilder;
-use base_consensus_node::{
+use base_consensus_driver_service::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
 };

@@ -22,7 +22,6 @@ alloy-signer = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
-base-consensus-node = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-rpc = { workspace = true }
 base-consensus-engine = { workspace = true }
@@ -33,6 +32,7 @@ base-execution-state-memory = {workspace = true}
 base-common-l1-transactions = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
+base-consensus-driver-service = { workspace = true }
 base-consensus-network-service = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }

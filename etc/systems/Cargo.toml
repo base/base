@@ -30,7 +30,6 @@ reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }
-base-consensus-node = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-prover-service-db = { workspace = true }
 base-common-client-rollup = {workspace = true}
@@ -45,6 +44,7 @@ eyre = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
+base-consensus-driver-service = { workspace = true }
 base-consensus-source-providers = {workspace = true}
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-evm-precompiles = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "base-consensus-node"
+name = "base-consensus-driver-service"
 description = "An implementation of the Base consensus node service"
 version.workspace = true
 edition.workspace = true
