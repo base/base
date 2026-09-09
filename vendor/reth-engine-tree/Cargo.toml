@@ -25,7 +25,6 @@ reth-prune = { workspace = true }
 reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-execution-cache = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
@@ -53,8 +52,8 @@ base-common-types-payload = {workspace = true, features = ["serde"]}
 base-execution-state-types = {features = ["rayon"], workspace = true}
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
+base-execution-state-tasks = {features = ["default"], workspace = true}
 serde_json = { workspace = true, features = ["alloc"], optional = true }
-base-execution-state-tasks = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
@@ -105,7 +104,6 @@ test-utils = [
     "reth-trie-sparse/test-utils",
     "base-execution-state-tasks/test-utils",
     "base-common-runtime-tasks/test-utils",
-    "reth-execution-cache/test-utils",
     "base-execution-state-memory/test-utils",
 ]
 trie-debug = [

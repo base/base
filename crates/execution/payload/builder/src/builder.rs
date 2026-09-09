@@ -36,7 +36,7 @@ use base_execution_txpool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
-use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
+use base_execution_state_tasks::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use tracing::{debug, debug_span, info, instrument, trace, warn};

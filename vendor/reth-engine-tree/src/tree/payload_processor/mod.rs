@@ -614,7 +614,7 @@ mod tests {
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
-    use reth_execution_cache::CachedStatus;
+    use base_execution_state_tasks::CachedStatus;
 
     use crate::tree::{
         ExecutionCache, PayloadExecutionCache, SavedCache, TreeConfig,

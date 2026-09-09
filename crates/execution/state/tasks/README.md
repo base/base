@@ -1,6 +1,6 @@
 # `base-execution-state-tasks`
 
-Trie implementation for Base.
+Proof history, state-root workers, and execution caches for Base.
 
 ## Overview
 
@@ -11,8 +11,11 @@ navigating account and storage tries, a pruner for removing data outside the ret
 an initialization job for syncing historical proofs at startup.
 
 Also owns parallel account/storage proof workers and the state-root task handles shared by the
-Engine API and payload builder. Core trie algorithms and database cursors live in `reth-trie`,
+execution driver and payload builder. Core trie algorithms and database cursors live in `reth-trie`,
 below the provider layer; this crate composes providers with task scheduling and proof history.
+
+Cross-block execution caches and transaction-pool prewarm snapshots live here too. Cache checkout
+tracks active users and the parent block hash so fork transitions cannot reuse stale state.
 
 ## Usage
 

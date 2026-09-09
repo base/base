@@ -1,32 +1,12 @@
-//! Cross-block execution cache for payload processing.
-//!
-//! This crate provides the core caching infrastructure used during block execution:
-//! - [`ExecutionCache`]: Fixed-size concurrent caches for accounts, storage, and bytecode
-//! - [`SavedCache`]: An execution cache snapshot associated with a specific block hash
-//! - [`PayloadExecutionCache`]: Thread-safe wrapper for sharing cached state across payload
-//!   processing tasks
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
-mod cached_state;
-pub use cached_state::*;
-
-mod txpool;
 use std::sync::Arc;
 
+use crate::SavedCache;
 use alloy_primitives::B256;
 use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Histogram};
 use parking_lot::Mutex;
 use reth_primitives_traits::FastInstant as Instant;
 use tracing::{debug, instrument, warn};
-pub use txpool::*;
 
 /// A guarded, thread-safe cache of execution state that tracks the most recent block's caches.
 ///
@@ -140,6 +120,7 @@ struct PayloadExecutionCacheMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ExecutionCache;
 
     #[test]
     fn single_checkout_blocks_second() {

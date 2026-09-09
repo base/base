@@ -22,7 +22,6 @@ futures-util = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-payload-util = { workspace = true }
-reth-execution-cache = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
@@ -43,10 +42,10 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-state-api = { workspace = true, features = ["default"] }
+base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-types = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 base-execution-payload-types = {features = ["default"], workspace = true}
-base-execution-state-tasks = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace = true}
@@ -71,7 +70,6 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-primitives-traits/test-utils",
     "tokio/rt",
-    "reth-execution-cache/test-utils",
     "base-execution-state-tasks/test-utils",
     "base-execution-state-memory/test-utils",
 ]

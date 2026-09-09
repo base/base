@@ -121,7 +121,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-etl](../../vendor/reth-etl/Cargo.toml) | Retain shared infrastructure |
 | [reth-evm](../../vendor/reth-evm/Cargo.toml) | Retain shared infrastructure |
 | `reth-evm-ethereum` | Deleted; explicit EVM parameters and test-only Alloy adapter |
-| [reth-execution-cache](../../vendor/reth-execution-cache/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-tasks](../../crates/execution/state/tasks/Cargo.toml) | Retain shared infrastructure |
 | [reth-execution-errors](../../vendor/reth-execution-errors/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-exex](../../vendor/reth-exex/Cargo.toml) | Retain shared infrastructure |

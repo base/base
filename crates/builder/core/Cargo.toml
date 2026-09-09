@@ -35,7 +35,6 @@ base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-reth-execution-cache = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
 nanoid = { workspace = true, optional = true }
@@ -43,6 +42,7 @@ rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
 serde = { workspace = true, features = ["std"] }
+base-execution-state-tasks = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
@@ -162,7 +162,7 @@ test-utils = [
     "reth-chain-state/test-utils",
     "reth-db/test-utils",
     "base-execution-evm-blocks/test-utils",
-    "reth-execution-cache/test-utils",
+    "base-execution-state-tasks/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",

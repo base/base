@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, StorageKey};
-use reth_execution_cache::{CachedStateProvider, ExecutionCache, TxPoolPrewarmCacheSnapshot};
+use base_execution_state_tasks::{CachedStateProvider, ExecutionCache, TxPoolPrewarmCacheSnapshot};
 use reth_provider::{
     AccountReader, BytecodeReader, ProviderResult, StateProviderBox, StateReadProvider,
 };

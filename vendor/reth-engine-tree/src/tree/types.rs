@@ -7,7 +7,7 @@ use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
 use base_execution_evm_blocks::EvmEnvFor;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
-use reth_execution_cache::TxPoolPrewarmCacheSnapshot;
+use base_execution_state_tasks::TxPoolPrewarmCacheSnapshot;
 
 use crate::tree::error::InsertPayloadError;
 

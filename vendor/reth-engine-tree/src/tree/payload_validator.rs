@@ -131,7 +131,7 @@ use base_execution_payload_types::{
 use base_execution_state_types::ProviderResult;
 use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
 use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
-use reth_execution_cache::{CacheFillMode, CacheStats};
+use base_execution_state_tasks::{CacheFillMode, CacheStats};
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
     SealedHeader, SignerRecoverable,

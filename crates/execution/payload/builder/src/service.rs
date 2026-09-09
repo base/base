@@ -20,7 +20,7 @@ use base_execution_payload_types::{
 use base_execution_state_tasks::PayloadStateRootHandle;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
-use reth_execution_cache::SavedCache;
+use base_execution_state_tasks::SavedCache;
 use reth_primitives_traits::FastInstant as Instant;
 use tokio::sync::{
     broadcast, mpsc,

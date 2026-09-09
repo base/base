@@ -2357,7 +2357,6 @@ dependencies = [
  "reth-cli-commands",
  "reth-cli-util",
  "reth-db",
- "reth-execution-cache",
  "reth-node-core",
  "reth-payload-util",
  "reth-primitives-traits",
@@ -3686,7 +3685,6 @@ dependencies = [
  "moka",
  "reth-chain-state",
  "reth-engine-primitives",
- "reth-execution-cache",
  "reth-payload-util",
  "reth-primitives-traits",
  "reth-provider",
@@ -3881,6 +3879,7 @@ dependencies = [
  "crossbeam-utils",
  "derive_more",
  "eyre",
+ "fixed-cache",
  "metrics",
  "mockall",
  "parking_lot",
@@ -13966,7 +13965,6 @@ dependencies = [
  "reth-db-api",
  "reth-db-common",
  "reth-engine-primitives",
- "reth-execution-cache",
  "reth-exex-types",
  "reth-network-p2p",
  "reth-primitives-traits",
@@ -14022,25 +14020,6 @@ dependencies = [
  "rayon",
  "reth-db-api",
  "tempfile",
-]
-
-[[package]]
-name = "reth-execution-cache"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-observability-metrics",
- "base-execution-evm-runtime",
- "base-execution-state-api",
- "base-execution-state-memory",
- "base-execution-state-types",
- "fixed-cache",
- "metrics",
- "parking_lot",
- "reth-primitives-traits",
- "reth-provider",
- "reth-trie",
- "tracing",
 ]
 
 [[package]]

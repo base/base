@@ -22,7 +22,7 @@ use base_execution_txpool::TransactionPool;
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;
-use reth_execution_cache::SavedCache;
+use base_execution_state_tasks::SavedCache;
 use reth_primitives_traits::SealedHeader;
 use tokio::{
     sync::{Semaphore, oneshot},

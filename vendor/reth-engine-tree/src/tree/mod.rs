@@ -81,7 +81,7 @@ pub use payload_processor::*;
 pub use payload_validator::BasicEngineValidator;
 pub use persistence_state::PersistenceState;
 pub use reth_engine_primitives::TreeConfig;
-pub use reth_execution_cache::{
+pub use base_execution_state_tasks::{
     CachedStateCacheMetrics, CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
     ExecutionCache, PayloadExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot,
 };
