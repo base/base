@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
+use base_common_io_files as fs;
 use eyre::{Result, WrapErr};
 use reqwest::Client;
-use reth_fs_util as fs;
 use tracing::info;
 use url::Url;
 
@@ -169,14 +169,14 @@ pub(crate) async fn fetch_manifest_from_source(source: &str) -> Result<SnapshotM
                 let path = parsed
                     .to_file_path()
                     .map_err(|_| eyre::eyre!("Invalid file:// manifest path: {source}"))?;
-                let content = fs::read_to_string(path)?;
+                let content = fs::Files::read_to_string(path)?;
                 Ok(serde_json::from_str(&content)?)
             }
             _ => Err(eyre::eyre!("Unsupported manifest URL scheme: {}", parsed.scheme())),
         };
     }
 
-    let content = fs::read_to_string(source)?;
+    let content = fs::Files::read_to_string(source)?;
     Ok(serde_json::from_str(&content)?)
 }
 

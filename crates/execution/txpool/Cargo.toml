@@ -22,10 +22,10 @@ rustc-hash = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 futures-util = { workspace = true }
-reth-fs-util = { workspace = true }
 reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
+base-common-io-files = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }

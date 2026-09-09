@@ -24,11 +24,12 @@ type SortedStaticFiles = StaticFileMap<Vec<(SegmentRangeInclusive, SegmentHeader
 /// segment headers as presented in the file configuration.
 pub fn iter_static_files(path: &Path) -> Result<SortedStaticFiles, NippyJarError> {
     if !path.exists() {
-        reth_fs_util::create_dir_all(path).map_err(|err| NippyJarError::Custom(err.to_string()))?;
+        base_common_io_files::Files::create_dir_all(path)
+            .map_err(|err| NippyJarError::Custom(err.to_string()))?;
     }
 
     let mut static_files = SortedStaticFiles::default();
-    let entries = reth_fs_util::read_dir(path)
+    let entries = base_common_io_files::Files::read_dir(path)
         .map_err(|err| NippyJarError::Custom(err.to_string()))?
         .filter_map(Result::ok);
     for entry in entries {

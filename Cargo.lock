@@ -2703,6 +2703,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-io-files"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-common-network"
 version = "0.0.0"
 dependencies = [
@@ -3947,6 +3957,7 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-network",
  "base-common-observability-events",
  "base-common-observability-metrics",
@@ -3979,7 +3990,6 @@ dependencies = [
  "rand 0.9.5",
  "reth-chain-state",
  "reth-eth-wire-types",
- "reth-fs-util",
  "reth-primitives-traits",
  "reth-provider",
  "rustc-hash",
@@ -4118,6 +4128,7 @@ dependencies = [
  "alloy-rlp",
  "base-common-chain-activation",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-network",
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
@@ -4166,7 +4177,6 @@ dependencies = [
  "reth-engine-tree",
  "reth-engine-util",
  "reth-exex",
- "reth-fs-util",
  "reth-invalid-block-hooks",
  "reth-network",
  "reth-network-api",
@@ -13706,6 +13716,7 @@ dependencies = [
  "backon",
  "base-cli-utils",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-execution-evm-blocks",
@@ -13741,7 +13752,6 @@ dependencies = [
  "reth-ecies",
  "reth-eth-wire",
  "reth-exex",
- "reth-fs-util",
  "reth-net-nat",
  "reth-network",
  "reth-network-p2p",
@@ -13775,13 +13785,13 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
+ "base-common-io-files",
  "base-common-observability-tracing",
  "cfg-if",
  "eyre",
  "libc",
  "rand 0.8.7",
  "rand 0.9.5",
- "reth-fs-util",
  "secp256k1 0.30.0",
  "serde",
  "snmalloc-rs",
@@ -13839,6 +13849,7 @@ dependencies = [
  "alloy-primitives",
  "arbitrary",
  "assert_matches",
+ "base-common-io-files",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-types-chain",
@@ -13852,7 +13863,6 @@ dependencies = [
  "proptest",
  "quanta",
  "reth-db-api",
- "reth-fs-util",
  "reth-libmdbx",
  "reth-nippy-jar",
  "reth-primitives-traits",
@@ -13895,6 +13905,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-execution-state-types",
@@ -13904,7 +13915,6 @@ dependencies = [
  "reth-db",
  "reth-db-api",
  "reth-etl",
- "reth-fs-util",
  "reth-primitives-traits",
  "reth-provider",
  "reth-trie",
@@ -14212,6 +14222,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-execution-evm-blocks",
@@ -14224,7 +14235,6 @@ dependencies = [
  "itertools 0.14.0",
  "pin-project",
  "reth-engine-primitives",
- "reth-fs-util",
  "reth-primitives-traits",
  "serde",
  "serde_json",
@@ -14335,6 +14345,7 @@ dependencies = [
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
@@ -14353,7 +14364,6 @@ dependencies = [
  "reth-config",
  "reth-db-common",
  "reth-exex-types",
- "reth-fs-util",
  "reth-network",
  "reth-node-core",
  "reth-primitives-traits",
@@ -14410,15 +14420,6 @@ dependencies = [
  "reth-primitives-traits",
  "serde",
  "serde_with",
-]
-
-[[package]]
-name = "reth-fs-util"
-version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -14511,6 +14512,7 @@ dependencies = [
  "aquamarine",
  "auto_impl",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
@@ -14536,7 +14538,6 @@ dependencies = [
  "reth-ecies",
  "reth-eth-wire",
  "reth-eth-wire-types",
- "reth-fs-util",
  "reth-net-banlist",
  "reth-network",
  "reth-network-api",
@@ -14644,12 +14645,12 @@ name = "reth-nippy-jar"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-common-io-files",
  "bincode 1.3.3",
  "derive_more",
  "lz4_flex",
  "memmap2",
  "rand 0.9.5",
- "reth-fs-util",
  "serde",
  "tempfile",
  "thiserror 2.0.19",
@@ -14758,6 +14759,7 @@ dependencies = [
 name = "reth-node-metrics"
 version = "0.0.0"
 dependencies = [
+ "base-common-io-files",
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "bytes",
@@ -14774,7 +14776,6 @@ dependencies = [
  "pprof_util",
  "procfs",
  "reqwest",
- "reth-fs-util",
  "socket2 0.6.5",
  "tempfile",
  "tikv-jemalloc-ctl",
@@ -14835,6 +14836,7 @@ dependencies = [
  "alloy-primitives",
  "assert_matches",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "base-common-types-chain",
@@ -14853,7 +14855,6 @@ dependencies = [
  "reth-chain-state",
  "reth-db",
  "reth-db-api",
- "reth-fs-util",
  "reth-nippy-jar",
  "reth-primitives-traits",
  "reth-storage-overlay",

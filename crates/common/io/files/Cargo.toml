@@ -1,5 +1,5 @@
 [package]
-name = "reth-fs-util"
+name = "base-common-io-files"
 description = "Commonly used fs utils in reth."
 version.workspace = true
 edition.workspace = true
@@ -19,3 +19,6 @@ workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true, features = ["alloc", "std"] }
+
+[dev-dependencies]
+tempfile = { workspace = true, features = ["default"] }

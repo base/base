@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use alloy_primitives::{B256, hex};
 use arbitrary::Arbitrary;
+use base_common_io_files as fs;
 use base_common_types_chain::{EthereumTxEnvelope, Header, TxEip4844};
 use eyre::Result;
 use proptest::{
@@ -14,7 +15,6 @@ use reth_db_api::{
     table::{DupSort, Table, TableRow},
     tables,
 };
-use reth_fs_util as fs;
 use tracing::error;
 
 const VECTORS_FOLDER: &str = "testdata/micro/db";
@@ -31,7 +31,7 @@ pub fn generate_vectors(mut tables: Vec<String>) -> Result<()> {
     let rng = TestRng::from_seed(config.rng_algorithm, &seed.0);
     let mut runner = TestRunner::new_with_rng(config, rng);
 
-    fs::create_dir_all(VECTORS_FOLDER)?;
+    fs::Files::create_dir_all(VECTORS_FOLDER)?;
 
     macro_rules! generate_vector {
         ($table_type:ident$(<$($generic:ident),+>)?, $per_table:expr, TABLE) => {

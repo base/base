@@ -22,13 +22,13 @@ rmp-serde = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-config = { workspace = true }
-reth-fs-util = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
 base-node-context = { workspace = true }
+base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }

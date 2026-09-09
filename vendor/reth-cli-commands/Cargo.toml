@@ -31,7 +31,6 @@ reth-db-api = { workspace = true }
 reth-discv5 = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
-reth-fs-util = { workspace = true }
 reth-cli-util = { workspace = true }
 reth-eth-wire = { workspace = true }
 reth-provider = { workspace = true }
@@ -42,6 +41,7 @@ alloy-hardforks = { workspace = true }
 reth-node-events = { workspace = true }
 reth-static-file = { workspace = true }
 reth-node-metrics = { workspace = true }
+base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }

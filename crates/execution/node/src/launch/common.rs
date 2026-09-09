@@ -36,6 +36,11 @@ use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_chain_config::BaseChainSpec;
+use base_common_io_files as fs;
+use base_common_observability_tracing::{
+    throttle,
+    tracing::{debug, error, info, warn},
+};
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
@@ -52,7 +57,6 @@ use reth_db_common::init::{
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_engine_local::MiningMode;
 use reth_exex::ExExManagerHandle;
-use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
 use reth_node_core::{
     args::PruneConfigKind,
@@ -84,10 +88,6 @@ use reth_stages::{
 };
 use reth_static_file::{StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance};
 use reth_storage_overlay::OverlayManager;
-use base_common_observability_tracing::{
-    throttle,
-    tracing::{debug, error, info, warn},
-};
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,
@@ -330,7 +330,7 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
             let etl_path = EtlConfig::from_datadir(self.data_dir().data_dir());
             if etl_path.exists() {
                 // Remove etl-path files on launch
-                if let Err(err) = fs::remove_dir_all(&etl_path) {
+                if let Err(err) = fs::Files::remove_dir_all(&etl_path) {
                     warn!(target: "reth::cli", ?etl_path, %err, "Failed to remove ETL path on launch");
                 }
             }

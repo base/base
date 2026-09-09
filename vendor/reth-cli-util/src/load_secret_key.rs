@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use reth_fs_util::{self as fs, FsPathError};
+use base_common_io_files::{Files as fs, FsPathError};
 use secp256k1::{Error as SecretKeyBaseError, SecretKey};
 use thiserror::Error;
 

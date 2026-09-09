@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
+use base_common_observability_tracing::tracing::{info, warn};
 use eyre::Context;
 pub use reth_libmdbx::*;
-use base_common_observability_tracing::tracing::{info, warn};
 
 pub use crate::implementation::mdbx::*;
 use crate::{TableSet, Tables, is_database_empty};
@@ -83,7 +83,7 @@ pub fn create_db<P: AsRef<Path>>(path: P, args: DatabaseArguments) -> eyre::Resu
     warn_if_zfs(rpath);
 
     if is_database_empty(rpath) {
-        reth_fs_util::create_dir_all(rpath)
+        base_common_io_files::Files::create_dir_all(rpath)
             .wrap_err_with(|| format!("Could not create database directory {}", rpath.display()))?;
         create_db_version_file(rpath)?;
     } else {

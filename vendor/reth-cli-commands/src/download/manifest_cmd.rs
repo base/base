@@ -78,7 +78,7 @@ impl SnapshotManifestCommand {
         let num_components = manifest.components.len();
         let json = serde_json::to_string_pretty(&manifest)?;
         let output = self.output_dir.join("manifest.json");
-        reth_fs_util::write(&output, &json)?;
+        base_common_io_files::Files::write(&output, &json)?;
         info!(target: "reth::cli",
             path = ?output,
             components = num_components,

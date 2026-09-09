@@ -45,9 +45,9 @@ pub mod test_utils {
         sync::Arc,
     };
 
+    use base_common_io_files;
     use parking_lot::RwLock;
     use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
-    use reth_fs_util;
     use tempfile::TempDir;
 
     use super::*;
@@ -84,7 +84,7 @@ pub mod test_utils {
         fn drop(&mut self) {
             if let Some(db) = self.db.take() {
                 drop(db);
-                let _ = reth_fs_util::remove_dir_all(&self.path);
+                let _ = base_common_io_files::Files::remove_dir_all(&self.path);
             }
         }
     }
@@ -311,8 +311,11 @@ mod tests {
 
         // Database is not empty, version file is malformed
         {
-            reth_fs_util::write(path.path().join(db_version_file_path(&path)), "invalid-version")
-                .unwrap();
+            base_common_io_files::Files::write(
+                path.path().join(db_version_file_path(&path)),
+                "invalid-version",
+            )
+            .unwrap();
             let db = init_db(&path, args.clone());
             assert!(db.is_err());
             assert_matches!(
@@ -323,7 +326,8 @@ mod tests {
 
         // Database is not empty, version file contains not matching version
         {
-            reth_fs_util::write(path.path().join(db_version_file_path(&path)), "0").unwrap();
+            base_common_io_files::Files::write(path.path().join(db_version_file_path(&path)), "0")
+                .unwrap();
             let db = init_db(&path, args);
             assert!(db.is_err());
             assert_matches!(

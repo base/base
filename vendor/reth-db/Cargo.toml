@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 reth-db-api = { workspace = true }
-reth-fs-util = { workspace = true }
+base-common-io-files = { workspace = true }
 base-execution-state-types = {workspace = true}
 metrics = { workspace = true, optional = true }
 page_size = { workspace = true, optional = true }

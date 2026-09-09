@@ -7,7 +7,7 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
-use reth_fs_util::FsPathError;
+use base_common_io_files::FsPathError;
 
 /// Helper to parse a [Duration] from seconds
 pub fn parse_duration_from_secs(arg: &str) -> eyre::Result<Duration, std::num::ParseIntError> {
@@ -95,9 +95,9 @@ pub fn parse_socket_address(value: &str) -> eyre::Result<SocketAddr, SocketAddre
         .ok_or_else(|| SocketAddressParsingError::Parse(value.to_string()))
 }
 
-/// Wrapper around [`reth_fs_util::read_json_file`] which can be used as a clap value parser.
+/// Wrapper around [`base_common_io_files::Files::read_json_file`] which can be used as a clap value parser.
 pub fn read_json_from_file<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, FsPathError> {
-    reth_fs_util::read_json_file(Path::new(path))
+    base_common_io_files::Files::read_json_file(Path::new(path))
 }
 
 /// Parses an ether value from a string.

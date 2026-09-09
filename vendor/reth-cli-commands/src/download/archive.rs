@@ -4,10 +4,10 @@ use std::{
     time::Duration,
 };
 
+use base_common_io_files as fs;
 use eyre::Result;
 use futures::stream::{self, StreamExt};
 use reth_cli_util::cancellation::CancellationToken;
-use reth_fs_util as fs;
 use tokio::task;
 use tracing::{debug, info, warn};
 
@@ -35,7 +35,7 @@ pub(crate) async fn run_modular_downloads(
     cancel_token: CancellationToken,
 ) -> Result<()> {
     let download_cache_dir = target_dir.join(DOWNLOAD_CACHE_DIR);
-    fs::create_dir_all(&download_cache_dir)?;
+    fs::Files::create_dir_all(&download_cache_dir)?;
 
     let shared = SharedProgress::new(
         planned_downloads.total_download_size,
@@ -309,7 +309,7 @@ impl ArchiveProcessor {
     /// Extracts a cached archive file while updating shared extraction activity.
     fn extract_cached_archive(&self, archive_path: &Path, format: CompressionFormat) -> Result<()> {
         let mut extraction_progress = ArchiveExtractionProgress::new(self.ctx.session().progress());
-        let file = fs::open(archive_path)?;
+        let file = fs::Files::open(archive_path)?;
         let result = extract_archive_raw(
             file,
             format,

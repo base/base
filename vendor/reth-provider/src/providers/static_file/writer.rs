@@ -397,7 +397,9 @@ impl StaticFileProviderRW {
 
         // Get actual sidecar file size (may differ from header after crash)
         let actual_sidecar_blocks = if csoff_path.exists() {
-            let file_len = reth_fs_util::metadata(&csoff_path).map_err(ProviderError::other)?.len();
+            let file_len = base_common_io_files::Files::metadata(&csoff_path)
+                .map_err(ProviderError::other)?
+                .len();
             // Remove partial records from crash mid-write
             let aligned_len = file_len - (file_len % 16);
             aligned_len / 16

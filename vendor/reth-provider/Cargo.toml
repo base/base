@@ -24,9 +24,9 @@ itertools = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-api = { workspace = true }
 alloy-chains = { workspace = true }
-reth-fs-util = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-chain-state = { workspace = true }
+base-common-io-files = { workspace = true }
 reth-storage-overlay = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }

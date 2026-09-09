@@ -127,7 +127,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-exex](../../vendor/reth-exex/Cargo.toml) | Retain shared infrastructure |
 | [reth-exex-test-utils](../../vendor/reth-exex-test-utils/Cargo.toml) | Test support; retain or migrate |
 | [reth-exex-types](../../vendor/reth-exex-types/Cargo.toml) | Retain shared infrastructure |
-| [reth-fs-util](../../vendor/reth-fs-util/Cargo.toml) | Retain shared infrastructure |
+| [base-common-io-files](../../crates/common/io/files/Cargo.toml) | Retain shared infrastructure |
 | [reth-invalid-block-hooks](../../vendor/reth-invalid-block-hooks/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-ipc](../../vendor/reth-ipc/Cargo.toml) | Retain shared infrastructure |
 | [reth-libmdbx](../../vendor/reth-libmdbx/Cargo.toml) | Retain shared infrastructure |

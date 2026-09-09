@@ -36,7 +36,7 @@ pub fn write_config(config: &Config, data_dir: &Path) -> eyre::Result<bool> {
     }
 
     let toml_str = toml_0_9_12_spec_1_1_0::to_string_pretty(config)?;
-    reth_fs_util::write(&config_path, toml_str)?;
+    base_common_io_files::Files::write(&config_path, toml_str)?;
 
     info!(target: "reth::cli",
         path = ?config_path,

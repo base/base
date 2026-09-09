@@ -19,11 +19,11 @@ pub(crate) fn read_header_from_file<H>(path: &Path) -> Result<H, eyre::Error>
 where
     H: Decodable,
 {
-    let buf = if let Ok(content) = reth_fs_util::read_to_string(path) {
+    let buf = if let Ok(content) = base_common_io_files::Files::read_to_string(path) {
         alloy_primitives::hex::decode(content.trim())?
     } else {
         // If UTF-8 decoding fails, read as raw bytes
-        reth_fs_util::read(path)?
+        base_common_io_files::Files::read(path)?
     };
 
     let header = H::decode(&mut &buf[..])?;

@@ -155,7 +155,7 @@ members = [
   "vendor/reth-exex",
   "vendor/reth-exex-test-utils",
   "vendor/reth-exex-types",
-  "vendor/reth-fs-util",
+  "crates/common/io/files",
   "vendor/reth-invalid-block-hooks",
   "vendor/reth-libmdbx",
   "vendor/reth-mdbx-sys",
@@ -484,7 +484,7 @@ reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 reth-network = { path = "vendor/reth-network", default-features = false }
 reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }
-reth-fs-util = { path = "vendor/reth-fs-util", default-features = false }
+base-common-io-files = { path = "crates/common/io/files", default-features = false }
 reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
 reth-eth-wire = { path = "vendor/reth-eth-wire", default-features = false }
 reth-provider = { path = "vendor/reth-provider", default-features = false }

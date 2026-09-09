@@ -97,9 +97,9 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         let rocksdb_path = data_dir.rocksdb();
 
         if access.is_read_write() {
-            reth_fs_util::create_dir_all(&db_path)?;
-            reth_fs_util::create_dir_all(&sf_path)?;
-            reth_fs_util::create_dir_all(&rocksdb_path)?;
+            base_common_io_files::Files::create_dir_all(&db_path)?;
+            base_common_io_files::Files::create_dir_all(&sf_path)?;
+            base_common_io_files::Files::create_dir_all(&rocksdb_path)?;
         }
 
         let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());
@@ -139,7 +139,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
             // or created before RocksDB storage). Create an empty one so read-only
             // commands can proceed.
             debug!(target: "reth::cli", ?rocksdb_path, "RocksDB not found, initializing empty database");
-            reth_fs_util::create_dir_all(&rocksdb_path)?;
+            base_common_io_files::Files::create_dir_all(&rocksdb_path)?;
             let mut builder = RocksDBProvider::builder(data_dir.rocksdb())
                 .with_default_tables()
                 .with_database_log_level(self.db.log_level);

@@ -3,6 +3,7 @@ use std::{fs::File, io::BufReader};
 use alloy_eips::eip4895::Withdrawals;
 use alloy_primitives::{B256, Signature, TxKind, hex};
 use arbitrary::Arbitrary;
+use base_common_io_files as fs;
 use base_common_types_chain::{
     EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, TxEip4844, TxType,
     alloy::{
@@ -37,7 +38,6 @@ use reth_db::{
         StoredBlockWithdrawals,
     },
 };
-use reth_fs_util as fs;
 use reth_primitives_traits::{Account, Log, LogData, StorageEntry};
 use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
 
@@ -159,7 +159,7 @@ pub fn generate_vectors_with(generator: &[fn(&mut TestRunner) -> eyre::Result<()
     let rng = TestRng::from_seed(config.rng_algorithm, &seed.0);
     let mut runner = TestRunner::new_with_rng(config, rng);
 
-    fs::create_dir_all(VECTORS_FOLDER)?;
+    fs::Files::create_dir_all(VECTORS_FOLDER)?;
 
     for generate_fn in generator {
         generate_fn(&mut runner)?;
@@ -171,7 +171,7 @@ pub fn generate_vectors_with(generator: &[fn(&mut TestRunner) -> eyre::Result<()
 /// Reads multiple vectors of different types ensuring their correctness by decoding and
 /// re-encoding.
 pub fn read_vectors_with(read: &[fn() -> eyre::Result<()>]) -> Result<()> {
-    fs::create_dir_all(VECTORS_FOLDER)?;
+    fs::Files::create_dir_all(VECTORS_FOLDER)?;
     let mut errors = None;
 
     for read_fn in read {

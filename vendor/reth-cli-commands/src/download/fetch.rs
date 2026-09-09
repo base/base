@@ -11,10 +11,10 @@ use std::{
     time::Duration,
 };
 
+use base_common_io_files as fs;
 use eyre::Result;
 use reqwest::{StatusCode, blocking::Client as BlockingClient, header::RANGE};
 use reth_cli_util::cancellation::CancellationToken;
-use reth_fs_util as fs;
 use tracing::info;
 use url::Url;
 
@@ -88,18 +88,18 @@ impl DownloadPaths {
 
     /// Promotes the partial file into the final archive path.
     fn finalize(&self) -> Result<()> {
-        fs::rename(&self.part_path, &self.final_path)?;
+        fs::Files::rename(&self.part_path, &self.final_path)?;
         Ok(())
     }
 
     /// Removes only the partial `.part` file for the current archive.
     fn cleanup_partial(&self) {
-        let _ = fs::remove_file(&self.part_path);
+        let _ = fs::Files::remove_file(&self.part_path);
     }
 
     /// Removes both final and partial archive files so a fresh attempt can restart cleanly.
     fn cleanup_all(&self) {
-        let _ = fs::remove_file(&self.final_path);
+        let _ = fs::Files::remove_file(&self.final_path);
         self.cleanup_partial();
     }
 }
@@ -128,7 +128,7 @@ impl ArchiveFetcher {
         download_progress: Option<&mut ArchiveDownloadProgress<'_>>,
     ) -> Result<DownloadedArchive> {
         if let Some(path) = archive_file_url_path(&self.url)? {
-            let size = fs::metadata(&path)?.len();
+            let size = fs::Files::metadata(&path)?.len();
             if !self.quiet() {
                 info!(target: "reth::cli",
                     file = %path.display(),
@@ -210,7 +210,7 @@ impl ArchiveFetcher {
 
         for attempt in 1..=max_download_retries {
             let existing_size =
-                fs::metadata(self.paths.part_path()).map(|meta| meta.len()).unwrap_or(0);
+                fs::Files::metadata(self.paths.part_path()).map(|meta| meta.len()).unwrap_or(0);
 
             if let Some(total) = total_size
                 && existing_size >= total
@@ -290,7 +290,7 @@ impl ArchiveFetcher {
                     .open(self.paths.part_path())
                     .map_err(|error| fs::FsPathError::open(error, self.paths.part_path()))?
             } else {
-                fs::create_file(self.paths.part_path())?
+                fs::Files::create_file(self.paths.part_path())?
             };
 
             let start_offset = if is_partial { existing_size } else { 0 };
@@ -571,7 +571,7 @@ impl SegmentedDownload {
     fn run(self) -> Result<DownloadedArchive> {
         let Self { url, paths, total_size, plan, session } = self;
         {
-            let file = fs::create_file(paths.part_path())?;
+            let file = fs::Files::create_file(paths.part_path())?;
             file.set_len(total_size)?;
         }
 

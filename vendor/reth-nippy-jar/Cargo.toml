@@ -22,16 +22,18 @@ name = "reth_nippy_jar"
 memmap2 = { workspace = true }
 lz4_flex = { workspace = true }
 thiserror = { workspace = true }
-reth-fs-util = { workspace = true }
 bincode_1_3_3 = { workspace = true }
+base-common-io-files = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
 zstd = { workspace = true, features = ["default", "experimental", "zdict_builder"] }
+
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default", "small_rng"] }
+
 [features]
 default = []
 test-utils = []

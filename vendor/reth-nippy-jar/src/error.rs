@@ -15,7 +15,7 @@ pub enum NippyJarError {
 
     /// An error related to the file system occurred, wrapping a file system path error.
     #[error(transparent)]
-    FileSystem(#[from] reth_fs_util::FsPathError),
+    FileSystem(#[from] base_common_io_files::FsPathError),
 
     /// A custom error message provided by the user.
     #[error("{0}")]

@@ -3,6 +3,7 @@
 use std::{path::Path, rc::Rc, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
+use base_common_io_files as fs;
 use boyer_moore_magiclen::BMByte;
 use eyre::Result;
 use reth_db_api::{
@@ -12,7 +13,6 @@ use reth_db_api::{
     table::{Decode, Decompress, DupSort, Table, TableRow},
     transaction::{DbTx, DbTxMut},
 };
-use reth_fs_util as fs;
 use reth_provider::{ChainSpecProvider, DBProvider, ProviderFactory};
 use tracing::info;
 
@@ -140,17 +140,17 @@ impl DbTool {
     ) -> Result<()> {
         let db_path = db_path.as_ref();
         info!(target: "reth::cli", "Dropping database at {:?}", db_path);
-        fs::remove_dir_all(db_path)?;
+        fs::Files::remove_dir_all(db_path)?;
 
         let static_files_path = static_files_path.as_ref();
         info!(target: "reth::cli", "Dropping static files at {:?}", static_files_path);
-        fs::remove_dir_all(static_files_path)?;
-        fs::create_dir_all(static_files_path)?;
+        fs::Files::remove_dir_all(static_files_path)?;
+        fs::Files::create_dir_all(static_files_path)?;
 
         if exex_wal_path.as_ref().exists() {
             let exex_wal_path = exex_wal_path.as_ref();
             info!(target: "reth::cli", "Dropping ExEx WAL at {:?}", exex_wal_path);
-            fs::remove_dir_all(exex_wal_path)?;
+            fs::Files::remove_dir_all(exex_wal_path)?;
         }
 
         Ok(())

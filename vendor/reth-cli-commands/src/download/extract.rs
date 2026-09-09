@@ -9,11 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_io_files as fs;
 use eyre::{Result, WrapErr};
 use lz4::Decoder;
 use reqwest::blocking::Client as BlockingClient;
 use reth_cli_util::cancellation::CancellationToken;
-use reth_fs_util as fs;
 use tar::Archive;
 use tokio::task;
 use tracing::{info, warn};
@@ -224,7 +224,7 @@ fn record_extracted_file_bytes(
     progress: &ArchiveExtractionProgressHandle,
     extracted: &mut u64,
 ) {
-    let Ok(meta) = fs::metadata(entry_path) else { return };
+    let Ok(meta) = fs::Files::metadata(entry_path) else { return };
     let len = meta.len();
     if len > *extracted {
         progress.record_extracted(len - *extracted);
@@ -389,7 +389,7 @@ fn download_and_extract(
             "Extracting archive"
         );
     }
-    let file = fs::open(&downloaded_path)?;
+    let file = fs::Files::open(&downloaded_path)?;
 
     if quiet {
         extract_archive_raw(file, format, target_dir, None)?;

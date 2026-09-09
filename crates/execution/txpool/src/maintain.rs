@@ -12,6 +12,7 @@ use alloy_primitives::{
     map::{AddressSet, HashSet},
 };
 use base_common_chain_config::ChainSpecProvider;
+use base_common_io_files::FsPathError;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BlockHeader, transaction::TxHashRef};
 use base_execution_state_api::{BlockReaderIdExt, ProviderError, StateProviderFactory};
@@ -21,7 +22,6 @@ use futures_util::{
     future::{BoxFuture, Fuse, FusedFuture},
 };
 use reth_chain_state::CanonStateNotification;
-use reth_fs_util::FsPathError;
 use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -591,7 +591,7 @@ where
     }
 
     debug!(target: "txpool", txs_file =?file_path, "Check local persistent storage for saved transactions");
-    let data = reth_fs_util::read(file_path)?;
+    let data = base_common_io_files::Files::read(file_path)?;
 
     if data.is_empty() {
         return Ok(());
@@ -634,7 +634,7 @@ where
     .await;
 
     info!(target: "txpool", txs_file =?file_path, num_txs=%inserted.len(), "Successfully reinserted local transactions from file");
-    reth_fs_util::remove_file(file_path)?;
+    base_common_io_files::Files::remove_file(file_path)?;
     Ok(())
 }
 
@@ -669,7 +669,7 @@ where
     info!(target: "txpool", txs_file =?file_path, num_txs=%local_transactions.len(), "Saving current local transactions");
     let parent_dir = file_path.parent().map(std::fs::create_dir_all).transpose();
 
-    match parent_dir.map(|_| reth_fs_util::write(file_path, json_data)) {
+    match parent_dir.map(|_| base_common_io_files::Files::write(file_path, json_data)) {
         Ok(_) => {
             info!(target: "txpool", txs_file=?file_path, "Wrote local transactions to file");
         }
@@ -738,9 +738,9 @@ mod tests {
 
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{U256, hex};
+    use base_common_io_files as fs;
     use base_common_runtime_tasks::Runtime;
     use base_execution_evm_blocks::BaseEvmConfig;
-    use reth_fs_util as fs;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
@@ -802,7 +802,7 @@ mod tests {
 
         rt.graceful_shutdown();
 
-        let data = fs::read(transactions_path).unwrap();
+        let data = fs::Files::read(transactions_path).unwrap();
 
         let txs: Vec<TxBackup> = serde_json::from_slice::<Vec<TxBackup>>(&data).unwrap();
         assert_eq!(txs.len(), 1);

@@ -102,6 +102,7 @@ use std::{
 use crate::ChainSpecParser;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use archive::run_modular_downloads;
+use base_common_io_files as fs;
 use base_execution_state_types::PruneMode;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
@@ -114,7 +115,6 @@ use progress::{DownloadProgress, DownloadRequestLimiter};
 use reth_cli_util::cancellation::CancellationToken;
 use reth_db::{Database, init_db};
 use reth_db_api::transaction::DbTx;
-use reth_fs_util as fs;
 use reth_node_core::args::DefaultPruningValues;
 use source::{
     discover_manifest_url, fetch_manifest_from_source, fetch_snapshot_api_entries,
@@ -480,7 +480,7 @@ impl<C: ChainSpecParser> DownloadCommand<C> {
             if self.force {
                 clear_existing_datadir(target_dir)?;
             }
-            fs::create_dir_all(target_dir)?;
+            fs::Files::create_dir_all(target_dir)?;
 
             let request_limiter = DownloadRequestLimiter::new(self.download_concurrency.max(1));
             info!(target: "reth::cli",
@@ -514,7 +514,7 @@ impl<C: ChainSpecParser> DownloadCommand<C> {
         if self.force {
             clear_existing_datadir(target_dir)?;
         }
-        fs::create_dir_all(target_dir)?;
+        fs::Files::create_dir_all(target_dir)?;
         let startup_summary = summarize_download_startup(&planned.archives, target_dir)?;
         info!(target: "reth::cli",
             reusable = startup_summary.reusable,
@@ -903,11 +903,11 @@ fn clear_existing_datadir(target_dir: &Path) -> Result<()> {
             continue;
         }
 
-        let metadata = fs::metadata(&path)?;
+        let metadata = fs::Files::metadata(&path)?;
         if metadata.is_dir() {
-            fs::remove_dir_all(&path)?;
+            fs::Files::remove_dir_all(&path)?;
         } else if metadata.is_file() {
-            fs::remove_file(&path)?;
+            fs::Files::remove_file(&path)?;
         }
     }
 

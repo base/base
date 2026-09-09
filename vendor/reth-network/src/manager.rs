@@ -28,6 +28,7 @@ use std::{
 };
 
 use alloy_eip2124::EnrForkIdEntry;
+use base_common_io_files::{Files as fs, FsPathError};
 use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::shutdown::GracefulShutdown;
@@ -36,7 +37,6 @@ use base_execution_state_api::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use reth_eth_wire::DisconnectReason;
-use reth_fs_util::{self as fs, FsPathError};
 use reth_network_api::{
     EthProtocolInfo, NetworkEvent, NetworkStatus, PeerInfo, PeerRequest,
     events::{PeerEvent, SessionInfo},
@@ -448,7 +448,7 @@ impl NetworkManager {
     pub fn write_peers_to_file(&self, persistent_peers_file: &Path) -> Result<(), FsPathError> {
         let peers = self.swarm.peers().persistable_peers().collect::<Vec<_>>();
         persistent_peers_file.parent().map(fs::create_dir_all).transpose()?;
-        reth_fs_util::write_json_file(persistent_peers_file, &peers)?;
+        base_common_io_files::Files::write_json_file(persistent_peers_file, &peers)?;
         Ok(())
     }
 

@@ -433,7 +433,8 @@ impl RocksDBBuilder {
                 .parent()
                 .unwrap_or(&self.path)
                 .join(format!("rocksdb-secondary-tmp-{}", std::process::id()));
-            reth_fs_util::create_dir_all(&secondary_path).map_err(ProviderError::other)?;
+            base_common_io_files::Files::create_dir_all(&secondary_path)
+                .map_err(ProviderError::other)?;
 
             let db = DB::open_cf_descriptors_as_secondary(
                 &options,

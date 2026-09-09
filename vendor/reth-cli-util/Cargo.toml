@@ -19,7 +19,7 @@ serde = { workspace = true }
 cfg-if = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-fs-util = { workspace = true }
+base-common-io-files = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

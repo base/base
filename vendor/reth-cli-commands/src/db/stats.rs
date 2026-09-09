@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use base_common_io_files as fs;
 use base_execution_state_types::SegmentRangeInclusive;
 use clap::Parser;
 use comfy_table::{Cell, Row, Table as ComfyTable};
@@ -9,7 +10,6 @@ use itertools::Itertools;
 use reth_db::{mdbx, static_file::iter_static_files};
 use reth_db_api::{TableViewer, Tables, database::Database};
 use reth_db_common::DbTool;
-use reth_fs_util as fs;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
 
@@ -269,16 +269,16 @@ impl Command {
                 let columns = jar_provider.columns();
                 let rows = jar_provider.rows();
 
-                let data_size = fs::metadata(jar_provider.data_path())
+                let data_size = fs::Files::metadata(jar_provider.data_path())
                     .map(|metadata| metadata.len())
                     .unwrap_or_default();
-                let index_size = fs::metadata(jar_provider.index_path())
+                let index_size = fs::Files::metadata(jar_provider.index_path())
                     .map(|metadata| metadata.len())
                     .unwrap_or_default();
-                let offsets_size = fs::metadata(jar_provider.offsets_path())
+                let offsets_size = fs::Files::metadata(jar_provider.offsets_path())
                     .map(|metadata| metadata.len())
                     .unwrap_or_default();
-                let config_size = fs::metadata(jar_provider.config_path())
+                let config_size = fs::Files::metadata(jar_provider.config_path())
                     .map(|metadata| metadata.len())
                     .unwrap_or_default();
 

@@ -206,7 +206,7 @@ impl<H: NippyJarHeader> NippyJar<H> {
             .inspect_err(|e| {
                 warn!(?path, %e, "Failed to load static file jar");
             })
-            .map_err(|err| reth_fs_util::FsPathError::open(err, config_path))?;
+            .map_err(|err| base_common_io_files::FsPathError::open(err, config_path))?;
 
         let mut obj = Self::load_from_reader(io::BufReader::new(config_file))?;
         obj.path = path.to_path_buf();
@@ -261,7 +261,7 @@ impl<H: NippyJarHeader> NippyJar<H> {
         ] {
             if path.exists() {
                 debug!(target: "nippy-jar", ?path, "Removing file.");
-                reth_fs_util::remove_file(path)?;
+                base_common_io_files::Files::remove_file(path)?;
             }
         }
 
@@ -275,7 +275,9 @@ impl<H: NippyJarHeader> NippyJar<H> {
 
     /// Writes all necessary configuration to file.
     fn freeze_config(&self) -> Result<(), NippyJarError> {
-        Ok(reth_fs_util::atomic_write_file(&self.config_path(), |file| self.save_to_writer(file))?)
+        Ok(base_common_io_files::Files::atomic_write_file(&self.config_path(), |file| {
+            self.save_to_writer(file)
+        })?)
     }
 }
 

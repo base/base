@@ -10,7 +10,7 @@ pub type WalResult<T> = Result<T, WalError>;
 pub enum WalError {
     /// Filesystem error at the path
     #[error(transparent)]
-    FsPathError(#[from] reth_fs_util::FsPathError),
+    FsPathError(#[from] base_common_io_files::FsPathError),
     /// Directory entry reading error
     #[error("failed to get {0} directory entry: {1}")]
     DirEntry(PathBuf, std::io::Error),

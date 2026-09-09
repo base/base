@@ -1,8 +1,8 @@
 use std::{io::Read, path::Path};
 
+use base_common_io_files as fs;
 use blake3::Hasher;
 use eyre::Result;
-use reth_fs_util as fs;
 
 use super::{manifest::OutputFileChecksum, progress::ArchiveVerificationProgress};
 
@@ -37,7 +37,7 @@ impl<'a> OutputVerifier<'a> {
 
         for expected in output_files {
             let output_path = self.target_dir.join(&expected.path);
-            let meta = match fs::metadata(&output_path) {
+            let meta = match fs::Files::metadata(&output_path) {
                 Ok(meta) => meta,
                 Err(_) => return Ok(false),
             };
@@ -57,7 +57,7 @@ impl<'a> OutputVerifier<'a> {
     /// Removes any declared output files so a fresh archive attempt can restart cleanly.
     pub(crate) fn cleanup(&self, output_files: &[OutputFileChecksum]) {
         for output in output_files {
-            let _ = fs::remove_file(self.target_dir.join(&output.path));
+            let _ = fs::Files::remove_file(self.target_dir.join(&output.path));
         }
     }
 
@@ -66,7 +66,7 @@ impl<'a> OutputVerifier<'a> {
         path: &Path,
         mut progress: Option<&mut ArchiveVerificationProgress<'_>>,
     ) -> Result<String> {
-        let mut file = fs::open(path)?;
+        let mut file = fs::Files::open(path)?;
         let mut hasher = Hasher::new();
         let mut buf = [0_u8; 64 * 1024];
 
