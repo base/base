@@ -14,9 +14,11 @@ workspace = true
 [dependencies]
 url.workspace = true
 eyre.workspace = true
+backon.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
+base-retry.workspace = true
 base-metrics.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true

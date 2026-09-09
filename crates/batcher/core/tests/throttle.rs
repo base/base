@@ -238,7 +238,9 @@ fn test_throttle_transitions_from_active_to_inactive() {
 
         fn confirm(&mut self, _: SubmissionId, _: u64) {}
         fn requeue(&mut self, _: SubmissionId) {}
-        fn force_close_channel(&mut self) {}
+        fn flush(&mut self) -> Result<(), StepError> {
+            Ok(())
+        }
         fn advance_l1_head(&mut self, _: u64) {}
         fn reconcile_derivation(
             &mut self,

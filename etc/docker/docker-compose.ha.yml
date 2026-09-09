@@ -55,6 +55,7 @@ services:
       setup-conductor:
         condition: service_completed_successfully
     command:
+      - batcher
       - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
       - --l2-rpc-url

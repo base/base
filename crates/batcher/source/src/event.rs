@@ -16,7 +16,7 @@ pub enum L2BlockEvent {
     Block(Box<BaseBlock>),
     /// An L2 reorg was detected.
     Reorg,
-    /// Signal the driver to force-close the current channel and flush pending
+    /// Signal the driver to close the current channel and release pending
     /// frames as submissions without exhausting the source.
     ///
     /// The source remains open and the driver continues running, but the current

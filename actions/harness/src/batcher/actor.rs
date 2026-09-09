@@ -10,7 +10,6 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
@@ -25,9 +24,6 @@ pub struct BatcherConfig {
     pub batcher_address: alloy_primitives::Address,
     /// Batch inbox address on L1. Used as the `to` field on L1 transactions.
     pub inbox_address: alloy_primitives::Address,
-    /// Whether to encode blocks as [`SingleBatch`](base_protocol::SingleBatch)es
-    /// or a [`SpanBatch`](base_protocol::SpanBatch).
-    pub batch_type: BatchType,
     /// Encoder configuration forwarded to [`BatchEncoder`].
     pub encoder: EncoderConfig,
     /// L1 signer used to produce signed `TxEnvelope`s for production-mode DA tests.
@@ -44,7 +40,6 @@ impl Default for BatcherConfig {
         Self {
             batcher_address: l1_signer.address(),
             inbox_address: alloy_primitives::Address::repeat_byte(0xCA),
-            batch_type: BatchType::Single,
             encoder: EncoderConfig::default(),
             l1_signer,
         }
@@ -89,9 +84,9 @@ pub enum BatcherError {
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
-/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to force-close the current channel.
-/// 3. Wait for the ack, confirming the driver has encoded every resulting frame and
-///    handed it to the tx manager (not just the first).
+/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to close and release the current channel.
+/// 3. Wait for the ack, confirming the driver has handed every resulting submission
+///    to the tx manager (not just the first).
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
 ///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
 /// 5. Yield to let the driver confirm receipts and advance its L1 head.
@@ -141,9 +136,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     fn build(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
-        let mut encoder_config = config.encoder.clone();
-        encoder_config.batch_type = config.batch_type;
-        let pipeline = BatchEncoder::new(rollup_config, encoder_config);
+        let pipeline =
+            BatchEncoder::new(rollup_config, config.encoder.clone()).expect("valid encoder config");
 
         let (source, block_tx) = ChannelBlockSource::new();
 

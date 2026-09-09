@@ -32,6 +32,8 @@ pub use sequencer::{
 mod harness;
 pub use harness::ActionTestHarness;
 
+mod derivation_fixture;
+
 mod batcher;
 pub use batcher::{
     Batcher, BatcherConfig, BatcherError, Inner, L1MinerTxManager, L1SignedSubmission, Pending,

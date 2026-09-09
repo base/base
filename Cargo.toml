@@ -242,6 +242,7 @@ base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
+base-batcher-cli = { path = "crates/batcher/cli" }
 base-batcher-core = { path = "crates/batcher/core" }
 base-batcher-admin = { path = "crates/batcher/admin" }
 base-batcher-source = { path = "crates/batcher/source" }

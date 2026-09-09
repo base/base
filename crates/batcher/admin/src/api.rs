@@ -20,7 +20,7 @@ pub trait BatcherAdminApi {
     #[method(name = "stopBatcher")]
     async fn stop_batcher(&self) -> RpcResult<()>;
 
-    /// Force-close the current encoding channel, submitting any buffered frames.
+    /// Flush the current encoding channel, submitting any buffered frames.
     #[method(name = "flushBatcher")]
     async fn flush_batcher(&self) -> RpcResult<()>;
 

@@ -1,152 +1,28 @@
 //! Contains brotli compression utilities.
 
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
 
 use brotli::enc::{BrotliCompress, BrotliEncoderParams};
 
-use crate::{CompressorError, CompressorResult, CompressorWriter};
+use crate::BrotliLevel;
 
-/// The brotli encoding level used in Base.
-///
-/// See: <https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/derive/types.go#L50>
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BrotliLevel {
-    /// The fastest compression level.
-    Brotli9 = 9,
-    /// The default compression level.
-    Brotli10 = 10,
-    /// The highest compression level.
-    Brotli11 = 11,
-}
-
-impl From<BrotliLevel> for u32 {
-    fn from(level: BrotliLevel) -> Self {
-        level as Self
-    }
-}
-
-/// A Brotli Compression Error.
-#[derive(thiserror::Error, Debug)]
-pub enum BrotliCompressionError {
-    /// Unimplemented in `no_std` environments.
-    #[error("brotli compression is not supported in no_std environments")]
-    NoStd,
-    /// An error returned by the `std` brotli compression method.
-    #[error("Error from Brotli compression: {0}")]
-    CompressionError(#[from] std::io::Error),
-}
-
-/// The brotli compressor.
-///
-/// Raw input bytes are accumulated on every [`CompressorWriter::write`] call
-/// without compressing them. Compression is deferred until [`compressed_len`] or
-/// [`CompressorWriter::read`] is called, at which point the entire accumulated
-/// buffer is compressed once and cached until the next write invalidates it.
-///
-/// This eliminates the O(N²) re-compress-from-scratch behaviour that the
-/// previous eager implementation exhibited when filling a channel with many
-/// incremental block writes.
-///
-/// [`compressed_len`]: CompressorWriter::compressed_len
-#[derive(Debug, Clone)]
-pub struct BrotliCompressor {
-    /// The lazily-materialised compressed bytes.  Valid (non-dirty) only when
-    /// `dirty` is `false`.
-    compressed: RefCell<Vec<u8>>,
-    /// The raw accumulated input bytes.
-    raw: Vec<u8>,
-    /// Set to `true` when `raw` has been extended since the last compression
-    /// run, indicating that `compressed` is stale.
-    dirty: Cell<bool>,
-    /// The compression level.
-    level: BrotliLevel,
-}
+/// Stateless Brotli compression.
+#[derive(Debug)]
+pub struct BrotliCompressor;
 
 impl BrotliCompressor {
-    /// Creates a new brotli compressor with the given compression level.
-    pub fn new(level: impl Into<BrotliLevel>) -> Self {
-        let level = level.into();
-        Self {
-            compressed: RefCell::new(Vec::new()),
-            raw: Vec::new(),
-            dirty: Cell::new(false),
-            level,
-        }
-    }
-
-    /// Compresses `raw` into `compressed` if the dirty flag is set, then
-    /// clears the flag. [`compressed_len`] and [`read`] call this before
-    /// accessing the compressed buffer.
-    ///
-    /// [`compressed_len`]: CompressorWriter::compressed_len
-    /// [`read`]: CompressorWriter::read
-    fn ensure_compressed(&self) -> CompressorResult<()> {
-        if self.dirty.get() {
-            let c = Self::compress(&self.raw, self.level).map_err(|_| CompressorError::Brotli)?;
-            *self.compressed.borrow_mut() = c;
-            self.dirty.set(false);
-        }
-        Ok(())
-    }
-
     /// Compresses the given bytes data using the Brotli compressor implemented
     /// in the [`brotli`](https://crates.io/crates/brotli) crate.
     ///
-    /// Note: The level must be between 0 and 11. In Base, the levels 9, 10, and 11 are used.
-    ///       By default, [`BrotliLevel::Brotli10`] is used.
-    pub fn compress(
-        mut input: &[u8],
-        level: BrotliLevel,
-    ) -> Result<Vec<u8>, BrotliCompressionError> {
+    /// `level` is the Brotli encoder quality.
+    pub fn compress(mut input: &[u8], level: BrotliLevel) -> std::io::Result<Vec<u8>> {
         let mut output = alloc::vec![];
         BrotliCompress(
             &mut input,
             &mut output,
-            &BrotliEncoderParams { quality: level as i32, ..Default::default() },
+            &BrotliEncoderParams { quality: level.as_u32() as i32, ..Default::default() },
         )?;
         Ok(output)
-    }
-}
-
-impl From<BrotliLevel> for BrotliCompressor {
-    fn from(level: BrotliLevel) -> Self {
-        Self::new(level)
-    }
-}
-
-impl CompressorWriter for BrotliCompressor {
-    fn write(&mut self, data: &[u8]) -> CompressorResult<usize> {
-        // Accumulate raw bytes without compressing.  Compression is deferred
-        // to the first call that actually needs the compressed output.
-        self.raw.extend_from_slice(data);
-        self.compressed.borrow_mut().clear();
-        self.dirty.set(true);
-        Ok(data.len())
-    }
-
-    fn reset(&mut self) {
-        self.raw.clear();
-        self.compressed.borrow_mut().clear();
-        self.dirty.set(false);
-    }
-
-    fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
-        self.ensure_compressed()?;
-        let mut compressed = self.compressed.borrow_mut();
-        let len = compressed.len().min(buf.len());
-        buf[..len].copy_from_slice(&compressed[..len]);
-        compressed.drain(..len);
-        Ok(len)
-    }
-
-    fn compressed_len(&self) -> CompressorResult<usize> {
-        self.ensure_compressed()?;
-        Ok(self.compressed.borrow().len())
-    }
-
-    fn channel_version_byte(&self) -> Option<u8> {
-        Some(0x01)
     }
 }
 

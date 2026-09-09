@@ -5,7 +5,7 @@ use std::{net::SocketAddr, time::Duration};
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_encoder::EncoderConfig;
-use base_tx_manager::SignerConfig;
+use base_tx_manager::{SignerConfig, TxManagerConfig};
 use url::Url;
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding
@@ -69,10 +69,8 @@ pub struct BatcherConfig {
     pub encoder_config: EncoderConfig,
     /// Maximum number of in-flight (unconfirmed) transactions.
     pub max_pending_transactions: usize,
-    /// Number of L1 confirmations before a tx is considered finalized.
-    pub num_confirmations: usize,
-    /// Timeout before resubmitting a transaction.
-    pub resubmission_timeout: Duration,
+    /// Transaction manager configuration.
+    pub tx_manager: TxManagerConfig,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
     /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
@@ -100,8 +98,9 @@ pub struct BatcherConfig {
     /// initial sync — without this gate the initial backfill would race the
     /// node's derivation pipeline and could submit redundant data.
     pub wait_node_sync: bool,
-    /// Maximum time to wait for the rollup node to report sync when
-    /// [`wait_node_sync`](Self::wait_node_sync) is set.
+    /// Budget for retrying one-shot startup RPCs, and the maximum time to wait
+    /// for the rollup node to report sync when [`wait_node_sync`](Self::wait_node_sync)
+    /// is set.
     ///
     /// On expiry the service exits with an error rather than hanging
     /// indefinitely, giving operators a clear signal that the upstream node is
@@ -127,8 +126,7 @@ impl Default for BatcherConfig {
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
-            num_confirmations: 1,
-            resubmission_timeout: Duration::from_secs(48),
+            tx_manager: TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
             throttle: Some(ThrottleConfig::default()),
             check_recent_txs_depth: 0,
             admin_addr: None,
