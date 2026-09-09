@@ -4372,7 +4372,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-payload-builder",
  "base-execution-payload-types",
- "base-execution-txpool",
  "base-node-context",
  "base-node-core",
  "base-node-runner",

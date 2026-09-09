@@ -11,8 +11,7 @@ use eyre::Result;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig, NodeHooks,
-    node::BaseNode,
+    BaseNode, BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig, NodeHooks,
 };
 
 type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;

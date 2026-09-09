@@ -114,7 +114,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes> for BaseLocalPayload
 }
 
 /// Type configuration for a regular Base node.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BaseNode {
     /// Additional Base args
@@ -130,6 +130,19 @@ pub struct BaseNode {
     /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
+    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// captured authorization manifest before execution.
+    pub manifest_precheck_enabled: bool,
+    /// Resource metering by opcode for native payload admission.
+    pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    pub rejection_cache: RejectionCache,
+}
+
+impl Default for BaseNode {
+    fn default() -> Self {
+        Self::new(RollupArgs::default())
+    }
 }
 
 impl BaseNode {
@@ -139,6 +152,9 @@ impl BaseNode {
             args,
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            manifest_precheck_enabled: true,
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 
@@ -151,6 +167,24 @@ impl BaseNode {
     /// Configure the gas limit configuration for the payload builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
+        self
+    }
+
+    /// Configure whether EIP-8130 authorization manifests are checked before execution.
+    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
+        self.manifest_precheck_enabled = enabled;
+        self
+    }
+
+    /// Configure resource metering by opcode for the native payload builder.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
+    }
+
+    /// Configure the shared rejection cache for permanently rejected transactions.
+    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
+        self.rejection_cache = rejection_cache;
         self
     }
 
@@ -182,7 +216,10 @@ impl BaseNode {
             BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
-                    .with_gas_limit_config(self.gas_limit_config.clone()),
+                    .with_gas_limit_config(self.gas_limit_config.clone())
+                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
+                    .with_resource_metering(self.resource_metering.clone())
+                    .with_rejection_cache(self.rejection_cache.clone()),
             ),
             BaseNetworkBuilder::new(!discovery_v4),
         )

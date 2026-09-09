@@ -17,14 +17,11 @@ mod runner;
 pub use runner::{BaseNodeRunner, LaunchedBaseNode};
 
 mod types;
+pub use base_node_core::{BaseAddOns, BaseAddOnsBuilder, BaseNode};
 pub use types::{
     BaseNodeAddOns, BaseNodeBuilder, BaseNodeComponents, BaseNodeHandle, BaseNodeTypes,
     BaseProvider,
 };
-
-mod node;
-pub use base_node_core::{BaseAddOns, BaseAddOnsBuilder};
-pub use node::BaseNode;
 
 #[cfg(feature = "test-utils")]
 pub mod test_utils;

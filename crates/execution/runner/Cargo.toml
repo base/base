@@ -31,7 +31,6 @@ reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, optional = true}
 base-common-rpc-types-engine = { workspace = true, optional = true }
-base-execution-txpool = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
