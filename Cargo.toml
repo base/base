@@ -73,7 +73,7 @@ members = [
   "crates/execution/metering",
   "crates/execution/node",
   "crates/execution/node-context",
-  "crates/execution/payload",
+  "crates/execution/payload/builder",
   "crates/execution/payload-types",
   "crates/execution/rpc",
   "crates/execution/runner",
@@ -380,7 +380,7 @@ base-execution-txpool = { path = "crates/execution/txpool", default-features = f
 base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
 base-shadow-indexer = { path = "crates/execution/shadow-indexer", default-features = false }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
-base-execution-payload-builder = { path = "crates/execution/payload", default-features = false }
+base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc", default-features = false }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db", default-features = false }
 
