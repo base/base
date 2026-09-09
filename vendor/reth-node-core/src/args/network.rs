@@ -13,20 +13,23 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR;
+use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT as DEFAULT_DISCOVERY_PORT;
+use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
+use base_execution_network_types::IpFilter;
+use base_execution_network_types::NodeRecord;
+use base_execution_network_types::{TrustedPeer, mainnet_nodes};
 use clap::{
     Args,
     builder::{OsStr, Resettable},
 };
 use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
 use reth_config::Config;
-use reth_discv4::{DEFAULT_DISCOVERY_ADDR, DEFAULT_DISCOVERY_PORT, NodeRecord};
 use reth_discv5::{
     DEFAULT_COUNT_BOOTSTRAP_LOOKUPS, DEFAULT_DISCOVERY_V5_PORT,
     DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL, DEFAULT_SECONDS_LOOKUP_INTERVAL,
     discv5::ListenConfig,
 };
-use base_execution_network_types::IpFilter;
-use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
 use reth_network::{
     HelloMessageWithProtocols, NetworkConfigBuilder,
     transactions::{
@@ -47,7 +50,6 @@ use reth_network::{
         },
     },
 };
-use base_execution_network_types::{TrustedPeer, mainnet_nodes};
 use secp256k1::SecretKey;
 use tracing::error;
 
@@ -1173,9 +1175,9 @@ mod tests {
     };
 
     use base_common_chain_config::BaseChainSpec;
+    use base_execution_network_types::NodeRecord;
     use clap::Parser;
     use reth_config::Config;
-    use base_execution_network_types::NodeRecord;
     use secp256k1::SecretKey;
 
     use super::*;

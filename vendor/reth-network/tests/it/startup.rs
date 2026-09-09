@@ -4,8 +4,10 @@ use std::{
 };
 
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR;
+use base_execution_network_discovery::Discv4Config;
+use base_execution_network_discovery::NatResolver;
 use base_execution_state_api::NoopProvider;
-use reth_discv4::{DEFAULT_DISCOVERY_ADDR, Discv4Config, NatResolver};
 use reth_network::{
     Discovery, NetworkConfigBuilder, NetworkManager,
     error::{NetworkError, ServiceKind},

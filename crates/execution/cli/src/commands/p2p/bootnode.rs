@@ -2,16 +2,18 @@
 
 use std::{net::SocketAddr, path::PathBuf};
 
+use base_execution_network_discovery::Discv4;
+use base_execution_network_discovery::Discv4Config;
+use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
+use base_execution_network_discovery::NatResolver;
+use base_execution_network_types::NodeRecord;
 use base_node_core::BASE_V0_PROTOCOL_VERSION;
 use clap::Parser;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
-use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{
     Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
     discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
 };
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_types::NodeRecord;
 use secp256k1::SecretKey;
 use tokio::select;
 use tokio_stream::StreamExt;

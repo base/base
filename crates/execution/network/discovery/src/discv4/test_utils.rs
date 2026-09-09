@@ -13,8 +13,8 @@ use std::{
 
 use alloy_eip2124::{ForkHash, ForkId};
 use alloy_primitives::{B256, B512, hex};
-use rand_08::{Rng, RngCore, thread_rng};
 use base_execution_network_types::{NodeRecord, pk2id};
+use rand_08::{Rng, RngCore, thread_rng};
 use secp256k1::{SECP256K1, SecretKey};
 use tokio::{
     net::UdpSocket,
@@ -24,11 +24,10 @@ use tokio::{
 use tokio_stream::{Stream, StreamExt};
 use tracing::debug;
 
-use crate::{
-    Discv4, Discv4Config, Discv4Service, EgressSender, IngressEvent, IngressReceiver, PeerId,
-    SAFE_MAX_DATAGRAM_NEIGHBOUR_RECORDS,
+use crate::discv4::{
+    Discv4, Discv4Config, Discv4Service, Discv4Socket, EgressSender, IngressEvent, IngressReceiver,
+    PeerId, SAFE_MAX_DATAGRAM_NEIGHBOUR_RECORDS,
     proto::{FindNode, Message, Neighbours, NodeEndpoint, Packet, Ping, Pong},
-    receive_loop, send_loop,
 };
 
 /// Mock discovery node
@@ -69,10 +68,10 @@ impl MockDiscovery {
         let mut tasks = JoinSet::<()>::new();
 
         let udp = Arc::clone(&socket);
-        tasks.spawn(receive_loop(udp, ingress_tx, local_enr.id));
+        tasks.spawn(Discv4Socket::receive_loop(udp, ingress_tx, local_enr.id));
 
         let udp = Arc::clone(&socket);
-        tasks.spawn(send_loop(udp, egress_rx));
+        tasks.spawn(Discv4Socket::send_loop(udp, egress_rx));
 
         let (tx, command_rx) = mpsc::channel(128);
         let this = Self {
@@ -328,7 +327,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
-    use crate::Discv4Event;
+    use crate::discv4::Discv4Event;
 
     /// This test creates two local UDP sockets. The mocked discovery service responds to specific
     /// messages and we check the actual service receives answers

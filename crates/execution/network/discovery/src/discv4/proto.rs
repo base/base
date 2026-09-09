@@ -12,14 +12,14 @@ use alloy_rlp::{
     Decodable, Encodable, Error as RlpError, Header, RlpDecodable, RlpEncodable,
     RlpEncodableWrapper,
 };
-use enr::Enr;
 use base_execution_network_types::{NodeRecord, PeerId, pk2id};
+use enr::Enr;
 use secp256k1::{
     SECP256K1, SecretKey,
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 
-use crate::{MAX_PACKET_SIZE, MIN_PACKET_SIZE, error::DecodePacketError};
+use crate::discv4::{MAX_PACKET_SIZE, MIN_PACKET_SIZE, error::DecodePacketError};
 
 // Note: this is adapted from https://github.com/vorot93/discv4
 
@@ -596,7 +596,7 @@ mod tests {
     use rand_08::{Rng, RngCore, thread_rng as rng};
 
     use super::*;
-    use crate::{
+    use crate::discv4::{
         DEFAULT_DISCOVERY_PORT, SAFE_MAX_DATAGRAM_NEIGHBOUR_RECORDS,
         test_utils::{rng_endpoint, rng_ipv4_record, rng_ipv6_record, rng_message},
     };

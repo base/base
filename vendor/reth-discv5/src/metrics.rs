@@ -28,7 +28,7 @@ pub struct DiscoveredPeersMetrics {
     /// socket in their node record which is reachable from the local node. Only these peers make
     /// it into [`discv5_reth::Discv5`]'s kbuckets and will hence be included in queries.
     ///
-    /// Note: the definition of 'discovered' is not exactly synonymous in `reth_discv4::Discv4`.
+    /// Note: the definition of 'discovered' is not exactly synonymous in `base_execution_network_discovery::Discv4`.
     inserted_kbucket_peers_raw_total: Counter,
 
     ////////////////////////////////////////////////////////////////////////////////////////////////

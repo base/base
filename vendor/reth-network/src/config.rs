@@ -7,6 +7,11 @@ use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDRESS as DEFAULT_DISCOVERY_ADDRESS;
+use base_execution_network_discovery::Discv4Config;
+use base_execution_network_discovery::Discv4ConfigBuilder;
+use base_execution_network_discovery::DnsDiscoveryConfig;
+use base_execution_network_discovery::NatResolver;
 use base_execution_network_types::PeersConfig;
 use base_execution_network_types::SessionsConfig;
 use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
@@ -20,9 +25,7 @@ use base_execution_state_api::{
     BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
 };
-use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
-use base_execution_network_discovery::DnsDiscoveryConfig;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
@@ -372,7 +375,7 @@ impl NetworkConfigBuilder {
     /// [`NetworkConfigBuilder::discovery_addr`].
     ///
     /// By default, both are on the same port:
-    /// [`DEFAULT_DISCOVERY_PORT`](reth_discv4::DEFAULT_DISCOVERY_PORT)
+    /// [`DEFAULT_DISCOVERY_PORT`](base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT)
     pub const fn set_addrs(self, addr: SocketAddr) -> Self {
         self.listener_addr(addr).discovery_addr(addr)
     }
@@ -387,7 +390,7 @@ impl NetworkConfigBuilder {
 
     /// Sets the port of the address the network will listen on.
     ///
-    /// By default, this is [`DEFAULT_DISCOVERY_PORT`](reth_discv4::DEFAULT_DISCOVERY_PORT)
+    /// By default, this is [`DEFAULT_DISCOVERY_PORT`](base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT)
     pub fn listener_port(mut self, port: u16) -> Self {
         self.listener_addr.get_or_insert(DEFAULT_DISCOVERY_ADDRESS).set_port(port);
         self
@@ -401,7 +404,7 @@ impl NetworkConfigBuilder {
 
     /// Sets the port of the address the discovery network will listen on.
     ///
-    /// By default, this is [`DEFAULT_DISCOVERY_PORT`](reth_discv4::DEFAULT_DISCOVERY_PORT)
+    /// By default, this is [`DEFAULT_DISCOVERY_PORT`](base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT)
     pub fn discovery_port(mut self, port: u16) -> Self {
         self.discovery_addr.get_or_insert(DEFAULT_DISCOVERY_ADDRESS).set_port(port);
         self

@@ -10,6 +10,8 @@ use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::B256;
 use base_common_runtime_tasks::{EventSender, EventStream};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
+use base_execution_network_discovery::Discv4;
+use base_execution_network_discovery::NatResolver;
 use base_execution_network_types::PeerAddr;
 use base_execution_network_types::PeerKind;
 use base_execution_network_types::Reputation;
@@ -23,7 +25,6 @@ use base_execution_network_wire::SharedTransactions;
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
-use reth_discv4::{Discv4, NatResolver};
 use reth_discv5::Discv5;
 use reth_network_api::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,

@@ -5,12 +5,12 @@ use std::time::Duration;
 use alloy_primitives::map::HashSet;
 use base_common_observability_tracing::init_test_tracing;
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_discovery::Discv4Config;
 use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::HeadersDirection;
 use base_execution_state_api::NoopProvider;
 use futures::StreamExt;
-use reth_discv4::Discv4Config;
 use reth_network::{
     BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
     NetworkManager, PeersConfig,

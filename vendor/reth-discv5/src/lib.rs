@@ -19,11 +19,11 @@ use std::{
 use ::enr::Enr;
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::bytes::Bytes;
+use base_execution_network_types::{NodeRecord, PeerId};
 use enr::{EnrCombinedKeyWrapper, discv4_id_to_discv5_id};
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{Rng, RngCore};
-use base_execution_network_types::{NodeRecord, PeerId};
 use secp256k1::SecretKey;
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, trace};
@@ -252,7 +252,7 @@ impl Discv5 {
 
                 // node has been inserted into kbuckets
 
-                // `replaced` partly covers `reth_discv4::DiscoveryUpdate::Removed(_)`
+                // `replaced` partly covers `base_execution_network_discovery::Discv4DiscoveryUpdate::Removed(_)`
 
                 self.metrics.discovered_peers.increment_kbucket_insertions(1);
 
@@ -260,7 +260,7 @@ impl Discv5 {
             }
             discv5_reth::Event::SessionEstablished(enr, remote_socket) => {
                 // this branch is semantically similar to branches of
-                // `reth_discv4::DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
+                // `base_execution_network_discovery::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
                 // `DiscoveryUpdate::DiscoveredAtCapacity(_)
 
                 // peer has been discovered as part of query, or, by incoming session (peer has
@@ -276,7 +276,7 @@ impl Discv5 {
                 node_id: _,
             } => {
                 // this branch is semantically similar to branches of
-                // `reth_discv4::DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
+                // `base_execution_network_discovery::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
                 // `DiscoveryUpdate::DiscoveredAtCapacity(_)
 
                 // peer has been discovered as part of query, or, by an outgoing session (but peer

@@ -9,18 +9,20 @@ use std::{
 };
 
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
-use enr::Enr;
-use futures::StreamExt;
-use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
-use reth_discv5::{DiscoveredPeer, Discv5};
+use base_execution_network_discovery::Discv4;
+use base_execution_network_discovery::Discv4Config;
+use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
 use base_execution_network_discovery::DnsDiscoveryConfig;
 use base_execution_network_discovery::DnsDiscoveryHandle;
 use base_execution_network_discovery::DnsDiscoveryService;
 use base_execution_network_discovery::DnsNodeRecordUpdate;
 use base_execution_network_discovery::DnsResolver;
-use reth_network_api::{DiscoveredEvent, DiscoveryEvent};
-use base_execution_network_types::{NodeRecord, PeerId};
 use base_execution_network_types::PeerAddr;
+use base_execution_network_types::{NodeRecord, PeerId};
+use enr::Enr;
+use futures::StreamExt;
+use reth_discv5::{DiscoveredPeer, Discv5};
+use reth_network_api::{DiscoveredEvent, DiscoveryEvent};
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
@@ -76,7 +78,7 @@ pub struct Discovery {
 impl Discovery {
     /// Spawns the discovery service.
     ///
-    /// This will spawn the [`reth_discv4::Discv4Service`] onto a new task and establish a listener
+    /// This will spawn the [`base_execution_network_discovery::Discv4Service`] onto a new task and establish a listener
     /// channel to receive all discovered nodes.
     pub async fn new(
         tcp_addr: SocketAddr,
@@ -499,7 +501,7 @@ mod tests {
         .unwrap();
     }
 
-    use reth_discv4::Discv4ConfigBuilder;
+    use base_execution_network_discovery::Discv4ConfigBuilder;
     use reth_discv5::{enr::EnrCombinedKeyWrapper, enr_to_discv4_id};
     use tracing::trace;
 

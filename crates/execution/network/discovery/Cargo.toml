@@ -16,36 +16,43 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-enr = { workspace = true }
+enr = {workspace = true}
 thiserror = {workspace = true}
+itertools = { workspace = true }
+alloy-eip2124 = {workspace = true}
+discv5-reth = { workspace = true }
 futures-util = { workspace = true }
-alloy-eip2124 = { workspace = true }
 if-addrs_0_14_0 = { workspace = true }
 linked_hash_set = { workspace = true }
-serde = { workspace = true, optional = true }
+serde = {optional = true, workspace = true}
 dashmap = { workspace = true, features = ["inline"] }
+schnellru = {workspace = true, features = ["default"]}
 tracing = {workspace = true, features = ["attributes"]}
-schnellru = { workspace = true, features = ["default"] }
-tokio-stream = { workspace = true, features = ["default"] }
+tokio-stream = {workspace = true, features = ["default"]}
+parking_lot = { workspace = true, features = ["default"] }
 data-encoding = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 tokio = {workspace = true, features = ["io-util", "net", "time"]}
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 base-common-runtime-tasks = { workspace = true, features = ["time"] }
+rand_08 = { workspace = true, optional = true, features = ["default"] }
 serde_with = {workspace = true, optional = true, features = ["macros"]}
 hickory-resolver = { workspace = true, features = ["default", "tokio"] }
-base-execution-network-types = { workspace = true, features = ["secp256k1"] }
-secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "serde"] }
+alloy-primitives = {workspace = true, features = ["map-foldhash", "rand"]}
+base-execution-network-types = {workspace = true, features = ["secp256k1", "std"]}
+secp256k1 = {workspace = true, features = ["global-context", "recovery", "serde", "std"]}
 
 [dev-dependencies]
 alloy-chains = { workspace = true }
+assert_matches = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-observability-tracing = {workspace = true, features = ["default"]}
+secp256k1 = {workspace = true, features = ["global-context", "rand", "recovery"]}
 tokio = {workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"]}
-secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 
 [features]
 default = ["serde"]
@@ -55,9 +62,13 @@ serde = [
     "dashmap/serde",
     "dep:serde",
     "dep:serde_with",
+    "discv5-reth/serde",
     "enr/serde",
     "hickory-resolver/serde",
     "linked_hash_set/serde",
+    "parking_lot/serde",
     "rand/serde",
+    "rand_08?/serde",
     "secp256k1/serde",
 ]
+test-utils = ["dep:rand_08"]

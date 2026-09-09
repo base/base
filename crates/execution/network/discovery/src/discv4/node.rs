@@ -3,7 +3,7 @@ use base_execution_network_types::{NodeRecord, PeerId};
 
 /// The key type for the table.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) struct NodeKey(pub(crate) PeerId);
+pub struct NodeKey(pub PeerId);
 
 impl From<PeerId> for NodeKey {
     fn from(value: PeerId) -> Self {
@@ -24,8 +24,10 @@ impl From<&NodeRecord> for NodeKey {
     }
 }
 
-/// Converts a `PeerId` into the required `Key` type for the table
-#[inline]
-pub(crate) fn kad_key(node: PeerId) -> discv5_reth::Key<NodeKey> {
-    discv5_reth::kbucket::Key::from(NodeKey::from(node))
+impl NodeKey {
+    /// Converts a `PeerId` into the required `Key` type for the table
+    #[inline]
+    pub fn kad_key(node: PeerId) -> discv5_reth::Key<NodeKey> {
+        discv5_reth::kbucket::Key::from(NodeKey::from(node))
+    }
 }

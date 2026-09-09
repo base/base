@@ -25,7 +25,7 @@
 //!
 //!        * Responds to incoming ETH related requests: `Headers`, `Bodies`
 //!
-//!    - `Discovery Task`: is a spawned [`Discv4`](reth_discv4::Discv4) future that handles peer
+//!    - `Discovery Task`: is a spawned [`Discv4`](base_execution_network_discovery::Discv4) future that handles peer
 //!      discovery and emits new peers to the `Network`
 //!
 //!    - [`NetworkManager`] task advances the state of the `Network`, which includes:
@@ -177,9 +177,9 @@ pub use swarm::NetworkConnectionState;
 
 /// re-export types crates
 pub mod types {
+    pub use base_execution_network_discovery::NatResolver;
     pub use base_execution_network_types::*;
     pub use base_execution_network_wire::*;
-    pub use reth_discv4::NatResolver;
 }
 
 use aquamarine as _;

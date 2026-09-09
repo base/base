@@ -1,28 +1,4 @@
-//! Discovery v4 implementation: <https://github.com/ethereum/devp2p/blob/master/discv4.md>
-//!
-//! Discv4 employs a kademlia-like routing table to store and manage discovered peers and topics.
-//! The protocol allows for external IP discovery in NAT environments through regular PING/PONG's
-//! with discovered nodes. Nodes return the external IP address that they have received and a simple
-//! majority is chosen as our external IP address. If an external IP address is updated, this is
-//! produced as an event to notify the swarm (if one is used for this behaviour).
-//!
-//! This implementation consists of a [`Discv4`] and [`Discv4Service`] pair. The service manages the
-//! state and drives the UDP socket. The (optional) [`Discv4`] serves as the frontend to interact
-//! with the service via a channel. Whenever the underlying table changes service produces a
-//! [`DiscoveryUpdate`] that listeners will receive.
-//!
-//! ## Feature Flags
-//!
-//! - `serde` (default): Enable serde support
-//! - `test-utils`: Export utilities for testing
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+//! UDP discovery v4 service and routing table.
 
 use std::{
     cell::RefCell,
@@ -38,6 +14,7 @@ use std::{
 
 use alloy_eip2124::ForkId;
 use alloy_primitives::{B256, bytes::Bytes, hex};
+use base_execution_network_types::{PeerId, pk2id};
 use discv5_reth::{
     ConnectionDirection, ConnectionState, kbucket,
     kbucket::{
@@ -48,8 +25,6 @@ use discv5_reth::{
 use enr::Enr;
 use itertools::Itertools;
 use parking_lot::Mutex;
-use proto::{EnrRequest, EnrResponse};
-use base_execution_network_types::{PeerId, pk2id};
 use secp256k1::SecretKey;
 use tokio::{
     net::UdpSocket,
@@ -60,33 +35,29 @@ use tokio::{
 use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
 use tracing::{debug, trace};
 
-use crate::{
-    error::{DecodePacketError, Discv4Error},
-    proto::{FindNode, Message, Neighbours, Packet, Ping, Pong},
-};
-
-pub mod error;
-pub mod proto;
+mod error;
+pub use error::*;
+mod proto;
+pub use proto::*;
 
 mod config;
 pub use config::{Discv4Config, Discv4ConfigBuilder};
 
 mod node;
-use node::{NodeKey, kad_key};
+pub use node::NodeKey;
 
 mod table;
 
 // reexport NodeRecord primitive
-pub use base_execution_network_types::NodeRecord;
+use base_execution_network_types::NodeRecord;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-use base_execution_network_discovery::ResolveNatInterval;
-/// reexport to get public ip.
-pub use base_execution_network_discovery::NatResolver;
+use crate::ResolveNatInterval;
 
-use crate::table::PongTable;
+pub use table::NodeKey as PongNodeKey;
+pub use table::PongTable;
 
 /// The default address for discv4 via UDP
 ///
@@ -152,8 +123,8 @@ const UDP_MESSAGE_POLL_LOOP_BUDGET: i32 = 4;
 type EgressSender = mpsc::Sender<(Bytes, SocketAddr)>;
 type EgressReceiver = mpsc::Receiver<(Bytes, SocketAddr)>;
 
-pub(crate) type IngressSender = mpsc::Sender<IngressEvent>;
-pub(crate) type IngressReceiver = mpsc::Receiver<IngressEvent>;
+pub type IngressSender = mpsc::Sender<IngressEvent>;
+pub type IngressReceiver = mpsc::Receiver<IngressEvent>;
 
 type NodeRecordSender = OneshotSender<Vec<NodeRecord>>;
 
@@ -213,7 +184,7 @@ impl Discv4 {
     /// Binds a new `UdpSocket` and creates the service
     ///
     /// ```
-    /// use reth_discv4::{Discv4, Discv4Config};
+    /// use base_execution_network_discovery::{Discv4, Discv4Config};
     /// use base_execution_network_types::{pk2id, NodeRecord, PeerId};
     /// use secp256k1::SECP256K1;
     /// use std::{net::SocketAddr, str::FromStr};
@@ -562,7 +533,7 @@ impl Discv4Service {
     ///
     /// If `ingress_tx` is `Some`, the receive loop is spawned to read from the socket. If `None`,
     /// the caller feeds packets into `ingress_rx` externally (shared socket mode).
-    pub(crate) fn new(
+    pub fn new(
         socket: Arc<UdpSocket>,
         ingress_tx: Option<IngressSender>,
         ingress_rx: IngressReceiver,
@@ -576,11 +547,11 @@ impl Discv4Service {
 
         if let Some(ingress_tx) = ingress_tx {
             let udp = Arc::clone(&socket);
-            tasks.spawn(receive_loop(udp, ingress_tx, local_node_record.id));
+            tasks.spawn(Discv4Socket::receive_loop(udp, ingress_tx, local_node_record.id));
         }
 
         let udp = Arc::clone(&socket);
-        tasks.spawn(send_loop(udp, egress_rx));
+        tasks.spawn(Discv4Socket::send_loop(udp, egress_rx));
 
         let kbuckets = KBucketsTable::new(
             NodeKey::from(&local_node_record).into(),
@@ -684,8 +655,8 @@ impl Discv4Service {
         self.lookup_interval = tokio::time::interval(duration);
     }
 
-    /// Sets the external Ip to the configured external IP if [`NatResolver::ExternalIp`] or
-    /// [`NatResolver::ExternalAddr`]. In the case of [`NatResolver::ExternalAddr`], it will return
+    /// Sets the external Ip to the configured external IP if [`crate::NatResolver::ExternalIp`] or
+    /// [`crate::NatResolver::ExternalAddr`]. In the case of [`crate::NatResolver::ExternalAddr`], it will return
     /// the first IP address found for the domain associated with the discv4 UDP port.
     fn resolve_external_ip(&mut self) {
         if let Some(r) = &self.resolve_external_ip_interval
@@ -734,7 +705,7 @@ impl Discv4Service {
 
     /// Returns true if the given `PeerId` is currently in the bucket
     pub fn contains_node(&self, id: PeerId) -> bool {
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         self.kbuckets.get_index(&key).is_some()
     }
 
@@ -752,7 +723,7 @@ impl Discv4Service {
     pub fn bootstrap(&mut self) {
         for record in self.config.bootstrap_nodes.clone() {
             debug!(target: "discv4", ?record, "pinging boot node");
-            let key = kad_key(record.id);
+            let key = NodeKey::kad_key(record.id);
             let entry = NodeEntry::new(record);
 
             // insert the boot node in the table
@@ -831,7 +802,7 @@ impl Discv4Service {
     /// the request has finished.
     fn lookup_with(&mut self, target: PeerId, tx: Option<NodeRecordSender>) {
         trace!(target: "discv4", ?target, "Starting lookup");
-        let target_key = kad_key(target);
+        let target_key = NodeKey::kad_key(target);
 
         // Start a lookup context with the 16 (MAX_NODES_PER_BUCKET) closest nodes to which we have
         // a valid endpoint proof
@@ -941,7 +912,7 @@ impl Discv4Service {
     /// This allows applications, for whatever reason, to remove nodes from the local routing
     /// table. Returns `true` if the node was in the table and `false` otherwise.
     pub fn remove_node(&mut self, node_id: PeerId) -> bool {
-        let key = kad_key(node_id);
+        let key = NodeKey::kad_key(node_id);
         self.remove_key(node_id, key)
     }
 
@@ -950,7 +921,7 @@ impl Discv4Service {
     ///
     /// Returns `true` if the node was removed
     pub fn soft_remove_node(&mut self, node_id: PeerId) -> bool {
-        let key = kad_key(node_id);
+        let key = NodeKey::kad_key(node_id);
         let Some(bucket) = self.kbuckets.get_bucket(&key) else { return false };
         if bucket.num_entries() < MAX_NODES_PER_BUCKET / 2 {
             // skip half empty bucket
@@ -988,7 +959,7 @@ impl Discv4Service {
     where
         F: FnOnce(&NodeEntry) -> R,
     {
-        let key = kad_key(peer_id);
+        let key = NodeKey::kad_key(peer_id);
         match self.kbuckets.entry(&key) {
             BucketEntry::Present(entry, _) => Some(f(entry.value())),
             BucketEntry::Pending(entry, _) => Some(f(entry.value())),
@@ -1012,7 +983,7 @@ impl Discv4Service {
             last_enr_seq = None;
         }
 
-        let key = kad_key(record.id);
+        let key = NodeKey::kad_key(record.id);
         let old_enr = match self.kbuckets.entry(&key) {
             kbucket::Entry::Present(mut entry, _) => {
                 entry.value_mut().update_with_enr(last_enr_seq)
@@ -1051,7 +1022,7 @@ impl Discv4Service {
         // node
         let has_enr_seq = last_enr_seq.is_some();
 
-        let key = kad_key(record.id);
+        let key = NodeKey::kad_key(record.id);
         match self.kbuckets.entry(&key) {
             kbucket::Entry::Present(mut entry, old_status) => {
                 // endpoint is now proven
@@ -1105,7 +1076,7 @@ impl Discv4Service {
     /// Returns `true` if the record was added successfully, and `false` if the node is either
     /// already in the table or the record's bucket is full.
     pub fn add_node(&mut self, record: NodeRecord) -> bool {
-        let key = kad_key(record.id);
+        let key = NodeKey::kad_key(record.id);
         match self.kbuckets.entry(&key) {
             kbucket::Entry::Absent(entry) => {
                 let node = NodeEntry::new(record);
@@ -1131,7 +1102,7 @@ impl Discv4Service {
     }
 
     /// Encodes the packet, sends it and returns the hash.
-    pub(crate) fn send_packet(&self, msg: Message, to: SocketAddr) -> B256 {
+    pub fn send_packet(&self, msg: Message, to: SocketAddr) -> B256 {
         let (payload, hash) = msg.encode(&self.secret_key);
         trace!(target: "discv4", r#type=?msg.msg_type(), ?to, ?hash, "sending packet");
         let _ = self.egress.try_send((payload, to)).map_err(|err| {
@@ -1173,7 +1144,7 @@ impl Discv4Service {
         }
         .into_ipv4_mapped();
 
-        let key = kad_key(record.id);
+        let key = NodeKey::kad_key(record.id);
 
         // See also <https://github.com/ethereum/devp2p/blob/master/discv4.md#ping-packet-0x01>:
         // > If no communication with the sender of this ping has occurred within the last 12h, a
@@ -1314,7 +1285,7 @@ impl Discv4Service {
     /// Sends a ping message to the node's UDP address.
     ///
     /// Returns the echo hash of the ping message.
-    pub(crate) fn send_ping(&mut self, node: NodeRecord, reason: PingReason) -> B256 {
+    pub fn send_ping(&mut self, node: NodeRecord, reason: PingReason) -> B256 {
         let remote_addr = node.udp_addr();
         let id = node.id;
         let ping = Ping {
@@ -1334,7 +1305,7 @@ impl Discv4Service {
     /// Sends an enr request message to the node's UDP address.
     ///
     /// Returns the echo hash of the ping message.
-    pub(crate) fn send_enr_request(&mut self, node: NodeRecord) {
+    pub fn send_enr_request(&mut self, node: NodeRecord) {
         if !self.config.enable_eip868 {
             return;
         }
@@ -1426,7 +1397,7 @@ impl Discv4Service {
             }
 
             if resp.echo_hash == msg.request_hash {
-                let key = kad_key(id);
+                let key = NodeKey::kad_key(id);
                 let fork_id = msg.eth_fork_id();
                 let (record, old_fork_id) = match self.kbuckets.entry(&key) {
                     kbucket::Entry::Present(mut entry, _) => {
@@ -1541,7 +1512,7 @@ impl Discv4Service {
             ctx.filter_closest(ALPHA, |node| !self.pending_find_nodes.contains_key(&node.id));
 
         for closest in closest {
-            let key = kad_key(closest.id);
+            let key = NodeKey::kad_key(closest.id);
             match self.kbuckets.entry(&key) {
                 BucketEntry::Absent(entry) => {
                     // the node's endpoint is not proven yet, so we need to ping it first, on
@@ -1602,7 +1573,7 @@ impl Discv4Service {
 
     /// Sends a Neighbours packet for `target` to the given addr
     fn respond_closest(&mut self, target: PeerId, to: SocketAddr) {
-        let key = kad_key(target);
+        let key = NodeKey::kad_key(target);
         let expire = self.send_neighbours_expiration();
 
         let enforce_eip868 = self.config.enable_eip868 && self.config.enforce_eip868_neighbours;
@@ -1695,7 +1666,7 @@ impl Discv4Service {
         trace!(target: "discv4", num=%failed_find_nodes.len(), "processing failed find nodes");
 
         for node_id in failed_find_nodes {
-            let key = kad_key(node_id);
+            let key = NodeKey::kad_key(node_id);
             let failures = match self.kbuckets.entry(&key) {
                 kbucket::Entry::Present(mut entry, _) => {
                     entry.value_mut().inc_failed_request();
@@ -1796,7 +1767,7 @@ impl Discv4Service {
     /// To prevent traffic amplification attacks, implementations must verify that the sender of a
     /// query participates in the discovery protocol. The sender of a packet is considered verified
     /// if it has sent a valid Pong response with matching ping hash within the last 12 hours.
-    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Discv4Event> {
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Discv4Event> {
         loop {
             // drain buffered events first
             if let Some(event) = self.queued_events.pop_front() {
@@ -2002,40 +1973,46 @@ pub enum Discv4Event {
     Terminated,
 }
 
-/// Continuously reads new messages from the channel and writes them to the socket
-pub(crate) async fn send_loop(udp: Arc<UdpSocket>, rx: EgressReceiver) {
-    let mut stream = ReceiverStream::new(rx);
-    while let Some((payload, to)) = stream.next().await {
-        match udp.send_to(&payload, to).await {
-            Ok(size) => {
-                trace!(target: "discv4", ?to, ?size,"sent payload");
-            }
-            Err(err) => {
-                debug!(target: "discv4", ?to, %err,"Failed to send datagram.");
-            }
-        }
-    }
-}
-
 /// Rate limits the number of incoming packets from individual IPs to 1 packet/second
 const MAX_INCOMING_PACKETS_PER_MINUTE_BY_IP: usize = 60usize;
 
-/// Continuously awaits new incoming messages and sends them back through the channel.
-///
-/// The receive loop enforces primitive rate limiting for IPs to prevent message spams from
-/// individual IPs.
-pub(crate) async fn receive_loop(udp: Arc<UdpSocket>, tx: IngressSender, local_id: PeerId) {
-    let mut handler = IngressHandler::new(tx, local_id);
-    let mut buf = [0; MAX_PACKET_SIZE];
-    loop {
-        let res = udp.recv_from(&mut buf).await;
-        match res {
-            Err(err) => {
-                debug!(target: "discv4", %err, "Failed to read datagram.");
-                handler.send(IngressEvent::RecvError(err)).await;
+/// Runs the UDP receive and send tasks for discovery v4.
+#[derive(Debug)]
+pub struct Discv4Socket;
+
+impl Discv4Socket {
+    /// Continuously reads new messages from the channel and writes them to the socket
+    pub async fn send_loop(udp: Arc<UdpSocket>, rx: EgressReceiver) {
+        let mut stream = ReceiverStream::new(rx);
+        while let Some((payload, to)) = stream.next().await {
+            match udp.send_to(&payload, to).await {
+                Ok(size) => {
+                    trace!(target: "discv4", ?to, ?size,"sent payload");
+                }
+                Err(err) => {
+                    debug!(target: "discv4", ?to, %err,"Failed to send datagram.");
+                }
             }
-            Ok((read, remote_addr)) => {
-                handler.handle_packet(&buf[..read], remote_addr).await;
+        }
+    }
+
+    /// Continuously awaits new incoming messages and sends them back through the channel.
+    ///
+    /// The receive loop enforces primitive rate limiting for IPs to prevent message spams from
+    /// individual IPs.
+    pub async fn receive_loop(udp: Arc<UdpSocket>, tx: IngressSender, local_id: PeerId) {
+        let mut handler = IngressHandler::new(tx, local_id);
+        let mut buf = [0; MAX_PACKET_SIZE];
+        loop {
+            let res = udp.recv_from(&mut buf).await;
+            match res {
+                Err(err) => {
+                    debug!(target: "discv4", %err, "Failed to read datagram.");
+                    handler.send(IngressEvent::RecvError(err)).await;
+                }
+                Ok((read, remote_addr)) => {
+                    handler.handle_packet(&buf[..read], remote_addr).await;
+                }
             }
         }
     }
@@ -2182,7 +2159,7 @@ enum Discv4Command {
 
 /// Event type receiver produces
 #[derive(Debug)]
-pub(crate) enum IngressEvent {
+pub enum IngressEvent {
     /// Encountered an error when reading a datagram message.
     RecvError(io::Error),
     /// Received a bad message
@@ -2309,7 +2286,7 @@ impl LookupContext {
 
     /// Inserts the node if it's missing
     fn add_node(&self, record: NodeRecord) {
-        let distance = self.inner.target.distance(&kad_key(record.id));
+        let distance = self.inner.target.distance(&NodeKey::kad_key(record.id));
         let mut closest = self.inner.closest_nodes.borrow_mut();
         if let btree_map::Entry::Vacant(entry) = closest.entry(distance) {
             entry.insert(QueryNode { record, queried: false, responded: false });
@@ -2571,11 +2548,13 @@ mod tests {
     use alloy_eip2124::{EnrForkIdEntry, ForkHash};
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable};
-    use rand_08::Rng;
     use base_execution_network_types::mainnet_nodes;
+    use rand_08::Rng;
 
     use super::*;
-    use crate::test_utils::{create_discv4, create_discv4_with_config, rng_endpoint, rng_record};
+    use crate::discv4::test_utils::{
+        create_discv4, create_discv4_with_config, rng_endpoint, rng_record,
+    };
 
     #[tokio::test]
     async fn test_configured_enr_forkid_entry() {
@@ -2725,7 +2704,7 @@ mod tests {
         let id = PeerId::random();
         service.on_ping(ping, addr, id, B256::random());
 
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         match service.kbuckets.entry(&key) {
             kbucket::Entry::Present(entry, _) => {
                 let node_addr = entry.value().record.address;
@@ -2757,7 +2736,7 @@ mod tests {
         let id = PeerId::random();
         service.on_ping(ping, addr, id, B256::random());
 
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         match service.kbuckets.entry(&key) {
             kbucket::Entry::Absent(_) => {}
             _ => unreachable!(),
@@ -2772,7 +2751,7 @@ mod tests {
         let (_discv4, mut service) = create_discv4_with_config(config.clone()).await;
 
         let id = PeerId::random();
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         let record = NodeRecord::new("0.0.0.0:0".parse().unwrap(), id);
 
         let _ = service.kbuckets.insert_or_update(
@@ -2805,7 +2784,7 @@ mod tests {
         let (_discv4, mut service2) = create_discv4_with_config(config).await;
 
         let id = PeerId::random();
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         let record = NodeRecord::new("0.0.0.0:0".parse().unwrap(), id);
 
         let _ = service.kbuckets.insert_or_update(
@@ -2860,10 +2839,10 @@ mod tests {
         let config = Discv4Config::builder().build();
         let (_discv4, mut service) = create_discv4_with_config(config).await;
 
-        let target_key = kad_key(PeerId::random());
+        let target_key = NodeKey::kad_key(PeerId::random());
 
         let id = PeerId::random();
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         let record = NodeRecord::new("0.0.0.0:0".parse().unwrap(), id);
 
         let _ = service.kbuckets.insert_or_update(
@@ -2896,7 +2875,7 @@ mod tests {
         let target = PeerId::random();
 
         let id = PeerId::random();
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         let record = NodeRecord::new("0.0.0.0:0".parse().unwrap(), id);
 
         let _ = service.kbuckets.insert_or_update(
@@ -2930,7 +2909,7 @@ mod tests {
         let target = PeerId::random();
 
         let id = PeerId::random();
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         let record = NodeRecord::new("0.0.0.0:0".parse().unwrap(), id);
 
         let mut entry = NodeEntry::new_proven(record);
@@ -2987,7 +2966,7 @@ mod tests {
         let (_disv4, mut service) = create_discv4_with_config(config).await;
 
         let id = PeerId::random();
-        let key = kad_key(id);
+        let key = NodeKey::kad_key(id);
         let record = NodeRecord::new("0.0.0.0:0".parse().unwrap(), id);
 
         let _ = service.kbuckets.insert_or_update(
@@ -3094,7 +3073,7 @@ mod tests {
         assert_eq!(event, Discv4Event::Ping);
 
         // node is now in the table but not connected yet
-        let key1 = kad_key(*service_1.local_peer_id());
+        let key1 = NodeKey::kad_key(*service_1.local_peer_id());
         match service_2.kbuckets.entry(&key1) {
             kbucket::Entry::Present(_entry, status) => {
                 assert!(!status.is_connected());
@@ -3107,7 +3086,7 @@ mod tests {
         assert_eq!(event, Discv4Event::Pong);
 
         // endpoint is proven
-        let key2 = kad_key(*service_2.local_peer_id());
+        let key2 = NodeKey::kad_key(*service_2.local_peer_id());
         match service_1.kbuckets.entry(&key2) {
             kbucket::Entry::Present(_entry, status) => {
                 assert!(status.is_connected());
@@ -3156,7 +3135,7 @@ mod tests {
         );
 
         let new_record = rng_record(&mut rand_08::thread_rng());
-        let key = kad_key(new_record.id);
+        let key = NodeKey::kad_key(new_record.id);
         match kbuckets.entry(&key) {
             kbucket::Entry::Absent(entry) => {
                 let node = NodeEntry::new(new_record);
@@ -3218,7 +3197,7 @@ mod tests {
     }
 
     fn insert_proven_node(service: &mut Discv4Service, record: NodeRecord) {
-        let key = kad_key(record.id);
+        let key = NodeKey::kad_key(record.id);
         let _ = service.kbuckets.insert_or_update(
             &key,
             NodeEntry::new_proven(record),

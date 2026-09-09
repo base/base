@@ -6,15 +6,17 @@ use std::{
     sync::Arc,
 };
 
+use base_execution_network_discovery::Discv4;
+use base_execution_network_discovery::Discv4Config;
+use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
+use base_execution_network_discovery::NatResolver;
+use base_execution_network_types::NodeRecord;
 use clap::Parser;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
-use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{
     Config, Discv5,
     discv5::{self, Event, ListenConfig},
 };
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_types::NodeRecord;
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};
 use tokio_stream::StreamExt;

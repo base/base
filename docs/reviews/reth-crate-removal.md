@@ -97,7 +97,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-db-api](../../vendor/reth-db-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-db-common](../../vendor/reth-db-common/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Consolidate; retain required code |
-| [reth-discv4](../../vendor/reth-discv4/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [reth-discv5](../../vendor/reth-discv5/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [reth-downloaders](../../vendor/reth-downloaders/Cargo.toml) | Retain shared infrastructure |
