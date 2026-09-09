@@ -12,15 +12,6 @@ The crate also provides the interactive terminal monitor for block production,
 node sync status, flashblock throughput, and system metrics, plus the
 non-interactive `basectl flashblocks` JSON-lines stream.
 
-## Cobalt Readiness
-
-The upgrades monitor attaches `BaseTime` checks to Cobalt, using the live consensus
-node's `optimism_rollupConfig` Cobalt timestamp. `CobaltChecker` checks a hash-pinned
-L2 snapshot for `BaseTime` installation, update metadata and receipt, storage/getter
-agreement, 200ms cadence, and millisecond RPC fields. Active-only checks start at
-Cobalt; an absent or later Denim activation does not change their readiness state.
-Denim remains visible in the upgrade schedule without separate `BaseTime` checks.
-
 ## Pods View
 
 `basectl monitor pods` displays Kubernetes pod status from groups defined in a
