@@ -12,7 +12,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
-use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
+use base_protocol::L2BlockInfo;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -254,13 +254,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             return Ok(state.sync_state.unsafe_head());
         }
 
-        BaseTimeUpdateTx::validate_block_timestamp(
-            &self.rollup_config,
-            &block.body.transactions,
-            block.header.number,
-            block.header.timestamp,
-        )?;
-
         // Insert the new payload.
         let insert_time_start = Instant::now();
         let response = match execution_payload {
@@ -388,15 +381,12 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::{
-        BaseTimeScheduleError, BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo,
-    };
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 
     use super::{InsertPayloadPolicy, InsertPayloadSafety, InsertTask};
     use crate::{
-        Engine, EngineTaskError, EngineTaskErrorSeverity, EngineTaskExt, InsertTaskError,
+        Engine, EngineTaskExt, InsertTaskError,
         test_utils::{TestEngineStateBuilder, test_engine_client_builder},
     };
 
@@ -453,36 +443,6 @@ mod tests {
 
     fn bedrock_payload(block_number: u64) -> BaseExecutionPayload {
         bedrock_payload_with_parent(block_number, B256::ZERO)
-    }
-
-    fn cobalt_config() -> Arc<RollupConfig> {
-        Arc::new(RollupConfig {
-            block_time: 2,
-            upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { cobalt: Some(2), ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-    }
-
-    fn cobalt_payload(
-        block_number: u64,
-        timestamp: u64,
-        timestamp_millis_part: u16,
-    ) -> BaseExecutionPayload {
-        let BaseExecutionPayload::V1(mut payload) = bedrock_payload(block_number) else {
-            unreachable!()
-        };
-        payload.timestamp = timestamp;
-        payload.transactions.push(
-            BaseTxEnvelope::from(
-                BaseTimeUpdateTx::new(timestamp_millis_part).unwrap().into_deposit_tx(block_number),
-            )
-            .encoded_2718()
-            .into(),
-        );
-        BaseExecutionPayload::V1(payload)
     }
 
     fn canyon_payload(block_number: u64) -> BaseExecutionPayload {
@@ -649,85 +609,6 @@ mod tests {
             "stale unsafe payload should not be sent to engine_newPayload"
         );
         assert_eq!(state.sync_state.unsafe_head(), current_unsafe);
-    }
-
-    #[tokio::test]
-    async fn cobalt_schedule_mismatch_is_rejected_before_new_payload() {
-        let client = test_client();
-        let mut state = TestEngineStateBuilder::new().build();
-
-        for (payload, expected_error) in [
-            (
-                cobalt_payload(2, 3, 200),
-                BaseTimeScheduleError::InvalidTimestamp { expected: 2, actual: 3 },
-            ),
-            (
-                cobalt_payload(2, 2, 400),
-                BaseTimeScheduleError::InvalidTimestampMillisPart { expected: 200, actual: 400 },
-            ),
-        ] {
-            let error = InsertTask::unsafe_payload(
-                Arc::clone(&client),
-                cobalt_config(),
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: None,
-                    execution_payload: payload,
-                },
-            )
-            .execute_with_result(&mut state)
-            .await
-            .unwrap_err();
-
-            assert_eq!(error.severity(), EngineTaskErrorSeverity::Critical);
-            assert!(matches!(
-                &error,
-                InsertTaskError::InvalidBaseTimeSchedule(actual) if *actual == expected_error
-            ));
-        }
-
-        assert!(client.last_new_payload_v2().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn local_cobalt_schedule_mismatch_is_returned_to_caller() {
-        let client = test_client();
-        let mut state = TestEngineStateBuilder::new().build();
-        let envelope = BaseExecutionPayloadEnvelope {
-            parent_beacon_block_root: None,
-            execution_payload: cobalt_payload(2, 3, 200),
-        };
-
-        let error = InsertTask::new(
-            Arc::clone(&client),
-            cobalt_config(),
-            envelope,
-            InsertPayloadSafety::Unsafe,
-        )
-        .execute(&mut state)
-        .await
-        .unwrap_err();
-
-        assert!(matches!(error, InsertTaskError::InvalidBaseTimeSchedule(_)));
-        assert!(client.last_new_payload_v2().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn stale_unsafe_payload_is_dropped_before_schedule_validation() {
-        let client = test_client();
-        let current_unsafe = l2_block_info(4, B256::with_last_byte(4), B256::with_last_byte(3));
-        let mut state = TestEngineStateBuilder::new().with_unsafe_head(current_unsafe).build();
-        let envelope = BaseExecutionPayloadEnvelope {
-            parent_beacon_block_root: None,
-            execution_payload: cobalt_payload(2, 3, 200),
-        };
-
-        let result = InsertTask::unsafe_payload(Arc::clone(&client), cobalt_config(), envelope)
-            .execute_with_result(&mut state)
-            .await
-            .expect("stale payload should be dropped before validation");
-
-        assert_eq!(result, current_unsafe);
-        assert!(client.last_new_payload_v2().await.is_none());
     }
 
     #[tokio::test]
