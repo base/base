@@ -2,7 +2,6 @@
 
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
-use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, address, b256, bytes};
 use base_common_consensus::{
     BaseReceipt, BaseTransactionSigned, Block, BlockBody, Header, Predeploys, SignableTransaction,

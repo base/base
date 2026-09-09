@@ -29,7 +29,6 @@ use reth_rpc_builder::{
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use reth_storage_overlay::OverlayManager;
 use reth_tracing::tracing::{debug, info};
-use reth_trie_common::KeccakKeyHasher;
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
@@ -688,7 +687,7 @@ impl BasicEngineValidatorBuilder {
         tree_config: TreeConfig,
         overlay_manager: OverlayManager,
     ) -> eyre::Result<BasicEngineValidator<Node::Provider, BaseEngineValidator>> {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain));
+        let validator = BaseEngineValidator::new(Arc::clone(&ctx.config.chain));
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = InvalidBlockHookBuilder::build(
             ctx.config,

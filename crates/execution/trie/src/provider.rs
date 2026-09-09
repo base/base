@@ -16,9 +16,8 @@ use reth_trie::{
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
+    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 use revm::{
     database::BundleState,
@@ -227,7 +226,7 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
     for BaseProofsStateProviderRef<'a, Storage>
 {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
+        Ok(HashedPostState::from_bundle_state(bundle_state.state()))
     }
 }
 

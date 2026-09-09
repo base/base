@@ -3516,8 +3516,7 @@ mod tests {
     use reth_storage_api::{MetadataProvider, MetadataWriter, StateReadProvider};
     use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{
-        HashedPostState, KeccakKeyHasher, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey,
-        SortedTrieData,
+        HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
     };
     use revm::{database::BundleState, state::AccountInfo};
 
@@ -4421,7 +4420,7 @@ mod tests {
 
     #[test]
     fn test_write_state_and_historical_read_hashed() {
-        use reth_trie::{HashedPostState, KeccakKeyHasher};
+        use reth_trie::HashedPostState;
         use revm::{database::BundleState, state::AccountInfo};
 
         let factory = create_test_provider_factory();
@@ -4485,8 +4484,7 @@ mod tests {
             )
             .unwrap();
 
-        let hashed_state =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle.state()).into_sorted();
+        let hashed_state = HashedPostState::from_bundle_state(bundle.state()).into_sorted();
         provider_rw.write_hashed_state(&hashed_state).unwrap();
 
         let plain_storage_entries = provider_rw
@@ -4598,8 +4596,7 @@ mod tests {
 
             let bundle = builder.build();
 
-            let hashed_state =
-                HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle.state()).into_sorted();
+            let hashed_state = HashedPostState::from_bundle_state(bundle.state()).into_sorted();
 
             let header = Header {
                 number: block_num,
@@ -4830,8 +4827,7 @@ mod tests {
             )
             .unwrap();
 
-        let hashed_state =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle.state()).into_sorted();
+        let hashed_state = HashedPostState::from_bundle_state(bundle.state()).into_sorted();
         provider_rw.write_hashed_state(&hashed_state).unwrap();
 
         let hashed_account = provider_rw

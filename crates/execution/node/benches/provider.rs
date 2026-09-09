@@ -13,7 +13,7 @@ use reth_provider::{
     ExecutionOutcome, ProviderFactory, StorageSettingsCache,
     test_utils::{MockNodeDatabase, create_test_provider_factory},
 };
-use reth_trie::{HashedPostState, KeccakKeyHasher};
+use reth_trie::HashedPostState;
 use revm::{database::BundleState, state::AccountInfo};
 
 const HISTORY_BLOCKS: u64 = 128;
@@ -44,8 +44,7 @@ impl HistoricalReadFixture {
             .expect("genesis hash should exist");
         let blocks = Self::blocks(genesis_hash);
         let bundle = Self::bundle();
-        let hashed_state =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle.state()).into_sorted();
+        let hashed_state = HashedPostState::from_bundle_state(bundle.state()).into_sorted();
         let execution_outcome =
             ExecutionOutcome::new(bundle, vec![Vec::new(); HISTORY_BLOCKS as usize], 1, Vec::new());
 

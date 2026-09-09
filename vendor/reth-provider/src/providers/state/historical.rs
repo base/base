@@ -18,8 +18,8 @@ use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
-    ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof,
-    MultiProofTargets, StateRoot, StorageMultiProof, StorageRoot, TrieInput, TrieInputSorted,
+    ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
+    StorageMultiProof, StorageRoot, TrieInput, TrieInputSorted,
     hashed_cursor::{HashedPostStateCursorFactory, zero_destroyed_account_storage},
     proof::{Proof, StorageProof},
     trie_cursor::InMemoryTrieCursorFactory,
@@ -627,8 +627,7 @@ where
         &self,
         bundle_state: &revm::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
-        let mut hashed_state =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state());
+        let mut hashed_state = HashedPostState::from_bundle_state(bundle_state.state());
         if !bundle_state
             .state()
             .values()

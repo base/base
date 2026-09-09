@@ -42,9 +42,6 @@ pub use target_v2::{
     ChunkedMultiProofTargetsV2, MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent,
 };
 
-mod key;
-pub use key::{KeccakKeyHasher, KeyHasher};
-
 mod nibbles;
 pub use nibbles::{
     Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, StoredNibbles, StoredNibblesSubKey,

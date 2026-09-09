@@ -49,7 +49,7 @@ use reth_stages_api::{Pipeline, StageSet};
 use reth_static_file::StaticFileProducer;
 use reth_storage_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
 use reth_testing_utils::generators::{self, generate_key};
-use reth_trie::{DatabaseStateRoot, HashedPostState, KeccakKeyHasher, StateRoot};
+use reth_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
 type TestProviderFactory =
@@ -555,7 +555,7 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
     };
     let child_was_destroyed =
         output.state.account(&child_contract).is_some_and(|account| account.was_destroyed());
-    let hashed_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(output.state.state());
+    let hashed_state = HashedPostState::from_bundle_state(output.state.state());
     let block = execute_and_commit_block(
         &provider_factory,
         &evm_config,

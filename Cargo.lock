@@ -4361,7 +4361,6 @@ dependencies = [
  "reth-tokio-util",
  "reth-tracing",
  "reth-trie",
- "reth-trie-common",
  "revm",
  "rstest",
  "secp256k1 0.30.0",

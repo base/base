@@ -12,7 +12,6 @@ use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
-use reth_trie_common::KeccakKeyHasher;
 use secp256k1::Keypair;
 
 pub(crate) fn to_execution_outcome(
@@ -68,7 +67,7 @@ where
     let execution_outcome = to_execution_outcome(block.number(), &block_execution_output);
 
     // Commit the block's execution outcome to the database
-    let hashed_state = execution_outcome.hash_state_slow::<KeccakKeyHasher>().into_sorted();
+    let hashed_state = execution_outcome.hash_state_slow().into_sorted();
     let provider_rw = provider_factory.provider_rw()?;
     provider_rw.append_blocks_with_state(vec![block.clone()], &execution_outcome, hashed_state)?;
     provider_rw.commit()?;
@@ -182,7 +181,7 @@ where
     execution_outcome.state_mut().reverts.sort();
 
     // Commit the block's execution outcome to the database
-    let hashed_state = execution_outcome.hash_state_slow::<KeccakKeyHasher>().into_sorted();
+    let hashed_state = execution_outcome.hash_state_slow().into_sorted();
     let provider_rw = provider_factory.provider_rw()?;
     provider_rw.append_blocks_with_state(
         vec![block1.clone(), block2.clone()],

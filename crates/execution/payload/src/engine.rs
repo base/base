@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, keccak256};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTxEnvelope, BlockHeader, Predeploys};
 use base_common_evm::BaseTime;
@@ -14,7 +14,7 @@ use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_engine_primitives::{InsertBlockErrorKind, PayloadValidator};
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProvider, StateProviderBox, errors::ProviderResult};
-use reth_trie_common::{HashedPostState, KeyHasher};
+use reth_trie_common::HashedPostState;
 
 use crate::BaseExecutionPayloadValidator;
 
@@ -27,8 +27,8 @@ pub struct BaseEngineValidator {
 
 impl BaseEngineValidator {
     /// Instantiates a new validator.
-    pub fn new<KH: KeyHasher>(chain_spec: Arc<BaseChainSpec>) -> Self {
-        let hashed_addr_l2tol1_msg_passer = KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER);
+    pub fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
+        let hashed_addr_l2tol1_msg_passer = keccak256(Predeploys::L2_TO_L1_MESSAGE_PASSER);
         Self {
             inner: BaseExecutionPayloadValidator::new(chain_spec),
             hashed_addr_l2tol1_msg_passer,
@@ -267,14 +267,13 @@ mod tests {
         noop::NoopProvider,
         test_utils::{ExtendedAccount, MockEthProvider},
     };
-    use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
 
     const COBALT_TIMESTAMP: u64 = 1_800_000_001;
 
     fn validator_with_chain_spec(chain_spec: BaseChainSpec) -> BaseEngineValidator {
-        BaseEngineValidator::new::<KeccakKeyHasher>(Arc::new(chain_spec))
+        BaseEngineValidator::new(Arc::new(chain_spec))
     }
 
     fn validator() -> BaseEngineValidator {

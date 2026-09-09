@@ -143,7 +143,7 @@ use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
 use reth_tasks::LazyHandle;
 use reth_trie::{
-    HashedPostState, KeccakKeyHasher, LazyTrieData, hashed_cursor::HashedCursorFactory,
+    HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
 use revm::database::{BundleAccount, State, states::bundle_state::BundleRetention};
@@ -721,9 +721,7 @@ where
                 if let Some(Ok(state)) = hashed_state_rx.as_mut().map(|rx| rx.recv()) {
                     state
                 } else {
-                    Arc::new(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
-                        hashed_state_output.state.state(),
-                    ))
+                    Arc::new(HashedPostState::from_bundle_state(hashed_state_output.state.state()))
                 }
             });
 

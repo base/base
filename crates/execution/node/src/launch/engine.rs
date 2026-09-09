@@ -30,7 +30,6 @@ use reth_storage_overlay::OverlayManager;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, error, info};
-use reth_trie_common::KeccakKeyHasher;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -393,7 +392,7 @@ impl EngineNodeLauncher {
             execution: BaseExecutionHandle {
                 driver: beacon_engine_handle,
                 payload_builder: ctx.node_adapter().payload_builder_handle().clone(),
-                validator: BaseEngineValidator::new::<KeccakKeyHasher>(
+                validator: BaseEngineValidator::new(
                     ctx.node_adapter().evm_config().chain_spec().clone(),
                 ),
             },

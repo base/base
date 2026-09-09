@@ -14,7 +14,7 @@ use reth_primitives_traits::Account;
 use revm::database::BundleAccount;
 
 use crate::{
-    KeyHasher, MultiProofTargets, Nibbles,
+    MultiProofTargets, Nibbles,
     added_removed_keys::MultiAddedRemovedKeys,
     prefix_set::{PrefixSetMut, TriePrefixSetsMut},
     utils::{extend_sorted_vec, kway_merge_disjoint_sorted, kway_merge_sorted},
@@ -44,13 +44,13 @@ impl HashedPostState {
     /// Hashes all changed accounts and storage entries that are currently stored in the bundle
     /// state.
     #[inline]
-    pub fn from_bundle_state<'a, KH: KeyHasher>(
+    pub fn from_bundle_state<'a>(
         state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
     ) -> Self {
         state
             .into_iter()
             .map(|(address, account)| {
-                let hashed_address = KH::hash_key(address);
+                let hashed_address = keccak256(address);
                 let hashed_account = account.info.as_ref().map(Into::into);
                 let hashed_storage = HashedStorage::from_iter(
                     account
@@ -993,12 +993,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::KeccakKeyHasher;
 
     fn bundle_hashed_storage(account: &BundleAccount) -> Option<HashedStorage> {
         let address = Address::ZERO;
-        let mut state =
-            HashedPostState::from_bundle_state::<KeccakKeyHasher>([(&address, account)]);
+        let mut state = HashedPostState::from_bundle_state([(&address, account)]);
         state.storages.remove(&keccak256(address))
     }
 
@@ -1112,7 +1110,7 @@ mod tests {
         let state = vec![(&address, &account)];
 
         // Convert the bundle state into a hashed post state.
-        let hashed_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(state);
+        let hashed_state = HashedPostState::from_bundle_state(state);
 
         // Validate the hashed post state.
         assert_eq!(hashed_state.accounts.len(), 1);

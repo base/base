@@ -80,7 +80,6 @@ mod tests {
     use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
     use base_execution_chainspec::BaseChainSpec;
     use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
-    use reth_trie_common::KeccakKeyHasher;
     use tokio::sync::mpsc;
 
     use super::*;
@@ -92,9 +91,7 @@ mod tests {
             let handle = BaseExecutionHandle {
                 driver: ConsensusEngineHandle::new(sender),
                 payload_builder: PayloadBuilderHandle::noop(),
-                validator: BaseEngineValidator::new::<KeccakKeyHasher>(Arc::new(
-                    BaseChainSpec::sepolia(),
-                )),
+                validator: BaseEngineValidator::new(Arc::new(BaseChainSpec::sepolia())),
             };
             let state = ForkchoiceState::same_hash(B256::repeat_byte(1));
             let update =

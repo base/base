@@ -365,9 +365,7 @@ mod tests {
     use revm::{database::BundleState, state::AccountInfo};
 
     use super::*;
-    use crate::{
-        HashedPostState, HashedPostStateSorted, HashedStorage, KeccakKeyHasher, StateRoot,
-    };
+    use crate::{HashedPostState, HashedPostStateSorted, HashedStorage, StateRoot};
 
     fn overlay_root_for_provider<TX: reth_db_api::transaction::DbTx>(
         _provider: &impl StorageSettingsCache,
@@ -428,7 +426,7 @@ mod tests {
             .build();
         assert_eq!(bundle_state.reverts.len(), 1);
 
-        let post_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(&bundle_state.state);
+        let post_state = HashedPostState::from_bundle_state(&bundle_state.state);
         assert_eq!(post_state.accounts.len(), 2);
         assert_eq!(post_state.storages.len(), 2);
 

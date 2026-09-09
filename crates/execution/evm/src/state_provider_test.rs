@@ -11,8 +11,8 @@ use reth_storage_api::{
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
-    AccountProof, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof, MultiProofTargets,
-    StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
+    AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
+    StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 /// Mock state for testing
@@ -156,7 +156,7 @@ impl HashedPostStateProvider for StateProviderTest {
         &self,
         bundle_state: &revm::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
+        Ok(HashedPostState::from_bundle_state(bundle_state.state()))
     }
 }
 

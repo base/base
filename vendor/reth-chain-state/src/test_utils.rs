@@ -285,10 +285,8 @@ impl TestBlockBuilder {
             )
             .build();
 
-        let hashed_state = reth_trie::HashedPostState::from_bundle_state::<
-            reth_trie::KeccakKeyHasher,
-        >(bundle.state.iter())
-        .into_sorted();
+        let hashed_state =
+            reth_trie::HashedPostState::from_bundle_state(bundle.state.iter()).into_sorted();
 
         let block_receipts = if receipts.is_empty() {
             recovered

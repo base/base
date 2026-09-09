@@ -7,7 +7,7 @@ use alloy_primitives::{
 };
 use base_common_consensus::{BaseReceipt, TxReceipt};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
-use reth_trie_common::{HashedPostState, KeyHasher};
+use reth_trie_common::HashedPostState;
 use revm::{
     database::{BundleAccount, states::BundleState},
     state::AccountInfo,
@@ -211,8 +211,8 @@ impl ExecutionOutcome {
 
     /// Returns [`HashedPostState`] for this execution outcome.
     /// See [`HashedPostState::from_bundle_state`] for more info.
-    pub fn hash_state_slow<KH: KeyHasher>(&self) -> HashedPostState {
-        HashedPostState::from_bundle_state::<KH>(&self.bundle.state)
+    pub fn hash_state_slow(&self) -> HashedPostState {
+        HashedPostState::from_bundle_state(&self.bundle.state)
     }
 
     /// Transform block number to the index of block.
