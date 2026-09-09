@@ -8,7 +8,7 @@ base_metrics::define_metrics! {
     #[describe("Total number of encoding channels closed, by reason")]
     #[label(
         name = "reason",
-        default = ["size_full", "timeout", "force", "discard"]
+        default = ["soft_target", "protocol_limit", "timeout", "flush", "discard"]
     )]
     channel_closed_total: counter,
     #[describe("Total number of channels for which every frame was confirmed on L1")]
@@ -45,7 +45,7 @@ base_metrics::define_metrics! {
     #[describe("Batcher signer account balance in ether")]
     #[no_zero]
     balance: gauge,
-    #[describe("Number of frames currently waiting for L1 submission")]
+    #[describe("Number of immutable artifact frames currently ready for L1 submission")]
     pending_frames: gauge,
     #[describe("Number of L2 blocks buffered in the encoder input queue")]
     pending_blocks: gauge,
@@ -66,16 +66,19 @@ base_metrics::define_metrics! {
 }
 
 impl BatcherMetrics {
-    /// Channel closed because the compressed frame data reached the target size.
-    pub const REASON_SIZE_FULL: &'static str = "size_full";
+    /// Channel closed because its soft compressed-size target was reached.
+    pub const REASON_SOFT_TARGET: &'static str = "soft_target";
+
+    /// Channel closed before a batch that would exceed a hard protocol limit.
+    pub const REASON_PROTOCOL_LIMIT: &'static str = "protocol_limit";
 
     /// Channel closed because it reached its configured L1 deadline.
     pub const REASON_TIMEOUT: &'static str = "timeout";
 
-    /// Channel closed by an explicit force-flush signal.
-    pub const REASON_FORCE: &'static str = "force";
+    /// Channel closed by an explicit flush signal.
+    pub const REASON_FLUSH: &'static str = "flush";
 
-    /// Channel discarded without producing frames because the span batch exceeded limits.
+    /// Channel discarded because its first block exceeded channel limits.
     pub const REASON_DISCARD: &'static str = "discard";
 
     /// The block source signalled an L2 reorg.

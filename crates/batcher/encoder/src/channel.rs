@@ -1,610 +1,552 @@
-//! Channel state machine types.
+//! One derivation channel and its admission / close types.
 
-use std::{fmt, ops::Range, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};
 
+use alloy_primitives::Bytes;
 use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;
-use base_comp::{
-    ChannelOut, ChannelOutError, CompressorError, CompressorWriter, ShadowCompressor,
-    VariantCompressor,
+use base_comp::CompressionStream;
+use base_protocol::{
+    BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, BatchType, ChannelId, Frame, SingleBatch,
 };
-use base_protocol::{BatchType, ChannelId, Frame, SingleBatch, SpanBatch, SpanBatchError};
 
-use crate::EncoderConfig;
+use crate::{BatcherMetrics, CompressionError, EncoderConfig, EncoderConfigError};
 
-/// Why a candidate block did not fit in an open channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ChannelFullReason {
-    /// The candidate exceeded the configured compressed output target.
-    #[error("compressed output target exceeded")]
-    CompressedOutput,
-    /// The candidate exceeded the protocol RLP input limit.
-    #[error("maximum RLP input bytes reached")]
-    RlpInput,
-}
-
-/// Result of attempting to add one L2 block to an open channel.
+/// Result of appending one complete `SingleBatch` to a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelAddOutcome {
-    /// The block was accepted and the channel can accept more blocks.
+    /// The batch was committed and the channel remains below its soft target.
     Accepted,
-    /// The block was accepted and exactly filled or exceeded the compression target.
-    AcceptedAndFull,
-    /// The block was not accepted; the caller decides whether it can be retried.
-    Rejected(ChannelFullReason),
+    /// The batch was committed and reached the optional soft target.
+    TargetReached,
+    /// The batch was not committed because a hard channel limit would be exceeded.
+    Rejected(ChannelLimit),
 }
 
-/// Failure while building or finalizing an open channel.
+/// Hard derivation limit preventing one batch from joining a channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ChannelLimit {
+    /// Uncompressed channel RLP bytes exceed the fork-specific decoder limit.
+    #[error("channel RLP requires {required} bytes, maximum is {maximum}")]
+    RlpBytes {
+        /// Required bytes after appending the candidate batch.
+        required: u64,
+        /// Fork-specific maximum.
+        maximum: u64,
+    },
+    /// The finished channel cannot be represented by sequential `u16` frame numbers.
+    #[error("channel requires {required} frames, maximum is {maximum}")]
+    FrameCount {
+        /// Conservatively required frames.
+        required: usize,
+        /// Maximum representable frame count.
+        maximum: usize,
+    },
+    /// Compressed bytes and frame storage exceed the assembled-channel limit.
+    #[error("assembled channel may require {required} bytes, maximum is {maximum}")]
+    AssembledBytes {
+        /// Conservative assembled size.
+        required: u64,
+        /// Fork-specific maximum.
+        maximum: u64,
+    },
+}
+
+/// Why a writable channel stopped accepting batches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelCloseReason {
+    /// The optional compressed-size target was reached.
+    SoftTarget,
+    /// The next batch would exceed a hard derivation limit.
+    ProtocolLimit,
+    /// The channel reached its operational L1 block timeout.
+    Timeout,
+    /// The caller explicitly requested an administrative flush.
+    Flush,
+}
+
+impl ChannelCloseReason {
+    /// Returns the bounded metric label for this reason.
+    pub const fn metric_label(self) -> &'static str {
+        match self {
+            Self::SoftTarget => BatcherMetrics::REASON_SOFT_TARGET,
+            Self::ProtocolLimit => BatcherMetrics::REASON_PROTOCOL_LIMIT,
+            Self::Timeout => BatcherMetrics::REASON_TIMEOUT,
+            Self::Flush => BatcherMetrics::REASON_FLUSH,
+        }
+    }
+}
+
+/// Error returned by a channel state transition.
 #[derive(Debug, thiserror::Error)]
-pub enum OpenChannelError {
-    /// A single-batch channel or frame operation failed.
-    #[error("channel output failed: {0}")]
-    Output(#[from] ChannelOutError),
-    /// Span-batch construction or encoding failed.
-    #[error("span batch failed: {0}")]
-    SpanBatch(#[from] SpanBatchError),
-    /// Exact span-channel compression failed.
-    #[error("span channel compression failed: {0}")]
-    Compression(#[from] CompressorError),
+pub enum ChannelError {
+    /// Compression failed.
+    #[error(transparent)]
+    Compression(#[from] CompressionError),
+    /// A batch was appended after the channel closed.
+    #[error("cannot append a batch to a closed channel")]
+    Closed,
+    /// A frame requests compressed bytes not present in the channel output.
+    #[error("frame requires {requested} bytes, but only {available} are available")]
+    OutputUnderflow {
+        /// Requested compressed bytes.
+        requested: usize,
+        /// Available compressed bytes.
+        available: usize,
+    },
+    /// The finished channel cannot be represented by sequential `u16` frame numbers.
+    #[error("channel requires {frame_count} frames, exceeding the maximum {maximum}")]
+    TooManyFrames {
+        /// Number of frames required for the channel.
+        frame_count: usize,
+        /// Maximum representable frame count.
+        maximum: usize,
+    },
+    /// A terminal frame was requested before the closed channel tail was complete.
+    #[error("terminal frame does not consume the complete closed channel tail")]
+    InvalidTerminalTransition,
 }
 
-/// Span-mode state for one open derivation channel.
-///
-/// [`OpenChannelKind::Span`] owns this state while the encoder fills the channel.
-/// One channel may contain multiple sealed [`SpanBatch`]es and one active span.
-/// `accepted_rlp` is the sole committed payload; `candidate_rlp` is swapped into
-/// it only after the candidate passes the RLP and compressed-size limits.
-#[derive(Debug)]
-pub struct SpanChannel {
-    /// Unique channel identifier used when producing frames.
+/// One encoding channel, from first batch until the safe head covers it.
+#[derive(derive_more::Debug)]
+pub struct Channel {
+    /// Unique derivation channel identifier.
     id: ChannelId,
-    /// Rollup configuration used for protocol limits and span metadata.
+    /// Rollup rules used for timestamp-dependent protocol limits.
+    #[debug(skip)]
     rollup_config: Arc<RollupConfig>,
-    /// Compressor checkpointed against accepted RLP input.
-    compressor: VariantCompressor,
-    /// Span batch currently accepting blocks.
-    active_span: SpanBatch,
-    /// RLP input containing all accepted span batches.
-    accepted_rlp: Vec<u8>,
-    /// Reusable RLP buffer for the next candidate state.
-    candidate_rlp: Vec<u8>,
-    /// Reusable buffer for the encoded active span batch.
-    encoded_span: Vec<u8>,
-    /// Number of accepted RLP bytes belonging to sealed span batches.
-    sealed_rlp_bytes: usize,
-    /// Accepted RLP input length represented by the current compressor checkpoint.
-    compressor_input_bytes: usize,
-    /// Maximum compressed bytes that fit in the configured target frames.
-    target_output_bytes: usize,
-    /// Optional maximum number of blocks per span batch.
-    max_blocks_per_span_batch: Option<usize>,
+    /// Compressor present only while the channel accepts batches.
+    #[debug(skip)]
+    compressor: Option<CompressionStream>,
+    /// Compressed bytes emitted but not yet assigned to immutable DA artifacts.
+    #[debug(skip)]
+    output: VecDeque<Bytes>,
+    /// Number of bytes currently available in `output`.
+    available_output: usize,
+    /// Total compressed bytes emitted by this channel.
+    compressed_bytes: u64,
+    /// Maximum serialized frame size.
+    max_frame_size: usize,
+    /// Optional soft compressed-size target.
+    compressed_size_target: Option<usize>,
+    /// Number of accepted uncompressed RLP bytes.
+    input_bytes: u64,
+    /// Reused buffer for one encoded `SingleBatch` wire value.
+    #[debug(skip)]
+    candidate_scratch: Vec<u8>,
+    /// Index of the first buffered L2 block encoded into the channel.
+    block_start: usize,
+    /// Number of buffered L2 blocks encoded into the channel.
+    blocks_added: usize,
+    /// Estimated DA bytes represented by the accepted L2 blocks.
+    da_backlog_bytes: u64,
+    /// L1 block observed when the channel opened.
+    opened_l1_block: u64,
+    /// Absolute L1 deadline for closure, then partial-tail release.
+    deadline_l1_block: u64,
+    /// Next frame number assigned by DA egress.
+    next_frame_number: usize,
+    /// Whether the terminal frame still needs to be emitted.
+    terminal_pending: bool,
+    /// Earliest L1 inclusion block among confirmed artifacts.
+    first_confirmed_l1_block: Option<u64>,
+    /// Latest L1 inclusion block among confirmed artifacts.
+    last_confirmed_l1_block: Option<u64>,
 }
 
-impl SpanChannel {
-    /// Creates the Span state selected by [`OpenChannel::new`].
-    pub fn new(id: ChannelId, rollup_config: Arc<RollupConfig>, config: &EncoderConfig) -> Self {
-        let compressor = VariantCompressor::from(config.compression_algo);
-        let active_span = SpanBatch {
-            chain_id: rollup_config.l2_chain_id.id(),
-            genesis_timestamp: rollup_config.genesis.l2_time,
-            ..Default::default()
-        };
+impl Channel {
+    /// Max frames per channel. Derivation cannot reassemble frame number `u16::MAX`.
+    pub const MAX_FRAMES: usize = u16::MAX as usize;
 
-        Self {
-            id,
-            rollup_config,
-            compressor,
-            active_span,
-            accepted_rlp: Vec::new(),
-            candidate_rlp: Vec::new(),
-            encoded_span: Vec::new(),
-            sealed_rlp_bytes: 0,
-            compressor_input_bytes: 0,
-            target_output_bytes: config.target_output_size(),
-            max_blocks_per_span_batch: config.max_blocks_per_span_batch,
-        }
-    }
-
-    /// Attempts to add one L2 block, represented as a [`SingleBatch`].
+    /// Creates an empty writable channel at the tail of the FIFO.
     ///
-    /// [`OpenChannel::add_block`] calls this from the encoder's `step` transition.
-    /// The returned [`ChannelAddOutcome`] tells the caller whether to advance the
-    /// block cursor, close the channel, or retry the block in a fresh channel.
-    /// A [`ChannelAddOutcome::Rejected`] result makes this channel terminal:
-    /// the caller must close it rather than call `add_block` again.
-    pub fn add_block(
-        &mut self,
-        batch: SingleBatch,
-        sequence_number: u64,
-    ) -> Result<ChannelAddOutcome, OpenChannelError> {
-        debug_assert!(
-            self.candidate_rlp.len() <= self.accepted_rlp.len(),
-            "cannot append to a SpanChannel after rejection"
-        );
-
-        // A span at the configured block limit is already represented by
-        // `accepted_rlp`; seal it before building the next candidate span.
-        if self.max_blocks_per_span_batch.is_some_and(|max| self.active_span.batches.len() == max) {
-            self.sealed_rlp_bytes = self.accepted_rlp.len();
-            self.candidate_rlp.clear();
-            self.candidate_rlp.extend_from_slice(&self.accepted_rlp);
-            self.active_span = SpanBatch {
-                chain_id: self.rollup_config.l2_chain_id.id(),
-                genesis_timestamp: self.rollup_config.genesis.l2_time,
-                ..Default::default()
-            };
-        }
-
-        // `active_span` may retain a rejected block, but that channel becomes
-        // terminal. Only `accepted_rlp` is ever finalized or submitted.
-        let timestamp = batch.timestamp;
-        self.active_span.append_singular_batch(batch, sequence_number)?;
-
-        // Rebuild the candidate while preserving already sealed spans and
-        // replacing only the active span's RLP byte string.
-        self.encoded_span.clear();
-        self.encoded_span.push(BatchType::Span as u8);
-        self.active_span.encode(&mut self.encoded_span)?;
-        self.candidate_rlp.truncate(self.sealed_rlp_bytes);
-        self.encoded_span.as_slice().encode(&mut self.candidate_rlp);
-
-        // The protocol RLP limit is hard: unlike the compressed target, even
-        // the first block cannot exceed it.
-        let max_rlp_bytes = self.rollup_config.max_rlp_bytes_per_channel(timestamp) as usize;
-        if self.candidate_rlp.len() > max_rlp_bytes {
-            return Ok(ChannelAddOutcome::Rejected(ChannelFullReason::RlpInput));
-        }
-
-        // Defer full recompression until the exact checkpoint plus the new
-        // uncompressed bytes approaches the target.
-        // Swapping the candidate into `accepted_rlp` is the commit point in each
-        // accepted branch below.
-        let rlp_growth = self.candidate_rlp.len() - self.compressor_input_bytes;
-        if self.compressor.compressed_len()? + rlp_growth < self.target_output_bytes {
-            std::mem::swap(&mut self.accepted_rlp, &mut self.candidate_rlp);
-            return Ok(ChannelAddOutcome::Accepted);
-        }
-
-        // Near the boundary, recompress the complete candidate so the decision
-        // uses its actual encoded size.
-        self.compressor.reset();
-        self.compressor.write(&self.candidate_rlp)?;
-        self.compressor_input_bytes = self.candidate_rlp.len();
-        let compressed_bytes = self.compressor.compressed_len()?;
-        if compressed_bytes < self.target_output_bytes {
-            std::mem::swap(&mut self.accepted_rlp, &mut self.candidate_rlp);
-            return Ok(ChannelAddOutcome::Accepted);
-        }
-
-        // A channel must make progress even when one block exceeds the soft
-        // compression target. An exact fit is also retained.
-        if self.accepted_rlp.is_empty() || compressed_bytes == self.target_output_bytes {
-            std::mem::swap(&mut self.accepted_rlp, &mut self.candidate_rlp);
-            return Ok(ChannelAddOutcome::AcceptedAndFull);
-        }
-
-        // The candidate did not fit. Restore the compressor to the committed
-        // payload before the caller finalizes this channel and retries the block.
-        self.compress_accepted()?;
-        Ok(ChannelAddOutcome::Rejected(ChannelFullReason::CompressedOutput))
-    }
-
-    /// Restores the compressor to the committed payload.
+    /// # Errors
     ///
-    /// This is the rollback path after a rejected candidate and the finalization
-    /// path when accepted candidates used only the cheap size pre-check.
-    pub fn compress_accepted(&mut self) -> Result<usize, CompressorError> {
-        self.compressor.reset();
-        self.compressor.write(&self.accepted_rlp)?;
-        self.compressor_input_bytes = self.accepted_rlp.len();
-        self.compressor.compressed_len()
-    }
-
-    /// Consumes accepted Span state and produces the channel's complete frame list.
-    ///
-    /// [`OpenChannel::into_frames`] calls this when the encoder closes the channel.
-    /// Uncommitted candidate bytes are never passed to the framing layer.
-    pub fn into_frames(mut self, max_frame_size: usize) -> Result<Vec<Frame>, OpenChannelError> {
-        // Accepted candidates may have used the cheap size pre-check, leaving
-        // the compressor at an older checkpoint.
-        if self.compressor_input_bytes != self.accepted_rlp.len() {
-            self.compress_accepted()?;
-        }
-        Ok(ChannelOut::new(self.id, self.rollup_config, self.compressor)
-            .into_frames(max_frame_size)?)
-    }
-}
-
-/// Batch-type-specific state owned by an open channel.
-#[derive(Debug)]
-pub enum OpenChannelKind {
-    /// Incrementally compressed single batches.
-    Single(ChannelOut<ShadowCompressor>),
-    /// Transactionally encoded span batches.
-    Span(Box<SpanChannel>),
-}
-
-/// Batch-type facade for the channel currently accepting L2 blocks.
-///
-/// The encoder owns at most one `OpenChannel`. This type keeps lifecycle metadata
-/// common to both producer modes and delegates encoding to [`OpenChannelKind`].
-pub struct OpenChannel {
-    /// Batch-type-specific channel state.
-    pub kind: OpenChannelKind,
-    /// Index of the first block encoded into this channel.
-    pub block_start: usize,
-    /// L1 block number when this channel was opened (for `MaxChannelDuration`).
-    pub opened_at_l1: u64,
-    /// Number of L2 blocks fed into this channel so far.
-    pub blocks_added: usize,
-    /// Estimated DA bytes for blocks fed into this channel.
-    pub da_backlog_bytes: u64,
-}
-
-impl fmt::Debug for OpenChannel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpenChannel")
-            .field("channel_id", &self.id())
-            .field("block_start", &self.block_start)
-            .field("opened_at_l1", &self.opened_at_l1)
-            .field("blocks_added", &self.blocks_added)
-            .field("da_backlog_bytes", &self.da_backlog_bytes)
-            .finish()
-    }
-}
-
-impl OpenChannel {
-    /// Creates the channel requested by the encoder when `step` needs one.
+    /// Returns [`EncoderConfigError`] when `config` violates an encoder limit.
     pub fn new(
         id: ChannelId,
         rollup_config: Arc<RollupConfig>,
         config: &EncoderConfig,
         block_start: usize,
-        opened_at_l1: u64,
-    ) -> Self {
-        let kind = match config.batch_type {
-            BatchType::Single => {
-                let compressor =
-                    ShadowCompressor::new(config.target_frame_size as u64, config.compression_algo);
-                OpenChannelKind::Single(ChannelOut::new(id, rollup_config, compressor))
-            }
-            BatchType::Span => {
-                OpenChannelKind::Span(Box::new(SpanChannel::new(id, rollup_config, config)))
-            }
-        };
+        opened_l1_block: u64,
+    ) -> Result<Self, EncoderConfigError> {
+        config.validate()?;
 
-        Self { kind, block_start, opened_at_l1, blocks_added: 0, da_backlog_bytes: 0 }
+        let duration_blocks = config.max_channel_duration.saturating_sub(config.sub_safety_margin);
+        Ok(Self {
+            id,
+            rollup_config,
+            compressor: Some(CompressionStream::new(config.brotli_level)),
+            output: VecDeque::new(),
+            available_output: 0,
+            compressed_bytes: 0,
+            max_frame_size: config.max_frame_size,
+            compressed_size_target: config.compressed_size_target,
+            input_bytes: 0,
+            candidate_scratch: Vec::new(),
+            block_start,
+            blocks_added: 0,
+            da_backlog_bytes: 0,
+            opened_l1_block,
+            deadline_l1_block: opened_l1_block.saturating_add(duration_blocks),
+            next_frame_number: 0,
+            terminal_pending: false,
+            first_confirmed_l1_block: None,
+            last_confirmed_l1_block: None,
+        })
     }
 
     /// Returns the channel identifier.
     pub const fn id(&self) -> ChannelId {
-        match &self.kind {
-            OpenChannelKind::Single(out) => out.id(),
-            OpenChannelKind::Span(channel) => channel.id,
-        }
+        self.id
     }
 
-    /// Returns the accepted uncompressed RLP input length.
+    /// Returns whether the channel still accepts batches.
+    pub const fn is_open(&self) -> bool {
+        self.compressor.is_some()
+    }
+
+    /// Returns whether no batch has been accepted.
+    pub const fn is_empty(&self) -> bool {
+        self.blocks_added == 0
+    }
+
+    /// Returns the number of accepted uncompressed RLP bytes.
     pub const fn input_bytes(&self) -> u64 {
-        match &self.kind {
-            OpenChannelKind::Single(out) => out.input_bytes(),
-            OpenChannelKind::Span(channel) => channel.accepted_rlp.len() as u64,
-        }
+        self.input_bytes
     }
 
-    /// Dispatches one block to the configured producer mode.
-    ///
-    /// The encoder calls this once per `step`. Accepted outcomes also update the
-    /// channel's block count and DA backlog before the caller advances its cursor.
-    pub fn add_block(
+    /// Returns the total compressed stream bytes emitted so far.
+    pub const fn compressed_bytes(&self) -> u64 {
+        self.compressed_bytes
+    }
+
+    /// Returns compressed bytes not yet assigned to a DA artifact.
+    pub const fn available_output(&self) -> usize {
+        self.available_output
+    }
+
+    /// Returns the maximum data bytes carried by one frame.
+    pub const fn max_frame_data(&self) -> usize {
+        self.max_frame_size - Frame::ENCODED_OVERHEAD
+    }
+
+    /// Returns the L1 block observed when the channel opened.
+    pub const fn opened_l1_block(&self) -> u64 {
+        self.opened_l1_block
+    }
+
+    /// Whether `l1_head` has reached the channel deadline.
+    pub const fn deadline_due(&self, l1_head: u64) -> bool {
+        l1_head >= self.deadline_l1_block
+    }
+
+    /// Make a closed partial tail eligible at `l1_head` without postponing the deadline.
+    pub fn release_at(&mut self, l1_head: u64) {
+        self.deadline_l1_block = self.deadline_l1_block.min(l1_head);
+    }
+
+    /// Returns the accepted buffered block range.
+    pub const fn block_range(&self) -> std::ops::Range<usize> {
+        self.block_start..self.block_start + self.blocks_added
+    }
+
+    /// Returns the number of accepted L2 blocks.
+    pub const fn blocks_added(&self) -> usize {
+        self.blocks_added
+    }
+
+    /// Returns the estimated DA backlog represented by accepted blocks.
+    pub const fn da_backlog_bytes(&self) -> u64 {
+        self.da_backlog_bytes
+    }
+
+    /// Returns whether the terminal frame has been emitted.
+    pub const fn framing_complete(&self) -> bool {
+        self.compressor.is_none() && !self.terminal_pending
+    }
+
+    /// Returns whether a terminal frame remains after the available output.
+    pub const fn terminal_pending(&self) -> bool {
+        self.terminal_pending
+    }
+
+    /// Returns the number of frames assigned so far.
+    pub const fn frame_count(&self) -> usize {
+        self.next_frame_number
+    }
+
+    /// Append `batch` if hard limits hold; otherwise reject without mutating the stream.
+    pub fn add_batch(
         &mut self,
-        batch: SingleBatch,
-        sequence_number: u64,
+        batch: &SingleBatch,
         da_backlog_bytes: u64,
-    ) -> Result<ChannelAddOutcome, OpenChannelError> {
-        let outcome = match &mut self.kind {
-            OpenChannelKind::Single(out) => match out.add_single_batch(batch) {
-                Ok(()) => ChannelAddOutcome::Accepted,
-                Err(ChannelOutError::Compression(CompressorError::Full)) => {
-                    ChannelAddOutcome::Rejected(ChannelFullReason::CompressedOutput)
-                }
-                Err(ChannelOutError::ExceedsMaxRlpBytesPerChannel) => {
-                    ChannelAddOutcome::Rejected(ChannelFullReason::RlpInput)
-                }
-                Err(error) => return Err(error.into()),
-            },
-            OpenChannelKind::Span(channel) => channel.add_block(batch, sequence_number)?,
+    ) -> Result<ChannelAddOutcome, ChannelError> {
+        let max_channel_bytes = self.rollup_config.max_rlp_bytes_per_channel(batch.timestamp);
+        let max_frame_data = self.max_frame_data();
+        let Some(compressor) = self.compressor.as_mut() else {
+            return Err(ChannelError::Closed);
         };
 
-        if matches!(outcome, ChannelAddOutcome::Accepted | ChannelAddOutcome::AcceptedAndFull) {
-            self.blocks_added += 1;
-            self.da_backlog_bytes += da_backlog_bytes;
+        // Wire form of one Single batch: RLP string header, type byte, payload.
+        self.candidate_scratch.clear();
+        batch.rlp_header().encode(&mut self.candidate_scratch);
+        self.candidate_scratch.push(BatchType::Single as u8);
+        batch.encode(&mut self.candidate_scratch);
+
+        // Reject on the cumulative RLP limit first. Every projection below then
+        // starts from an input size the protocol bounds well inside memory.
+        let next_input_bytes = self.input_bytes.saturating_add(self.candidate_scratch.len() as u64);
+        if next_input_bytes > max_channel_bytes {
+            return Ok(ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes {
+                required: next_input_bytes,
+                maximum: max_channel_bytes,
+            }));
         }
-        Ok(outcome)
-    }
 
-    /// Consumes the open channel and returns all frames ready for submission.
-    ///
-    /// The encoder calls this exactly once when size, timeout, or a force-close
-    /// request closes the channel.
-    pub fn into_frames(self, max_frame_size: usize) -> Result<Vec<Frame>, OpenChannelError> {
-        match self.kind {
-            OpenChannelKind::Single(out) => Ok(out.into_frames(max_frame_size)?),
-            OpenChannelKind::Span(channel) => channel.into_frames(max_frame_size),
+        // Worst-case compressed size of the finished channel, including this batch.
+        let max_compressed_bytes = compressor.max_output_size(next_input_bytes as usize);
+        let max_frame_count = max_compressed_bytes.div_ceil(max_frame_data);
+
+        // Blob packing can split output at blob boundaries, so a channel may
+        // need more frames than `max_frame_size` packing alone would suggest.
+        let blob_payload_capacity = BLOB_MAX_DATA_SIZE - BLOB_DERIVATION_PREFIX_SIZE;
+        let max_blob_boundary_frames = max_compressed_bytes
+            .div_ceil(blob_payload_capacity - Frame::ENCODED_OVERHEAD)
+            .saturating_add(1);
+        let max_total_frames = max_frame_count.saturating_add(max_blob_boundary_frames);
+        let max_assembled_bytes = max_compressed_bytes
+            .saturating_add(max_total_frames.saturating_mul(Frame::OVERHEAD))
+            as u64;
+
+        // Reject against projected limits before mutating the stream.
+        if max_total_frames > Self::MAX_FRAMES {
+            return Ok(ChannelAddOutcome::Rejected(ChannelLimit::FrameCount {
+                required: max_total_frames,
+                maximum: Self::MAX_FRAMES,
+            }));
+        }
+        if max_assembled_bytes > max_channel_bytes {
+            return Ok(ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes {
+                required: max_assembled_bytes,
+                maximum: max_channel_bytes,
+            }));
+        }
+
+        // Commit once. Newly stable bytes go into the FIFO.
+        let output = compressor.append(&self.candidate_scratch)?;
+        let total_output = compressor.output_size();
+
+        self.push_output(output);
+        self.input_bytes = next_input_bytes;
+        self.blocks_added += 1;
+        self.da_backlog_bytes += da_backlog_bytes;
+
+        if self.compressed_size_target.is_some_and(|target| total_output >= target) {
+            Ok(ChannelAddOutcome::TargetReached)
+        } else {
+            Ok(ChannelAddOutcome::Accepted)
         }
     }
-}
 
-/// Submission lifecycle of a frame in a closed channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameState {
-    /// The frame is available for submission.
-    Ready,
-    /// The frame was submitted and is awaiting an outcome.
-    Pending,
-    /// The frame was confirmed on L1.
-    Confirmed,
-}
+    /// Stop accepting batches and finish the compressor.
+    pub fn close(&mut self) -> Result<(), ChannelError> {
+        let Some(compressor) = self.compressor.take() else {
+            return Ok(());
+        };
 
-/// A closed channel retained while its frames and derivation progress are tracked.
-#[derive(Debug)]
-pub struct ReadyChannel {
-    /// The channel identifier.
-    pub id: ChannelId,
-    /// All frames, in order. Wrapped in [`Arc`] so that the slice handed to
-    /// [`BatchSubmission`] is a cheap pointer copy rather than a deep clone of
-    /// the frame payload (up to `max_frame_size` bytes per frame).
-    pub frames: Vec<Arc<Frame>>,
-    /// Submission state for each frame.
-    pub frame_states: Vec<FrameState>,
-    /// Exact input block range encoded into this channel.
-    pub encoded_block_range: Range<usize>,
-    /// DA bytes still represented by this closed channel's frames.
-    pub da_backlog_bytes: u64,
-    /// Earliest L1 block that confirmed any frame from this channel.
-    pub first_confirmed_l1_block: Option<u64>,
-    /// Latest L1 block that confirmed any frame from this channel.
-    pub last_confirmed_l1_block: Option<u64>,
-}
+        // Marked before finishing: a failed finish loses the compressed tail, and
+        // must not leave a channel reporting complete framing without a terminal frame.
+        self.terminal_pending = true;
+        self.candidate_scratch = Vec::new();
+        self.push_output(compressor.finish()?);
 
-impl ReadyChannel {
-    /// Returns the first contiguous range of frames available for submission.
-    ///
-    /// Per-frame state replaces a monotonic cursor so retries can make only the
-    /// affected frames ready again without resubmitting confirmed frames.
-    pub fn next_ready_frame_range(&self) -> Option<Range<usize>> {
-        let start = self.frame_states.iter().position(|state| *state == FrameState::Ready)?;
-        let count = self.frame_states[start..]
-            .iter()
-            .take_while(|state| **state == FrameState::Ready)
-            .count();
-        Some(start..start + count)
+        Ok(())
     }
 
-    /// Marks a ready frame range as awaiting an L1 submission outcome.
-    pub fn mark_pending(&mut self, range: Range<usize>) {
-        debug_assert!(
-            self.frame_states[range.clone()].iter().all(|state| *state == FrameState::Ready)
+    /// Cut the next numbered frame from the compressed FIFO.
+    pub fn take_frame(&mut self, data_len: usize, is_last: bool) -> Result<Frame, ChannelError> {
+        if data_len > self.available_output {
+            return Err(ChannelError::OutputUnderflow {
+                requested: data_len,
+                available: self.available_output,
+            });
+        }
+        if self.next_frame_number >= Self::MAX_FRAMES {
+            return Err(ChannelError::TooManyFrames {
+                frame_count: self.next_frame_number + 1,
+                maximum: Self::MAX_FRAMES,
+            });
+        }
+
+        // `is_last` is valid only after close, on the exact remaining tail.
+        if is_last
+            && (self.compressor.is_some()
+                || data_len != self.available_output
+                || !self.terminal_pending)
+        {
+            return Err(ChannelError::InvalidTerminalTransition);
+        }
+
+        let number = self.next_frame_number as u16;
+        let data = self.take_output(data_len);
+
+        self.next_frame_number += 1;
+        if is_last {
+            self.terminal_pending = false;
+        }
+
+        Ok(Frame { id: self.id, number, data, is_last })
+    }
+
+    /// Drain `len` bytes from the compressed FIFO.
+    fn take_output(&mut self, len: usize) -> Vec<u8> {
+        debug_assert!(len <= self.available_output);
+        debug_assert_eq!(
+            self.available_output,
+            self.output.iter().map(|chunk| chunk.len()).sum::<usize>()
         );
-        self.frame_states[range].fill(FrameState::Pending);
+
+        let mut remaining = len;
+        let mut output = Vec::with_capacity(len);
+        while remaining > 0 {
+            let chunk = self.output.pop_front().expect("output length validated before mutation");
+            let consumed = remaining.min(chunk.len());
+            output.extend_from_slice(&chunk[..consumed]);
+            remaining -= consumed;
+
+            if consumed < chunk.len() {
+                self.output.push_front(chunk.slice(consumed..));
+            }
+        }
+
+        self.available_output -= len;
+        output
     }
 
-    /// Marks a pending frame range as confirmed on L1.
-    pub fn mark_confirmed(&mut self, range: Range<usize>) {
-        debug_assert!(
-            self.frame_states[range.clone()].iter().all(|state| *state == FrameState::Pending)
-        );
-        self.frame_states[range].fill(FrameState::Confirmed);
+    /// Record L1 inclusion for timeout/replay (min/max over artifacts).
+    pub fn record_confirmation(&mut self, l1_block: u64) {
+        self.first_confirmed_l1_block =
+            Some(self.first_confirmed_l1_block.map_or(l1_block, |first| first.min(l1_block)));
+        self.last_confirmed_l1_block =
+            Some(self.last_confirmed_l1_block.map_or(l1_block, |last| last.max(l1_block)));
     }
 
-    /// Returns a pending frame range to the submission queue.
-    pub fn mark_ready(&mut self, range: Range<usize>) {
-        debug_assert!(
-            self.frame_states[range.clone()].iter().all(|state| *state == FrameState::Pending)
-        );
-        self.frame_states[range].fill(FrameState::Ready);
+    /// Returns the earliest confirmed artifact inclusion block.
+    pub const fn first_confirmed_l1_block(&self) -> Option<u64> {
+        self.first_confirmed_l1_block
     }
 
-    /// Returns `true` once every frame in the channel is confirmed on L1.
-    pub fn is_fully_confirmed(&self) -> bool {
-        self.frame_states.iter().all(|state| *state == FrameState::Confirmed)
+    /// Returns the latest confirmed artifact inclusion block.
+    pub const fn last_confirmed_l1_block(&self) -> Option<u64> {
+        self.last_confirmed_l1_block
     }
-}
 
-/// Tracks a pending submission back to its channel and frame range.
-#[derive(Debug, Clone)]
-pub struct PendingRef {
-    /// Index into the `ready_channels` deque.
-    pub channel_idx: usize,
-    /// Index of the first frame in the ready channel covered by this submission.
-    pub frame_start: usize,
-    /// Number of frames included in this submission (1 when `target_num_frames == 1`).
-    pub frame_count: usize,
+    /// Shifts `block_start` after the encoder drops a safe prefix of `blocks`.
+    pub const fn rebase_after_prune(&mut self, prune_count: usize) {
+        let old_end = self.block_start + self.blocks_added;
+        self.block_start = self.block_start.saturating_sub(prune_count);
+        self.blocks_added = old_end.saturating_sub(prune_count).saturating_sub(self.block_start);
+    }
+
+    /// Enqueues newly transferred compressor bytes for later framing.
+    fn push_output(&mut self, output: Vec<u8>) {
+        if output.is_empty() {
+            return;
+        }
+        self.available_output += output.len();
+        self.compressed_bytes += output.len() as u64;
+        self.output.push_back(Bytes::from(output));
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use alloy_primitives::B256;
 
-    use alloy_consensus::{SignableTransaction, TxEnvelope, TxLegacy};
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, Signature};
-    use base_common_genesis::RollupConfig;
-    use base_protocol::{ChannelId, Frame, SingleBatch};
-    use rstest::rstest;
+    use super::*;
+    use crate::BrotliLevel;
 
-    use super::{ChannelAddOutcome, FrameState, ReadyChannel, SpanChannel};
-    use crate::{CompressionAlgo, EncoderConfig};
+    fn batch(transaction_len: usize) -> SingleBatch {
+        let mut state = 1u64;
+        let transaction = (0..transaction_len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect::<Vec<_>>();
+        SingleBatch {
+            parent_hash: B256::ZERO,
+            epoch_num: 0,
+            epoch_hash: B256::ZERO,
+            timestamp: 0,
+            transactions: vec![Bytes::from(transaction)],
+        }
+    }
 
-    fn span_config(target_output_bytes: usize, compression_algo: CompressionAlgo) -> EncoderConfig {
-        let version_byte = usize::from(compression_algo != CompressionAlgo::Zlib);
-        EncoderConfig {
-            batch_type: base_protocol::BatchType::Span,
-            compression_algo,
-            target_frame_size: Frame::ENCODED_OVERHEAD + version_byte + target_output_bytes,
-            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+    fn channel(config: EncoderConfig) -> Channel {
+        Channel::new(ChannelId::default(), Arc::new(RollupConfig::default()), &config, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn output_fifo_preserves_transferred_stream_order() {
+        let mut channel = channel(EncoderConfig::default());
+        channel.push_output(vec![1, 2]);
+        channel.push_output(vec![3, 4, 5]);
+
+        assert_eq!(channel.take_output(4), vec![1, 2, 3, 4]);
+        assert_eq!(channel.take_output(1), vec![5]);
+        assert_eq!(channel.available_output(), 0);
+    }
+
+    #[test]
+    fn soft_target_accepts_complete_batch_before_closing() {
+        let config = EncoderConfig {
+            compressed_size_target: Some(1),
+            brotli_level: BrotliLevel::Brotli0,
             ..EncoderConfig::default()
-        }
-    }
-
-    fn single_batch(timestamp: u64) -> SingleBatch {
-        SingleBatch { epoch_num: timestamp, timestamp, ..Default::default() }
-    }
-
-    fn exact_compressed_size(blocks: usize, compression_algo: CompressionAlgo) -> usize {
-        let version_byte = usize::from(compression_algo != CompressionAlgo::Zlib);
-        let mut channel = SpanChannel::new(
-            ChannelId::default(),
-            Arc::new(RollupConfig::default()),
-            &span_config(
-                EncoderConfig::MAX_BLOB_FRAME_SIZE - Frame::ENCODED_OVERHEAD - version_byte,
-                compression_algo,
-            ),
-        );
-        for timestamp in 1..=blocks as u64 {
-            assert_eq!(
-                channel.add_block(single_batch(timestamp), timestamp - 1).unwrap(),
-                ChannelAddOutcome::Accepted
-            );
-        }
-        channel.compress_accepted().unwrap()
-    }
-
-    fn channel_with_states(frame_states: Vec<FrameState>) -> ReadyChannel {
-        let frames = frame_states.iter().map(|_| Arc::new(Frame::default())).collect();
-        ReadyChannel {
-            id: Default::default(),
-            frames,
-            frame_states,
-            encoded_block_range: 0..0,
-            da_backlog_bytes: 0,
-            first_confirmed_l1_block: None,
-            last_confirmed_l1_block: None,
-        }
-    }
-
-    #[test]
-    fn returns_first_contiguous_ready_range() {
-        let channel = channel_with_states(vec![
-            FrameState::Confirmed,
-            FrameState::Ready,
-            FrameState::Ready,
-            FrameState::Pending,
-            FrameState::Ready,
-        ]);
-
-        assert_eq!(channel.next_ready_frame_range(), Some(1..3));
-    }
-
-    #[test]
-    fn transitions_only_selected_frame_range() {
-        let mut channel = channel_with_states(vec![
-            FrameState::Ready,
-            FrameState::Ready,
-            FrameState::Pending,
-            FrameState::Confirmed,
-        ]);
-
-        channel.mark_pending(0..2);
-        channel.mark_confirmed(0..1);
-        channel.mark_ready(1..3);
-
-        assert_eq!(
-            channel.frame_states,
-            [FrameState::Confirmed, FrameState::Ready, FrameState::Ready, FrameState::Confirmed,]
-        );
-        assert_eq!(channel.next_ready_frame_range(), Some(1..3));
-    }
-
-    #[rstest]
-    #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli10)]
-    fn span_channel_rejects_overflow_without_committing_candidate(
-        #[case] compression_algo: CompressionAlgo,
-    ) {
-        let one_block_size = exact_compressed_size(1, compression_algo);
-        let two_block_size = exact_compressed_size(2, compression_algo);
-        assert!(two_block_size > one_block_size);
-        let target = one_block_size + 1;
-        let mut channel = SpanChannel::new(
-            ChannelId::default(),
-            Arc::new(RollupConfig::default()),
-            &span_config(target, compression_algo),
-        );
-
-        assert_eq!(channel.add_block(single_batch(1), 0).unwrap(), ChannelAddOutcome::Accepted);
-        let accepted = channel.accepted_rlp.clone();
-        let outcome = channel.add_block(single_batch(2), 1).unwrap();
-        assert_eq!(
-            outcome,
-            ChannelAddOutcome::Rejected(super::ChannelFullReason::CompressedOutput),
-            "one_block_size={one_block_size}, two_block_size={two_block_size}, target={target}"
-        );
-
-        assert_eq!(channel.accepted_rlp, accepted);
-        assert_eq!(channel.compressor_input_bytes, channel.accepted_rlp.len());
-    }
-
-    #[rstest]
-    #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli10)]
-    fn span_channel_accepts_exact_compression_target(#[case] compression_algo: CompressionAlgo) {
-        let target = exact_compressed_size(1, compression_algo);
-        let mut channel = SpanChannel::new(
-            ChannelId::default(),
-            Arc::new(RollupConfig::default()),
-            &span_config(target, compression_algo),
-        );
-
-        assert_eq!(
-            channel.add_block(single_batch(1), 0).unwrap(),
-            ChannelAddOutcome::AcceptedAndFull
-        );
-        assert!(!channel.accepted_rlp.is_empty());
-    }
-
-    #[rstest]
-    #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli10)]
-    fn span_channel_accepts_oversized_first_block(#[case] compression_algo: CompressionAlgo) {
-        let target = exact_compressed_size(1, compression_algo) - 1;
-        let mut channel = SpanChannel::new(
-            ChannelId::default(),
-            Arc::new(RollupConfig::default()),
-            &span_config(target, compression_algo),
-        );
-
-        assert_eq!(
-            channel.add_block(single_batch(1), 0).unwrap(),
-            ChannelAddOutcome::AcceptedAndFull
-        );
-        assert!(!channel.accepted_rlp.is_empty());
-    }
-
-    #[test]
-    fn span_channel_rejects_first_block_over_rlp_limit() {
-        let rollup_config = Arc::new(RollupConfig::default());
-        let oversized_input = vec![0; rollup_config.max_rlp_bytes_per_channel(1) as usize].into();
-        let signed = TxLegacy { input: oversized_input, ..Default::default() }
-            .into_signed(Signature::test_signature());
-        let mut encoded_tx = Vec::new();
-        TxEnvelope::Legacy(signed).encode_2718(&mut encoded_tx);
-        let batch = SingleBatch {
-            epoch_num: 1,
-            timestamp: 1,
-            transactions: vec![Bytes::from(encoded_tx)],
-            ..Default::default()
         };
-        let mut channel = SpanChannel::new(
-            ChannelId::default(),
-            rollup_config,
-            &span_config(1024, CompressionAlgo::Brotli10),
-        );
+        let mut channel = channel(config);
 
         assert_eq!(
-            channel.add_block(batch, 0).unwrap(),
-            ChannelAddOutcome::Rejected(super::ChannelFullReason::RlpInput)
+            channel.add_batch(&batch(10_000), 10_000).unwrap(),
+            ChannelAddOutcome::TargetReached
         );
-        assert!(channel.accepted_rlp.is_empty());
+        assert_eq!(channel.blocks_added(), 1);
+        assert!(channel.input_bytes() > 0);
+    }
+
+    #[test]
+    fn cumulative_rlp_limit_rejects_without_mutating_stream() {
+        let mut channel = channel(EncoderConfig::default());
+        let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
+        channel.input_bytes = maximum;
+
+        assert!(matches!(
+            channel.add_batch(&batch(1), 1).unwrap(),
+            ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes { .. })
+        ));
+        assert_eq!(channel.input_bytes, maximum);
+        assert_eq!(channel.blocks_added(), 0);
+        assert_eq!(channel.compressed_bytes(), 0);
+    }
+
+    #[test]
+    fn frame_number_limit_rejects_without_mutating_stream() {
+        let config = EncoderConfig {
+            max_frame_size: Frame::ENCODED_OVERHEAD + 1,
+            ..EncoderConfig::default()
+        };
+        let mut channel = channel(config);
+
+        assert!(matches!(
+            channel.add_batch(&batch(Channel::MAX_FRAMES + 1), 1).unwrap(),
+            ChannelAddOutcome::Rejected(ChannelLimit::FrameCount { .. })
+        ));
+        assert!(channel.is_empty());
+        assert_eq!(channel.compressed_bytes(), 0);
     }
 }

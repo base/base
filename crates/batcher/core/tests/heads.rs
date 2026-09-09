@@ -7,8 +7,8 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, DerivationStatus,
-    NoopThrottleClient, ThrottleController,
+    BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverHeads, DaThrottle,
+    DerivationStatus, NoopThrottleClient, ThrottleController,
     test_utils::{
         DriverFixture, ImmediateConfirmTxManager, PendingL1HeadSource, PendingSource, Recorded,
         SubmissionStub, TrackingPipeline, TrackingSource,
@@ -131,7 +131,12 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
                 force_blobs_when_throttling: true,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-            (PendingL1HeadSource, DerivationStatus::from_safe_l2(safe_head(10)), status_rx),
+            BatchDriverHeads::new(
+                PendingL1HeadSource,
+                0,
+                DerivationStatus::from_safe_l2(safe_head(10)),
+                status_rx,
+            ),
         );
         let handle = ctx.spawn(driver.run());
 
@@ -173,7 +178,12 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
                 force_blobs_when_throttling: true,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-            (PendingL1HeadSource, DerivationStatus::from_safe_l2(safe_l2), status_rx),
+            BatchDriverHeads::new(
+                PendingL1HeadSource,
+                0,
+                DerivationStatus::from_safe_l2(safe_l2),
+                status_rx,
+            ),
         );
         let handle = ctx.spawn(driver.run());
 

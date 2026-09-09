@@ -23,11 +23,11 @@ variable "PLATFORM_PAIR" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher"]
+  default = ["base"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
+  default = ["base", "ingress-rpc", "audit-archiver"]
 }
 
 group "default" {
@@ -46,7 +46,6 @@ group "rust-services" {
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
-    "batcher",
     "sidecrush",
     "prover-service",
     "zk-host",
@@ -141,16 +140,6 @@ target "audit-archiver" {
   inherits = ["_rust-service-common"]
   target = "audit-archiver"
   tags = ["audit-archiver:local"]
-}
-
-target "batcher" {
-  inherits = ["_rust-service-common"]
-  target = "batcher"
-  tags = ["base-batcher:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
-  ]
 }
 
 target "sidecrush" {

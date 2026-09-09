@@ -128,6 +128,23 @@ macro_rules! define_tx_manager_cli {
             )]
             pub resubmission_timeout: ::std::time::Duration,
 
+            /// Maximum retries when an RPC temporarily rejects an ordered nonce.
+            #[arg(
+                long = "tx-manager.publish-max-retries",
+                env = concat!($prefix, "_", "PUBLISH_MAX_RETRIES"),
+                default_value = "10"
+            )]
+            pub publish_max_retries: usize,
+
+            /// Delay between nonce-too-high publication retries (e.g., "1s").
+            #[arg(
+                long = "tx-manager.publish-retry-delay",
+                env = concat!($prefix, "_", "PUBLISH_RETRY_DELAY"),
+                default_value = "1s",
+                value_parser = ::humantime::parse_duration
+            )]
+            pub publish_retry_delay: ::std::time::Duration,
+
             /// Interval between receipt query attempts (e.g., "12s").
             #[arg(
                 long = "tx-manager.receipt-query-interval",
@@ -197,6 +214,8 @@ macro_rules! define_tx_manager_cli {
                     min_basefee: cli.min_basefee,
                     network_timeout: cli.network_timeout,
                     resubmission_timeout: cli.resubmission_timeout,
+                    publish_max_retries: cli.publish_max_retries,
+                    publish_retry_delay: cli.publish_retry_delay,
                     receipt_query_interval: cli.receipt_query_interval,
                     tx_send_timeout: cli.tx_send_timeout,
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,

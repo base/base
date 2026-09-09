@@ -1,6 +1,6 @@
 [package]
-name = "base-batcher-bin"
-description = "Base Batcher Binary"
+name = "base-batcher-cli"
+description = "Shared Base batcher CLI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,17 +8,13 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[[bin]]
-name = "base-batcher"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
 url.workspace = true
 eyre.workspace = true
-base-protocol.workspace = true
+humantime.workspace = true
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
@@ -26,7 +22,6 @@ alloy-signer-local.workspace = true
 tracing = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 clap = { workspace = true, features = ["derive", "env"] }
-serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-batcher-encoder = { workspace = true, features = ["clap"] }
 base-batcher-service = { workspace = true, features = ["metrics"] }

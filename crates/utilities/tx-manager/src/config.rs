@@ -113,6 +113,10 @@ pub struct TxManagerConfig {
     pub network_timeout: Duration,
     /// Fee-bump resubmission timeout.
     pub resubmission_timeout: Duration,
+    /// Maximum attempts to publish when an RPC reports a transient nonce gap.
+    pub publish_max_retries: usize,
+    /// Delay between transient nonce-gap publication attempts.
+    pub publish_retry_delay: Duration,
     /// Receipt polling interval.
     pub receipt_query_interval: Duration,
     /// Overall send timeout (zero = disabled).
@@ -136,6 +140,8 @@ impl Default for TxManagerConfig {
             min_basefee: 0,
             network_timeout: Duration::from_secs(10),
             resubmission_timeout: Duration::from_secs(48),
+            publish_max_retries: 10,
+            publish_retry_delay: Duration::from_secs(1),
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
@@ -157,6 +163,8 @@ impl TxManagerConfig {
     /// - `min_blob_fee` must be >= 1
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
+    /// - `publish_max_retries` must be >= 1
+    /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
     /// - `confirmation_timeout` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -184,10 +192,16 @@ impl TxManagerConfig {
             )+};
         }
 
-        reject_zero!(num_confirmations, safe_abort_nonce_too_low_count, fee_limit_multiplier);
+        reject_zero!(
+            num_confirmations,
+            safe_abort_nonce_too_low_count,
+            fee_limit_multiplier,
+            publish_max_retries,
+        );
         reject_zero_duration!(
             network_timeout,
             resubmission_timeout,
+            publish_retry_delay,
             receipt_query_interval,
             confirmation_timeout,
         );
@@ -303,6 +317,27 @@ mod tests {
         assert!(
             matches!(err, ConfigError::OutOfRange { field: "min_blob_fee", .. }),
             "expected OutOfRange for min_blob_fee, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_zero_publish_max_retries() {
+        let config = TxManagerConfig { publish_max_retries: 0, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "publish_max_retries", .. }),
+            "expected OutOfRange for publish_max_retries, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_zero_publish_retry_delay() {
+        let config =
+            TxManagerConfig { publish_retry_delay: Duration::ZERO, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "publish_retry_delay", .. }),
+            "expected OutOfRange for publish_retry_delay, got: {err}"
         );
     }
 }

@@ -8,7 +8,6 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_encoder::DaType;
 use base_batcher_service::{BatcherConfig, BatcherService};
-use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use eyre::Result;
@@ -61,8 +60,6 @@ impl InProcessBatcher {
         };
         if config.force_batch_submission {
             batcher_config.encoder_config.da_type = DaType::Calldata;
-            batcher_config.encoder_config.batch_type = BatchType::Span;
-            batcher_config.encoder_config.max_blocks_per_span_batch = Some(2);
         }
         let cancellation = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancellation.clone());

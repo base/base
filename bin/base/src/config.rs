@@ -136,14 +136,14 @@ impl ChainResolver {
         Self { chain: chain.unwrap_or_default(), chain_explicitly_set }
     }
 
-    /// Rejects top-level chain selectors before dispatching to reth-derived subcommands.
+    /// Rejects top-level chain selectors for commands that manage their own chain configuration.
     pub(crate) fn reject_for_reth_command(&self, command: &str) -> eyre::Result<()> {
         if !self.chain_explicitly_set {
             return Ok(());
         }
 
         eyre::bail!(
-            "`base --chain`/`BASE_CHAIN` only applies to integrated node commands; pass `--chain` to `{command}` instead"
+            "`base --chain`/`BASE_CHAIN` only applies to integrated node commands; `{command}` manages its own chain configuration"
         );
     }
 
