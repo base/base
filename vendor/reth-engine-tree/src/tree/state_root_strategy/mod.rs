@@ -1300,10 +1300,10 @@ mod tests {
     use alloy_primitives::{Address, U256, map::HashMap};
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::constants::KECCAK_EMPTY;
-    use base_evm_handler::state::{
+    use base_execution_evm_blocks::OnStateHook;
+    use base_execution_evm_runtime::state::{
         AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
     };
-    use base_execution_evm_blocks::OnStateHook;
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_common::init::init_genesis;
@@ -1395,7 +1395,7 @@ mod tests {
                     }
                 }
 
-                let mut account = base_evm_handler::state::Account::default();
+                let mut account = base_execution_evm_runtime::state::Account::default();
                 account.info = AccountInfo {
                     balance: U256::from(rng.random::<u64>()),
                     nonce: rng.random::<u64>(),

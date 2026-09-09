@@ -1,6 +1,6 @@
 //! Error types for the Base EVM module.
 
-use base_evm_handler::BlockExecutionError;
+use base_execution_evm_runtime::BlockExecutionError;
 
 /// L1 Block Info specific errors
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

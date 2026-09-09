@@ -2,22 +2,22 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::U256;
-use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_types_rpc::BaseTransactionRequest;
 use base_common_types_rpc::state::EvmOverrides;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};
-use base_evm_handler::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
+use base_execution_evm_runtime::BaseTransaction as BaseRevm;
+use base_execution_evm_runtime::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_types::BaseEthApiError;
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
-/// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.
+/// read-only [`base_execution_evm_runtime::Eip8130Executor::simulate`] at the block state.
 ///
 /// The EIP-8130 pipeline prices a deterministic, signature-independent amount
 /// (intrinsic + phased-call gas + payer authentication), so a single
-/// [`base_common_evm::Eip8130Executor::simulate`] resolves the sender and prices
+/// [`base_execution_evm_runtime::Eip8130Executor::simulate`] resolves the sender and prices
 /// intrinsic/auth gas once. To return a gas *limit* that is guaranteed to
 /// succeed — covering both the unrefunded gross call spend and EIP-150's 63/64
 /// retention across nested calls — `simulate` internally binary-searches the

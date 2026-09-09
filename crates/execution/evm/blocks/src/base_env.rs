@@ -1,13 +1,13 @@
 use alloy_primitives::U256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
-use base_common_evm::BaseSpecId;
 use base_common_types_chain::Header;
 #[cfg(feature = "std")]
 use base_common_types_payload::ExecutionData;
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
-use base_evm_handler::EvmEnv;
-use base_evm_handler::primitives::hardfork::SpecId;
+use base_execution_evm_runtime::BaseSpecId;
+use base_execution_evm_runtime::EvmEnv;
+use base_execution_evm_runtime::primitives::hardfork::SpecId;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 
 use crate::BaseNextBlockEnvAttributes;

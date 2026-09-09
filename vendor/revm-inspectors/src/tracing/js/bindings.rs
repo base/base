@@ -11,7 +11,7 @@ use core::cell::RefCell;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_evm_context::DBErrorMarker;
-use base_evm_handler::{
+use base_execution_evm_runtime::{
     Database, DatabaseRef,
     bytecode::opcode::{OpCode, PUSH0, PUSH32},
     interpreter::{SharedMemory, Stack},
@@ -1435,7 +1435,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_evm_handler::{database::CacheDB, database::EmptyDB};
+    use base_execution_evm_runtime::{database::CacheDB, database::EmptyDB};
     use boa_engine::Source;
 
     use super::*;

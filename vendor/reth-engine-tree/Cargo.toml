@@ -26,13 +26,13 @@ reth-prune = { workspace = true }
 reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-cache = { workspace = true }
 reth-execution-types = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
@@ -69,11 +69,11 @@ base-execution-evm-blocks = {features = ["metrics", "optional-balance-check", "o
 reth-db-api = { workspace = true }
 assert_matches = { workspace = true }
 reth-db-common = { workspace = true }
-base-common-evm = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-static-file = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }

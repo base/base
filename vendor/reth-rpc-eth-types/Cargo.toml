@@ -30,7 +30,6 @@ base-protocol = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
-base-common-evm = { workspace = true }
 base-common-flz = { workspace = true }
 jsonrpsee-types = { workspace = true }
 base-evm-context = { workspace = true }
@@ -61,7 +60,7 @@ reth-rpc-convert = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
-base-evm-handler = { workspace = true, features = ["overrides", "call-util"] }
+base-execution-evm-runtime = {features = ["call-util", "overrides"], workspace = true}
 
 [dev-dependencies]
 reth-db-models = { workspace = true }

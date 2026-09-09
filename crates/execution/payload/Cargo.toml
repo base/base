@@ -26,15 +26,14 @@ futures-util = { workspace = true }
 reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-execution-cache = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-evm-runtime = {workspace = true}
 base-observability-events = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 derive_more = { workspace = true, features = ["full"]}
@@ -66,7 +65,7 @@ base-execution-evm-blocks = { workspace = true, features = ["default", "test-uti
 [features]
 default = ["metrics"]
 metrics = [
-    "base-common-evm/metrics",
+    "base-execution-evm-runtime/metrics",
     "base-metrics/metrics",
     "base-observability-events/metrics",
     "base-execution-evm-blocks/metrics",

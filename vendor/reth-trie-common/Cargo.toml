@@ -17,25 +17,26 @@ workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
-base-evm-handler = { workspace = true }
-reth-primitives-traits = { workspace = true }
 bytes = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true }
+serde = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true  }
 arrayvec = { workspace = true, optional = true }
+base-execution-evm-runtime = { workspace = true }
 nybbles = { workspace = true, features = ["rlp"] }
 alloy-serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-trie = { workspace = true, features = ["ethereum"] }
 itertools = { workspace = true, features = ["use_alloc"] }
 base-common-types-rpc = { workspace = true, optional = true }
-base-common-types-chain = { workspace = true, optional = false }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 alloy-rlp = { workspace = true, features = ["core-net", "arrayvec"] }
 hash-db = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 plain_hasher = { workspace = true, optional = true, features = ["default"] }
+
 [dev-dependencies]
 bytes = { workspace = true }
 serde = { workspace = true }
@@ -46,9 +47,9 @@ bincode_1_3_3 = { workspace = true }
 base-common-types-chain = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 hash-db = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"] }
-proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
 serde_with = { workspace = true, features = ["macros"] }
 plain_hasher = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["serde"] }
@@ -73,8 +74,7 @@ std = [
     "serde?/std",
     "serde_with?/std",
     "serde_json/std",
-    "base-evm-handler/std",
-    "base-common-types-chain/std",
+    "base-execution-evm-runtime/std",
     "alloy-eips/std",
     "thiserror/std",
 ]
@@ -89,8 +89,7 @@ serde = [
     "alloy-trie/serde",
     "base-common-types-rpc?/serde",
     "reth-primitives-traits/serde",
-    "base-common-types-chain/serde",
-    "base-evm-handler/serde",
+    "base-execution-evm-runtime/serde",
     "alloy-eips/serde",
 ]
 reth-codec = ["dep:bytes", "dep:arrayvec"]
@@ -118,9 +117,8 @@ arbitrary = [
     "base-common-types-chain/arbitrary",
     "alloy-primitives/arbitrary",
     "nybbles/arbitrary",
-    "base-common-types-chain/arbitrary",
     "base-common-types-rpc?/arbitrary",
     "alloy-eips/arbitrary",
-    "base-evm-handler/arbitrary",
+    "base-execution-evm-runtime/arbitrary",
 ]
 rayon = ["dep:rayon"]

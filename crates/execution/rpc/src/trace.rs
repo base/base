@@ -14,7 +14,7 @@ use base_common_types_rpc::{
     TransactionOpcodeGas,
     state::{EvmOverrides, StateOverride},
 };
-use base_evm_handler::DatabaseCommit;
+use base_execution_evm_runtime::DatabaseCommit;
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;

@@ -15,16 +15,15 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 base-proof = { workspace = true }
 base-protocol = { workspace = true }
-base-common-evm = { workspace = true }
 alloy-primitives = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-evm-runtime = {workspace = true}
 spin = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
@@ -34,9 +33,8 @@ tokio = { workspace = true, features = ["default", "full"] }
 [features]
 std = [
     "base-common-types-chain/std",
-    "base-evm-handler/std",
+    "base-execution-evm-runtime/std",
     "alloy-primitives/std",
-    "base-common-evm/std",
     "base-common-chain-config/std",
     "base-proof-driver/std",
     "base-proof-executor/std",

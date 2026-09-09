@@ -61,4 +61,4 @@ reth-pin:
 
 [private]
 _build-contracts:
-    cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build
+    cd {{justfile_directory()}}/crates/testing/support/contracts && forge soldeer install && forge build

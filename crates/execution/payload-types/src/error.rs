@@ -5,7 +5,7 @@ use core::error;
 
 use alloy_primitives::B256;
 use base_common_types_payload::{ForkchoiceUpdateError, PayloadError, PayloadStatusEnum};
-use base_evm_handler::BlockExecutionError;
+use base_execution_evm_runtime::BlockExecutionError;
 use reth_storage_errors::provider::ProviderError;
 use tokio::sync::{mpsc, oneshot};
 

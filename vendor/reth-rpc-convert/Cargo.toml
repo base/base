@@ -18,8 +18,9 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-evm-handler = { workspace = true, features = ["rpc"] }
+base-execution-evm-runtime = { workspace = true  }
 base-common-types-chain = { workspace = true, features = ["reth"] }
+
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }
 

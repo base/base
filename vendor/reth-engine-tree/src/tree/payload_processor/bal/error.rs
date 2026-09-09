@@ -1,7 +1,7 @@
 //! Errors for the BAL execution path.
 
-use base_evm_handler::BlockExecutionError;
 use base_execution_evm_blocks::ConsensusError;
+use base_execution_evm_runtime::BlockExecutionError;
 use reth_storage_errors::provider::ProviderError;
 
 /// Errors surfaced by `execute_block`.

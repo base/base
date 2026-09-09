@@ -14,7 +14,7 @@ use base_common_types_chain::{
     BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559,
     TxReceipt,
 };
-use base_evm_handler::{database::BundleState, state::AccountInfo};
+use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
 use rand::Rng;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_primitives_traits::{

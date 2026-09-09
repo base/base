@@ -49,7 +49,7 @@ real-token network='devnet' *args:
         exit 0
     fi
 
-    contracts_dir="crates/utilities/test-utils/contracts"
+    contracts_dir="crates/testing/support/contracts"
     template="crates/infra/load-tests/examples/real-token-devnet.yaml.template"
     rendered_config="$(mktemp "${TMPDIR:-/tmp}/base-real-token-devnet.XXXXXX")"
 
@@ -93,7 +93,7 @@ validity-stress *args:
         export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
     fi
 
-    contracts_dir="crates/utilities/test-utils/contracts"
+    contracts_dir="crates/testing/support/contracts"
     template="crates/infra/load-tests/examples/validity-stress.yaml.template"
     rendered_config="$(mktemp "${TMPDIR:-/tmp}/base-validity-stress.XXXXXX.yaml")"
     mutator_pid=""

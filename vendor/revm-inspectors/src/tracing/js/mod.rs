@@ -12,8 +12,8 @@ use base_evm_context::{
     Block, ContextTr, ExecutionResult, HaltReasonTr, JournalTr, Output, ResultAndState, TransactTo,
     Transaction,
 };
-use base_evm_handler::JournalExt;
-use base_evm_handler::{
+use base_execution_evm_runtime::JournalExt;
+use base_execution_evm_runtime::{
     DatabaseRef, Inspector,
     bytecode::OpCode,
     database::WrapDatabaseRef,
@@ -758,15 +758,15 @@ fn js_error_to_revert(err: JsError) -> InterpreterResult {
 mod tests {
     use alloy_primitives::{Address, bytes, hex};
     use base_evm_context::TxEnv;
-    use base_evm_handler::InspectorEvmTr;
-    use base_evm_handler::{
+    use base_execution_evm_runtime::InspectorEvmTr;
+    use base_execution_evm_runtime::{
         InspectEvm, MainBuilder, MainContext,
         database::CacheDB,
         database::EmptyDB,
         primitives::hardfork::SpecId,
         state::{AccountInfo, Bytecode},
     };
-    //use base_evm_handler::{inspector_handler, InspectorContext, InspectorMainEvm};
+    //use base_execution_evm_runtime::{inspector_handler, InspectorContext, InspectorMainEvm};
     use serde_json::json;
 
     use super::*;
@@ -822,7 +822,7 @@ mod tests {
 
         let insp = JsInspector::new(code.to_string(), serde_json::Value::Null).unwrap();
 
-        let mut evm = base_evm_handler::Context::mainnet()
+        let mut evm = base_execution_evm_runtime::Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
             .with_db(db)
             .build_mainnet_with_inspector(insp);

@@ -56,8 +56,4 @@ tokio = { workspace = true, features = ["default", "macros", "test-util"] }
 
 [features]
 default = []
-metrics = [
-	"base-consensus-derive/metrics",
-	"base-metrics/metrics",
-	"dep:metrics",
-]
+metrics = ["base-consensus-derive/metrics", "base-metrics/metrics", "dep:metrics"]

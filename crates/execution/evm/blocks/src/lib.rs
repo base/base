@@ -52,9 +52,9 @@ pub use metrics::ExecutorMetrics;
 /// test helpers for mocking executor
 pub mod test_utils;
 
-pub use base_evm_handler as state_changes;
-pub use base_evm_handler as system_calls;
-pub use base_evm_handler::{OnStateHook, *};
+pub use base_execution_evm_runtime as state_changes;
+pub use base_execution_evm_runtime as system_calls;
+pub use base_execution_evm_runtime::{OnStateHook, *};
 
 mod next_block;
 pub use next_block::NextBlockEnvAttributes;

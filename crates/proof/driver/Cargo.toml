@@ -17,18 +17,18 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 base-protocol = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
 base-proof-executor = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 
 [features]
 std = [
     "base-common-types-chain/std",
-    "base-evm-handler/std",
+    "base-execution-evm-runtime/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
     "base-common-chain-config/std",

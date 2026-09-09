@@ -39,7 +39,7 @@ the default EOA, or a stub when absent) lets the intrinsic schedule price
 authentication gas from its shape, and an optional `sender_actor_id` names the
 acting actor published to the `TxContext` precompile (default: the account's
 self-actor) so policy-gated session-key estimates resolve the right policy —
-and runs a single read-only `base_common_evm::Eip8130Executor::simulate`
+and runs a single read-only `base_execution_evm_runtime::Eip8130Executor::simulate`
 against the block state.
 
 Because the EIP-8130 pipeline charges a deterministic, signature-independent

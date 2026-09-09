@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_evm_handler::database::BundleAccount;
+use base_execution_evm_runtime::database::BundleAccount;
 use reth_primitives_traits::Account;
 use reth_storage_errors::db::DatabaseError;
 use reth_trie_common::HashedPostState;
@@ -114,7 +114,7 @@ pub fn zero_destroyed_account_storage<'a>(
 
 #[cfg(test)]
 mod tests {
-    use base_evm_handler::database::AccountStatus;
+    use base_execution_evm_runtime::database::AccountStatus;
 
     use super::*;
 

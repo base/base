@@ -26,20 +26,17 @@ futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["display"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 base-state = { workspace = true }
-base-test-utils = { workspace = true }
+base-testing-support = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
+base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 
 [features]
-default = [ "metrics" ]
-metrics = [
-	"base-metrics/metrics",
-	"base-observability-events/metrics",
-	"dep:metrics",
-]
+default = ["metrics"]
+metrics = ["base-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]

@@ -18,7 +18,7 @@ use std::{collections::HashMap, fmt, fs, path::Path};
 
 use alloy_primitives::{Address, TxHash};
 use base_bundles::{MeterBundleResponse, OpcodeGas};
-use base_evm_handler::state::EvmState;
+use base_execution_evm_runtime::state::EvmState;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -830,7 +830,7 @@ impl ResourceMeteringSchedule {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_evm_handler::state::{Account, EvmStorageSlot, TransactionId};
+    use base_execution_evm_runtime::state::{Account, EvmStorageSlot, TransactionId};
 
     use super::*;
 

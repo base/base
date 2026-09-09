@@ -17,7 +17,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, TxReceipt,
     transaction::{SignerRecoverable, TransactionMeta},
 };
-use base_evm_handler::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
+use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
@@ -3522,7 +3522,7 @@ mod tests {
     use alloy_primitives::{U256, map::B256Map};
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
-    use base_evm_handler::{database::BundleState, state::AccountInfo};
+    use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
@@ -4435,7 +4435,7 @@ mod tests {
 
     #[test]
     fn test_write_state_and_historical_read_hashed() {
-        use base_evm_handler::{database::BundleState, state::AccountInfo};
+        use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
         use reth_trie::HashedPostState;
 
         let factory = create_test_provider_factory();

@@ -35,7 +35,6 @@ base-common-flz = { workspace = true }
 base-txpool-rpc = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
 base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
@@ -74,7 +73,6 @@ derive_more = { workspace = true, features = ["debug"] }
 secp256k1 = { workspace = true, features = ["default"] }
 serde_with = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
-base-common-evm = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 clap_builder = { workspace = true, features = ["default"] }
@@ -89,6 +87,7 @@ reth-network-peers = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
+base-execution-evm-runtime = {features = ["std"], workspace = true}
 reth-execution-types = { workspace = true, features = ["default"] }
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -113,10 +112,10 @@ tikv-jemallocator = { workspace = true, optional = true, features = ["default"] 
 [dev-dependencies]
 nanoid = { workspace = true }
 rlimit = { workspace = true }
-base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-execution-trie = { workspace = true }
+base-testing-support = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 ctor = { workspace = true, features = ["default"] }
 hyper = { workspace = true, features = ["default"] }
@@ -134,7 +133,7 @@ base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 default = ["jemalloc", "metrics"]
 metrics = [
     "base-txpool-rpc/metrics",
-    "base-common-evm/metrics",
+    "base-execution-evm-runtime/metrics",
     "base-execution-payload-builder/metrics",
     "base-metrics/metrics",
     "base-observability-events/metrics",

@@ -1091,7 +1091,7 @@ mod tests {
     impl HashedPostStateProvider for MockStateProvider {
         fn hashed_post_state(
             &self,
-            _bundle_state: &base_evm_handler::database::BundleState,
+            _bundle_state: &base_execution_evm_runtime::database::BundleState,
         ) -> ProviderResult<HashedPostState> {
             Ok(HashedPostState::default())
         }

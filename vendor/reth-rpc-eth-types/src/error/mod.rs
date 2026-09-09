@@ -11,8 +11,10 @@ use alloy_transport::{RpcError, TransportErrorKind};
 
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
-use base_evm_handler::{BlockExecutionError, BlockValidationError, CallError, StateOverrideError};
-use base_evm_handler::{database::EvmDatabaseError, state::bal::BalError};
+use base_execution_evm_runtime::{
+    BlockExecutionError, BlockValidationError, CallError, StateOverrideError,
+};
+use base_execution_evm_runtime::{database::EvmDatabaseError, state::bal::BalError};
 use base_execution_txpool::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,

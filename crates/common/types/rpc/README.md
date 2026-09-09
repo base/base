@@ -10,7 +10,7 @@ retain Base deposit and EIP-8130 behavior; the generic Ethereum types remain ava
 providers. Shared `Header` and `Log` responses carry optional millisecond timestamps.
 
 The Base network marker and transaction builders live in `base-common-network`. RPC-to-EVM
-conversion lives in `base-common-evm`, keeping these schemas independent of providers and execution.
+conversion lives in `base-execution-evm-runtime`, keeping these schemas independent of providers and execution.
 Engine payload and fork-choice types live in `base-common-types-payload`.
 
 ## Usage

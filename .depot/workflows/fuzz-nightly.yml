@@ -69,9 +69,9 @@ jobs:
       - name: Pre-pull docker images
         run: just devnet pull-images
       - name: Build test contracts
-        # base-test-utils embeds Foundry artifacts (contracts/out/*.json) at compile
+        # base-testing-support embeds Foundry artifacts (contracts/out/*.json) at compile
         # time; they are gitignored build output, so generate them before building.
-        run: cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+        run: cd crates/testing/support/contracts && forge soldeer install && forge build
       - name: Run fuzz sync-parity test
         # FUZZ_SEED is exported by the "Pick fuzz seed" step above.
         run: |

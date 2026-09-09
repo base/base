@@ -5,7 +5,7 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{B256Map, HashMap, HashSet, hash_map},
 };
-use base_evm_handler::database::BundleAccount;
+use base_execution_evm_runtime::database::BundleAccount;
 use itertools::Itertools;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{FromParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -987,7 +987,7 @@ impl Iterator for ChunkedHashedPostState {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Bytes;
-    use base_evm_handler::{
+    use base_execution_evm_runtime::{
         database::{AccountStatus, StorageSlot, StorageWithOriginalValues},
         state::{AccountInfo, Bytecode},
     };

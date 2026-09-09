@@ -37,26 +37,28 @@ alloy-json-abi = { workspace = true }
 alloy-provider = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-network = { workspace = true }
+base-common-types-chain = { workspace = true }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 futures-util = { workspace = true, features = ["default"] }
+base-common-types-rpc = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = [
     "alloc",
     "raw_value",
 ] }
-base-common-network = { workspace = true }
-base-common-types-chain = { workspace = true }
-base-common-types-rpc = { workspace = true, features = ["serde"] }
+
 [dev-dependencies]
-base-common-network = { workspace = true }
 alloy-node-bindings = { workspace = true }
+base-common-network = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-provider = { workspace = true, features = ["anvil-node"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasmtimer = { workspace = true, features = ["default"] }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
@@ -65,7 +67,4 @@ tokio = { workspace = true, features = ["default", "time"] }
 workspace = true
 
 [features]
-pubsub = [
-    "alloy-provider/pubsub",
-    "dep:alloy-pubsub",
-]
+pubsub = ["alloy-provider/pubsub", "dep:alloy-pubsub"]

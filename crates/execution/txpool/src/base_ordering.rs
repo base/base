@@ -204,7 +204,7 @@ mod tests {
         Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
     };
     use base_execution_txpool::{BaseOrdering, test_utils::TransactionBuilder};
-    use base_test_utils::Account;
+    use base_testing_support::Account;
     use reth_primitives_traits::Recovered;
 
     use super::*;

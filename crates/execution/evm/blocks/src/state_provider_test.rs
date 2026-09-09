@@ -154,7 +154,7 @@ impl StateProofProvider for StateProviderTest {
 impl HashedPostStateProvider for StateProviderTest {
     fn hashed_post_state(
         &self,
-        bundle_state: &base_evm_handler::database::BundleState,
+        bundle_state: &base_execution_evm_runtime::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
         Ok(HashedPostState::from_bundle_state(bundle_state.state()))
     }

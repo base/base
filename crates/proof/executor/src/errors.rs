@@ -8,7 +8,7 @@ use alloc::string::String;
 
 use base_common_types_chain::EIP1559ParamError;
 use base_evm_context::DBErrorMarker;
-use base_evm_handler::BlockExecutionError;
+use base_execution_evm_runtime::BlockExecutionError;
 use base_proof_mpt::TrieNodeError;
 use thiserror::Error;
 
@@ -278,7 +278,7 @@ impl From<EIP1559ParamError> for ExecutorError {
 
 #[cfg(test)]
 mod tests {
-    use base_evm_handler::{
+    use base_execution_evm_runtime::{
         BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
     };
 

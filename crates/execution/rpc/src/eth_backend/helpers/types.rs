@@ -5,7 +5,7 @@
 mod tests {
     use base_common_types_chain::Transaction;
     use base_common_types_rpc::TransactionRequest;
-    use base_evm_handler::database::CacheDB;
+    use base_execution_evm_runtime::database::CacheDB;
     use reth_provider::test_utils::MockEthProvider;
     use reth_rpc_eth_types::simulate::resolve_transaction;
 
@@ -15,7 +15,9 @@ mod tests {
     fn test_resolve_transaction_empty_request() {
         let builder = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
         let mut db = CacheDB::<
-            base_evm_handler::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+            base_execution_evm_runtime::database::EmptyDBTyped<
+                reth_storage_errors::provider::ProviderError,
+            >,
         >::default();
         let tx = TransactionRequest::default();
         let result = resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &builder).unwrap();
@@ -30,7 +32,9 @@ mod tests {
     #[test]
     fn test_resolve_transaction_legacy() {
         let mut db = CacheDB::<
-            base_evm_handler::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+            base_execution_evm_runtime::database::EmptyDBTyped<
+                reth_storage_errors::provider::ProviderError,
+            >,
         >::default();
         let builder = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
 
@@ -48,7 +52,9 @@ mod tests {
     #[test]
     fn test_resolve_transaction_partial_eip1559() {
         let mut db = CacheDB::<
-            base_evm_handler::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+            base_execution_evm_runtime::database::EmptyDBTyped<
+                reth_storage_errors::provider::ProviderError,
+            >,
         >::default();
         let rpc_converter = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
 
@@ -71,7 +77,9 @@ mod tests {
     #[test]
     fn test_resolve_transaction_wraps_max_nonce_when_nonce_check_disabled() {
         let mut db = CacheDB::<
-            base_evm_handler::database::EmptyDBTyped<reth_storage_errors::provider::ProviderError>,
+            base_execution_evm_runtime::database::EmptyDBTyped<
+                reth_storage_errors::provider::ProviderError,
+            >,
         >::default();
         let rpc_converter = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
 

@@ -17,12 +17,11 @@ derive_more = { workspace = true }
 base-bundles = { workspace = true }
 reth-provider = { workspace = true }
 revm-bytecode = { workspace = true }
-base-common-evm = { workspace = true }
 alloy-primitives = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-precompiles = { workspace = true }
+base-execution-evm-runtime = {workspace = true}
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }
@@ -37,18 +36,18 @@ serde_json = { workspace = true }
 revm-bytecode = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-evm-handler = { workspace = true }
 base-common-network = { workspace = true }
 base-common-types-payload = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 url = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 base-node-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-base-test-utils = { workspace = true, features = ["contracts"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
+base-testing-support = { workspace = true, features = ["contracts"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}

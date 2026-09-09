@@ -1,7 +1,7 @@
 //! State predicates carried by pooled transactions.
 
 use alloy_primitives::{Address, U256};
-use base_evm_handler::Database;
+use base_execution_evm_runtime::Database;
 use base_execution_txpool::ValidPoolTransaction;
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
@@ -324,7 +324,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::TxKind;
     use base_common_types_chain::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
-    use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
+    use base_execution_evm_runtime::{database::InMemoryDB, state::AccountInfo};
     use serde_json::json;
 
     use super::*;

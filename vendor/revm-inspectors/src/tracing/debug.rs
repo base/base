@@ -7,8 +7,8 @@ use base_common_types_rpc::{
     PreStateConfig, TransactionInfo,
 };
 use base_evm_context::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
-use base_evm_handler::FrameResult;
-use base_evm_handler::{
+use base_execution_evm_runtime::FrameResult;
+use base_execution_evm_runtime::{
     DatabaseRef, Inspector,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
     primitives::{Address, Log, U256},
@@ -36,7 +36,7 @@ pub enum DebugInspector {
     /// PreStateTracer
     PreStateTracer(TracingInspector, PreStateConfig),
     /// Noop tracer
-    Noop(base_evm_handler::NoOpInspector),
+    Noop(base_execution_evm_runtime::NoOpInspector),
     /// Mux tracer
     Mux(MuxInspector, MuxConfig),
     /// FlatCallTracer
@@ -107,7 +107,7 @@ impl DebugInspector {
                         )
                     }
                     GethDebugBuiltInTracerType::NoopTracer => {
-                        Self::Noop(base_evm_handler::NoOpInspector)
+                        Self::Noop(base_execution_evm_runtime::NoOpInspector)
                     }
                     GethDebugBuiltInTracerType::MuxTracer => {
                         let config = tracer_config

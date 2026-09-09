@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::{BaseReceipt, transaction::Either};
-use base_evm_handler::database::{
+use base_execution_evm_runtime::database::{
     BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
 };
 use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};

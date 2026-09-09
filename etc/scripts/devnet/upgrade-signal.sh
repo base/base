@@ -21,7 +21,7 @@ if [[ -n "${UPGRADE_SIGNAL_ENV_FILES:-}" ]]; then
   done
 fi
 
-CONTRACT_ROOT="${CONTRACT_ROOT:-$REPO_ROOT/crates/utilities/test-utils/contracts}"
+CONTRACT_ROOT="${CONTRACT_ROOT:-$REPO_ROOT/crates/testing/support/contracts}"
 ENV_OUT="${UPGRADE_SIGNAL_ENV_OUT:-$REPO_ROOT/.devnet/l2/configs/upgrade-signal.env}"
 ROLLUP_JSON="${UPGRADE_SIGNAL_ROLLUP_JSON:-$REPO_ROOT/.devnet/l2/configs/rollup.json}"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"

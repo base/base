@@ -8,7 +8,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
 use base_execution_cli::ExecutionUpgradeSignalConfig;
-use base_test_utils::MockProtocolVersions;
+use base_testing_support::MockProtocolVersions;
 use base_upgrade_signal::{
     UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode,
 };

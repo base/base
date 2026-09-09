@@ -10,7 +10,7 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130,
 };
-use base_test_utils::Account;
+use base_testing_support::Account;
 
 /// L2 timestamp where the Zenith fork activates in these tests.
 pub(crate) const ZENITH_ACTIVATION_TIMESTAMP: u64 = 4;

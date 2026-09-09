@@ -32,7 +32,7 @@ use base_execution_payload_builder::{
 use base_execution_txpool::NoopTransactionPool;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_state::CachedReads;
-use base_test_utils::build_test_genesis;
+use base_testing_support::build_test_genesis;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;

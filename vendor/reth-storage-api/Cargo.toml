@@ -19,7 +19,6 @@ workspace = true
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-models = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-stages-types = { workspace = true }
@@ -28,6 +27,7 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
 reth-tokio-util = { workspace = true, optional = true }
@@ -51,7 +51,7 @@ std = [
     "base-common-types-payload/std",
     "reth-primitives-traits/std",
     "reth-stages-types/std",
-    "base-evm-handler/std",
+    "base-execution-evm-runtime/std",
     "reth-execution-types/std",
     "reth-prune-types/std",
     "reth-storage-errors/std",
@@ -71,7 +71,7 @@ serde = [
     "reth-prune-types/serde",
     "reth-stages-types/serde",
     "reth-trie-common/serde",
-    "base-evm-handler/serde",
+    "base-execution-evm-runtime/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-types-chain/serde",

@@ -14,7 +14,6 @@ use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chain_config::DaFootprintGasScalarUpdate;
 use base_common_chain_config::Upgrades;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
-use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_precompiles::NonceManagerStorage;
 use base_common_precompiles::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -25,12 +24,13 @@ use base_common_types_chain::{
     constants::KECCAK_EMPTY,
 };
 use base_evm_context::JournalCheckpoint;
-use base_evm_handler::state::{AccountInfo, Bytecode};
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
     TxAuthError,
 };
+use base_execution_evm_runtime::state::{AccountInfo, Bytecode};
+use base_execution_evm_runtime::{BaseSpecId, L1BlockInfo};
 use base_execution_txpool::{
     EthTransactionValidator, InvalidPoolTransactionError, PoolTransactionError, TransactionOrigin,
     TransactionValidationOutcome, TransactionValidator, ValidTransaction,
@@ -2177,7 +2177,7 @@ mod tests {
     use base_execution_txpool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
-    use base_test_utils::{Account, build_test_genesis_zenith};
+    use base_testing_support::{Account, build_test_genesis_zenith};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;

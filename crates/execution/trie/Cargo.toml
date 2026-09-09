@@ -19,11 +19,11 @@ alloy-eips = { workspace = true }
 derive_more = { workspace = true }
 base-metrics = { workspace = true }
 reth-provider = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 static_assertions = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-execution-evm-runtime = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 bytes = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, optional = true }

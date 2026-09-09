@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use alloy_primitives::{B256, keccak256, map::HashSet};
-use base_evm_handler::database::RevertToSlot;
+use base_execution_evm_runtime::database::RevertToSlot;
 use eyre::Context;
 use rayon::slice::ParallelSliceMut;
 use reth_db::tables;
@@ -203,7 +203,7 @@ pub(super) fn inject_plain_wipe_slots<P: DBProvider>(
 /// into the account revert if not already present.
 fn inject_preimage_entry(
     reader: &SlotPreimagesReader,
-    revert: &mut base_evm_handler::database::AccountRevert,
+    revert: &mut base_execution_evm_runtime::database::AccountRevert,
     address: alloy_primitives::Address,
     hashed_slot: B256,
     value: alloy_primitives::U256,

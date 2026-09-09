@@ -1009,7 +1009,7 @@ mod tests {
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
-    use base_evm_handler::database::{BundleState, OriginalValuesKnown};
+    use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{

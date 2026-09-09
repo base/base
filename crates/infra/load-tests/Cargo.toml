@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 tracing = { workspace = true }
-thiserror = { workspace = true }
 humantime = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -24,10 +24,10 @@ alloy-signer = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-tx-manager = { workspace = true }
-base-evm-handler = { workspace = true }
 alloy-primitives = { workspace = true }
 tracing-indicatif = { workspace = true }
 base-common-precompiles = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }

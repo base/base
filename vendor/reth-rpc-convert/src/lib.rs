@@ -12,5 +12,5 @@
 
 pub mod transaction;
 
-pub use base_evm_handler::{CallFees, CallFeesError, EthTxEnvError, TryIntoTxEnv};
+pub use base_execution_evm_runtime::{CallFees, CallFeesError, EthTxEnvError, TryIntoTxEnv};
 pub use transaction::TransactionConversionError;

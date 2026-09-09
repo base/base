@@ -11,11 +11,11 @@ use std::{
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
-use base_evm_handler::database::BundleState;
 use base_execution_evm_blocks::{
     BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
 };
+use base_execution_evm_runtime::database::BundleState;
 pub use base_execution_trie::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
@@ -612,8 +612,8 @@ mod tests {
     use alloy_primitives::{Address, B256, U256};
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::constants::KECCAK_EMPTY;
-    use base_evm_handler::{database::BundleState, state::AccountInfo};
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use reth_execution_cache::CachedStatus;
 
     use crate::tree::{

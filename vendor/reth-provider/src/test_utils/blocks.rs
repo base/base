@@ -9,7 +9,7 @@ use alloy_primitives::{
 use base_common_types_chain::{
     BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header, TxLegacy,
 };
-use base_evm_handler::{database::BundleState, state::AccountInfo};
+use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives_traits::{Account, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
@@ -39,7 +39,10 @@ pub fn assert_genesis_block<DB: Database>(provider: &DatabaseProviderRW, g: Seal
     );
     assert_eq!(tx.table::<tables::TransactionBlocks>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::TransactionHashNumbers>().unwrap(), vec![]);
-    assert_eq!(tx.table::<tables::Receipts<base_common_types_chain::BaseReceipt>>().unwrap(), vec![]);
+    assert_eq!(
+        tx.table::<tables::Receipts<base_common_types_chain::BaseReceipt>>().unwrap(),
+        vec![]
+    );
     assert_eq!(tx.table::<tables::PlainAccountState>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::PlainStorageState>().unwrap(), vec![]);
     assert_eq!(tx.table::<tables::AccountsHistory>().unwrap(), vec![]);
@@ -199,15 +202,17 @@ fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome) {
             .revert_account_info(number, account2, Some(None))
             .state_storage(account1, HashMap::from_iter([(slot, (U256::ZERO, U256::from(10)))]))
             .build(),
-        vec![vec![base_common_types_chain::BaseReceipt::Eip2930(base_common_types_chain::Receipt {
-            status: (true).into(),
-            cumulative_gas_used: 300,
-            logs: vec![Log::new_unchecked(
-                Address::new([0x60; 20]),
-                vec![B256::with_last_byte(1), B256::with_last_byte(2)],
-                Bytes::default(),
-            )],
-        })]],
+        vec![vec![base_common_types_chain::BaseReceipt::Eip2930(
+            base_common_types_chain::Receipt {
+                status: (true).into(),
+                cumulative_gas_used: 300,
+                logs: vec![Log::new_unchecked(
+                    Address::new([0x60; 20]),
+                    vec![B256::with_last_byte(1), B256::with_last_byte(2)],
+                    Bytes::default(),
+                )],
+            },
+        )]],
         number,
         Vec::new(),
     );
@@ -252,15 +257,17 @@ fn block2(
             )
             .revert_storage(number, account, Vec::from([(slot, U256::from(10))]))
             .build(),
-        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
-            status: (false).into(),
-            cumulative_gas_used: 400,
-            logs: vec![Log::new_unchecked(
-                Address::new([0x61; 20]),
-                vec![B256::with_last_byte(3), B256::with_last_byte(4)],
-                Bytes::default(),
-            )],
-        })]],
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(
+            base_common_types_chain::Receipt {
+                status: (false).into(),
+                cumulative_gas_used: 400,
+                logs: vec![Log::new_unchecked(
+                    Address::new([0x61; 20]),
+                    vec![B256::with_last_byte(3), B256::with_last_byte(4)],
+                    Bytes::default(),
+                )],
+            },
+        )]],
         number,
         Vec::new(),
     );
@@ -314,15 +321,17 @@ fn block3(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
-            status: (true).into(),
-            cumulative_gas_used: 400,
-            logs: vec![Log::new_unchecked(
-                Address::new([0x61; 20]),
-                vec![B256::with_last_byte(3), B256::with_last_byte(4)],
-                Bytes::default(),
-            )],
-        })]],
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(
+            base_common_types_chain::Receipt {
+                status: (true).into(),
+                cumulative_gas_used: 400,
+                logs: vec![Log::new_unchecked(
+                    Address::new([0x61; 20]),
+                    vec![B256::with_last_byte(3), B256::with_last_byte(4)],
+                    Bytes::default(),
+                )],
+            },
+        )]],
         number,
         Vec::new(),
     );
@@ -396,15 +405,17 @@ fn block4(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
-            status: (true).into(),
-            cumulative_gas_used: 400,
-            logs: vec![Log::new_unchecked(
-                Address::new([0x61; 20]),
-                vec![B256::with_last_byte(3), B256::with_last_byte(4)],
-                Bytes::default(),
-            )],
-        })]],
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(
+            base_common_types_chain::Receipt {
+                status: (true).into(),
+                cumulative_gas_used: 400,
+                logs: vec![Log::new_unchecked(
+                    Address::new([0x61; 20]),
+                    vec![B256::with_last_byte(3), B256::with_last_byte(4)],
+                    Bytes::default(),
+                )],
+            },
+        )]],
         number,
         Vec::new(),
     );
@@ -475,15 +486,17 @@ fn block5(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(base_common_types_chain::Receipt {
-            status: (true).into(),
-            cumulative_gas_used: 400,
-            logs: vec![Log::new_unchecked(
-                Address::new([0x61; 20]),
-                vec![B256::with_last_byte(3), B256::with_last_byte(4)],
-                Bytes::default(),
-            )],
-        })]],
+        vec![vec![base_common_types_chain::BaseReceipt::Eip1559(
+            base_common_types_chain::Receipt {
+                status: (true).into(),
+                cumulative_gas_used: 400,
+                logs: vec![Log::new_unchecked(
+                    Address::new([0x61; 20]),
+                    vec![B256::with_last_byte(3), B256::with_last_byte(4)],
+                    Bytes::default(),
+                )],
+            },
+        )]],
         number,
         Vec::new(),
     );

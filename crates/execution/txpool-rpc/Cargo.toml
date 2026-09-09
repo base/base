@@ -31,8 +31,8 @@ base-common-chain-config = {features = ["default"], workspace = true}
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
-base-test-utils = { workspace = true }
 base-common-network = { workspace = true }
+base-testing-support = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }

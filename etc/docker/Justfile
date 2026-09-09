@@ -321,4 +321,4 @@ _up-devnet compose_profile mode:
 
 [private]
 _build-contracts:
-    cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+    cd crates/testing/support/contracts && forge soldeer install && forge build

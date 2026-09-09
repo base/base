@@ -43,9 +43,8 @@ members = [
   "crates/common/bundles",
   "crates/common/chain/config",
   "crates/common/types/chain",
-  "crates/common/evm",
+  "crates/execution/evm/runtime",
   "crates/common/evm-context",
-  "crates/common/evm-handler",
   "crates/common/flz",
   "crates/common/l1-fees",
   "crates/common/network",
@@ -124,7 +123,7 @@ members = [
   "crates/utilities/reth-cli",
   "crates/utilities/retry",
   "crates/utilities/runtime",
-  "crates/utilities/test-utils",
+  "crates/testing/support",
   "crates/utilities/trusted-proxy",
   "crates/utilities/tx-manager",
   "crates/utilities/upgrade-signal",
@@ -340,7 +339,7 @@ incremental = false
 
 [workspace.dependencies]
 # Base Primitives
-base-common-evm = { path = "crates/common/evm", default-features = false }
+base-execution-evm-runtime = { path = "crates/execution/evm/runtime", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-bundles = { path = "crates/common/bundles", default-features = false }
 base-common-network = { path = "crates/common/network", default-features = false }
@@ -441,7 +440,7 @@ base-cli-utils = { path = "crates/utilities/cli", default-features = false }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
 base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
-base-test-utils = { path = "crates/utilities/test-utils", default-features = false }
+base-testing-support = { path = "crates/testing/support", default-features = false }
 base-tx-manager = { path = "crates/utilities/tx-manager", default-features = false }
 base-optimism-rpc = { path = "crates/utilities/optimism-rpc", default-features = false }
 base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
@@ -451,7 +450,6 @@ base-balance-monitor = { path = "crates/utilities/balance-monitor", default-feat
 # revm
 revm-state = { path = "vendor/revm-state", default-features = false }
 base-evm-context = { path = "crates/common/evm-context", default-features = false }
-base-evm-handler = { path = "crates/common/evm-handler", default-features = false }
 revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
 revm-precompile = { path = "vendor/revm-precompile", default-features = false }
 revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }

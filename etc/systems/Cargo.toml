@@ -55,13 +55,13 @@ chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default"] }
-base-test-utils = { workspace = true, optional = true }
 tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
+base-testing-support = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
@@ -107,9 +107,9 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 
 [features]
 default = ["upgrade-signal"]
-# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
+# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-testing-support, whose
 # contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
-# time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
+# time. Those artifacts are gitignored, so base-testing-support cannot compile when pulled over a git
 # dependency. External consumers that only need the core L1+L2 stack disable this feature
 # (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
-upgrade-signal = ["base-test-utils/contracts", "dep:base-test-utils"]
+upgrade-signal = ["base-testing-support/contracts", "dep:base-testing-support"]

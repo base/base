@@ -172,7 +172,7 @@ mod tests {
     };
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use base_node_core::{BaseNode, NodeConfig, RollupArgs};
-    use base_test_utils::build_test_genesis;
+    use base_testing_support::build_test_genesis;
     use reth_node_core::{
         args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
         dirs::{DataDirPath, MaybePlatformPath},

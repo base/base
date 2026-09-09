@@ -14,8 +14,11 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+auto_impl = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-sol-types = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
@@ -24,23 +27,21 @@ thiserror = { workspace = true, features = ["std"] }
 rand_08 = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"]}
 alloy-eips = { workspace = true, features = ["std", "serde"] }
+futures-utils-wasm = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
+base-common-types-rpc = {workspace = true, features = ["std", "serde"]}
+base-common-types-chain = {workspace = true, features = ["serde", "std"]}
 coins-bip39 = { workspace = true, features = ["english"], optional = true }
 zeroize = { workspace = true, features = [
     "zeroize_derive",
     "alloc",
 ], optional = true }
-auto_impl = { workspace = true }
-alloy-json-rpc = { workspace = true }
-alloy-sol-types = { workspace = true }
-futures-utils-wasm = { workspace = true, features = ["default"] }
-base-common-types-rpc = {workspace = true, features = ["std", "serde"]}
-base-common-types-chain = {workspace = true, features = ["serde", "std"]}
+
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-tempfile = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 

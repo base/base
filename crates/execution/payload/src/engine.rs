@@ -3,12 +3,12 @@ use std::sync::Arc;
 use alloy_primitives::{B256, keccak256};
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
-use base_common_evm::BaseTime;
 use base_common_types_chain::{BlockHeader, Predeploys};
 use base_common_types_payload::ExecutionData;
 use base_execution_evm_blocks::{
     BaseConsensusError, ConsensusError, verify_withdrawals_root_prehashed,
 };
+use base_execution_evm_runtime::BaseTime;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError,
 };

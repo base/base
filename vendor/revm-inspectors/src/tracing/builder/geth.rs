@@ -16,7 +16,7 @@ use base_common_types_rpc::{
     PreStateConfig, PreStateFrame, PreStateMode, StructLog,
 };
 use base_evm_context::{HaltReasonTr, ResultAndState};
-use base_evm_handler::{
+use base_execution_evm_runtime::{
     DatabaseRef,
     bytecode::opcode,
     primitives::KECCAK_EMPTY,
@@ -471,7 +471,9 @@ impl<'a> GethTraceBuilder<'a> {
                 }
 
                 if let Some(status) = &step.status {
-                    if *status == base_evm_handler::interpreter::InstructionResult::OutOfGas {
+                    if *status
+                        == base_execution_evm_runtime::interpreter::InstructionResult::OutOfGas
+                    {
                         out_of_gas = true;
                     }
                 }
@@ -590,7 +592,7 @@ fn account_was_empty(account: &AccountInfo) -> bool {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address};
-    use base_evm_handler::{
+    use base_execution_evm_runtime::{
         database::CacheDB,
         database::EmptyDB,
         state::{Account, AccountInfo},

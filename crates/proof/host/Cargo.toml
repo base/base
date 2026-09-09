@@ -24,7 +24,6 @@ alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 alloy-transport = { workspace = true }
-base-common-evm = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
 base-common-network = { workspace = true }
@@ -43,17 +42,17 @@ base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }
-base-evm-handler = { workspace = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"], optional = true }
+base-execution-evm-runtime = {features = ["blst", "c-kzg", "portable", "secp256k1", "std"],  workspace = true}
 
 [dev-dependencies]
 proptest = { workspace = true, features = ["default"] }
 
 [features]
-disk = [ "dep:rocksdb" ]
+disk = ["dep:rocksdb"]
 metrics = [
-    "base-common-evm/metrics",
+    "base-execution-evm-runtime/metrics",
     "base-consensus-providers/metrics",
     "base-metrics/metrics",
     "dep:metrics",
 ]
-precompiles = [ "dep:base-evm-handler" ]
+precompiles = []

@@ -1,8 +1,8 @@
 //! Base-specific implementation and utilities for the executor
 
 use alloy_primitives::{U16, U256, hex};
-use base_common_evm::L1BlockInfo;
 use base_common_types_chain::Transaction;
+use base_execution_evm_runtime::L1BlockInfo;
 use reth_primitives_traits::BlockBody;
 
 use crate::{BaseBlockExecutionError, L1BlockInfoError};

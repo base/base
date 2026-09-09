@@ -15,7 +15,7 @@ use base_execution_txpool::{
     ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
-use base_test_utils::Account;
+use base_testing_support::Account;
 use base_txpool_rpc::SendRawTransactionValidityOptions;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.

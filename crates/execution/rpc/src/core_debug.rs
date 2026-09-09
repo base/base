@@ -16,12 +16,12 @@ use base_common_types_rpc::{
     GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
     GethTraceResult as TraceResult, Index, StateContext, state::EvmOverrides,
 };
-use base_evm_handler::{BlockEnvironment, Evm};
-use base_evm_handler::{
+use base_execution_evm_blocks::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
+use base_execution_evm_runtime::{BlockEnvironment, Evm};
+use base_execution_evm_runtime::{
     Database, DatabaseCommit,
     database::{BundleRetention, State},
 };
-use base_execution_evm_blocks::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
 use base_execution_txpool::TransactionPool;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
@@ -1261,7 +1261,7 @@ impl Default for BadBlockStore {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, keccak256};
-    use base_evm_handler::{
+    use base_execution_evm_runtime::{
         database::{AccountStatus, BundleAccount, BundleState, StorageSlot},
         state::AccountInfo as RevmAccountInfo,
     };

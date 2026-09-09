@@ -6,8 +6,8 @@ use base_common_types_rpc::{
     MuxConfig, MuxFrame, NoopFrame, PreStateConfig, TransactionInfo,
 };
 use base_evm_context::{ContextTr, HaltReasonTr, ResultAndState};
-use base_evm_handler::FrameResult;
-use base_evm_handler::{
+use base_execution_evm_runtime::FrameResult;
+use base_execution_evm_runtime::{
     DatabaseRef, Inspector,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
 };

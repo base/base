@@ -702,7 +702,7 @@ impl SystemTestStackBuilder {
             }
         });
 
-        // The upgrade-signal path deploys a mock ProtocolVersions contract via base-test-utils.
+        // The upgrade-signal path deploys a mock ProtocolVersions contract via base-testing-support.
         // That crate embeds Foundry artifacts at compile time and cannot build as a git
         // dependency, so it and this path are gated behind the (default-on) `upgrade-signal`
         // feature. With the feature off the stack simply runs without an L1 upgrade signal.

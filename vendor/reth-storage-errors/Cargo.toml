@@ -18,11 +18,11 @@ workspace = true
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-trie-common = {workspace = true}
-base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
-base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
+base-common-types-chain = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -38,7 +38,7 @@ std = [
     "thiserror/std",
     "reth-prune-types/std",
     "reth-static-file-types/std",
-    "base-evm-handler/std",
+    "base-execution-evm-runtime/std",
     "base-common-types-chain/std",
     "reth-trie-common/std",
 ]

@@ -17,15 +17,14 @@ workspace = true
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
 reth-provider = { workspace = true }
-base-common-evm = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-execution-evm-runtime = {workspace = true}
 tracing = { workspace = true, features = ["std"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
@@ -38,9 +37,9 @@ serde_json = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
-base-test-utils = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
+base-testing-support = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

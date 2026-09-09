@@ -42,4 +42,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
 
 [features]
 default = []
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = ["base-metrics/metrics", "dep:metrics"]

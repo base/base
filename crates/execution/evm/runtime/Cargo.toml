@@ -1,0 +1,155 @@
+[package]
+name = "base-execution-evm-runtime"
+description = "EVM implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+either = { workspace = true }
+auto_impl = {workspace = true}
+thiserror = {workspace = true}
+tracing = { workspace = true }
+alloy-eips = {workspace = true}
+base-state = { workspace = true }
+revm-state = { workspace = true }
+revm-bytecode = { workspace = true }
+alloy-primitives = {workspace = true}
+base-evm-context = {workspace = true}
+alloy-hardforks = { workspace = true }
+base-common-flz = { workspace = true }
+revm-precompile = { workspace = true }
+revm-primitives = { workspace = true }
+revm-interpreter = { workspace = true }
+base-common-l1-fees = { workspace = true }
+base-common-types-rpc = { workspace = true}
+base-common-precompiles = {workspace = true}
+metrics = { workspace = true, optional = true }
+base-metrics = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["full"] }
+base-execution-eip8130 = { workspace = true, optional = true }
+base-common-types-chain = {features = ["k256"], workspace = true}
+base-common-chain-config = {workspace = true, features = ["default"]}
+serde = {features = ["derive", "rc"], optional = true, workspace = true}
+serde_json = { workspace = true, features = [
+    "alloc",
+    "preserve_order",
+], optional = true }
+
+[dev-dependencies]
+sha2 = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-hardforks = { workspace = true }
+alloy-sol-types = { workspace = true }
+base-common-network = { workspace = true }
+base-common-types-rpc = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+base-state = { workspace = true, features = ["serde"]}
+alloy-primitives = {features = ["serde"], workspace = true}
+k256 = { workspace = true, features = ["default", "ecdsa"] }
+base-common-precompiles = { workspace = true, features = ["test-utils"] }
+serde_json = {features = ["alloc", "default", "preserve_order"], workspace = true}
+
+[features]
+default = [
+    "blst",
+    "c-kzg",
+    "portable",
+    "secp256k1",
+    "std",
+]
+std = [
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "base-common-chain-config/std",
+    "base-common-flz/std",
+    "base-common-l1-fees/std",
+    "base-common-precompiles/std",
+    "base-common-types-chain/std",
+    "base-common-types-rpc/std",
+    "base-evm-context/std",
+    "base-metrics?/std",
+    "base-state/std",
+    "dep:base-execution-eip8130",
+    "derive_more/std",
+    "either/std",
+    "revm-bytecode/std",
+    "revm-interpreter/std",
+    "revm-precompile/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "serde?/std",
+    "serde_json?/preserve_order",
+    "serde_json?/std",
+    "thiserror/std",
+    "tracing/std",
+]
+serde = [
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "base-common-chain-config/serde",
+    "base-common-types-chain/serde",
+    "base-evm-context/serde",
+    "base-state/serde",
+    "dep:serde",
+    "either/serde",
+    "revm-bytecode/serde",
+    "revm-interpreter/serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+]
+metrics = [
+    "base-metrics/metrics",
+    "dep:base-metrics",
+    "dep:metrics",
+    "std",
+]
+bn = ["base-common-precompiles/bn", "revm-precompile/bn"]
+blst = ["base-common-precompiles/blst", "revm-precompile/blst"]
+c-kzg = ["base-common-precompiles/c-kzg", "revm-precompile/c-kzg"]
+portable = ["base-common-precompiles/portable", "revm-precompile/portable"]
+secp256k1 = ["base-common-precompiles/secp256k1", "revm-precompile/secp256k1"]
+memory_limit = ["base-common-precompiles/memory_limit", "base-evm-context/memory_limit", "revm-interpreter/memory_limit"]
+optional_no_base_fee = ["base-common-precompiles/optional_no_base_fee", "base-evm-context/optional_no_base_fee"]
+optional_eip3541 = ["base-common-precompiles/optional_eip3541", "base-evm-context/optional_eip3541"]
+optional_eip3607 = ["base-common-precompiles/optional_eip3607", "base-evm-context/optional_eip3607"]
+optional_fee_charge = ["base-common-precompiles/optional_fee_charge", "base-evm-context/optional_fee_charge"]
+optional_balance_check = ["base-common-precompiles/optional_balance_check", "base-evm-context/optional_balance_check"]
+optional_block_gas_limit = ["base-common-precompiles/optional_block_gas_limit", "base-evm-context/optional_block_gas_limit"]
+serde-json = ["serde", "tracer"]
+tracer = [
+    "dep:serde",
+    "dep:serde_json",
+    "serde",
+    "std",
+]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
+call-util = ["overrides"]
+gmp = ["revm-precompile/gmp"]
+overrides = []
+alloydb = ["base-state/alloydb"]
+arbitrary = ["revm-primitives/arbitrary"]
+asyncdb = ["base-state/asyncdb"]
+dev = [
+    "memory_limit",
+    "optional_balance_check",
+    "optional_block_gas_limit",
+    "optional_eip3541",
+    "optional_eip3607",
+    "optional_eip7623",
+    "optional_no_base_fee",
+]
+hashbrown = ["revm-interpreter/hashbrown", "revm-precompile/hashbrown"]
+map-foldhash = ["revm-primitives/map-foldhash"]
+optional_eip7623 = ["base-evm-context/optional_eip7623"]
+optional_priority_fee_check = ["base-evm-context/optional_priority_fee_check"]
+p256-aws-lc-rs = ["revm-precompile/p256-aws-lc-rs"]
+parse = ["revm-bytecode/parse"]
+sha3-keccak = ["revm-primitives/sha3-keccak"]

@@ -8,8 +8,8 @@ use alloy_hardforks::{EthereumHardfork, ethereum::mainnet::*};
 use alloy_primitives::{Address, Bytes, U256};
 use base_common_types_rpc::AccountState;
 use base_evm_context::{ContextTr, TransactTo, TxEnv};
-use base_evm_handler::InspectorEvmTr;
-use base_evm_handler::{
+use base_execution_evm_runtime::InspectorEvmTr;
+use base_execution_evm_runtime::{
     InspectEvm, MainBuilder, MainContext,
     database::CacheDB,
     database::EmptyDB,
@@ -203,7 +203,7 @@ fn build_db_from_prestate(prestate: &BTreeMap<Address, AccountState>) -> CacheDB
         let code = state
             .code
             .as_ref()
-            .map(|code| base_evm_handler::bytecode::Bytecode::new_raw(code.clone()));
+            .map(|code| base_execution_evm_runtime::bytecode::Bytecode::new_raw(code.clone()));
 
         db.insert_account_info(
             *address,
@@ -274,7 +274,7 @@ fn run_trace(script: &str, contract: &Bytes, helper_contract: Option<&Bytes>) ->
     }
 
     let inspector = JsInspector::new(script.to_owned(), serde_json::Value::Null).unwrap();
-    let mut evm = base_evm_handler::Context::mainnet()
+    let mut evm = base_execution_evm_runtime::Context::mainnet()
         .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
         .with_db(db)
         .build_mainnet_with_inspector(inspector);
@@ -297,7 +297,7 @@ fn run_trace(script: &str, contract: &Bytes, helper_contract: Option<&Bytes>) ->
 
 fn run_mainnet_aa_trace(script: &str, db: CacheDB<EmptyDB>) -> serde_json::Value {
     let inspector = JsInspector::new(script.to_owned(), serde_json::Value::Null).unwrap();
-    let mut evm = base_evm_handler::Context::mainnet()
+    let mut evm = base_execution_evm_runtime::Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| cfg.spec = spec_id_from_block(MAINNET_AA_BLOCK_NUMBER))
         .modify_block_chained(|block| {

@@ -49,9 +49,5 @@ base-common-chain-config = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default", "arbitrary", "k256"] }
 
 [features]
-metrics = [
-	"base-consensus-providers/metrics",
-	"base-metrics/metrics",
-	"dep:metrics",
-]
-test-utils = [ "base-common-chain-config/test-utils", "base-protocol/test-utils" ]
+metrics = ["base-consensus-providers/metrics", "base-metrics/metrics", "dep:metrics"]
+test-utils = ["base-common-chain-config/test-utils", "base-protocol/test-utils"]

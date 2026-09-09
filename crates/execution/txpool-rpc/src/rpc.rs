@@ -313,7 +313,7 @@ mod tests {
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
-    use base_test_utils::build_test_genesis_zenith;
+    use base_testing_support::build_test_genesis_zenith;
     use httpmock::prelude::*;
     use reth_provider::test_utils::MockEthProvider;
     use serde_json::{self, json};

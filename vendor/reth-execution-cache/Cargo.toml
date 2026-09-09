@@ -20,23 +20,20 @@ metrics = { workspace = true }
 reth-trie = { workspace = true }
 base-state = { workspace = true }
 reth-provider = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
+base-execution-evm-runtime = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, features = ["common"] }
 fixed-cache = { workspace = true, features = ["alloc", "stats"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+
 [dev-dependencies]
-base-evm-handler = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
 reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 
 [features]
-test-utils = [
-    "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
-    "reth-trie/test-utils",
-]
+test-utils = ["reth-primitives-traits/test-utils", "reth-provider/test-utils", "reth-trie/test-utils"]

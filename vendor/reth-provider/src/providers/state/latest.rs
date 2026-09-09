@@ -266,7 +266,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
 impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_, Provider> {
     fn hashed_post_state(
         &self,
-        bundle_state: &base_evm_handler::database::BundleState,
+        bundle_state: &base_execution_evm_runtime::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
         let mut hashed_state = HashedPostState::from_bundle_state(bundle_state.state());
         zero_destroyed_account_storage(

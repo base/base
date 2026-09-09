@@ -11,7 +11,7 @@ use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader};
-use base_evm_handler::{
+use base_execution_evm_runtime::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
     state::bal::{

@@ -14,7 +14,7 @@ use base_common_precompiles::{
     IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
 };
 use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope, TxReceipt};
-use base_test_utils::Account;
+use base_testing_support::Account;
 
 /// L2 timestamp where the Beryl fork activates in these tests.
 pub(crate) const BERYL_ACTIVATION_TIMESTAMP: u64 = 4;

@@ -6,7 +6,7 @@ use alloy_primitives::{
 };
 use base_common_types_rpc::{AccessList, AccessListItem};
 use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
-use base_evm_handler::{Inspector, bytecode::opcode, interpreter::Interpreter};
+use base_execution_evm_runtime::{Inspector, bytecode::opcode, interpreter::Interpreter};
 
 /// An [Inspector] that collects touched accounts and storage slots.
 ///
@@ -142,8 +142,8 @@ where
     fn call(
         &mut self,
         context: &mut CTX,
-        _inputs: &mut base_evm_handler::interpreter::CallInputs,
-    ) -> Option<base_evm_handler::interpreter::CallOutcome> {
+        _inputs: &mut base_execution_evm_runtime::interpreter::CallInputs,
+    ) -> Option<base_execution_evm_runtime::interpreter::CallOutcome> {
         // At the top-level frame, fill the excluded addresses
         if context.journal().depth() == 0 {
             self.collect_excluded_addresses(context)
@@ -154,8 +154,8 @@ where
     fn create(
         &mut self,
         context: &mut CTX,
-        _inputs: &mut base_evm_handler::interpreter::CreateInputs,
-    ) -> Option<base_evm_handler::interpreter::CreateOutcome> {
+        _inputs: &mut base_execution_evm_runtime::interpreter::CreateInputs,
+    ) -> Option<base_execution_evm_runtime::interpreter::CreateOutcome> {
         // At the top-level frame, fill the excluded addresses
         if context.journal().depth() == 0 {
             self.collect_excluded_addresses(context)

@@ -1,36 +1,37 @@
 //! Helper aliases when working with [`crate::BaseEvmConfig`] and the traits in this crate.
 
-use base_evm_handler::{BlockExecutorFor, Database, EvmEnv, NoOpInspector};
-use base_evm_handler::{Inspector, database::State};
+use base_execution_evm_runtime::{BlockExecutorFor, Database, EvmEnv, NoOpInspector};
+use base_execution_evm_runtime::{Inspector, database::State};
 
-/// Helper to access [`base_evm_handler::EvmFactory`] for a given [`crate::BaseEvmConfig`].
-pub type EvmFactoryFor = base_common_evm::BaseEvmFactory;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory`] for a given [`crate::BaseEvmConfig`].
+pub type EvmFactoryFor = base_execution_evm_runtime::BaseEvmFactory;
 
-/// Helper to access [`base_evm_handler::EvmFactory::Spec`] for a given [`crate::BaseEvmConfig`].
-pub type SpecFor = base_common_evm::BaseSpecId;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::Spec`] for a given [`crate::BaseEvmConfig`].
+pub type SpecFor = base_execution_evm_runtime::BaseSpecId;
 
-/// Helper to access [`base_evm_handler::EvmFactory::BlockEnv`] for a given [`crate::BaseEvmConfig`].
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::BlockEnv`] for a given [`crate::BaseEvmConfig`].
 pub type BlockEnvFor = base_evm_context::BlockEnv;
 
-/// Helper to access [`base_evm_handler::EvmFactory::Evm`] for a given [`crate::BaseEvmConfig`].
-pub type EvmFor<DB, I = NoOpInspector> = base_common_evm::BaseEvm<DB, I>;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::Evm`] for a given [`crate::BaseEvmConfig`].
+pub type EvmFor<DB, I = NoOpInspector> = base_execution_evm_runtime::BaseEvm<DB, I>;
 
-/// Helper to access [`base_evm_handler::EvmFactory::Error`] for a given [`crate::BaseEvmConfig`].
-pub type EvmErrorFor<DB> = base_evm_context::EVMError<DB, base_common_evm::BaseTransactionError>;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::Error`] for a given [`crate::BaseEvmConfig`].
+pub type EvmErrorFor<DB> =
+    base_evm_context::EVMError<DB, base_execution_evm_runtime::BaseTransactionError>;
 
-/// Helper to access [`base_evm_handler::EvmFactory::Context`] for a given [`crate::BaseEvmConfig`].
-pub type EvmContextFor<DB> = base_common_evm::BaseContext<DB>;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::Context`] for a given [`crate::BaseEvmConfig`].
+pub type EvmContextFor<DB> = base_execution_evm_runtime::BaseContext<DB>;
 
-/// Helper to access [`base_evm_handler::EvmFactory::HaltReason`] for a given [`crate::BaseEvmConfig`].
-pub type HaltReasonFor = base_common_evm::BaseHaltReason;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::HaltReason`] for a given [`crate::BaseEvmConfig`].
+pub type HaltReasonFor = base_execution_evm_runtime::BaseHaltReason;
 
-/// Helper to access [`base_evm_handler::EvmFactory::Tx`] for a given [`crate::BaseEvmConfig`].
-pub type TxEnvFor = base_common_evm::BaseTransaction;
+/// Helper to access [`base_execution_evm_runtime::EvmFactory::Tx`] for a given [`crate::BaseEvmConfig`].
+pub type TxEnvFor = base_execution_evm_runtime::BaseTransaction;
 
-/// Helper to access [`base_evm_handler::BlockExecutorFactory::ExecutionCtx`] for a given [`crate::BaseEvmConfig`].
-pub type ExecutionCtxFor = base_common_evm::BaseBlockExecutionCtx;
+/// Helper to access [`base_execution_evm_runtime::BlockExecutorFactory::ExecutionCtx`] for a given [`crate::BaseEvmConfig`].
+pub type ExecutionCtxFor = base_execution_evm_runtime::BaseBlockExecutionCtx;
 
-/// Helper to access [`base_evm_handler::BlockExecutor`] for a given [`crate::BaseEvmConfig`].
+/// Helper to access [`base_execution_evm_runtime::BlockExecutor`] for a given [`crate::BaseEvmConfig`].
 pub type BlockExecutorForEvm<'a, DB, I = NoOpInspector> =
     BlockExecutorFor<'a, crate::BaseExecutorFactory, &'a mut State<DB>, I>;
 

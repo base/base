@@ -24,13 +24,15 @@ use alloy_eip7928::{
 use alloy_primitives::Address;
 use base_common_types_chain::BaseReceipt;
 use base_evm_context::{Block, ResultAndState};
-use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult};
-use base_evm_handler::{
-    database::{BundleRetention, State},
-    state::bal::Bal as RevmBal,
-};
 use base_execution_evm_blocks::{
     BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
+};
+use base_execution_evm_runtime::{
+    BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult,
+};
+use base_execution_evm_runtime::{
+    database::{BundleRetention, State},
+    state::bal::Bal as RevmBal,
 };
 use crossbeam_channel::{Receiver, Sender};
 use reth_provider::BlockExecutionOutput;
@@ -301,12 +303,12 @@ mod tests {
     };
     use alloy_primitives::{B256, U256, keccak256};
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_evm::L1BlockInfo;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
         SystemAddresses, TxDeposit,
     };
-    use base_evm_handler::{
+    use base_execution_evm_runtime::L1BlockInfo;
+    use base_execution_evm_runtime::{
         database::{BundleState, CacheDB, EmptyDB},
         state::{AccountInfo, Bytecode},
     };
@@ -430,7 +432,7 @@ mod tests {
     /// This intentionally mirrors what `execute_block` does internally,
     /// but without any hash check — the output is the BAL itself, not a pass/fail signal.
     fn reference_bal_for_empty_block(evm_config: &BaseEvmConfig) -> BlockAccessList {
-        use base_evm_handler::database::State as RevmState;
+        use base_execution_evm_runtime::database::State as RevmState;
 
         let db = system_contracts_db();
         let mut state =
@@ -565,7 +567,7 @@ mod tests {
     where
         Tx: ExecutableTxFor,
     {
-        use base_evm_handler::database::State as RevmState;
+        use base_execution_evm_runtime::database::State as RevmState;
 
         let mut state = RevmState::builder()
             .with_database(&mut db)
@@ -730,7 +732,7 @@ mod tests {
         block: &SealedBlock,
         txs: &[Recovered<BaseTxEnvelope>],
     ) -> (ShadowOutput, BlockAccessList) {
-        use base_evm_handler::database::State as RevmState;
+        use base_execution_evm_runtime::database::State as RevmState;
 
         let mut state = RevmState::builder()
             .with_database(canonical_db)
@@ -884,7 +886,7 @@ mod tests {
         // block gas for tx2's gas limit.
         use alloy_primitives::TxKind;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
-        use base_evm_handler::BlockValidationError;
+        use base_execution_evm_runtime::BlockValidationError;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
@@ -1196,7 +1198,7 @@ mod tests {
         use base_evm_context::{
             ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
-        use base_evm_handler::state::EvmState;
+        use base_execution_evm_runtime::state::EvmState;
 
         let block_gas_limit = 1_000_000u64;
         let first_tx_gas = 600_000u64;
@@ -1237,7 +1239,7 @@ mod tests {
         use base_evm_context::{
             ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
-        use base_evm_handler::{primitives::eip7825::TX_GAS_LIMIT_CAP, state::EvmState};
+        use base_execution_evm_runtime::{primitives::eip7825::TX_GAS_LIMIT_CAP, state::EvmState};
 
         let block_gas_limit = 30_000_000u64;
         let oversized = TX_GAS_LIMIT_CAP + 1_000_000; // 17_777_216 — above the cap

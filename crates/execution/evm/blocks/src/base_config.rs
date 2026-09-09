@@ -6,18 +6,18 @@ use core::fmt::Debug;
 use alloy_primitives::Bytes;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
-use base_common_evm::{
-    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
-};
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
 #[cfg(not(feature = "std"))]
 use base_common_types_payload as _;
 #[cfg(feature = "std")]
 use base_common_types_payload::ExecutionData;
-use base_evm_handler::{
+use base_execution_evm_runtime::{
+    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
+};
+use base_execution_evm_runtime::{
     BlockExecutionError, BlockExecutorFactory, BlockExecutorFor, Database, EvmFactory, IntoTxEnv,
 };
-use base_evm_handler::{
+use base_execution_evm_runtime::{
     database::State,
     primitives::{Address, B256, Bytes as RevmBytes},
 };
@@ -274,7 +274,7 @@ impl BaseEvmConfig {
 
     /// Creates a [`BlockBuilder`]. Should be used when building a new block.
     ///
-    /// Block builder wraps an inner [`base_evm_handler::BlockExecutor`] and has a similar
+    /// Block builder wraps an inner [`base_execution_evm_runtime::BlockExecutor`] and has a similar
     /// interface. Builder collects all of the executed transactions, and once
     /// [`BlockBuilder::finish`] is called, it invokes the configured [`crate::BaseBlockAssembler`] to
     /// create a block.
@@ -393,11 +393,11 @@ mod tests {
     };
     use base_common_chain_config::BaseUpgrade;
     use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_common_evm::BaseSpecId;
     use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
     use base_evm_context::{BlockEnv, CfgEnv};
-    use base_evm_handler::NoOpInspector;
-    use base_evm_handler::{
+    use base_execution_evm_runtime::BaseSpecId;
+    use base_execution_evm_runtime::NoOpInspector;
+    use base_execution_evm_runtime::{
         database::EmptyDBTyped,
         database::{BundleState, CacheDB},
         primitives::Log,

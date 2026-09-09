@@ -13,7 +13,7 @@ native precompiles that are installed into a dynamic `PrecompilesMap`.
 is not a `PrecompileProvider`; plug the installed `PrecompilesMap` into an EVM, not the selector
 type. `BasePrecompileSpec` is the small trait bound that lets downstream crates use their own spec
 wrapper as long as it converts to and from `BaseUpgrade`. Most EVM users should still go through
-the `BasePrecompiles` alias and builders in `base-common-evm`, because those are already wired to
+the `BasePrecompiles` alias and builders in `base-execution-evm-runtime`, because those are already wired to
 `BaseSpecId` and install the full map.
 
 The crate also exports the ABI types, storage adapters, entry points, and shared token traits for
@@ -97,7 +97,7 @@ to and from `BaseUpgrade`:
 
 ```rust,ignore
 use base_common_chain_config::BaseUpgrade;
-use base_common_evm::BaseSpecId;
+use base_execution_evm_runtime::BaseSpecId;
 use base_common_precompiles::BasePrecompiles;
 
 let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul));

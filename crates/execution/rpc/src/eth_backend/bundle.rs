@@ -8,9 +8,9 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{Transaction as _, transaction::TxHashRef};
 use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_evm_context::{Block, ResultAndState};
-use base_evm_handler::BlockEnvironment;
-use base_evm_handler::{DatabaseCommit, DatabaseRef};
 use base_execution_evm_blocks::Evm;
+use base_execution_evm_runtime::BlockEnvironment;
+use base_execution_evm_runtime::{DatabaseCommit, DatabaseRef};
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_types::{

@@ -16,14 +16,16 @@ use base_common_types_rpc::{
     state::{EvmOverrides, StateOverride},
 };
 use base_evm_context::{Block, Cfg, ResultAndState, Transaction};
-use base_evm_handler::{
-    Database, DatabaseCommit,
-    database::{EvmDatabaseError, State},
-};
-use base_evm_handler::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides};
 use base_execution_evm_blocks::{
     BlockBuilder, BlockEnvironment, BlockExecutor, CancelOnDrop, Evm, EvmEnvFor, EvmFor,
     HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
+};
+use base_execution_evm_runtime::{
+    Database, DatabaseCommit,
+    database::{EvmDatabaseError, State},
+};
+use base_execution_evm_runtime::{
+    OverrideBlockHashes, apply_block_overrides, apply_state_overrides,
 };
 use futures::Future;
 use reth_primitives_traits::Recovered;
@@ -474,7 +476,7 @@ impl BaseEthApi {
         _evm_env: &EvmEnvFor,
         tx_env: &TxEnvFor,
     ) -> Result<u64, BaseEthApiError> {
-        base_evm_handler::caller_gas_allowance(&mut db, tx_env)
+        base_execution_evm_runtime::caller_gas_allowance(&mut db, tx_env)
             .map_err(BaseEthApiError::from_eth_err)
     }
 

@@ -17,7 +17,6 @@ alloy-eips = {workspace = true}
 alloy-trie = { workspace = true }
 futures-util = { workspace = true }
 base-protocol = { workspace = true }
-base-evm-handler = {workspace = true}
 alloy-hardforks = { workspace = true }
 base-evm-context = { workspace = true }
 reth-storage-errors = {workspace = true}
@@ -36,7 +35,7 @@ reth-trie-common = {features = ["default"], workspace = true}
 base-common-types-chain = {features = ["reth"], workspace = true}
 reth-execution-types = {features = ["default"], workspace = true}
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
-base-common-evm = { workspace = true, features = ["std", "reth"] }
+base-execution-evm-runtime = {features = ["std"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
@@ -62,7 +61,7 @@ required-features = ["test-utils"]
 [features]
 default = ["metrics", "std"]
 metrics = [
-    "base-common-evm/metrics",
+    "base-execution-evm-runtime/metrics",
     "std",
     "dep:metrics",
     "dep:reth-metrics",
@@ -75,9 +74,8 @@ std = [
     "alloy-rlp?/std",
     "alloy-trie/std",
     "base-common-chain-config/std",
-    "base-common-evm/std",
+    "base-execution-evm-runtime/std",
     "base-common-types-chain/std",
-    "base-evm-handler/std",
     "base-execution-payload-types/std",
     "base-protocol/std",
     "dep:rayon",
@@ -92,8 +90,7 @@ std = [
     "thiserror/std",
     "tracing/std",
 ]
-portable = ["base-common-evm/portable", "base-evm-handler/portable"]
-rpc = ["base-evm-handler/rpc"]
+portable = ["base-execution-evm-runtime/portable"]
 test-utils = [
     "dep:reth-trie",
     "reth-primitives-traits/test-utils",
@@ -103,19 +100,19 @@ test-utils = [
 ]
 witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
 serde = [
-    "base-evm-handler/serde",
+    "base-execution-evm-runtime/serde",
     "alloy-primitives/serde",
     "base-common-types-chain/serde",
     "reth-trie?/serde",
     "reth-primitives-traits/serde",
     "reth-storage-api/serde",
 ]
-gmp = ["base-evm-handler/gmp"]
-optional-balance-check = ["base-evm-handler/optional_balance_check"]
-optional-block-gas-limit = ["base-evm-handler/optional_block_gas_limit"]
-optional-eip3541 = ["base-evm-handler/optional_eip3541"]
-optional-eip3607 = ["base-evm-handler/optional_eip3607"]
-optional-no-base-fee = ["base-evm-handler/optional_no_base_fee"]
+gmp = ["base-execution-evm-runtime/gmp"]
+optional-balance-check = ["base-execution-evm-runtime/optional_balance_check"]
+optional-block-gas-limit = ["base-execution-evm-runtime/optional_block_gas_limit"]
+optional-eip3541 = ["base-execution-evm-runtime/optional_eip3541"]
+optional-eip3607 = ["base-execution-evm-runtime/optional_eip3607"]
+optional-no-base-fee = ["base-execution-evm-runtime/optional_no_base_fee"]
 optional-checks = [
     "optional-balance-check",
     "optional-block-gas-limit",
@@ -123,4 +120,4 @@ optional-checks = [
     "optional-eip3607",
     "optional-no-base-fee",
 ]
-memory_limit = ["base-evm-handler/memory_limit"]
+memory_limit = ["base-execution-evm-runtime/memory_limit"]

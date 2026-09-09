@@ -21,12 +21,12 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-metrics = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
+base-execution-evm-runtime = { workspace = true }
 alloy-signer = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -59,7 +59,7 @@ serde = [
     "reth-execution-types/serde",
     "reth-primitives-traits/serde",
     "reth-trie/serde",
-    "base-evm-handler/serde",
+    "base-execution-evm-runtime/serde",
     "reth-storage-api/serde",
 ]
 test-utils = [

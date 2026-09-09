@@ -83,7 +83,7 @@ base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"]}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
-base-evm-handler = { workspace = true, features = ["overrides", "call-util", "optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
+base-execution-evm-runtime = { workspace = true, features = ["overrides", "call-util", "optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
 
 [dev-dependencies]
 reth-db-api = { workspace = true }

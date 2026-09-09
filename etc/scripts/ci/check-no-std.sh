@@ -7,7 +7,7 @@ set -eo pipefail
 no_std_packages=(
   # common crates (ported from op-alloy)
   base-common-types-chain
-  base-common-evm
+  base-execution-evm-runtime
   base-common-chain-config
   base-common-types-rpc
   base-common-types-payload

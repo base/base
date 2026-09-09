@@ -268,7 +268,7 @@ Skip this section if the upgrade only affects protocol-level behavior (batch dec
 
 ### 9. Add the `BaseSpecId` variant
 
-**File:** [`crates/common/evm/src/spec.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/spec.rs)
+**File:** [`crates/execution/evm/runtime/src/spec.rs`](https://github.com/base/base/blob/main/crates/execution/evm/runtime/src/spec.rs)
 
 ```rust
 pub enum BaseSpecId {

@@ -14,7 +14,7 @@ use base_common_network::ReceiptResponse;
 use base_common_types_chain::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
-use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_zenith};
+use base_testing_support::{Account, DEVNET_CHAIN_ID, build_test_genesis_zenith};
 
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;

@@ -4,7 +4,6 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, address, b256, bytes};
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
-use base_common_evm::BaseTime;
 use base_common_types_chain::{
     BaseReceipt, BaseTransactionSigned, Block, BlockBody, Header, Predeploys, SignableTransaction,
     SystemAddresses, TxDeposit, TxEip1559,
@@ -12,6 +11,7 @@ use base_common_types_chain::{
 use base_execution_evm_blocks::{
     BaseEvmConfig, BasicBlockExecutor, Executor, test_utils::StateProviderTest,
 };
+use base_execution_evm_runtime::BaseTime;
 use base_protocol::BaseTimeUpdateTx;
 use reth_primitives_traits::{Account, RecoveredBlock};
 

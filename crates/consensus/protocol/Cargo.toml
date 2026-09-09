@@ -67,12 +67,12 @@ name = "frame_parse_iai"
 harness = false
 
 [features]
-default = [ "std" ]
+default = ["std"]
 test-utils = [
-	"base-common-chain-config/test-utils",
-	"dep:spin",
+    "base-common-chain-config/test-utils",
+    "dep:spin",
     "dep:tracing",
-	"dep:tracing-subscriber",
+    "dep:tracing-subscriber",
 ]
 std = [
     "base-common-types-chain/std",

@@ -36,7 +36,7 @@ DISALLOWED_DEPS=(
 #   - base-consensus-engine: consensus protocol crate under crates/consensus/.
 #   - base-execution-eip8130: EIP-8130 account-abstraction protocol logic
 #     (authorize / nonce / intrinsic-gas / account-change apply) consumed both by
-#     the enshrined EVM executor in base-common-evm and by the execution-layer
+#     the enshrined EVM executor in base-execution-evm-runtime and by the execution-layer
 #     txpool/builder. The crate is foundational rather than execution-specific;
 #     this exception unblocks the common-layer dependency until it is relocated
 #     under crates/common/.

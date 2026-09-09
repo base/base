@@ -10,14 +10,14 @@ use base_common_types_rpc::{
     state::StateOverride,
 };
 use base_evm_context::{Block, ExecutionResult};
-use base_evm_handler::{
-    Database,
-    primitives::{Address, Bytes, TxKind, U256},
-};
-use base_evm_handler::{PrecompilesMap, TxResult};
 use base_execution_evm_blocks::{
     BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor,
 };
+use base_execution_evm_runtime::{
+    Database,
+    primitives::{Address, Bytes, TxKind, U256},
+};
+use base_execution_evm_runtime::{PrecompilesMap, TxResult};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
@@ -269,7 +269,7 @@ pub fn apply_precompile_overrides(
     }
 
     precompiles.move_precompiles(moves).map_err(
-        |base_evm_handler::MovePrecompileError::NotAPrecompile(addr)| {
+        |base_execution_evm_runtime::MovePrecompileError::NotAPrecompile(addr)| {
             EthSimulateError::NotAPrecompile(addr)
         },
     )?;
@@ -595,8 +595,8 @@ mod tests {
         simulate::SimBlock,
         state::{AccountOverride, StateOverride},
     };
-    use base_evm_handler::PrecompilesMap;
-    use base_evm_handler::precompile::Precompiles;
+    use base_execution_evm_runtime::PrecompilesMap;
+    use base_execution_evm_runtime::precompile::Precompiles;
     use reth_primitives_traits::SealedHeader;
 
     use super::{

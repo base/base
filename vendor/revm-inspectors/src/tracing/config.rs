@@ -2,7 +2,7 @@ use alloy_primitives::{U256, map::HashSet};
 use base_common_types_rpc::{
     CallConfig, Erc7562Config, FlatCallConfig, GethDefaultTracingOptions, PreStateConfig, TraceType,
 };
-use base_evm_handler::bytecode::opcode::OpCode;
+use base_execution_evm_runtime::bytecode::opcode::OpCode;
 
 /// 256 bits each marking whether an opcode should be included into steps trace or not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

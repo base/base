@@ -28,15 +28,14 @@ reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-evm = { workspace = true }
 base-common-flz = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
 reth-chain-state = { workspace = true }
 base-common-precompiles = {workspace = true}
 base-execution-eip8130 = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
+base-execution-evm-runtime = {workspace = true}
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
@@ -67,8 +66,8 @@ reth-tasks = { workspace = true }
 alloy-signer = { workspace = true }
 assert_matches = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-test-utils = { workspace = true }
 base-common-network = { workspace = true }
+base-testing-support = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
@@ -91,7 +90,7 @@ required-features = ["test-utils"]
 
 [features]
 default = ["metrics"]
-metrics = ["base-common-evm/metrics", "base-metrics/metrics", "base-observability-events/metrics"]
+metrics = ["base-execution-evm-runtime/metrics", "base-metrics/metrics", "base-observability-events/metrics"]
 serde = [
     "reth-execution-types/serde",
     "reth-eth-wire-types/serde",
@@ -106,7 +105,7 @@ serde = [
     "reth-primitives-traits/serde",
     "reth-chain-state/serde",
     "reth-storage-api/serde",
-    "base-evm-handler/serde",
+    "base-execution-evm-runtime/serde",
 ]
 test-utils = [
     "rand",
@@ -130,5 +129,5 @@ arbitrary = [
     "bitflags/arbitrary",
     "reth-primitives-traits/arbitrary",
     "smallvec/arbitrary",
-    "base-evm-handler/arbitrary",
+    "base-execution-evm-runtime/arbitrary",
 ]

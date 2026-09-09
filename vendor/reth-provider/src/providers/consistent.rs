@@ -10,7 +10,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
-use base_evm_handler::database::PlainStorageRevert;
+use base_execution_evm_runtime::database::PlainStorageRevert;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
@@ -1471,7 +1471,7 @@ mod tests {
 
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
-    use base_evm_handler::database::BundleState;
+    use base_execution_evm_runtime::database::BundleState;
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};

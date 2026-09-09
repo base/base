@@ -6,14 +6,14 @@ use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader};
-pub use base_evm_handler::{
+pub use base_execution_evm_runtime::{
     BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
     InternalBlockExecutionError,
 };
-use base_evm_handler::{
+use base_execution_evm_runtime::{
     CommitChanges, Evm, EvmEnv, EvmFactory, ExecutableTxParts, RecoveredTx, ToTxEnv,
 };
-use base_evm_handler::{
+use base_execution_evm_runtime::{
     database::{BundleRetention, BundleState, State},
     state::bal::Bal,
 };
@@ -187,9 +187,9 @@ pub struct BlockAssemblerInput<'a, 'b> {
     /// Configuration of EVM used when executing the block.
     ///
     /// Contains context relevant to EVM such as [`base_evm_context::BlockEnv`].
-    pub evm_env: EvmEnv<base_common_evm::BaseSpecId>,
+    pub evm_env: EvmEnv<base_execution_evm_runtime::BaseSpecId>,
     /// [`BlockExecutorFactory::ExecutionCtx`] used to execute the block.
-    pub execution_ctx: base_common_evm::BaseBlockExecutionCtx,
+    pub execution_ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     /// Parent block header.
     pub parent: &'a SealedHeader,
     /// Transactions that were executed in this block.
@@ -211,8 +211,8 @@ impl<'a, 'b> BlockAssemblerInput<'a, 'b> {
     /// Creates a new [`BlockAssemblerInput`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        evm_env: EvmEnv<base_common_evm::BaseSpecId>,
-        execution_ctx: base_common_evm::BaseBlockExecutionCtx,
+        evm_env: EvmEnv<base_execution_evm_runtime::BaseSpecId>,
+        execution_ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
         parent: &'a SealedHeader,
         transactions: Vec<BaseTxEnvelope>,
         output: &'b BlockExecutionResult<BaseReceipt>,
@@ -333,7 +333,7 @@ pub struct BasicBlockBuilder<'a, Executor> {
     /// The transactions executed in this block.
     pub transactions: Vec<Recovered<BaseTxEnvelope>>,
     /// The parent block execution context.
-    pub ctx: base_common_evm::BaseBlockExecutionCtx,
+    pub ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     /// The sealed parent block header.
     pub parent: &'a SealedHeader,
     /// The assembler used to build the block.
@@ -643,7 +643,7 @@ mod tests {
     use core::marker::PhantomData;
 
     use base_common_types_chain::BaseReceipt;
-    use base_evm_handler::database::{CacheDB, EmptyDB};
+    use base_execution_evm_runtime::database::{CacheDB, EmptyDB};
 
     use super::*;
 

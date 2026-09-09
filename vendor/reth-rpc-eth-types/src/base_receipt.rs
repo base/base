@@ -187,17 +187,17 @@ impl ReceiptFieldsBuilder {
         }
     }
 
-    /// Applies [`L1BlockInfo`](base_common_evm::L1BlockInfo).
+    /// Applies [`L1BlockInfo`](base_execution_evm_runtime::L1BlockInfo).
     pub fn l1_block_info<T: Encodable2718 + BaseTransaction>(
         mut self,
         chain_spec: &impl Upgrades,
         tx: &T,
-        l1_block_info: &mut base_common_evm::L1BlockInfo,
+        l1_block_info: &mut base_execution_evm_runtime::L1BlockInfo,
     ) -> Self {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
 
-        let spec_id = base_common_evm::BaseSpecId::from_timestamp(chain_spec, timestamp);
+        let spec_id = base_execution_evm_runtime::BaseSpecId::from_timestamp(chain_spec, timestamp);
         self.l1_fee = Some(if tx.is_deposit() {
             0
         } else {
@@ -310,7 +310,7 @@ impl BaseReceiptBuilder {
     pub fn new(
         chain_spec: &impl Upgrades,
         input: ConvertReceiptInput<'_>,
-        l1_block_info: &mut base_common_evm::L1BlockInfo,
+        l1_block_info: &mut base_execution_evm_runtime::L1BlockInfo,
     ) -> Result<Self, BaseEthApiError> {
         let timestamp = input.meta.timestamp;
         let block_number = input.meta.block_number;
@@ -536,7 +536,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = base_execution_evm_runtime::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::from(2)),
             ..Default::default()
@@ -559,7 +559,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = base_execution_evm_runtime::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
@@ -648,7 +648,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = base_execution_evm_runtime::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -687,7 +687,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = base_execution_evm_runtime::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -744,7 +744,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_common_evm::L1BlockInfo {
+        let mut l1_block_info = base_execution_evm_runtime::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };

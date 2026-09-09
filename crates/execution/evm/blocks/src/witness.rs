@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{B256, Bytes, keccak256};
-use base_evm_handler::database::State;
+use base_execution_evm_runtime::database::State;
 use reth_trie::{ExecutionWitnessMode, HashedPostState, HashedStorage};
 
 /// Borrows finalized execution state for witness generation.
@@ -135,7 +135,7 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_evm_handler::{
+    use base_execution_evm_runtime::{
         database::{AccountStatus, BundleAccount, CacheAccount, EmptyDB},
         state::AccountInfo,
     };
@@ -150,7 +150,7 @@ mod tests {
     impl HashedPostStateProvider for ExpandedStateProvider {
         fn hashed_post_state(
             &self,
-            bundle_state: &base_evm_handler::database::BundleState,
+            bundle_state: &base_execution_evm_runtime::database::BundleState,
         ) -> ProviderResult<HashedPostState> {
             assert!(bundle_state.state.values().any(BundleAccount::was_destroyed));
             Ok(self.0.clone())

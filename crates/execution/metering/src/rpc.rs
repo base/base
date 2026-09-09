@@ -5,9 +5,9 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
-use base_common_evm::L1BlockInfo;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::extract_l1_info_from_tx;
+use base_execution_evm_runtime::L1BlockInfo;
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
@@ -317,7 +317,7 @@ mod tests {
     use base_common_types_chain::{BaseTransactionSigned, BaseTxEnvelope};
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
-    use base_test_utils::Account;
+    use base_testing_support::Account;
 
     use super::*;
 

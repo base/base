@@ -11,8 +11,8 @@ use base_common_types_chain::{
 };
 use base_common_types_payload::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
-use base_evm_handler::database::BundleState;
-use base_evm_handler::{BlockExecutionResult, EvmFactory};
+use base_execution_evm_runtime::database::BundleState;
+use base_execution_evm_runtime::{BlockExecutionResult, EvmFactory};
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use base_protocol::OutputRoot;
 

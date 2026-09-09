@@ -353,7 +353,7 @@ impl DatabaseHashedPostState for HashedPostStateSorted {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
-    use base_evm_handler::{database::BundleState, state::AccountInfo};
+    use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use reth_db_api::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,

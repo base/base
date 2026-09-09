@@ -59,7 +59,7 @@ impl TxPoolPrewarmCacheSnapshot {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::map::U256Map;
-    use base_evm_handler::{bytecode::Bytecode as RevmBytecode, state::AccountInfo};
+    use base_execution_evm_runtime::{bytecode::Bytecode as RevmBytecode, state::AccountInfo};
     use base_state::CachedAccount;
 
     use super::*;

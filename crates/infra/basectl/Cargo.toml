@@ -32,7 +32,6 @@ futures = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["default"] }
 crossterm = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
-base-common-evm = { workspace = true, features = ["std"] }
 toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["default", "serde"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
@@ -43,6 +42,7 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-execution-evm-runtime = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["k256", "std"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }

@@ -16,7 +16,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_precompiles::NonceManagerStorage;
 use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 use base_node_runner::test_utils::TestHarness;
-use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_zenith};
+use base_testing_support::{Account, build_test_genesis_cobalt, build_test_genesis_zenith};
 use serde_json::json;
 
 /// Launches a harness with the standalone EIP-8130 override registered over the

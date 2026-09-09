@@ -21,9 +21,8 @@ alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
 base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
-base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }
-base-evm-handler = { workspace = true }
+base-execution-evm-runtime = {workspace = true}
 serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
@@ -44,13 +43,12 @@ alloy-provider = { workspace = true, features = ["default", "reqwest"], optional
 std = [
     "base-common-types-chain/std",
     "alloy-eips/std",
-    "base-evm-handler/std",
+    "base-execution-evm-runtime/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
     "base-common-types-payload/std",
     "alloy-trie/std",
     "base-common-chain-config/std",
-    "base-common-evm/std",
     "base-proof-mpt/std",
     "base-protocol/std",
     "getrandom_0_2_17/std",
@@ -66,7 +64,6 @@ test-utils = [
     "dep:alloy-rpc-client",
     "dep:alloy-transport",
     "dep:alloy-transport-http",
-
     "dep:rand",
     "dep:rocksdb",
     "dep:serde",

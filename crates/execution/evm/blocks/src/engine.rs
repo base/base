@@ -1,5 +1,5 @@
 use base_common_types_chain::{BaseTxEnvelope, transaction::Either};
-use base_evm_handler::{ExecutableTxParts, RecoveredTx};
+use base_execution_evm_runtime::{ExecutableTxParts, RecoveredTx};
 use rayon::prelude::*;
 
 use crate::{TxEnvFor, execute::ExecutableTxFor};

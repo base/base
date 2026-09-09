@@ -3,7 +3,7 @@ use std::io::{self, Write};
 
 use alloy_primitives::{Address, B256, U256, address, hex, map::HashMap};
 use anstyle::{AnsiColor, Color, Style};
-use base_evm_handler::interpreter::InstructionResult;
+use base_execution_evm_runtime::interpreter::InstructionResult;
 use colorchoice::ColorChoice;
 
 use super::{

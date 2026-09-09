@@ -17,7 +17,7 @@ use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_evm_handler::{Database, database::State};
+use base_execution_evm_runtime::{Database, database::State};
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,

@@ -335,7 +335,7 @@ pub fn chain_spec() -> Arc<BaseChainSpec> {
 /// `BaseUpgrade::Azul` activated at genesis (timestamp 0).
 pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
     use alloy_hardforks::ForkCondition;
-    use base_common_evm::BaseUpgrade;
+    use base_execution_evm_runtime::BaseUpgrade;
 
     let genesis = include_str!("./artifacts/genesis.json.tmpl");
     let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");

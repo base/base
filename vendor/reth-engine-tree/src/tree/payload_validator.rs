@@ -114,12 +114,12 @@ use base_common_types_chain::{
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
 };
-use base_evm_handler::database::{BundleAccount, BundleRetention, State};
-use base_evm_handler::{BlockExecutionError, Evm};
 use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
 };
+use base_execution_evm_runtime::database::{BundleAccount, BundleRetention, State};
+use base_execution_evm_runtime::{BlockExecutionError, Evm};
 use base_execution_payload_builder::{
     BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources,
 };
@@ -1129,10 +1129,14 @@ where
         has_bal: bool,
     ) -> Result<(E, Vec<Address>), BlockExecutionError>
     where
-        E: BlockExecutor<Receipt = BaseReceipt, Evm: base_evm_handler::Evm<DB = &'a mut State<DB>>>,
-        Tx: base_evm_handler::ExecutableTx<E> + base_evm_handler::RecoveredTx<InnerTx>,
+        E: BlockExecutor<
+                Receipt = BaseReceipt,
+                Evm: base_execution_evm_runtime::Evm<DB = &'a mut State<DB>>,
+            >,
+        Tx: base_execution_evm_runtime::ExecutableTx<E>
+            + base_execution_evm_runtime::RecoveredTx<InnerTx>,
         InnerTx: TxHashRef,
-        DB: base_evm_handler::Database + 'a,
+        DB: base_execution_evm_runtime::Database + 'a,
         Err: core::error::Error + Send + Sync + 'static,
     {
         let mut senders = Vec::with_capacity(transaction_count);
@@ -1164,7 +1168,7 @@ where
             self.metrics.record_transaction_wait(wait_start.elapsed());
 
             let tx = tx_result.map_err(BlockExecutionError::other)?;
-            let tx_signer = *<Tx as base_evm_handler::RecoveredTx<InnerTx>>::signer(&tx);
+            let tx_signer = *<Tx as base_execution_evm_runtime::RecoveredTx<InnerTx>>::signer(&tx);
 
             senders.push(tx_signer);
 

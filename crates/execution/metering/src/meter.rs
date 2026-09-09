@@ -8,20 +8,20 @@ use alloy_primitives::{
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
 use base_common_chain_config::BaseChainSpec;
-use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_common_types_chain::{BlockHeader, Transaction as _};
 use base_evm_context::GasParams;
-use base_evm_handler::TxResult as _;
-use base_evm_handler::{
+use base_execution_evm_blocks::{
+    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _,
+};
+use base_execution_evm_runtime::TxResult as _;
+use base_execution_evm_runtime::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_execution_evm_runtime::{
     database::State,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::EvmState,
-};
-use base_execution_evm_blocks::{
-    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _,
 };
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
@@ -871,10 +871,12 @@ mod tests {
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
     use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
-    use base_evm_handler::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
+    use base_execution_evm_runtime::state::{
+        Account as RevmAccount, EvmStorageSlot, TransactionId,
+    };
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
-    use base_test_utils::{
+    use base_testing_support::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
     };
     use eyre::Context;

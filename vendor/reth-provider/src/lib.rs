@@ -54,7 +54,7 @@ pub use reth_chain_state::{
 pub use reth_execution_types::*;
 // reexport traits to avoid breaking changes
 /// Re-export `OriginalValuesKnown`
-pub use base_evm_handler::database::OriginalValuesKnown;
+pub use base_execution_evm_runtime::database::OriginalValuesKnown;
 pub use reth_static_file_types as static_file;
 pub use reth_storage_api::{
     BalNotification, BalNotificationStream, BalProvider, BalStore, BalStoreHandle,

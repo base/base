@@ -1739,7 +1739,7 @@ mod tests {
         CanonicalStateUpdate, EthTransactionValidatorBuilder, InMemoryBlobStore, PoolConfig,
         PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,
     };
-    use base_test_utils::build_test_genesis_zenith;
+    use base_testing_support::build_test_genesis_zenith;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
