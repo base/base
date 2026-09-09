@@ -27,7 +27,8 @@ pub type L1HeadNumber = Arc<AtomicU64>;
 /// A [`ChainProvider`] wrapper that enforces an L1 confirmation depth.
 ///
 /// When `conf_depth > 0`, `block_info_by_number(n)` returns a temporary `BlockNotFound`
-/// error for any block `n` where `n + conf_depth > l1_head`. This causes the derivation
+/// error for any block above `l1_head.saturating_sub(conf_depth)`. Genesis remains
+/// available while the chain is younger than the confirmation depth. This causes the derivation
 /// pipeline to yield and retry later, matching the behavior of the reference node's `ConfDepth` wrapper.
 ///
 /// All other methods delegate to the inner [`AlloyChainProvider`] unchanged.
@@ -66,7 +67,7 @@ impl ChainProvider for ConfDepthProvider {
             // Only filter when the L1 head is known (non-zero). A number-based
             // BlockNotFound maps to a Temporary pipeline error, causing the pipeline
             // to yield and retry once the chain advances.
-            if l1_head > 0 && l1_head.saturating_sub(number) < self.conf_depth {
+            if l1_head > 0 && number > l1_head.saturating_sub(self.conf_depth) {
                 return Err(AlloyChainProviderError::BlockNotFound(number.into()));
             }
         }
@@ -89,6 +90,8 @@ impl ChainProvider for ConfDepthProvider {
 mod tests {
     use std::sync::atomic::AtomicU64;
 
+    use httpmock::{Method::POST, MockServer};
+
     use super::*;
     use crate::AlloyChainProviderError;
 
@@ -102,6 +105,33 @@ mod tests {
         );
         let l1_head = Arc::new(AtomicU64::new(head));
         ConfDepthProvider::new(dummy_inner, l1_head, conf_depth)
+    }
+
+    #[tokio::test]
+    async fn young_chain_allows_genesis_but_waits_for_confirmations() {
+        let server = MockServer::start_async().await;
+        let genesis: alloy_rpc_types_eth::Block = Default::default();
+        let response = server
+            .mock_async(|when, then| {
+                when.method(POST).json_body_includes(
+                    r#"{"method":"eth_getBlockByNumber","params":["0x0",false]}"#,
+                );
+                then.status(200).json_body(serde_json::json!({
+                    "jsonrpc": "2.0", "id": 0, "result": genesis,
+                }));
+            })
+            .await;
+        let inner = AlloyChainProvider::new(
+            alloy_provider::RootProvider::new_http(server.url("/").parse().unwrap()),
+            1,
+        );
+        let mut provider = ConfDepthProvider::new(inner, Arc::new(AtomicU64::new(1)), 15);
+        assert_eq!(provider.block_info_by_number(0).await.unwrap().number, 0);
+        assert!(matches!(
+            provider.block_info_by_number(1).await,
+            Err(AlloyChainProviderError::BlockNotFound(_))
+        ));
+        response.assert_calls_async(1).await;
     }
 
     #[tokio::test]
