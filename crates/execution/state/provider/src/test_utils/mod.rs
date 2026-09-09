@@ -8,9 +8,9 @@ use base_execution_state_database::{
     DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase,
 };
 use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_trie::{DatabaseStateRoot, StateRoot};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StorageEntry;
-use base_execution_state_trie::{DatabaseStateRoot, StateRoot};
 
 use crate::{
     ChainSpecProvider, HashingWriter, ProviderFactory, TrieWriter,
@@ -26,7 +26,7 @@ pub mod blocks;
 mod mock;
 mod noop;
 
-pub use crate::canonical_state::test_utils::{TestBlockBuilder, TestCanonStateSubscriptions};
+pub use crate::canonical_state::{TestBlockBuilder, TestCanonStateSubscriptions};
 pub use mock::{ExtendedAccount, MockEthProvider};
 pub use noop::NoopProvider;
 

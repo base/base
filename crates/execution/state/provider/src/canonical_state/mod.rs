@@ -25,4 +25,6 @@ pub use memory_overlay::{MemoryOverlayStateProvider, MemoryOverlayStateProviderR
 
 #[cfg(any(test, feature = "test-utils"))]
 /// Common test helpers
-pub mod test_utils;
+mod test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_utils::{TestBlockBuilder, TestCanonStateSubscriptions};
