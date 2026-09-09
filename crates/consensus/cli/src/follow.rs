@@ -13,13 +13,31 @@ use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
 use reth_node_core::args::TraceArgs;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    ConsensusChainArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs,
-    MetricsArgs, RpcArgs, metrics::CliMetrics,
+    ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedRpcArgs, L1ClientArgs, L1ConfigFile,
+    L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, RpcArgs, metrics::CliMetrics,
 };
+
+/// Overrides supplied by callers that embed a follow node alongside an execution node.
+#[derive(Clone, Debug, Default)]
+pub struct FollowNodeOverrides {
+    /// Override for the L2 Engine API endpoint.
+    ///
+    /// The unified binary sets this to the co-located execution node's IPC socket so the follow
+    /// node inserts payloads over IPC instead of a network engine endpoint.
+    pub l2_engine_rpc: Option<Url>,
+}
+
+impl FollowNodeOverrides {
+    /// Creates overrides for a follow node embedded alongside an execution node.
+    pub const fn embedded_execution(l2_engine_rpc: Url) -> Self {
+        Self { l2_engine_rpc: Some(l2_engine_rpc) }
+    }
+}
 
 /// Standalone consensus follow-node command.
 #[derive(Args, Clone, Debug)]
@@ -159,6 +177,94 @@ pub struct ConsensusFollowNodeConfigArgs {
     pub l1_rpc_args: L1ClientArgs,
 }
 
+/// Follow-node configuration arguments for embedded callers (the unified binary).
+///
+/// Mirrors [`ConsensusFollowNodeConfigArgs`] but omits the `--l2-engine-rpc` argument: the L2
+/// engine endpoint is provided by the co-located execution node over IPC and supplied via
+/// [`FollowNodeOverrides::embedded_execution`]. Follow mode reads canonical payloads from
+/// `--source-l2-rpc` rather than P2P gossip, so no P2P arguments are exposed.
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddedConsensusFollowNodeConfigArgs {
+    /// The URL of the node to follow.
+    #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
+    pub source_l2_rpc: Url,
+
+    /// Local L2 execution RPC URL (non-engine, e.g. the embedded execution node's HTTP port).
+    #[arg(
+        long = "l2-rpc-url",
+        default_value = "http://localhost:8545",
+        env = "BASE_NODE_L2_RPC_URL"
+    )]
+    pub l2_rpc_url: Url,
+
+    /// L2 engine CLI arguments (JWT/timeout/trust; the engine endpoint is supplied by execution).
+    #[clap(flatten)]
+    pub l2_client_args: EmbeddedL2ClientArgs,
+
+    /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
+    ///
+    /// Namespaced as `--follow.proofs` (not `--proofs`) to avoid colliding with the execution
+    /// node's `--proofs`/`--proofs-history` `ExEx` toggle when both are flattened into the unified
+    /// `base follow` command. The `BASE_NODE_PROOFS` env var is unchanged.
+    #[arg(long = "follow.proofs", default_value_t = false, env = "BASE_NODE_PROOFS")]
+    pub proofs: bool,
+
+    /// Maximum number of blocks the follow node may advance beyond the proofs
+    /// `ExEx` head. Only effective when `--follow.proofs` is enabled.
+    #[arg(
+        long = "follow.proofs.max-blocks-ahead",
+        default_value_t = 16,
+        env = "BASE_NODE_PROOFS_MAX_BLOCKS_AHEAD"
+    )]
+    pub proofs_max_blocks_ahead: u64,
+
+    /// Delay after each successful source payload insert, in milliseconds.
+    #[arg(
+        long = "follow.insert-delay-ms",
+        default_value = "0",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        },
+        env = "BASE_NODE_FOLLOW_INSERT_DELAY_MS"
+    )]
+    pub insert_delay: Duration,
+
+    /// RPC CLI arguments.
+    #[command(flatten)]
+    pub rpc_flags: EmbeddedRpcArgs,
+
+    /// L2 configuration file.
+    #[clap(flatten)]
+    pub l2_config: L2ConfigFile,
+
+    /// L1 configuration file.
+    #[clap(flatten)]
+    pub l1_config: L1ConfigFile,
+
+    /// L1 RPC CLI arguments.
+    #[clap(flatten)]
+    pub l1_rpc_args: L1ClientArgs,
+}
+
+impl From<EmbeddedConsensusFollowNodeConfigArgs> for ConsensusFollowNodeConfigArgs {
+    fn from(args: EmbeddedConsensusFollowNodeConfigArgs) -> Self {
+        Self {
+            source_l2_rpc: args.source_l2_rpc,
+            l2_rpc_url: args.l2_rpc_url,
+            // The placeholder engine endpoint is always replaced by the embedded-execution
+            // override before the follow node is built.
+            l2_client_args: args.l2_client_args.into(),
+            proofs: args.proofs,
+            proofs_max_blocks_ahead: args.proofs_max_blocks_ahead,
+            insert_delay: args.insert_delay,
+            rpc_flags: args.rpc_flags.into(),
+            l2_config: args.l2_config,
+            l1_config: args.l1_config,
+            l1_rpc_args: args.l1_rpc_args,
+        }
+    }
+}
+
 impl ConsensusFollowNodeArgs {
     /// Loads the configured L2 rollup config.
     pub fn load_rollup_config(&self) -> eyre::Result<RollupConfig> {
@@ -170,9 +276,17 @@ impl ConsensusFollowNodeArgs {
 
     /// Builds a follow node with default external endpoint configuration.
     pub async fn build_follow_node(&self) -> eyre::Result<FollowNode> {
+        self.build_follow_node_with_overrides(&FollowNodeOverrides::default()).await
+    }
+
+    /// Builds a follow node with caller-supplied endpoint overrides.
+    pub async fn build_follow_node_with_overrides(
+        &self,
+        overrides: &FollowNodeOverrides,
+    ) -> eyre::Result<FollowNode> {
         let cfg = self.load_rollup_config()?;
         let local_l2_provider = self.local_l2_provider();
-        self.follow_node(cfg, local_l2_provider).await
+        self.follow_node(cfg, local_l2_provider, overrides).await
     }
 
     /// Builds a follow node from explicit runtime dependencies.
@@ -180,8 +294,12 @@ impl ConsensusFollowNodeArgs {
         &self,
         cfg: RollupConfig,
         local_l2_provider: RootProvider<Base>,
+        overrides: &FollowNodeOverrides,
     ) -> eyre::Result<FollowNode> {
-        let l2_engine_rpc = self.config.l2_client_args.l2_engine_rpc.clone();
+        let l2_engine_rpc = overrides
+            .l2_engine_rpc
+            .clone()
+            .unwrap_or_else(|| self.config.l2_client_args.l2_engine_rpc.clone());
         let jwt_secret =
             self.config.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?;
         let rollup_config = Arc::new(cfg.clone());
@@ -216,8 +334,20 @@ impl ConsensusFollowNodeArgs {
         }))
     }
 
-    /// Starts a follow node.
+    /// Starts a follow node with default external endpoint configuration.
     pub async fn start(&self) -> eyre::Result<()> {
+        self.start_with_overrides(FollowNodeOverrides::default(), CancellationToken::new()).await
+    }
+
+    /// Starts a follow node with caller-supplied endpoint overrides and cancellation.
+    ///
+    /// The unified binary uses this to point the follow node at the embedded execution node's
+    /// engine IPC socket and to stop the follow runtime when execution exits.
+    pub async fn start_with_overrides(
+        &self,
+        overrides: FollowNodeOverrides,
+        cancellation: CancellationToken,
+    ) -> eyre::Result<()> {
         let cfg = self.load_rollup_config()?;
         if !self.config.proofs {
             warn!(
@@ -238,10 +368,14 @@ impl ConsensusFollowNodeArgs {
             self.check_proofs_rpc(&local_l2_provider).await?;
         }
 
-        self.follow_node(cfg, local_l2_provider).await?.start().await.map_err(|e| {
-            error!(target: "rollup_node", error = %e, "Failed to start follow node");
-            eyre::eyre!(e)
-        })?;
+        self.follow_node(cfg, local_l2_provider, &overrides)
+            .await?
+            .start_with_cancellation(cancellation)
+            .await
+            .map_err(|e| {
+                error!(target: "rollup_node", error = %e, "Failed to start follow node");
+                eyre::eyre!(e)
+            })?;
 
         Ok(())
     }

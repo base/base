@@ -85,9 +85,20 @@ where
         }
     }
 
-    /// Starts the follow node.
+    /// Starts the follow node, creating a fresh cancellation token.
     pub async fn start(&self) -> Result<(), FollowError> {
-        let cancellation = CancellationToken::new();
+        self.start_with_cancellation(CancellationToken::new()).await
+    }
+
+    /// Starts the follow node, driven by an externally supplied cancellation token.
+    ///
+    /// Cancelling the token stops the follow runtime, which lets an embedding caller (e.g. the
+    /// unified binary running execution in-process) coordinate a clean shutdown across both
+    /// services. The follow node also stops on an internal [`ShutdownSignal`].
+    pub async fn start_with_cancellation(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<(), FollowError> {
         let local = Arc::new(LocalL2Client::new(
             self.local_l2_provider.clone(),
             self.l1_provider.clone(),
