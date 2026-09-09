@@ -612,8 +612,6 @@ mod tests {
     #[cfg(feature = "partial-persistence")]
     #[cfg(feature = "partial-persistence")]
     use reth_stages_types::{FinishCheckpoint, StageCheckpoint};
-    #[cfg(feature = "partial-persistence")]
-    use reth_storage_api::StageCheckpointWriter;
     use reth_trie::{BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles};
 
     use super::*;

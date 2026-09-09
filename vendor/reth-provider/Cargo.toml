@@ -39,6 +39,7 @@ base-execution-chainspec = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 eyre = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }

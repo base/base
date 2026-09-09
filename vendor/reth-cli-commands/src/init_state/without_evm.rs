@@ -5,8 +5,8 @@ use alloy_rlp::Decodable;
 use base_common_consensus::{BaseBlock, BlockHeader};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
-    BlockWriter, ProviderResult, StageCheckpointWriter, StaticFileProviderFactory,
-    StaticFileWriter, providers::StaticFileProvider,
+    BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
+    providers::StaticFileProvider,
 };
 use reth_stages::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
@@ -32,13 +32,15 @@ where
 
 /// Creates a dummy chain (with no transactions) up to the last EVM block and appends the
 /// first valid block.
-pub fn setup_without_evm<Provider, F>(
-    provider_rw: &Provider,
+pub fn setup_without_evm<
+    TX: reth_db_api::transaction::DbTx + reth_db_api::transaction::DbTxMut + 'static,
+    F,
+>(
+    provider_rw: &reth_provider::DatabaseProvider<TX>,
     header: SealedHeader,
     header_factory: F,
 ) -> ProviderResult<()>
 where
-    Provider: StaticFileProviderFactory + StageCheckpointWriter + BlockWriter<Block = BaseBlock>,
     F: Fn(BlockNumber) -> base_common_consensus::Header + Send + Sync + 'static,
 {
     info!(target: "reth::cli", new_tip = ?header.num_hash(), "Setting up dummy EVM chain before importing state.");

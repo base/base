@@ -479,8 +479,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        BlockWriter, DatabaseProviderFactory, RocksDBProviderFactory, StageCheckpointWriter,
-        TransactionsProvider,
+        BlockWriter, DatabaseProviderFactory, RocksDBProviderFactory, TransactionsProvider,
         init::insert_genesis_history,
         providers::{rocksdb::RocksDBBuilder, static_file::StaticFileWriter},
         test_utils::{create_test_provider_factory, create_test_provider_factory_with_chain_spec},

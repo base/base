@@ -629,7 +629,7 @@ mod tests {
         test_utils::create_test_provider_factory,
     };
     use reth_stages_types::{StageCheckpoint, StageId};
-    use reth_storage_api::{StageCheckpointWriter, TrieWriter};
+    use reth_storage_api::TrieWriter;
     use reth_trie::{BranchNodeCompact, Nibbles, StateRoot};
 
     use super::*;

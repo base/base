@@ -19,11 +19,11 @@ use reth_etl::Collector;
 use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader, StorageEntry};
 use reth_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
-    DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, HistoryWriter,
-    MetadataProvider, MetadataWriter, OriginalValuesKnown, ProviderError, RevertsInit,
-    RocksDBProviderFactory, StageCheckpointReader, StageCheckpointWriter, StateWriteConfig,
-    StateWriter, StaticFileProviderFactory, StorageSettings, StorageSettingsCache, TrieWriter,
-    errors::provider::ProviderResult, providers::StaticFileWriter,
+    DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,
+    OriginalValuesKnown, ProviderError, ProviderFactory, RevertsInit, RocksDBProviderFactory,
+    StageCheckpointReader, StateWriteConfig, StateWriter, StaticFileProviderFactory,
+    StorageSettings, StorageSettingsCache, TrieWriter, errors::provider::ProviderResult,
+    providers::StaticFileWriter,
 };
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
@@ -101,88 +101,25 @@ impl From<DatabaseError> for InitStorageError {
 }
 
 /// Write the genesis block if it has not already been written
-pub fn init_genesis<PF>(factory: &PF) -> Result<B256, InitStorageError>
-where
-    PF: DatabaseProviderFactory
-        + StaticFileProviderFactory
-        + ChainSpecProvider
-        + StageCheckpointReader
-        + BlockNumReader
-        + MetadataProvider
-        + StorageSettingsCache,
-    PF::ProviderRW: StaticFileProviderFactory
-        + StageCheckpointWriter
-        + HistoryWriter
-        + HeaderProvider
-        + HashingWriter
-        + StateWriter
-        + TrieWriter
-        + MetadataWriter
-        + ChainSpecProvider
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + AsRef<PF::ProviderRW>,
-{
+pub fn init_genesis(factory: &ProviderFactory) -> Result<B256, InitStorageError> {
     init_genesis_with_settings(factory, StorageSettings::base())
 }
 
 /// Write the genesis block if it has not already been written with [`StorageSettings`].
-pub fn init_genesis_with_settings<PF>(
-    factory: &PF,
+pub fn init_genesis_with_settings(
+    factory: &ProviderFactory,
     genesis_storage_settings: StorageSettings,
-) -> Result<B256, InitStorageError>
-where
-    PF: DatabaseProviderFactory
-        + StaticFileProviderFactory
-        + ChainSpecProvider
-        + StageCheckpointReader
-        + BlockNumReader
-        + MetadataProvider
-        + StorageSettingsCache,
-    PF::ProviderRW: StaticFileProviderFactory
-        + StageCheckpointWriter
-        + HistoryWriter
-        + HeaderProvider
-        + HashingWriter
-        + StateWriter
-        + TrieWriter
-        + MetadataWriter
-        + ChainSpecProvider
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + AsRef<PF::ProviderRW>,
-{
+) -> Result<B256, InitStorageError> {
     init_genesis_with_settings_and_validate(factory, genesis_storage_settings, true)
 }
 
 /// Write the genesis block if it has not already been written with [`StorageSettings`],
 /// optionally validating the DB-resident genesis hash against the chainspec hash.
-pub fn init_genesis_with_settings_and_validate<PF>(
-    factory: &PF,
+pub fn init_genesis_with_settings_and_validate(
+    factory: &ProviderFactory,
     genesis_storage_settings: StorageSettings,
     validate_genesis_hash: bool,
-) -> Result<B256, InitStorageError>
-where
-    PF: DatabaseProviderFactory
-        + StaticFileProviderFactory
-        + ChainSpecProvider
-        + StageCheckpointReader
-        + BlockNumReader
-        + MetadataProvider
-        + StorageSettingsCache,
-    PF::ProviderRW: StaticFileProviderFactory
-        + StageCheckpointWriter
-        + HistoryWriter
-        + HeaderProvider
-        + HashingWriter
-        + StateWriter
-        + TrieWriter
-        + MetadataWriter
-        + ChainSpecProvider
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + AsRef<PF::ProviderRW>,
-{
+) -> Result<B256, InitStorageError> {
     let chain = factory.chain_spec();
 
     let genesis = chain.genesis();
@@ -499,29 +436,11 @@ where
 /// It's similar to [`init_genesis`] but supports importing state too big to fit in memory, and can
 /// be set to the highest block present. One practical usecase is to import OP mainnet state at
 /// bedrock transition block.
-pub fn init_from_state_dump<PF>(
+pub fn init_from_state_dump(
     mut reader: impl BufRead,
-    provider_factory: &PF,
+    provider_factory: &ProviderFactory,
     etl_config: EtlConfig,
-) -> eyre::Result<B256>
-where
-    PF: DatabaseProviderFactory<
-        ProviderRW: StaticFileProviderFactory
-                        + DBProvider<Tx: DbTxMut>
-                        + BlockNumReader
-                        + BlockHashReader
-                        + ChainSpecProvider
-                        + StageCheckpointWriter
-                        + HistoryWriter
-                        + HeaderProvider
-                        + HashingWriter
-                        + TrieWriter
-                        + StateWriter
-                        + StorageSettingsCache
-                        + RocksDBProviderFactory
-                        + AsRef<PF::ProviderRW>,
-    >,
-{
+) -> eyre::Result<B256> {
     if etl_config.file_size == 0 {
         return Err(eyre::eyre!("ETL file size cannot be zero"));
     }

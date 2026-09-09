@@ -2,9 +2,7 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use reth_db_common::DbTool;
-use reth_provider::{
-    DBProvider, DatabaseProviderFactory, StageCheckpointReader, StageCheckpointWriter,
-};
+use reth_provider::{DBProvider, DatabaseProviderFactory, StageCheckpointReader};
 use reth_stages::StageId;
 
 use crate::common::AccessRights;
@@ -149,7 +147,7 @@ impl From<StageArg> for StageId {
 mod tests {
     use clap::Parser;
     use reth_provider::{
-        DBProvider, DatabaseProviderFactory, StageCheckpointReader, StageCheckpointWriter,
+        DBProvider, DatabaseProviderFactory, StageCheckpointReader,
         test_utils::create_test_provider_factory,
     };
     use reth_stages::StageCheckpoint;

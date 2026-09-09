@@ -9,8 +9,7 @@ use reth_db_api::{
 };
 use reth_primitives_traits::{GotExpected, SealedHeader};
 use reth_provider::{
-    ChangeSetReader, DBProvider, HeaderProvider, ProviderError, StageCheckpointReader,
-    StageCheckpointWriter, StatsReader, StorageChangeSetReader, StorageSettingsCache, TrieWriter,
+    HeaderProvider, ProviderError, StageCheckpointReader, StatsReader, TrieWriter,
 };
 use reth_stages_api::{
     BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, MerkleCheckpoint, Stage,
@@ -148,9 +147,9 @@ impl MerkleStage {
     }
 
     /// Saves the hashing progress
-    pub fn save_execution_checkpoint(
+    pub fn save_execution_checkpoint<TX: DbTx + DbTxMut + 'static>(
         &self,
-        provider: &impl StageCheckpointWriter,
+        provider: &reth_provider::DatabaseProvider<TX>,
         checkpoint: Option<MerkleCheckpoint>,
     ) -> Result<(), StageError> {
         let mut buf = vec![];
@@ -166,18 +165,7 @@ impl MerkleStage {
     }
 }
 
-impl<Provider> Stage<Provider> for MerkleStage
-where
-    Provider: DBProvider<Tx: DbTxMut>
-        + TrieWriter
-        + StatsReader
-        + HeaderProvider
-        + ChangeSetReader
-        + StorageChangeSetReader
-        + StorageSettingsCache
-        + StageCheckpointReader
-        + StageCheckpointWriter,
-{
+impl<TX: DbTx + DbTxMut + 'static> Stage<reth_provider::DatabaseProvider<TX>> for MerkleStage {
     /// Return the id of the stage
     fn id(&self) -> StageId {
         match self {
@@ -189,7 +177,11 @@ where
     }
 
     /// Execute the stage.
-    fn execute(&mut self, provider: &Provider, input: ExecInput) -> Result<ExecOutput, StageError> {
+    fn execute(
+        &mut self,
+        provider: &reth_provider::DatabaseProvider<TX>,
+        input: ExecInput,
+    ) -> Result<ExecOutput, StageError> {
         let (threshold, incremental_threshold) = match self {
             Self::Unwind { .. } => {
                 info!(target: "sync::stages::merkle::unwind", "Stage is always skipped");
@@ -378,7 +370,7 @@ where
     /// Unwind the stage.
     fn unwind(
         &mut self,
-        provider: &Provider,
+        provider: &reth_provider::DatabaseProvider<TX>,
         input: UnwindInput,
     ) -> Result<UnwindOutput, StageError> {
         let tx = provider.tx_ref();
@@ -478,6 +470,7 @@ fn validate_state_root(
 
 #[cfg(test)]
 mod tests {
+    use reth_provider::DBProvider;
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;

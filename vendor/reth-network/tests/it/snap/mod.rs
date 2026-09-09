@@ -34,8 +34,8 @@ use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
 use reth_primitives_traits::{Account, Block as _, StorageEntry};
 use reth_provider::{
     BalProvider, BalStoreHandle, BlockReader, BlockWriter, ChainSpecProvider, HashingWriter,
-    HeaderProvider, InMemoryBalStore, ProviderFactory, RawBal, StageCheckpointWriter,
-    StateProviderFactory, StateRangeProviderFactory, StateRootProvider, StorageRootProvider,
+    HeaderProvider, InMemoryBalStore, ProviderFactory, RawBal, StateProviderFactory,
+    StateRangeProviderFactory, StateRootProvider, StorageRootProvider,
     providers::{BlockchainProvider, SNAPSHOT_STATE_RETENTION},
     test_utils::{ExtendedAccount, MockEthProvider, create_test_provider_factory},
 };

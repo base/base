@@ -30,7 +30,7 @@ use reth_node_metrics::{
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
-    StageCheckpointWriter, providers::BlockchainProvider,
+    providers::BlockchainProvider,
 };
 use reth_stages::{
     ExecInput, ExecOutput, ExecutionStageThresholds, Stage, StageExt, UnwindInput, UnwindOutput,

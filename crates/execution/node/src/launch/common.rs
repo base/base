@@ -71,8 +71,8 @@ use reth_node_metrics::{
 };
 use reth_provider::{
     BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
-    InMemoryBalStore, MetadataProvider, MetadataWriter, ProviderError, ProviderFactory,
-    ProviderResult, RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
+    InMemoryBalStore, MetadataProvider, ProviderError, ProviderFactory, ProviderResult,
+    RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
     StaticFileProviderFactory, StorageSettingsCache,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
@@ -1238,7 +1238,7 @@ fn get_partial_trie_unwind_marker(
 const PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY: &str = "partial_state_trie_unwind";
 
 fn write_partial_trie_unwind_marker(
-    provider: &impl MetadataWriter,
+    provider: &reth_provider::DatabaseProvider<impl reth_db_api::transaction::DbTxMut>,
     marker: PartialStateTrieUnwindMarker,
 ) -> ProviderResult<()> {
     provider.write_metadata(
@@ -1247,7 +1247,9 @@ fn write_partial_trie_unwind_marker(
     )
 }
 
-fn delete_partial_trie_unwind_marker(provider: &impl MetadataWriter) -> ProviderResult<()> {
+fn delete_partial_trie_unwind_marker(
+    provider: &reth_provider::DatabaseProvider<impl reth_db_api::transaction::DbTxMut>,
+) -> ProviderResult<()> {
     provider.delete_metadata(PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY)
 }
 

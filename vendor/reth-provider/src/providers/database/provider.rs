@@ -43,9 +43,9 @@ use reth_prune_types::{
 use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
-    BlockBodyIndicesProvider, MetadataProvider, MetadataWriter, StateProvider, StateReader,
-    StateWriteConfig, StorageChangeSetReader, StoragePath, StorageSettingsCache,
-    TryIntoHistoricalStateProvider, WriteStateInput,
+    BlockBodyIndicesProvider, MetadataProvider, StateProvider, StateReader, StateWriteConfig,
+    StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
+    WriteStateInput,
 };
 use reth_storage_errors::provider::{ProviderResult, StaticFileWriterError};
 use reth_storage_overlay::OverlayManager;
@@ -76,9 +76,7 @@ use crate::{
         static_file::{StaticFileWriteCtx, StaticFileWriter},
     },
     to_range,
-    traits::{
-        AccountExtReader, BlockSource, ChangeSetReader, ReceiptProvider, StageCheckpointWriter,
-    },
+    traits::{AccountExtReader, BlockSource, ChangeSetReader, ReceiptProvider},
 };
 
 /// Determines the commit order for database operations.
@@ -2049,9 +2047,9 @@ impl<TX: DbTx> StageCheckpointReader for DatabaseProvider<TX> {
     }
 }
 
-impl<TX: DbTxMut> StageCheckpointWriter for DatabaseProvider<TX> {
+impl<TX: DbTxMut> DatabaseProvider<TX> {
     /// Save stage checkpoint.
-    fn save_stage_checkpoint(
+    pub fn save_stage_checkpoint(
         &self,
         id: StageId,
         checkpoint: StageCheckpoint,
@@ -2060,7 +2058,7 @@ impl<TX: DbTxMut> StageCheckpointWriter for DatabaseProvider<TX> {
     }
 
     /// Save stage checkpoint progress.
-    fn save_stage_checkpoint_progress(
+    pub fn save_stage_checkpoint_progress(
         &self,
         id: StageId,
         checkpoint: Vec<u8>,
@@ -2069,7 +2067,8 @@ impl<TX: DbTxMut> StageCheckpointWriter for DatabaseProvider<TX> {
     }
 
     #[instrument(level = "debug", target = "providers::db", skip_all)]
-    fn update_pipeline_stages(
+    /// Updates the persisted checkpoints of every pipeline stage.
+    pub fn update_pipeline_stages(
         &self,
         block_number: BlockNumber,
         drop_stage_checkpoint: bool,
@@ -3472,12 +3471,28 @@ impl<TX: DbTx> MetadataProvider for DatabaseProvider<TX> {
     }
 }
 
-impl<TX: DbTxMut> MetadataWriter for DatabaseProvider<TX> {
-    fn write_metadata(&self, key: &str, value: Vec<u8>) -> ProviderResult<()> {
+impl<TX: DbTxMut> DatabaseProvider<TX> {
+    /// Write storage settings for this node
+    ///
+    /// Be sure to update provider factory cache with
+    /// [`StorageSettingsCache::set_storage_settings_cache`].
+    pub fn write_storage_settings(&self, settings: StorageSettings) -> ProviderResult<()> {
+        if !settings.storage_v2 {
+            return Err(ProviderError::UnsupportedProvider);
+        }
+        self.write_metadata(
+            reth_storage_api::metadata::keys::STORAGE_SETTINGS,
+            serde_json::to_vec(&settings).map_err(ProviderError::other)?,
+        )
+    }
+
+    /// Writes a node metadata value.
+    pub fn write_metadata(&self, key: &str, value: Vec<u8>) -> ProviderResult<()> {
         self.tx.put::<tables::Metadata>(key.to_string(), value).map_err(Into::into)
     }
 
-    fn delete_metadata(&self, key: &str) -> ProviderResult<()> {
+    /// Deletes a node metadata value.
+    pub fn delete_metadata(&self, key: &str) -> ProviderResult<()> {
         self.tx.delete::<tables::Metadata>(key.to_string(), None)?;
         Ok(())
     }
@@ -3513,7 +3528,7 @@ mod tests {
     use reth_db_api::models::StorageSettings;
     use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
-    use reth_storage_api::{MetadataProvider, MetadataWriter, StateReadProvider};
+    use reth_storage_api::{MetadataProvider, StateReadProvider};
     use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{
         HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,

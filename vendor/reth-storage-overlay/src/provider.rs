@@ -243,7 +243,7 @@ mod tests {
         test_utils::{MockNodeDatabase, create_test_provider_factory},
     };
     use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
-    use reth_storage_api::StageCheckpointWriter;
+
     use reth_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,
         updates::TrieUpdatesSorted,

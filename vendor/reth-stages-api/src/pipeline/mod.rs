@@ -14,7 +14,6 @@ use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
 use reth_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
-    StageCheckpointWriter,
 };
 use reth_static_file::StaticFileProducer;
 use reth_tokio_util::{EventSender, EventStream};

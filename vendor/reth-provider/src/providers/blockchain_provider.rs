@@ -1027,8 +1027,8 @@ mod tests {
         BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
         BlockReaderIdExt, BlockSource, ChangeSetReader, DBProvider, DatabaseProviderFactory,
         HashingWriter, HeaderProvider, RangeEnd, ReceiptProvider, ReceiptProviderIdExt,
-        StageCheckpointWriter, StateProviderFactory, StateRangeProvider, StateRangeProviderFactory,
-        StateRootProvider, StateWriteConfig, StateWriter, StorageRootProvider, TransactionVariant,
+        StateProviderFactory, StateRangeProvider, StateRangeProviderFactory, StateRootProvider,
+        StateWriteConfig, StateWriter, StorageRootProvider, TransactionVariant,
         TransactionsProvider,
     };
     use reth_testing_utils::generators::{

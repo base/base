@@ -1452,7 +1452,7 @@ mod tests {
         use alloy_primitives::{keccak256, map::HashMap};
         use reth_execution_types::ExecutionOutcome;
         use reth_stages_types::{StageCheckpoint, StageId};
-        use reth_storage_api::{HashedPostStateProvider, StageCheckpointWriter};
+        use reth_storage_api::HashedPostStateProvider;
         use reth_testing_utils::generators::{self, BlockRangeParams};
         use revm::{
             database::{AccountStatus, BundleAccount, BundleState},

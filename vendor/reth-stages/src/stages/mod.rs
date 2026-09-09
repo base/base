@@ -65,7 +65,7 @@ mod tests {
     use reth_provider::{
         AccountExtReader, BlockBodyIndicesProvider, BlockWriter, DatabaseProviderFactory,
         ProviderFactory, ProviderResult, PruneCheckpointWriter, ReceiptProvider,
-        StageCheckpointWriter, StaticFileProviderFactory, StorageReader,
+        StaticFileProviderFactory, StorageReader,
         providers::{StaticFileProvider, StaticFileWriter},
     };
     use reth_prune_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};

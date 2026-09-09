@@ -101,9 +101,8 @@ pub mod metadata;
 #[cfg(all(feature = "db-api", feature = "std"))]
 pub use metadata::StoragePath;
 #[cfg(feature = "db-api")]
-pub use metadata::{MetadataProvider, MetadataWriter, StorageSettingsCache};
+pub use metadata::{MetadataProvider, StorageSettingsCache};
 #[cfg(feature = "db-api")]
 pub use reth_db_api::models::StorageSettings;
-
 
 pub mod macros;
