@@ -92,7 +92,7 @@ use tokio::sync::{
     oneshot, watch,
 };
 
-use crate::{BuilderContext, ExExLauncher, launch_components::ComponentBuilder};
+use crate::{BaseNode, BuilderContext, ExExLauncher};
 
 /// Reusable setup for launching a node.
 ///
@@ -830,7 +830,8 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
     /// Creates a `BaseNodeContext` and attaches it to the launch context.
     pub async fn with_components(
         self,
-        components_builder: ComponentBuilder,
+        base: &BaseNode,
+        payload: Option<crate::BasePayloadServiceConfig>,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
@@ -843,7 +844,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
         );
 
         debug!(target: "reth::cli", "creating components");
-        let node_adapter = (components_builder.build)(&builder_ctx).await?;
+        let node_adapter = base.build_components(&builder_ctx, payload).await?;
 
         let components_container = WithComponents {
             db_provider_container: WithMeteredProvider {

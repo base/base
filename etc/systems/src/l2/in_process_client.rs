@@ -7,7 +7,7 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use base_builder_core::test_utils::get_available_port;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
-use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
+use base_node_core::{NodeConfig, NodeHandle, RollupArgs};
 use base_node_runner::BaseNode;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Context, Result, eyre};
@@ -208,16 +208,14 @@ impl InProcessClient {
             Self::create_test_database(&db_path)?
         };
 
-        let mut add_ons = base_node.add_ons_builder().build();
-        add_ons.rpc_add_ons.services.sequencer = Some(config.builder_rpc_url.clone());
-        add_ons.rpc_add_ons.services.validity = config
+        let mut rpc = base_node_core::BaseRpcServices::default();
+        rpc.sequencer = Some(config.builder_rpc_url.clone());
+        rpc.validity = config
             .enable_experimental_validity_transactions
             .then_some(base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES);
-        let builder = NodeBuilder::new(node_config.clone())
-            .with_database(db)
-            .with_launch_context(runtime.clone())
-            .with_components(base_node.components().into_builder())
-            .with_add_ons(add_ons);
+        let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        builder.base = base_node;
+        builder.rpc = rpc;
 
         let services = base_node_core::NodeServices {
             forwarding: config.tx_forwarding_config,
@@ -225,8 +223,8 @@ impl InProcessClient {
             shadow_indexer: config.shadow_indexer,
             ..Default::default()
         };
-        let NodeHandle { node: node_handle, node_exit_future } =
-            builder.with_services(services).launch().await?;
+        builder.services = services;
+        let NodeHandle { node: node_handle, node_exit_future } = builder.launch().await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()

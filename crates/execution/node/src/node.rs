@@ -3,14 +3,13 @@
 use std::{
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
-    time::Duration,
 };
 
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader};
+use base_common_consensus::BlockHeader;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
@@ -34,8 +33,7 @@ use reth_tracing::tracing::{debug, info};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    BaseAddOns, BaseAddOnsBuilder, BaseComponentsBuilder, BasePayloadServiceBuilder,
-    BuilderContext, DebugNodeConfig, PoolBuilderConfigOverrides,
+    BasePayloadServiceConfig, BuilderContext, PoolBuilderConfigOverrides,
     args::{RollupArgs, TxpoolOrdering},
     spawn_maintenance_tasks,
 };
@@ -188,51 +186,55 @@ impl BaseNode {
         self
     }
 
-    /// Returns the components for the given [`RollupArgs`].
-    pub fn components(&self) -> BaseComponentsBuilder<reth_db::DatabaseEnv> {
-        let RollupArgs {
-            discovery_v4,
-            txpool_ordering,
-            max_inflight_delegated_slots,
-            mempool_sender_limit,
-            mempool_payer_limit,
-            ..
-        } = self.args;
-        let ordering = match txpool_ordering {
+    /// Builds the fixed Base execution components.
+    pub async fn build_components(
+        &self,
+        ctx: &BuilderContext,
+        payload: Option<BasePayloadServiceConfig>,
+    ) -> eyre::Result<base_node_context::BaseNodeContext> {
+        let evm_config = BaseEvmConfig::new(ctx.chain_spec());
+        let ordering = match self.args.txpool_ordering {
             TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
             TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
         };
-        BaseComponentsBuilder::new(
-            BasePoolBuilder::default()
-                .with_ordering(ordering)
-                .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
-                .with_guard_limits(GuardLimits {
-                    signature_limit: mempool_sender_limit,
-                    payment_limit: mempool_payer_limit,
-                })
-                .with_additional_trusted_delegation_targets(
-                    self.args.mempool_trusted_delegation_targets.iter().copied(),
-                ),
-            BasePayloadServiceBuilder::new(
-                BasePayloadBuilder::new()
-                    .with_da_config(self.da_config.clone())
-                    .with_gas_limit_config(self.gas_limit_config.clone())
-                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
-                    .with_resource_metering(self.resource_metering.clone())
-                    .with_rejection_cache(self.rejection_cache.clone()),
-            ),
-            BaseNetworkBuilder::new(!discovery_v4),
-        )
-    }
-
-    /// Returns [`BaseAddOnsBuilder`] with configured arguments.
-    pub fn add_ons_builder(&self) -> BaseAddOnsBuilder {
-        BaseAddOnsBuilder::default()
-            .with_sequencer(self.args.sequencer.clone())
-            .with_sequencer_headers(self.args.sequencer_headers.clone())
-            .with_da_config(self.da_config.clone())
-            .with_gas_limit_config(self.gas_limit_config.clone())
-            .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
+        let pool = BasePoolBuilder::default()
+            .with_ordering(ordering)
+            .with_max_inflight_delegated_slots(self.args.max_inflight_delegated_slots)
+            .with_guard_limits(GuardLimits {
+                signature_limit: self.args.mempool_sender_limit,
+                payment_limit: self.args.mempool_payer_limit,
+            })
+            .with_additional_trusted_delegation_targets(
+                self.args.mempool_trusted_delegation_targets.iter().copied(),
+            )
+            .build_pool(ctx, evm_config.clone())
+            .await?;
+        let network = BaseNetworkBuilder::new(!self.args.discovery_v4)
+            .build_network(ctx, pool.clone())
+            .await?;
+        let payload = payload.unwrap_or_else(|| BasePayloadServiceConfig {
+            config: base_execution_payload_builder::config::BaseBuilderConfig {
+                da_config: self.da_config.clone(),
+                gas_limit_config: self.gas_limit_config.clone(),
+                manifest_precheck_enabled: self.manifest_precheck_enabled,
+                resource_metering: self.resource_metering.clone(),
+                rejection_cache: self.rejection_cache.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let payload_builder_handle = payload.start(ctx, pool.clone(), evm_config.clone()).await?;
+        Ok(base_node_context::BaseNodeContext {
+            provider: ctx.provider().clone(),
+            task_executor: ctx.task_executor().clone(),
+            transaction_pool: pool,
+            evm_config,
+            network,
+            payload_builder_handle,
+            consensus: Arc::new(base_execution_consensus::BaseBeaconConsensus::new(
+                ctx.chain_spec(),
+            )),
+        })
     }
 
     /// Instantiates the [`ProviderFactoryBuilder`] for a Base node.
@@ -273,21 +275,6 @@ impl BaseNode {
     /// ```
     pub fn provider_factory_builder() -> ProviderFactoryBuilder {
         ProviderFactoryBuilder::default()
-    }
-}
-
-/// Concrete add-ons for the core Base node and its provider adapter.
-pub type BaseNodeAddOns = BaseAddOns;
-
-impl BaseNode {
-    /// Returns the concrete RPC conversion and local-mining configuration.
-    pub fn debug_config() -> DebugNodeConfig<alloy_rpc_types_eth::Block<BaseTxEnvelope>> {
-        DebugNodeConfig {
-            rpc_to_primitive_block: |block| block.into_consensus(),
-            local_payload_attributes_builder: |chain_spec| {
-                Box::new(BaseLocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone())))
-            },
-        }
     }
 }
 
@@ -441,110 +428,6 @@ impl BasePoolBuilder {
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
 
         Ok(transaction_pool)
-    }
-}
-
-/// A basic Base payload service builder
-#[derive(Debug, Clone)]
-pub struct BasePayloadBuilder<Txs = ()> {
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
-    /// This data availability configuration specifies constraints for the payload builder
-    /// when assembling payloads
-    pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the payload builder.
-    /// This is used to configure gas limit related constraints for the payload builder.
-    pub gas_limit_config: GasLimitConfig,
-    /// Whether to drop positively stale EIP-8130 transactions using their
-    /// captured authorization manifest before execution.
-    pub manifest_precheck_enabled: bool,
-    /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
-    pub predicate_eval_hard_cutoff: Duration,
-    /// Resource metering by opcode for native payload admission.
-    pub resource_metering: ResourceMeteringConfig,
-    /// Shared, cross-job cache of permanently rejected transaction hashes.
-    pub rejection_cache: RejectionCache,
-}
-
-impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
-    fn default() -> Self {
-        Self {
-            best_transactions: Txs::default(),
-            da_config: BaseDAConfig::default(),
-            gas_limit_config: GasLimitConfig::default(),
-            manifest_precheck_enabled: true,
-            predicate_eval_hard_cutoff: Duration::from_millis(10),
-            resource_metering: ResourceMeteringConfig::default(),
-            rejection_cache: RejectionCache::default(),
-        }
-    }
-}
-
-impl BasePayloadBuilder {
-    /// Create a new instance with the default configuration.
-    pub fn new() -> Self {
-        Self {
-            best_transactions: (),
-            da_config: BaseDAConfig::default(),
-            gas_limit_config: GasLimitConfig::default(),
-            manifest_precheck_enabled: true,
-            predicate_eval_hard_cutoff: Duration::from_millis(10),
-            resource_metering: ResourceMeteringConfig::default(),
-            rejection_cache: RejectionCache::default(),
-        }
-    }
-
-    /// Configure the data availability configuration for the payload builder.
-    pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
-        self.da_config = da_config;
-        self
-    }
-
-    /// Configure the gas limit configuration for the payload builder.
-    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
-        self.gas_limit_config = gas_limit_config;
-        self
-    }
-
-    /// Configure whether EIP-8130 authorization manifests are checked before execution.
-    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
-        self.manifest_precheck_enabled = enabled;
-        self
-    }
-
-    /// Configure the cumulative validity-predicate evaluation time limit per payload build.
-    pub const fn with_predicate_eval_hard_cutoff(mut self, cutoff: Duration) -> Self {
-        self.predicate_eval_hard_cutoff = cutoff;
-        self
-    }
-
-    /// Configure resource metering by opcode for the native payload builder.
-    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
-        self.resource_metering = resource_metering;
-        self
-    }
-
-    /// Configure the shared rejection cache for permanently rejected transactions.
-    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
-        self.rejection_cache = rejection_cache;
-        self
-    }
-}
-
-impl<Txs> BasePayloadBuilder<Txs> {
-    /// Configures the type responsible for yielding the transactions that should be included in the
-    /// payload.
-    pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<T> {
-        BasePayloadBuilder {
-            best_transactions,
-            da_config: self.da_config,
-            gas_limit_config: self.gas_limit_config,
-            manifest_precheck_enabled: self.manifest_precheck_enabled,
-            predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
-            resource_metering: self.resource_metering,
-            rejection_cache: self.rejection_cache,
-        }
     }
 }
 
@@ -770,15 +653,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    #[test]
-    fn payload_builder_preserves_manifest_precheck_setting() {
-        let builder =
-            BasePayloadBuilder::new().with_manifest_precheck_enabled(false).with_transactions(());
-
-        assert!(!builder.manifest_precheck_enabled);
-        assert!(BasePayloadBuilder::<()>::default().manifest_precheck_enabled);
-    }
 
     #[rstest]
     #[case::enabled(false, false, false, false)]

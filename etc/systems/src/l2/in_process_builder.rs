@@ -10,7 +10,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 use base_builder_core::{BlockServiceBuilder, BuilderConfig, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
-use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
+use base_node_core::{NodeConfig, NodeHandle, RollupArgs};
 use base_node_runner::BaseNode;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
@@ -143,7 +143,7 @@ impl InProcessBuilder {
         let base_node = BaseNode::new(rollup_args.clone());
 
         let base_node = base_node.with_da_config(da_config).with_gas_limit_config(gas_limit_config);
-        let mut addons = base_node.add_ons_builder().build();
+        let mut rpc = base_node_core::BaseRpcServices::default();
 
         let mut node_config = create_node_config(chain_spec, &data_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
@@ -161,26 +161,17 @@ impl InProcessBuilder {
             shadow_indexer: config.shadow_indexer,
             ..Default::default()
         };
-        addons.rpc_add_ons.services.builder = Some(base_builder_core::BuilderApiConfig::new(
+        rpc.builder = Some(base_builder_core::BuilderApiConfig::new(
             accept_validity_transactions,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         ));
-        addons.rpc_add_ons.services.validity =
-            accept_validity_transactions.then_some(DEFAULT_MAX_VALIDITY_PREDICATES);
-        let node_builder = NodeBuilder::new(node_config.clone())
-            .with_database(db)
-            .with_launch_context(runtime.clone());
-        let launched = node_builder
-            .with_components(
-                base_node
-                    .components()
-                    .payload(BlockServiceBuilder::build(builder_config))
-                    .into_builder(),
-            )
-            .with_add_ons(addons)
-            .with_services(services)
-            .launch()
-            .await;
+        rpc.validity = accept_validity_transactions.then_some(DEFAULT_MAX_VALIDITY_PREDICATES);
+        let mut launch = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        launch.base = base_node;
+        launch.payload = Some(BlockServiceBuilder::build(builder_config));
+        launch.rpc = rpc;
+        launch.services = services;
+        let launched = launch.launch().await;
 
         let NodeHandle { node: node_handle, node_exit_future } =
             launched.wrap_err("Failed to launch builder node")?;

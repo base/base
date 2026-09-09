@@ -6,7 +6,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_common_rpc_types::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
+use base_node_core::{NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
@@ -91,14 +91,10 @@ impl LocalNode {
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
-        let mut add_ons = base_node.add_ons_builder().build();
-        add_ons.rpc_add_ons.services = rpc;
-        let builder = NodeBuilder::new(node_config.clone())
-            .with_database(db)
-            .with_launch_context(exec.clone())
-            .with_components(base_node.components().into_builder())
-            .with_add_ons(add_ons)
-            .with_services(services);
+        let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, exec.clone());
+        builder.base = base_node;
+        builder.rpc = rpc;
+        builder.services = services;
 
         let NodeHandle { node: node_handle, node_exit_future } = builder.launch().await?;
 
@@ -174,7 +170,7 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
-    use base_node_core::{NodeBuilder, NodeConfig, RollupArgs};
+    use base_node_core::{NodeConfig, RollupArgs};
     use base_test_utils::build_test_genesis;
     use reth_node_core::{
         args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
@@ -217,14 +213,9 @@ mod tests {
                 datadir: MaybePlatformPath::<DataDirPath>::from(path.clone()),
                 ..Default::default()
             });
-        let handle = NodeBuilder::new(config)
-            .with_database(db)
-            .with_launch_context(runtime.clone())
-            .with_components(base.components().into_builder())
-            .with_add_ons(base.add_ons_builder().build())
-            .launch()
-            .await
-            .unwrap();
+        let mut launch = base_node_core::NodeLaunch::new(config, db, runtime.clone());
+        launch.base = base;
+        let handle = launch.launch().await.unwrap();
         assert!(handle.node.rpc_server_handle().http_local_addr().is_none());
         assert!(handle.node.rpc_server_handle().ws_local_addr().is_none());
         let execution = &handle.node.execution;

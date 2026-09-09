@@ -5,11 +5,11 @@ use std::time::Duration;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, PayloadBuilderHandle,
-    PayloadBuilderService, builder::BasePayloadTransactions, config::BaseBuilderConfig,
+    PayloadBuilderService, config::BaseBuilderConfig,
 };
 use reth_chain_state::CanonStateSubscriptions;
 
-use crate::{BasePayloadBuilder, BuilderContext};
+use crate::BuilderContext;
 
 /// Scheduling used for Base payload construction.
 #[derive(Debug, Clone, Copy)]
@@ -23,84 +23,47 @@ pub enum BasePayloadServiceMode {
     },
 }
 
-/// Builds the standard Base payload service with a configurable transaction source.
+/// Base payload construction settings shared by the node and sequencer.
 #[derive(Debug, Clone)]
-pub struct BasePayloadServiceBuilder<Payload = BasePayloadBuilder> {
-    /// Payload construction settings and transaction source.
-    pub payload_builder: Payload,
+pub struct BasePayloadServiceConfig {
+    /// Execution and block admission settings.
+    pub config: BaseBuilderConfig,
     /// Whether canonical state notifications populate the payload cache.
     pub pre_cache_state: bool,
-    /// Full-block construction settings, when supplied by the sequencer.
-    pub builder_config: Option<BaseBuilderConfig>,
-    /// Scheduling and deadline configuration.
+    /// Scheduling and deadline used for payload jobs.
     pub mode: BasePayloadServiceMode,
 }
 
-impl<Payload> BasePayloadServiceBuilder<Payload> {
-    /// Creates a service using the configured transaction source.
-    pub const fn new(payload_builder: Payload) -> Self {
+impl Default for BasePayloadServiceConfig {
+    fn default() -> Self {
         Self {
-            payload_builder,
+            config: BaseBuilderConfig::default(),
             pre_cache_state: true,
-            builder_config: None,
             mode: BasePayloadServiceMode::DedicatedThread,
         }
     }
-
-    /// Controls caching of changed state from canonical notifications.
-    pub const fn with_pre_cache_state(mut self, pre_cache_state: bool) -> Self {
-        self.pre_cache_state = pre_cache_state;
-        self
-    }
 }
 
-impl<Payload: Default> Default for BasePayloadServiceBuilder<Payload> {
-    fn default() -> Self {
-        Self::new(Payload::default())
+impl BasePayloadServiceConfig {
+    /// Configures full-block construction for the sequencer.
+    pub fn full_block(config: BaseBuilderConfig, deadline: Duration) -> Self {
+        Self { config, pre_cache_state: true, mode: BasePayloadServiceMode::Task { deadline } }
     }
-}
 
-impl BasePayloadServiceBuilder {
-    /// Configures the full-block service used by the sequencer.
-    pub fn full_block(builder_config: BaseBuilderConfig, deadline: Duration) -> Self {
-        Self {
-            payload_builder: BasePayloadBuilder::default(),
-            pre_cache_state: true,
-            builder_config: Some(builder_config),
-            mode: BasePayloadServiceMode::Task { deadline },
-        }
-    }
-}
-
-impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
-    /// Starts the Base payload service with the selected scheduling mode.
-    pub async fn spawn_payload_builder_service(
+    /// Starts the standard Base payload implementation.
+    pub async fn start(
         self,
         ctx: &BuilderContext,
         pool: base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider>,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<PayloadBuilderHandle>
-    where
-        Txs: BasePayloadTransactions<
-            base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider>,
-        >,
-    {
+    ) -> eyre::Result<PayloadBuilderHandle> {
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool,
                 ctx.provider().clone(),
                 evm_config,
-                self.builder_config.unwrap_or(BaseBuilderConfig {
-                    da_config: self.payload_builder.da_config,
-                    gas_limit_config: self.payload_builder.gas_limit_config,
-                    manifest_precheck_enabled: self.payload_builder.manifest_precheck_enabled,
-                    predicate_eval_hard_cutoff: self.payload_builder.predicate_eval_hard_cutoff,
-                    resource_metering: self.payload_builder.resource_metering,
-                    rejection_cache: self.payload_builder.rejection_cache,
-                    ..Default::default()
-                }),
-            )
-            .with_transactions(self.payload_builder.best_transactions);
+                self.config,
+            );
         let config = &ctx.config().builder;
         let job_config = BasicPayloadJobGeneratorConfig::default()
             .interval(config.interval)

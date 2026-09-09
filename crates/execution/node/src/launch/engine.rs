@@ -1,7 +1,5 @@
 //! Engine node related functionality.
 
-use std::{future::Future, pin::Pin};
-
 use base_common_consensus::BlockHeader;
 use base_execution_payload_builder::{BaseEngineValidator, BaseExecutionHandle};
 use base_node_context::AddOnsContext;
@@ -11,66 +9,37 @@ use reth_engine_tree::{
     chain::{ChainEvent, FromOrchestrator},
     engine::{EngineApiKind, EngineApiRequest, EngineRequestHandler},
     launch::build_engine_orchestrator,
-    tree::TreeConfig,
 };
 use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
-use reth_node_core::{
-    args::PruneConfigKind,
-    dirs::{ChainPath, DataDirPath},
-    exit::NodeExitFuture,
-    primitives::Head,
-};
+use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::Head};
 use reth_node_events::node;
 use reth_provider::{BlockNumReader, StorageSettingsCache, providers::BlockchainProvider};
 use reth_storage_overlay::OverlayManager;
-use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, error, info};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    Attached, EngineShutdown, FullNode, LaunchContext, LaunchContextWith, LaunchNode,
-    NodeBuilderWithComponents, NodeHandle, WithConfigs,
+    Attached, EngineShutdown, FullNode, LaunchContext, LaunchContextWith, NodeHandle, WithConfigs,
     rpc::{BasicEngineValidatorBuilder, RpcHandle},
     setup::build_networked_pipeline,
 };
 
-/// The engine node launcher.
-#[derive(Debug)]
-pub struct EngineNodeLauncher {
-    /// The task executor for the node.
-    pub ctx: LaunchContext,
-
-    /// Temporary configuration for engine tree.
-    /// After engine is stabilized, this should be configured through node builder.
-    pub engine_tree_config: TreeConfig,
-}
-
-impl EngineNodeLauncher {
-    /// Create a new instance of the ethereum node launcher.
-    pub const fn new(
-        task_executor: TaskExecutor,
-        data_dir: ChainPath<DataDirPath>,
-        engine_tree_config: TreeConfig,
-    ) -> Self {
-        Self { ctx: LaunchContext::new(task_executor, data_dir), engine_tree_config }
-    }
-
-    async fn launch_node(self, target: NodeBuilderWithComponents) -> eyre::Result<NodeHandle> {
-        let Self { ctx, engine_tree_config } = self;
-        let NodeBuilderWithComponents {
-            database,
-            rocksdb_provider,
-            components_builder,
-            services,
-            add_ons,
-            config,
-        } = target;
-        let mut services = services.prepare()?;
+impl crate::NodeLaunch {
+    /// Starts Base execution, canonical processing, and the built-in RPC servers.
+    pub async fn launch(self) -> eyre::Result<NodeHandle> {
+        let ctx = LaunchContext::new(self.task_executor, self.config.datadir());
+        let engine_tree_config = self.engine_tree_config;
+        let database = self.database;
+        let config = self.config;
+        let base = self.base;
+        let rpc = self.rpc;
+        let payload = self.payload;
+        let mut services = self.services.prepare(&base.args)?;
 
         // Create the overlay manager that will be shared across the provider and engine.
         let overlay_manager =
@@ -91,7 +60,7 @@ impl EngineNodeLauncher {
             // Create the provider factory with the shared overlay manager
             .with_provider_factory(
                 overlay_manager.clone(),
-                rocksdb_provider,
+                None,
                 disabled_stages,
             )
             .await?
@@ -115,7 +84,7 @@ impl EngineNodeLauncher {
             .with_blockchain_db(move |provider_factory| {
                 Ok(BlockchainProvider::new(provider_factory)?)
             })?
-            .with_components(components_builder).await?;
+            .with_components(&base, payload).await?;
 
         services.start_tracing(ctx.node_adapter());
 
@@ -254,7 +223,7 @@ impl EngineNodeLauncher {
         );
 
         let RpcHandle { rpc_server_handles, rpc_registry } =
-            add_ons.launch_add_ons(add_ons_ctx, &services).await?;
+            crate::BaseRpcServer::launch(add_ons_ctx, &base, rpc, &services).await?;
 
         // Create engine shutdown handle
         let (engine_shutdown, shutdown_rx) = EngineShutdown::new();
@@ -405,15 +374,7 @@ impl EngineNodeLauncher {
             node: full_node,
         };
 
+        crate::BaseDebugServices::start(&handle).await?;
         Ok(handle)
-    }
-}
-
-impl LaunchNode<NodeBuilderWithComponents> for EngineNodeLauncher {
-    type Node = NodeHandle;
-    type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
-
-    fn launch_node(self, target: NodeBuilderWithComponents) -> Self::Future {
-        Box::pin(self.launch_node(target))
     }
 }

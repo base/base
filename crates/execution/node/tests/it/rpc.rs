@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::{BaseNode, NodeBuilder, NodeHandle};
+use base_node_core::NodeHandle;
 use reth_network::types::NatResolver;
 use reth_node_core::{
     args::{NetworkArgs, RpcServerArgs},
@@ -31,14 +31,8 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
         .with_network(network_args)
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
-    let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
-
-    let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
-        .testing_node(exec)
-        .with_components(BaseNode::default().components().into_builder())
-        .with_add_ons(add_ons)
-        .launch()
-        .await?;
+    let NodeHandle { node, node_exit_future: _ } =
+        base_node_core::NodeLaunch::testing(node_config, exec).launch().await?;
 
     assert!(node.rpc_server_handle().http_local_addr().is_some());
 

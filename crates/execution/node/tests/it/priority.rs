@@ -1,96 +1,24 @@
-//! Node builder test that customizes priority of transactions in the block.
+//! Production payload construction includes queued transactions when their nonce gap closes.
 
 use std::sync::Arc;
 
+use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
-use alloy_primitives::{Address, ChainId, TxKind};
-use base_common_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::Recovered};
+use alloy_primitives::{Address, TxKind};
+use base_common_consensus::{SignableTransaction, Transaction, TxEip1559};
 use base_common_network::TxSignerSync;
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_payload_builder::{
-    NonParkablePayloadTransactions, ParkablePayloadTransactions, builder::BasePayloadTransactions,
-};
-use base_execution_txpool::BasePooledTransaction;
-use base_node_core::{
-    BaseComponentsBuilder, BaseNetworkBuilder, BaseNode, BasePayloadBuilder,
-    BasePayloadServiceBuilder, BasePoolBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig,
-    RollupArgs,
-};
+use base_node_core::NodeConfig;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_core::args::DatadirArgs;
-use reth_payload_util::{
-    BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
-};
 use reth_tasks::Runtime;
 use tokio::sync::Mutex;
 
-#[derive(Clone, Debug)]
-struct CustomTxPriority {
-    chain_id: ChainId,
-}
-
-impl<Pool> BasePayloadTransactions<Pool> for CustomTxPriority
-where
-    Pool: base_execution_txpool::ParkableTransactionPool,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: base_execution_txpool::BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = BasePooledTransaction> {
-        // Block composition:
-        // 1. Best transactions from the pool (up to 250k gas)
-        // 2. End-of-block transaction created by the node (up to 100k gas)
-
-        // End of block transaction should send a 0-value transfer to a random address.
-        let sender = Wallet::default().inner;
-        let mut end_of_block_tx = TxEip1559 {
-            chain_id: self.chain_id,
-            nonce: 1, // it will be 2nd tx after L1 block info tx that uses the same sender
-            gas_limit: 21000,
-            max_fee_per_gas: 20e9 as u128,
-            to: TxKind::Call(Address::random()),
-            value: 0.try_into().unwrap(),
-            ..Default::default()
-        };
-        let signature = sender.sign_transaction_sync(&mut end_of_block_tx).unwrap();
-        let end_of_block_tx = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
-            base_common_consensus::BasePooledTransaction::Eip1559(
-                end_of_block_tx.into_signed(signature),
-            ),
-            sender.address(),
-        ));
-
-        NonParkablePayloadTransactions::new(PayloadTransactionsChain::new(
-            BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr)),
-            // Allow 250k gas for the transactions from the pool
-            Some(250_000),
-            PayloadTransactionsFixed::single(end_of_block_tx),
-            // Allow 100k gas for the end-of-block transaction
-            Some(100_000),
-        ))
-    }
-}
-
-/// Builds the node with custom transaction priority service within default payload builder.
-fn build_components(
-    chain_id: ChainId,
-) -> BaseComponentsBuilder<reth_db::DatabaseEnv, BasePayloadBuilder<CustomTxPriority>> {
-    let RollupArgs { discovery_v4, .. } = RollupArgs::default();
-    BaseComponentsBuilder::new(
-        BasePoolBuilder::default(),
-        BasePayloadServiceBuilder::new(
-            BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),
-        ),
-        BaseNetworkBuilder::new(!discovery_v4),
-    )
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn test_custom_block_priority_config() {
+async fn test_queued_transaction_included_after_nonce_gap_closes() {
     reth_tracing::init_test_tracing();
 
     let genesis: Genesis = BaseNodeTestUtils::genesis();
@@ -118,45 +46,45 @@ async fn test_custom_block_priority_config() {
             .db(),
     );
     let runtime = Runtime::test();
-    let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
-    let node_handle = NodeBuilder::new(config.clone())
-        .with_database(db)
-        .with_components(build_components(config.chain.chain_id()).into_builder())
-        .with_add_ons(add_ons)
-        .launch_with_fn(|builder| {
-            let launcher = EngineNodeLauncher::new(
-                runtime.clone(),
-                builder.config.datadir(),
-                Default::default(),
-            );
-            builder.launch_with(launcher)
-        })
+    let node_handle = base_node_core::NodeLaunch::new(config.clone(), db, runtime.clone())
+        .launch()
         .await
         .expect("Failed to launch node");
 
-    // Advance the chain with a single block.
-    let block_payloads =
-        NodeTestContext::new(node_handle.node, BaseNodeTestUtils::payload_attributes)
-            .await
-            .unwrap()
-            .advance(1, |_| {
-                let wallet = Arc::clone(&wallet);
-                Box::pin(async move {
-                    let mut wallet = wallet.lock().await;
-                    let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(
-                        wallet.chain_id,
-                        wallet.inner.clone(),
-                        // This doesn't matter in the current test (because it's only one block),
-                        // but make sure you're not reusing the nonce from end-of-block tx
-                        // if they have the same signer.
-                        wallet.inner_nonce * 2,
-                    );
-                    wallet.inner_nonce += 1;
-                    tx_fut.await
-                })
+    let sender = Wallet::default().inner;
+    let mut transfer = TxEip1559 {
+        chain_id: config.chain.chain_id(),
+        nonce: 1,
+        gas_limit: 21_000,
+        max_fee_per_gas: 20_000_000_000,
+        to: TxKind::Call(Address::random()),
+        ..Default::default()
+    };
+    let signature = sender.sign_transaction_sync(&mut transfer).unwrap();
+    let transfer = base_common_consensus::BaseTxEnvelope::Eip1559(transfer.into_signed(signature));
+    let mut node = NodeTestContext::new(node_handle.node, BaseNodeTestUtils::payload_attributes)
+        .await
+        .unwrap();
+    node.rpc.inject_tx(transfer.encoded_2718().into()).await.unwrap();
+    let block_payloads = node
+        .advance(1, |_| {
+            let wallet = Arc::clone(&wallet);
+            Box::pin(async move {
+                let mut wallet = wallet.lock().await;
+                let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(
+                    wallet.chain_id,
+                    wallet.inner.clone(),
+                    // This doesn't matter in the current test (because it's only one block),
+                    // but make sure you're not reusing the nonce from end-of-block tx
+                    // if they have the same signer.
+                    wallet.inner_nonce * 2,
+                );
+                wallet.inner_nonce += 1;
+                tx_fut.await
             })
-            .await
-            .unwrap();
+        })
+        .await
+        .unwrap();
     assert_eq!(block_payloads.len(), 1);
     let block_payload = block_payloads.first().unwrap();
     let block = block_payload.block();

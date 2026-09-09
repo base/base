@@ -6,7 +6,7 @@ use base_execution_payload_builder::{
     RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
-use base_node_core::{BasePayloadServiceBuilder, NodeHandle, RollupArgs};
+use base_node_core::{BasePayloadServiceConfig, NodeHandle, RollupArgs};
 use eyre::Result;
 use tracing::info;
 
@@ -28,7 +28,7 @@ pub struct BaseNodeRunner {
     /// Registered builder extensions.
     pub services: base_node_core::NodeServices,
     /// Payload service builder.
-    service_builder: Option<BasePayloadServiceBuilder>,
+    service_builder: Option<BasePayloadServiceConfig>,
     /// Shared DA configuration for the node and payload builder.
     da_config: Option<BaseDAConfig>,
     /// Shared gas-limit configuration for the node and payload builder.
@@ -105,7 +105,7 @@ impl BaseNodeRunner {
     }
 
     /// Selects a concrete payload service configuration.
-    pub fn with_service_builder(mut self, service_builder: BasePayloadServiceBuilder) -> Self {
+    pub fn with_service_builder(mut self, service_builder: BasePayloadServiceConfig) -> Self {
         self.service_builder = Some(service_builder);
         self
     }
@@ -126,13 +126,13 @@ impl BaseNodeRunner {
         Ok(LaunchedBaseNode { handle })
     }
 
-    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<BaseNodeHandle> {
+    async fn launch_node(self, mut builder: BaseNodeBuilder) -> Result<BaseNodeHandle> {
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
             rollup_args,
             mut rpc,
-            mut services,
+            services,
             service_builder,
             da_config,
             gas_limit_config,
@@ -154,34 +154,20 @@ impl BaseNodeRunner {
         if let Some(rejection_cache) = &rejection_cache {
             base_node = base_node.with_rejection_cache(rejection_cache.clone());
         }
-        services.proofs = Some(rollup_args.clone());
-        let components = base_node.components();
-        let components = match service_builder {
-            Some(mut service_builder) => {
-                if let Some(resource_metering) = resource_metering {
-                    if let Some(config) = service_builder.builder_config.as_mut() {
-                        config.resource_metering = resource_metering.clone();
-                    }
-                    service_builder.payload_builder.resource_metering = resource_metering;
-                }
-                if let Some(rejection_cache) = rejection_cache {
-                    if let Some(config) = service_builder.builder_config.as_mut() {
-                        config.rejection_cache = rejection_cache.clone();
-                    }
-                    service_builder.payload_builder.rejection_cache = rejection_cache;
-                }
-                components.payload(service_builder)
+        let payload = service_builder.map(|mut service| {
+            if let Some(resource_metering) = resource_metering {
+                service.config.resource_metering = resource_metering;
             }
-            None => components,
-        };
-
+            if let Some(rejection_cache) = rejection_cache {
+                service.config.rejection_cache = rejection_cache;
+            }
+            service
+        });
         rpc.sequencer = rollup_args.sequencer.clone();
-        let mut add_ons = base_node.add_ons_builder().build();
-        add_ons.rpc_add_ons.services = rpc;
-        let builder = builder
-            .with_components(components.into_builder())
-            .with_add_ons(add_ons)
-            .with_services(services);
+        builder.base = base_node;
+        builder.payload = payload;
+        builder.rpc = rpc;
+        builder.services = services;
 
         builder.launch().await
     }
@@ -205,7 +191,7 @@ mod tests {
                 ..ResourceMeteringConfig::default()
             })
             .with_rejection_cache(RejectionCache::default())
-            .with_service_builder(BasePayloadServiceBuilder::default());
+            .with_service_builder(BasePayloadServiceConfig::default());
 
         assert!(!runner.manifest_precheck_enabled);
         let configured_da = runner.da_config.expect("DA config should be preserved");

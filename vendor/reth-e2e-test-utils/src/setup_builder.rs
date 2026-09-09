@@ -7,7 +7,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_node_core::{ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle};
+use base_node_core::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_primitives_traits::AlloyBlockHeader;
@@ -97,7 +97,7 @@ where
     /// Builds and launches the test nodes.
     pub async fn build(
         self,
-        node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+        node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
     ) -> eyre::Result<(Vec<NodeHelperType>, Wallet)> {
         let runtime = Runtime::test();
 
@@ -136,21 +136,11 @@ where
                 };
 
                 let span = span!(Level::INFO, "node", idx);
-                let (components_builder, add_ons) = node_factory();
-                let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
-                    .testing_node(runtime.clone())
-                    .with_components(components_builder)
-                    .with_add_ons(add_ons)
-                    .launch_with_fn(|builder| {
-                        let launcher = EngineNodeLauncher::new(
-                            builder.task_executor().clone(),
-                            builder.config().datadir(),
-                            tree_config.clone(),
-                        );
-                        builder.launch_with(launcher)
-                    })
-                    .instrument(span)
-                    .await?;
+                let mut launch = base_node_core::NodeLaunch::testing(node_config, runtime.clone());
+                launch.base = node_factory();
+                launch.engine_tree_config = tree_config.clone();
+                let NodeHandle { node, node_exit_future: _ } =
+                    launch.launch().instrument(span).await?;
 
                 let node = NodeTestContext::new(node, self.attributes_generator).await?;
                 let genesis_number = self.chain_spec.genesis_header().number();

@@ -485,7 +485,7 @@ impl StandardBaseRethNode {
             return Ok(builder);
         }
 
-        let chain_spec = Arc::make_mut(&mut builder.config_mut().chain);
+        let chain_spec = Arc::make_mut(&mut builder.config.chain);
         ExecutionUpgradeSignal::apply_initial_signal_to_chain_spec(&config, chain_spec).await?;
 
         Ok(builder)

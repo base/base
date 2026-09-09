@@ -166,67 +166,20 @@ impl fmt::Debug for RpcSetupContext<'_> {
     }
 }
 
-/// Node add-ons containing RPC server configuration, with customizable eth API handler.
-///
-/// This struct can be used to provide the RPC server functionality. It is responsible for launching
-/// the public HTTP and WebSocket RPC servers. It is intended to be used and
-/// extended with Base execution RPC handlers.
-///
-/// It can be modified to register RPC API handlers, see [`RpcAddOns::launch_add_ons_with`] which
-/// takes a closure that provides access to all the configured modules (namespaces), and is invoked
-/// just before the servers are launched. This can be used to extend the node with custom RPC
-/// methods or even replace existing method handlers, see also [`TransportRpcModules`].
-pub struct RpcAddOns {
-    /// Runtime settings for Base RPC services.
-    pub services: crate::BaseRpcServices,
-    /// Additional RPC add-ons.
-    /// Builder for `EthApi`
-    eth_api_builder: BaseEthApiBuilder,
+/// Starts the built-in Base RPC handlers on the configured transports.
+#[derive(Debug)]
+pub struct BaseRpcServer;
 
-    /// Optional custom tokio runtime for the RPC server.
-    tokio_runtime: Option<tokio::runtime::Handle>,
-}
-
-impl Debug for RpcAddOns {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RpcAddOns").field("eth_api_builder", &"...").finish()
-    }
-}
-
-impl RpcAddOns {
-    /// Creates a new instance of the RPC add-ons.
-    pub fn new(eth_api_builder: BaseEthApiBuilder) -> Self {
-        Self { services: Default::default(), eth_api_builder, tokio_runtime: None }
-    }
-
-    /// Sets the tokio runtime for the RPC servers.
-    ///
-    /// Caution: This runtime must not be created from within asynchronous context.
-    pub fn with_tokio_runtime(mut self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
-        self.tokio_runtime = tokio_runtime;
-        self
-    }
-}
-
-impl Default for RpcAddOns {
-    fn default() -> Self {
-        Self::new(BaseEthApiBuilder::default())
-    }
-}
-
-impl RpcAddOns {
+impl BaseRpcServer {
     /// Launches public RPC and invokes the configured extension and lifecycle hooks.
-    pub async fn launch_add_ons(
-        self,
+    pub async fn launch(
         ctx: AddOnsContext<'_>,
-        da_config: base_execution_payload_builder::config::BaseDAConfig,
-        gas_limit_config: base_execution_payload_builder::config::GasLimitConfig,
+        base: &crate::BaseNode,
+        services: crate::BaseRpcServices,
         node_services: &crate::PreparedNodeServices,
     ) -> eyre::Result<RpcHandle> {
-        let tokio_runtime = self.tokio_runtime.clone();
-        let setup =
-            self.setup_rpc_components(ctx, da_config, gas_limit_config, node_services).await?;
-        let server_config = setup.config.rpc.rpc_server_config().with_tokio_runtime(tokio_runtime);
+        let setup = Self::setup_rpc_components(ctx, base, services, node_services).await?;
+        let server_config = setup.config.rpc.rpc_server_config();
         let rpc = Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
         let handles = RethRpcServerHandles { rpc };
         Ok(RpcHandle { rpc_server_handles: handles, rpc_registry: setup.registry })
@@ -234,13 +187,16 @@ impl RpcAddOns {
 
     /// Common setup for RPC server initialization
     async fn setup_rpc_components<'a>(
-        self,
         ctx: AddOnsContext<'a>,
-        da_config: base_execution_payload_builder::config::BaseDAConfig,
-        gas_limit_config: base_execution_payload_builder::config::GasLimitConfig,
+        base: &crate::BaseNode,
+        mut services: crate::BaseRpcServices,
         node_services: &crate::PreparedNodeServices,
     ) -> eyre::Result<RpcSetupContext<'a>> {
-        let Self { eth_api_builder, services, .. } = self;
+        services.sequencer = base.args.sequencer.clone();
+        let eth_api_builder = BaseEthApiBuilder::default()
+            .with_sequencer(base.args.sequencer.clone())
+            .with_sequencer_headers(base.args.sequencer_headers.clone())
+            .with_min_suggested_priority_fee(base.args.min_suggested_priority_fee);
 
         let AddOnsContext { node, config, beacon_engine_handle, engine_events } = ctx;
 
@@ -321,7 +277,10 @@ impl RpcAddOns {
             reth_rpc_server_types::RethRpcModule::Debug,
             witness.into_rpc(),
         )?;
-        let miner = base_execution_rpc::BaseMinerExtApi::new(da_config, gas_limit_config);
+        let miner = base_execution_rpc::BaseMinerExtApi::new(
+            base.da_config.clone(),
+            base.gas_limit_config.clone(),
+        );
         ctx.modules.add_or_replace_if_module_configured(
             reth_rpc_server_types::RethRpcModule::Miner,
             miner.into_rpc(),

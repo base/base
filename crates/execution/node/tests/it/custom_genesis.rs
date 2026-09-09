@@ -8,7 +8,7 @@ use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_node_core::{BaseNode, EngineNodeLauncher, NodeBuilder, NodeConfig};
+use base_node_core::NodeConfig;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
@@ -47,19 +47,8 @@ async fn test_base_node_custom_genesis_number() {
             .db(),
     );
     let runtime = reth_tasks::Runtime::test();
-    let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
-    let node_handle = NodeBuilder::new(config.clone())
-        .with_database(db)
-        .with_components(BaseNode::default().components().into_builder())
-        .with_add_ons(add_ons)
-        .launch_with_fn(|builder| {
-            let launcher = EngineNodeLauncher::new(
-                runtime.clone(),
-                builder.config.datadir(),
-                Default::default(),
-            );
-            builder.launch_with(launcher)
-        })
+    let node_handle = base_node_core::NodeLaunch::new(config.clone(), db, runtime.clone())
+        .launch()
         .await
         .expect("Failed to launch node");
 

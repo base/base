@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_cli_utils::CliContext;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::NodeBuilder;
+use base_node_core::NodeLaunch;
 use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
@@ -230,9 +230,7 @@ impl ExecutionNodeRuntimeConfig {
         info!(target: "reth::cli", path = ?db_path, "Opening database");
         let database = init_db(db_path, self.node_config.db.database_args())?.with_metrics();
 
-        let builder = NodeBuilder::new(self.node_config)
-            .with_database(database)
-            .with_launch_context(ctx.task_executor);
+        let builder = NodeLaunch::new(self.node_config, database, ctx.task_executor);
 
         Ok(builder)
     }

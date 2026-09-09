@@ -11,11 +11,8 @@ mod runner;
 pub use runner::{BaseNodeRunner, LaunchedBaseNode};
 
 mod types;
-pub use base_node_core::{BaseAddOns, BaseAddOnsBuilder, BaseNode};
-pub use types::{
-    BaseNodeAddOns, BaseNodeBuilder, BaseNodeComponents, BaseNodeHandle, BaseNodeTypes,
-    BaseProvider,
-};
+pub use base_node_core::BaseNode;
+pub use types::{BaseNodeBuilder, BaseNodeComponents, BaseNodeHandle, BaseNodeTypes, BaseProvider};
 
 #[cfg(feature = "test-utils")]
 pub mod test_utils;

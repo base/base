@@ -5,8 +5,7 @@ use std::{sync::Arc, time::Duration};
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_trie::InitializationJob;
 use base_node_core::{
-    BaseNode, NodeBuilder, NodeConfig, NodeServices, ProofHistory, ProofHistoryBackend,
-    ProofsHistoryDbBackend, RollupArgs,
+    BaseNode, NodeConfig, ProofHistory, ProofHistoryBackend, ProofsHistoryDbBackend, RollupArgs,
 };
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
@@ -48,14 +47,9 @@ async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Resul
             }
         }
         let runtime = Runtime::test();
-        let base = BaseNode::default();
-        let handle = NodeBuilder::new(config)
-            .testing_node(runtime.clone())
-            .with_components(base.components().into_builder())
-            .with_add_ons(base.add_ons_builder().build())
-            .with_services(NodeServices { proofs: Some(args), ..Default::default() })
-            .launch()
-            .await?;
+        let mut launch = base_node_core::NodeLaunch::testing(config, runtime.clone());
+        launch.base = BaseNode::new(args);
+        let handle = launch.launch().await?;
         let progress = handle
             .node
             .proofs_progress

@@ -19,8 +19,6 @@ use crate::{
 /// Runtime settings for the services shipped with the Base node.
 #[derive(Debug, Default)]
 pub struct NodeServices {
-    /// Proof history storage and retention settings.
-    pub proofs: Option<RollupArgs>,
     /// Canonical shadow indexing settings.
     pub shadow_indexer: Option<ShadowIndexerConfig>,
     /// Transaction event tracing settings.
@@ -59,13 +57,8 @@ pub struct PreparedNodeServices {
 
 impl NodeServices {
     /// Prepares the services before starting node tasks.
-    pub fn prepare(self) -> eyre::Result<PreparedNodeServices> {
-        let proofs = self
-            .proofs
-            .filter(|args| args.proofs_history)
-            .as_ref()
-            .map(ProofHistory::open)
-            .transpose()?;
+    pub fn prepare(self, args: &RollupArgs) -> eyre::Result<PreparedNodeServices> {
+        let proofs = args.proofs_history.then(|| ProofHistory::open(args)).transpose()?;
         let shadow_indexer = self.shadow_indexer.filter(|config| config.enabled).map(|config| {
             let (sender, receiver) = mpsc::channel(1024);
             ShadowIndexerRuntime { config, sender, receiver }

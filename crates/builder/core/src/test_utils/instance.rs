@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use base_common_rpc_types::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, TransactionPool};
-use base_node_core::{NodeBuilder, NodeConfig, RollupArgs};
+use base_node_core::{NodeConfig, RollupArgs};
 use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
 use futures::FutureExt;
 use nanoid::nanoid;
@@ -199,17 +199,13 @@ impl LocalInstance {
             .with_gas_limit_config(gas_limit_config);
 
         let service_builder = BlockServiceBuilder::build(builder_config.clone());
-        let components = base_node.components().payload(service_builder);
 
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
 
-        let mut add_ons = base_node.add_ons_builder().build();
-        add_ons.rpc_add_ons.services = rpc;
-        let builder = NodeBuilder::<_>::new(node_config.clone())
-            .with_database(db)
-            .with_launch_context(runtime.clone())
-            .with_components(components.into_builder())
-            .with_add_ons(add_ons);
+        let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        builder.base = base_node;
+        builder.payload = Some(service_builder);
+        builder.rpc = rpc;
 
         let node_handle = builder.launch().await?;
         let pool_monitor = node_handle.node.pool.all_transactions_event_listener();

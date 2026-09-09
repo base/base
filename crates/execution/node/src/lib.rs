@@ -25,10 +25,7 @@ mod node;
 pub use node::*;
 
 mod payload_service;
-pub use payload_service::{BasePayloadServiceBuilder, BasePayloadServiceMode};
-
-mod components;
-pub use components::BaseComponentsBuilder;
+pub use payload_service::{BasePayloadServiceConfig, BasePayloadServiceMode};
 
 #[cfg(test)]
 mod storage;
@@ -42,9 +39,6 @@ pub use proof_history::*;
 #[cfg(feature = "test-utils")]
 use reth_tasks as _;
 use revm as _;
-
-mod add_ons;
-pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
 
 mod rpc;
 pub use rpc::*;
@@ -67,8 +61,10 @@ pub use engine_shutdown::{EngineShutdown, EngineShutdownRequest};
 mod full_node;
 pub use full_node::*;
 
-mod builder;
-pub use builder::*;
+mod launch_config;
+pub use launch_config::NodeLaunch;
+mod startup_context;
+pub use startup_context::BuilderContext;
 
 mod aliases;
 pub use aliases::*;

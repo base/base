@@ -5,7 +5,6 @@ use std::sync::Arc;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_context::BaseNodeContext;
-use base_node_core::ComponentBuilder;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_provider::providers::BlockchainProvider;
@@ -42,7 +41,7 @@ pub use setup_builder::E2ETestSetupBuilder;
 
 /// Creates and connects the requested number of test nodes.
 pub async fn setup(
-    node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -56,7 +55,7 @@ pub async fn setup(
 
 /// Creates and connects test nodes with the supplied engine configuration.
 pub async fn setup_engine(
-    node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -77,7 +76,7 @@ pub async fn setup_engine(
 
 /// Creates test nodes and optionally connects their networks.
 pub async fn setup_engine_with_connection(
-    node_factory: impl Fn() -> (ComponentBuilder, base_node_core::BaseAddOns) + Send + Sync,
+    node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,

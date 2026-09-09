@@ -23,9 +23,9 @@ pub struct BaseNodeTestUtils;
 
 impl BaseNodeTestUtils {
     /// Supplies Base components and add-ons for a temporary node.
-    pub fn test_setup() -> (base_node_core::ComponentBuilder, base_node_core::BaseNodeAddOns) {
+    pub fn test_setup() -> base_node_core::BaseNode {
         let node = BaseNode::default();
-        (node.components().into_builder(), node.add_ons_builder().build())
+        node
     }
 
     /// Returns the shared Base integration-test genesis.

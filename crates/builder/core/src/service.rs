@@ -1,7 +1,7 @@
 //! Full-block payload service configuration.
 
 use base_execution_payload_builder::config::BaseBuilderConfig;
-use base_node_core::BasePayloadServiceBuilder;
+use base_node_core::BasePayloadServiceConfig;
 
 use crate::BuilderConfig;
 
@@ -11,8 +11,8 @@ pub struct BlockServiceBuilder;
 
 impl BlockServiceBuilder {
     /// Configures full-block payload construction and its deadline.
-    pub fn build(builder_config: BuilderConfig) -> BasePayloadServiceBuilder {
-        BasePayloadServiceBuilder::full_block(
+    pub fn build(builder_config: BuilderConfig) -> BasePayloadServiceConfig {
+        BasePayloadServiceConfig::full_block(
             BaseBuilderConfig {
                 da_config: builder_config.da_config,
                 gas_limit_config: builder_config.gas_limit_config,
