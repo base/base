@@ -12,7 +12,6 @@ use reth_db_api::{
     RawKey, RawTable, TableViewer,
     cursor::{DbCursorRO, DbDupCursorRO},
     database::Database,
-    database_metrics::DatabaseMetrics,
     models::{ShardedKey, storage_sharded_key::StorageShardedKey},
     table::{Compress, Decompress, DupSort, Table},
     tables,
@@ -127,10 +126,7 @@ pub enum RocksDbTable {
 
 impl Command {
     /// Execute `db get` command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         match self.subcommand {
             Subcommand::Mdbx { table, key, subkey, end_key, end_subkey, raw } => {
                 table.view(&GetValueViewer { tool, key, subkey, end_key, end_subkey, raw })?
@@ -306,8 +302,8 @@ impl Command {
 }
 
 /// Gets a value from a RocksDB table by key.
-fn get_rocksdb<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    tool: &DbTool<DB>,
+fn get_rocksdb(
+    tool: &DbTool,
     table: RocksDbTable,
     key: &str,
     block: Option<u64>,
@@ -517,8 +513,8 @@ fn table_subkey<T: DupSort>(subkey: Option<&str>) -> Result<T::SubKey, eyre::Err
     serde_json::from_str(subkey.unwrap_or_default()).map_err(|e| eyre::eyre!(e))
 }
 
-struct GetValueViewer<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
-    tool: &'a DbTool<DB>,
+struct GetValueViewer<'a> {
+    tool: &'a DbTool,
     key: String,
     subkey: Option<String>,
     end_key: Option<String>,
@@ -526,9 +522,7 @@ struct GetValueViewer<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'stat
     raw: bool,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TableViewer<()>
-    for GetValueViewer<'_, DB>
-{
+impl TableViewer<()> for GetValueViewer<'_> {
     type Error = eyre::Report;
 
     fn view<T: Table>(&self) -> Result<(), Self::Error> {

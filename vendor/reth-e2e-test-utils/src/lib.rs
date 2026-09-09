@@ -42,14 +42,14 @@ pub use setup_builder::E2ETestSetupBuilder;
 
 /// Creates and connects the requested number of test nodes.
 pub async fn setup<AO>(
-    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+    node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    AO: RethRpcAddOns<crate::TmpDB> + 'static,
+    AO: RethRpcAddOns + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
@@ -59,7 +59,7 @@ where
 
 /// Creates and connects test nodes with the supplied engine configuration.
 pub async fn setup_engine<AO>(
-    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+    node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -67,7 +67,7 @@ pub async fn setup_engine<AO>(
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    AO: RethRpcAddOns<crate::TmpDB> + 'static,
+    AO: RethRpcAddOns + 'static,
 {
     setup_engine_with_connection(
         node_factory,
@@ -83,7 +83,7 @@ where
 
 /// Creates test nodes and optionally connects their networks.
 pub async fn setup_engine_with_connection<AO>(
-    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+    node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -92,7 +92,7 @@ pub async fn setup_engine_with_connection<AO>(
     connect_nodes: bool,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    AO: RethRpcAddOns<crate::TmpDB> + 'static,
+    AO: RethRpcAddOns + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_tree_config_modifier(move |base| {
@@ -109,16 +109,16 @@ where
 /// Testing database
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// Provider used by test nodes.
-pub type TestProvider = BlockchainProvider<TmpDB>;
+pub type TestProvider = BlockchainProvider;
 
 /// Provider adapter used by test nodes.
 pub type TmpNodeAdapter = TmpDB;
 
 /// Adapter for a concrete set of test components.
-pub type Adapter = BaseNodeContext<TmpNodeAdapter>;
+pub type Adapter = BaseNodeContext;
 
 /// Context for a test node with explicit components and add-ons.
-pub type NodeHelperType<AO> = NodeTestContext<crate::TmpDB, AO>;
+pub type NodeHelperType<AO> = NodeTestContext<AO>;
 
 mod base_node;
 pub use base_node::{BaseNodeTestUtils, BaseTestNode};

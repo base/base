@@ -10,11 +10,7 @@ use base_common_consensus::{
 };
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
-use reth_db_api::{
-    Database,
-    database_metrics::DatabaseMetrics,
-    models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices},
-};
+use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
@@ -47,23 +43,23 @@ use crate::{
 /// time-out.
 #[derive(Debug)]
 #[doc(hidden)] // triggers ICE for `cargo docs`
-pub struct ConsistentProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+pub struct ConsistentProvider {
     /// Storage provider.
-    storage_provider: <ProviderFactory<DB> as DatabaseProviderFactory>::Provider,
+    storage_provider: <ProviderFactory as DatabaseProviderFactory>::Provider,
     /// Head block at time of [`Self`] creation
     head_block: Option<Arc<BlockState>>,
     /// In-memory canonical state. This is not a snapshot, and can change! Use with caution.
     canonical_in_memory_state: CanonicalInMemoryState,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvider<DB> {
+impl ConsistentProvider {
     /// Create a new provider using [`ProviderFactory`] and [`CanonicalInMemoryState`],
     ///
     /// Underneath it will take a snapshot by fetching [`CanonicalInMemoryState::head_state`] and
     /// [`ProviderFactory::database_provider_ro`] effectively maintaining one single snapshotted
     /// view of memory and database.
     pub fn new(
-        storage_provider_factory: ProviderFactory<DB>,
+        storage_provider_factory: ProviderFactory,
         state: CanonicalInMemoryState,
     ) -> ProviderResult<Self> {
         // Each one provides a snapshot at the time of instantiation, but its order matters.
@@ -122,7 +118,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvide
     ) -> ProviderResult<Vec<T>>
     where
         F: FnOnce(
-            &DatabaseProviderRO<DB>,
+            &DatabaseProviderRO,
             RangeInclusive<BlockNumber>,
             &mut P,
         ) -> ProviderResult<Vec<T>>,
@@ -227,7 +223,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvide
         fetch_from_block_state: M,
     ) -> ProviderResult<Vec<R>>
     where
-        S: FnOnce(&DatabaseProviderRO<DB>, RangeInclusive<TxNumber>) -> ProviderResult<Vec<R>>,
+        S: FnOnce(&DatabaseProviderRO, RangeInclusive<TxNumber>) -> ProviderResult<Vec<R>>,
         M: Fn(RangeInclusive<usize>, &BlockState) -> ProviderResult<Vec<R>>,
     {
         let in_mem_chain = self.head_block.iter().flat_map(|b| b.chain()).collect::<Vec<_>>();
@@ -324,7 +320,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvide
         fetch_from_block_state: M,
     ) -> ProviderResult<Option<R>>
     where
-        S: FnOnce(&DatabaseProviderRO<DB>) -> ProviderResult<Option<R>>,
+        S: FnOnce(&DatabaseProviderRO) -> ProviderResult<Option<R>>,
         M: Fn(usize, TxNumber, &BlockState) -> ProviderResult<Option<R>>,
     {
         let in_mem_chain = self.head_block.iter().flat_map(|b| b.chain()).collect::<Vec<_>>();
@@ -391,7 +387,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvide
         fetch_from_block_state: M,
     ) -> ProviderResult<R>
     where
-        S: FnOnce(&DatabaseProviderRO<DB>) -> ProviderResult<R>,
+        S: FnOnce(&DatabaseProviderRO) -> ProviderResult<R>,
         M: Fn(&BlockState) -> ProviderResult<R>,
     {
         if let Some(Some(block_state)) = self.head_block.as_ref().map(|b| b.block_on_chain(id)) {
@@ -425,7 +421,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvide
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvider<DB> {
+impl ConsistentProvider {
     /// Ensures that the given block number is canonical (synced)
     ///
     /// This is a helper for guarding the `HistoricalStateProvider` against block numbers that are
@@ -445,9 +441,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvide
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProviderFactory
-    for ConsistentProvider<DB>
-{
+impl StaticFileProviderFactory for ConsistentProvider {
     fn static_file_provider(&self) -> StaticFileProvider {
         self.storage_provider.static_file_provider()
     }
@@ -461,9 +455,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProvide
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
-    for ConsistentProvider<DB>
-{
+impl HeaderProvider for ConsistentProvider {
     fn header(
         &self,
         block_hash: BlockHash,
@@ -535,9 +527,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockHashReader
-    for ConsistentProvider<DB>
-{
+impl BlockHashReader for ConsistentProvider {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         self.get_in_memory_or_storage_by_block(
             number.into(),
@@ -563,9 +553,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockHashReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockNumReader
-    for ConsistentProvider<DB>
-{
+impl BlockNumReader for ConsistentProvider {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let best_number = self.best_block_number()?;
         Ok(ChainInfo { best_hash: self.block_hash(best_number)?.unwrap_or_default(), best_number })
@@ -588,9 +576,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockNumReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockIdReader
-    for ConsistentProvider<DB>
-{
+impl BlockIdReader for ConsistentProvider {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         Ok(self.canonical_in_memory_state.pending_block_num_hash())
     }
@@ -604,9 +590,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockIdReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
-    for ConsistentProvider<DB>
-{
+impl BlockReader for ConsistentProvider {
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -758,9 +742,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TransactionsProvider
-    for ConsistentProvider<DB>
-{
+impl TransactionsProvider for ConsistentProvider {
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -892,9 +874,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TransactionsProvi
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProvider
-    for ConsistentProvider<DB>
-{
+impl ReceiptProvider for ConsistentProvider {
     type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -963,9 +943,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProvider
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProviderIdExt
-    for ConsistentProvider<DB>
-{
+impl ReceiptProviderIdExt for ConsistentProvider {
     fn receipts_by_block_id(&self, block: BlockId) -> ProviderResult<Option<Vec<Self::Receipt>>> {
         match block {
             BlockId::Hash(rpc_block_hash) => {
@@ -998,9 +976,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProviderId
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockBodyIndicesProvider
-    for ConsistentProvider<DB>
-{
+impl BlockBodyIndicesProvider for ConsistentProvider {
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -1044,9 +1020,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockBodyIndicesP
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StageCheckpointReader
-    for ConsistentProvider<DB>
-{
+impl StageCheckpointReader for ConsistentProvider {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.storage_provider.get_stage_checkpoint(id)
     }
@@ -1060,9 +1034,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StageCheckpointRe
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PruneCheckpointReader
-    for ConsistentProvider<DB>
-{
+impl PruneCheckpointReader for ConsistentProvider {
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -1075,17 +1047,13 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PruneCheckpointRe
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChainSpecProvider
-    for ConsistentProvider<DB>
-{
+impl ChainSpecProvider for ConsistentProvider {
     fn chain_spec(&self) -> Arc<BaseChainSpec> {
         ChainSpecProvider::chain_spec(&self.storage_provider)
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReaderIdExt
-    for ConsistentProvider<DB>
-{
+impl BlockReaderIdExt for ConsistentProvider {
     fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
         match id {
             BlockId::Number(num) => self.block_by_number_or_tag(num),
@@ -1164,9 +1132,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReaderIdExt
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StorageChangeSetReader
-    for ConsistentProvider<DB>
-{
+impl StorageChangeSetReader for ConsistentProvider {
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
@@ -1327,9 +1293,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StorageChangeSetR
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChangeSetReader
-    for ConsistentProvider<DB>
-{
+impl ChangeSetReader for ConsistentProvider {
     fn account_block_changeset(
         &self,
         block_number: BlockNumber,
@@ -1477,9 +1441,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChangeSetReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
-    for ConsistentProvider<DB>
-{
+impl StateReader for ConsistentProvider {
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.
     ///
     /// If data for the block does not exist, this will return [`None`].

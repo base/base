@@ -181,7 +181,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         rocksdb_provider: RocksDBProvider,
         access: AccessRights,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<ProviderFactory<DatabaseEnv>>
+    ) -> eyre::Result<ProviderFactory>
     where
         C: ChainSpecParser,
     {
@@ -190,7 +190,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         let bal_store = BalStoreHandle::new(InMemoryBalStore::new(
             BalConfig::with_in_memory_retention_distance(balstore_cache_size),
         ));
-        let factory = ProviderFactory::<DatabaseEnv>::new(
+        let factory = ProviderFactory::new(
             db,
             self.chain.clone(),
             static_file_provider,
@@ -224,7 +224,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
             let (_tip_tx, tip_rx) = watch::channel(B256::ZERO);
 
             // Builds and executes an unwind-only pipeline
-            let mut pipeline = Pipeline::<DatabaseEnv>::builder()
+            let mut pipeline = Pipeline::builder()
                 .add_stages(DefaultStages::new(
                     factory.clone(),
                     tip_rx,
@@ -253,7 +253,7 @@ pub struct Environment {
     /// Configuration for reth node
     pub config: Config,
     /// Provider factory.
-    pub provider_factory: ProviderFactory<DatabaseEnv>,
+    pub provider_factory: ProviderFactory,
     /// Datadir path.
     pub data_dir: ChainPath<DataDirPath>,
 }

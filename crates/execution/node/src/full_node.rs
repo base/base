@@ -8,7 +8,6 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BaseExecutionHandle, PayloadBuilderHandle};
 use base_execution_trie::ProofsProgress;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::ConsensusEngineEvent;
 // re-export the node api types
 use reth_node_core::{
@@ -26,18 +25,15 @@ use crate::{EngineShutdown, NodeAddOns, rpc::RethRpcAddOns};
 ///
 /// This can be used to interact with the launched node.
 #[derive(Debug)]
-pub struct FullNode<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AddOns: NodeAddOns<DB>,
-> {
+pub struct FullNode<AddOns: NodeAddOns> {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
-    pub pool: base_node_context::BaseNodePool<BlockchainProvider<DB>>,
+    pub pool: base_node_context::BaseNodePool<BlockchainProvider>,
     /// Handle to the node's network.
     pub network: reth_network::NetworkHandle,
     /// Provider to interact with the node's database
-    pub provider: BlockchainProvider<DB>,
+    pub provider: BlockchainProvider,
     /// Handle to the node's payload builder service.
     pub payload_builder_handle: PayloadBuilderHandle,
     /// Commands submitted directly to the execution driver.
@@ -58,9 +54,7 @@ pub struct FullNode<
     pub add_ons_handle: AddOns::Handle,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns: NodeAddOns<DB>> Clone
-    for FullNode<DB, AddOns>
-{
+impl<AddOns: NodeAddOns> Clone for FullNode<AddOns> {
     fn clone(&self) -> Self {
         Self {
             evm_config: self.evm_config.clone(),
@@ -80,9 +74,9 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns: NodeAddOn
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> FullNode<DB, AddOns>
+impl<AddOns> FullNode<AddOns>
 where
-    AddOns: NodeAddOns<DB>,
+    AddOns: NodeAddOns,
 {
     /// Returns the chain spec of the node.
     pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
@@ -90,9 +84,9 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> FullNode<DB, AddOns>
+impl<AddOns> FullNode<AddOns>
 where
-    AddOns: RethRpcAddOns<DB>,
+    AddOns: RethRpcAddOns,
 {
     /// Returns the [`RpcServerHandle`] to the started rpc server.
     pub const fn rpc_server_handle(&self) -> &RpcServerHandle {
@@ -100,9 +94,7 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns: NodeAddOns<DB>> Deref
-    for FullNode<DB, AddOns>
-{
+impl<AddOns: NodeAddOns> Deref for FullNode<AddOns> {
     type Target = AddOns::Handle;
 
     fn deref(&self) -> &Self::Target {
@@ -110,9 +102,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns: NodeAddOn
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns: NodeAddOns<DB>> DerefMut
-    for FullNode<DB, AddOns>
-{
+impl<AddOns: NodeAddOns> DerefMut for FullNode<AddOns> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.add_ons_handle
     }

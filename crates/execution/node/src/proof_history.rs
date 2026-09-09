@@ -20,16 +20,13 @@ use crate::{
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
-type ProofHistoryNodeTypes = Arc<DatabaseEnv>;
-type ProofHistoryNodeBuilder = WithLaunchContext<
-    NodeBuilderWithComponents<ProofHistoryNodeTypes, BaseNodeAddOns<ProofHistoryNodeTypes>>,
->;
+type ProofHistoryNodeBuilder = WithLaunchContext<NodeBuilderWithComponents<BaseNodeAddOns>>;
 
 /// - no proofs history (plain node),
 /// - in-mem proofs storage,
 /// - on-disk proofs storage.
 pub async fn launch_node_with_proof_history(
-    builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>>>,
+    builder: WithLaunchContext<NodeBuilder<DatabaseEnv>>,
     args: RollupArgs,
 ) -> eyre::Result<(), ErrReport> {
     let RollupArgs {

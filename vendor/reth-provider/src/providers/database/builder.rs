@@ -7,7 +7,6 @@ use std::{
 
 use base_execution_chainspec::BaseChainSpec;
 use reth_db::{
-    DatabaseEnv,
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
     open_db_read_only,
 };
@@ -92,7 +91,7 @@ impl ProviderFactoryBuilder {
         chainspec: Arc<BaseChainSpec>,
         config: impl Into<ReadOnlyConfig>,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<ProviderFactory<DatabaseEnv>> {
+    ) -> eyre::Result<ProviderFactory> {
         let ReadOnlyConfig { db_dir, db_args, static_files_dir, rocksdb_dir, watch } =
             config.into();
         let db = open_db_read_only(db_dir, db_args)?;

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use std::{collections::BTreeMap, ops::Mul, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, ops::Mul, str::FromStr};
 
 use alloy_primitives::{
     Address, B256, U256, address, b256, hex_literal::hex, keccak256, map::HashMap,
@@ -9,7 +9,7 @@ use alloy_rlp::Encodable;
 use base_common_consensus::EMPTY_ROOT_HASH;
 use proptest::{prelude::ProptestConfig, proptest};
 use proptest_arbitrary_interop::arb;
-use reth_db::{DatabaseEnv, tables, test_utils::TempDatabase};
+use reth_db::tables;
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
     transaction::{DbTx, DbTxMut},
@@ -813,7 +813,7 @@ fn storage_trie_around_extension_node() {
 }
 
 fn extension_node_storage_trie(
-    tx: &DatabaseProviderRW<Arc<TempDatabase<DatabaseEnv>>>,
+    tx: &DatabaseProviderRW,
     hashed_address: B256,
 ) -> (B256, StorageTrieUpdates) {
     let value = U256::from(1);
@@ -842,7 +842,7 @@ fn extension_node_storage_trie(
     (root, trie_updates)
 }
 
-fn extension_node_trie(tx: &DatabaseProviderRW<Arc<TempDatabase<DatabaseEnv>>>) -> B256 {
+fn extension_node_trie(tx: &DatabaseProviderRW) -> B256 {
     let a = Account { nonce: 0, balance: U256::from(1u64), bytecode_hash: Some(B256::random()) };
     let val = encode_account(a, None);
 

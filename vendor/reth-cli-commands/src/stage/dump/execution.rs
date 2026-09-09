@@ -5,8 +5,7 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_db::DatabaseEnv;
 use reth_db_api::{
-    cursor::DbCursorRO, database::Database, database_metrics::DatabaseMetrics,
-    table::TableImporter, tables, transaction::DbTx,
+    cursor::DbCursorRO, database::Database, table::TableImporter, tables, transaction::DbTx,
 };
 use reth_db_common::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
@@ -21,7 +20,7 @@ use super::setup;
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn dump_execution_stage(
-    db_tool: &DbTool<DatabaseEnv>,
+    db_tool: &DbTool,
     from: u64,
     to: u64,
     output_datadir: ChainPath<DataDirPath>,
@@ -38,7 +37,7 @@ pub(crate) async fn dump_execution_stage(
 
     if should_run {
         dry_run(
-            ProviderFactory::<DatabaseEnv>::new(
+            ProviderFactory::new(
                 output_db,
                 db_tool.chain(),
                 StaticFileProvider::read_write(output_datadir.static_files())?,
@@ -56,9 +55,9 @@ pub(crate) async fn dump_execution_stage(
 }
 
 /// Imports all the tables that can be copied over a range.
-fn import_tables_with_range<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+fn import_tables_with_range(
     output_db: &DatabaseEnv,
-    db_tool: &DbTool<DB>,
+    db_tool: &DbTool,
     from: u64,
     to: u64,
 ) -> eyre::Result<()> {
@@ -129,8 +128,8 @@ fn import_tables_with_range<DB: Database + DatabaseMetrics + Clone + Unpin + 'st
 /// Dry-run an unwind to FROM block, so we can get the `PlainStorageState` and
 /// `PlainAccountState` safely. There might be some state dependency from an address
 /// which hasn't been changed in the given range.
-fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    db_tool: &DbTool<DB>,
+fn unwind_and_copy(
+    db_tool: &DbTool,
     from: u64,
     tip_block_number: u64,
     output_db: &DatabaseEnv,
@@ -161,16 +160,13 @@ fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
 }
 
 /// Try to re-execute the stage without committing
-fn dry_run<DB>(
-    output_provider_factory: ProviderFactory<DB>,
+fn dry_run(
+    output_provider_factory: ProviderFactory,
     to: u64,
     from: u64,
     evm_config: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
-) -> eyre::Result<()>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<()> {
     info!(target: "reth::cli", "Executing stage. [dry-run]");
 
     let mut exec_stage = ExecutionStage::new_with_executor(evm_config, consensus);

@@ -3,7 +3,7 @@
 use std::hash::Hasher;
 
 use clap::ValueEnum;
-use reth_db::{DatabaseEnv, tables};
+use reth_db::tables;
 use reth_db_api::table::Table;
 use reth_db_common::DbTool;
 use reth_primitives_traits::FastInstant as Instant;
@@ -36,7 +36,7 @@ impl RocksDbTable {
 
 /// Computes a checksum for a RocksDB table.
 pub fn checksum_rocksdb(
-    tool: &DbTool<DatabaseEnv>,
+    tool: &DbTool,
     table: RocksDbTable,
     limit: Option<usize>,
 ) -> eyre::Result<()> {

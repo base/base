@@ -49,9 +49,9 @@ pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// boot the testing environment
 pub type TestFullNodeTypes = TmpDB;
 /// Components needed by an execution extension, without a node launcher or RPC addons.
-pub type Adapter = BaseNodeContext<TestFullNodeTypes>;
+pub type Adapter = BaseNodeContext;
 /// An [`ExExContext`] using the [`Adapter`] type.
-pub type TestExExContext = ExExContext<crate::TmpDB>;
+pub type TestExExContext = ExExContext;
 
 /// A helper type for testing Execution Extensions.
 #[derive(Debug)]
@@ -59,7 +59,7 @@ pub struct TestExExHandle {
     /// Genesis block that was inserted into the storage
     pub genesis: RecoveredBlock,
     /// Provider Factory for accessing the emphemeral storage of the host node
-    pub provider_factory: ProviderFactory<TmpDB>,
+    pub provider_factory: ProviderFactory,
     /// Channel for receiving events from the Execution Extension
     pub events_rx: UnboundedReceiver<ExExEvent>,
     /// Channel for sending notifications to the Execution Extension
@@ -130,11 +130,11 @@ impl TestExExHandle {
 /// doing this.
 pub async fn test_exex_context_with_chain_spec(
     chain_spec: Arc<BaseChainSpec>,
-) -> eyre::Result<(ExExContext<crate::TmpDB>, TestExExHandle)> {
+) -> eyre::Result<(ExExContext, TestExExHandle)> {
     let (static_dir, _) = create_test_static_files_dir();
     let (rocksdb_dir, _) = create_test_rocksdb_dir();
     let db = create_test_rw_db();
-    let provider_factory = ProviderFactory::<_>::new(
+    let provider_factory = ProviderFactory::new(
         db,
         chain_spec,
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
@@ -178,7 +178,7 @@ pub async fn test_exex_context_with_chain_spec(
 
     let (_, payload_builder_handle) = NoopPayloadBuilderService::new();
 
-    let components = BaseNodeContext::<_> {
+    let components = BaseNodeContext {
         transaction_pool,
         evm_config,
         consensus,
@@ -235,7 +235,7 @@ pub async fn test_exex_context_with_chain_spec(
 /// Creates a new [`ExExContext`] with (mainnet)[`std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())`] chain spec.
 ///
 /// For more information see [`test_exex_context_with_chain_spec`].
-pub async fn test_exex_context() -> eyre::Result<(ExExContext<crate::TmpDB>, TestExExHandle)> {
+pub async fn test_exex_context() -> eyre::Result<(ExExContext, TestExExHandle)> {
     test_exex_context_with_chain_spec(std::sync::Arc::new(
         base_execution_chainspec::BaseChainSpec::mainnet(),
     ))

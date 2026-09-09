@@ -231,14 +231,13 @@ impl<P> From<BackfillJob<P>> for StreamBackfillJob<P, BatchBlockStreamItem> {
 mod tests {
     use std::sync::Arc;
 
-        use alloy_primitives::{Address, TxKind, U256, b256};
+    use alloy_primitives::{Address, TxKind, U256, b256};
     use base_common_consensus::{
         BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
     };
     use base_execution_chainspec::BaseChainSpec;
     use eyre::Result;
     use futures::StreamExt;
-    use reth_db_api::{Database, database_metrics::DatabaseMetrics};
     use reth_db_common::init::init_genesis;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use reth_provider::{
@@ -377,14 +376,11 @@ mod tests {
         Ok(blocks)
     }
 
-    fn execute_and_commit_blocks<DB>(
-        provider_factory: &ProviderFactory<DB>,
+    fn execute_and_commit_blocks(
+        provider_factory: &ProviderFactory,
         chain_spec: &Arc<BaseChainSpec>,
         blocks: &[RecoveredBlock],
-    ) -> Result<()>
-    where
-        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    {
+    ) -> Result<()> {
         for block in blocks {
             execute_block_and_commit_to_database(provider_factory, chain_spec.clone(), block)?;
         }

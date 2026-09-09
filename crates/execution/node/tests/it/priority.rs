@@ -17,7 +17,6 @@ use base_node_core::{
     RollupArgs,
 };
 use reth_db::test_utils::create_test_rw_db_with_path;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
@@ -77,12 +76,9 @@ where
 }
 
 /// Builds the node with custom transaction priority service within default payload builder.
-fn build_components<DB>(
+fn build_components(
     chain_id: ChainId,
-) -> BaseComponentsBuilder<DB, BasePayloadBuilder<CustomTxPriority>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> BaseComponentsBuilder<reth_db::DatabaseEnv, BasePayloadBuilder<CustomTxPriority>> {
     let RollupArgs { discovery_v4, .. } = RollupArgs::default();
     BaseComponentsBuilder::new(
         BasePoolBuilder::default(),
@@ -122,7 +118,7 @@ async fn test_custom_block_priority_config() {
             .db(),
     );
     let runtime = Runtime::test();
-    let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
+    let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_components(build_components(config.chain.chain_id()).into_builder())

@@ -258,6 +258,25 @@ pub struct DatabaseEnv {
     metrics: Option<Arc<DatabaseEnvMetrics>>,
     /// Write lock for when dealing with a read-write environment.
     _lock_file: Option<StorageLock>,
+    /// Keeps temporary database cleanup and transaction hooks alive in tests.
+    #[cfg(feature = "test-utils")]
+    pub test_owner: Option<Arc<crate::test_utils::TempDatabase<Self>>>,
+}
+
+#[cfg(feature = "test-utils")]
+impl From<Arc<crate::test_utils::TempDatabase<Self>>> for DatabaseEnv {
+    fn from(owner: Arc<crate::test_utils::TempDatabase<Self>>) -> Self {
+        let mut database = owner.db().clone();
+        database.test_owner = Some(owner);
+        database
+    }
+}
+
+#[cfg(feature = "test-utils")]
+impl From<crate::test_utils::TempDatabase<Self>> for DatabaseEnv {
+    fn from(owner: crate::test_utils::TempDatabase<Self>) -> Self {
+        Arc::new(owner).into()
+    }
 }
 
 impl Database for DatabaseEnv {
@@ -265,12 +284,21 @@ impl Database for DatabaseEnv {
     type TXMut = tx::Tx<RW>;
 
     fn tx(&self) -> Result<Self::TX, DatabaseError> {
-        Tx::new(
+        #[cfg(feature = "test-utils")]
+        if let Some(owner) = &self.test_owner {
+            owner.pre_tx_hook.read()();
+        }
+        let tx = Tx::new(
             self.inner.begin_ro_txn().map_err(|e| DatabaseError::InitTx(e.into()))?,
             self.dbis.clone(),
             self.metrics.clone(),
         )
-        .map_err(|e| DatabaseError::InitTx(e.into()))
+        .map_err(|e| DatabaseError::InitTx(e.into()))?;
+        #[cfg(feature = "test-utils")]
+        if let Some(owner) = &self.test_owner {
+            owner.post_tx_hook.read()();
+        }
+        Ok(tx)
     }
 
     fn tx_mut(&self) -> Result<Self::TXMut, DatabaseError> {
@@ -532,6 +560,8 @@ impl DatabaseEnv {
             dbis: Arc::default(),
             metrics: None,
             _lock_file,
+            #[cfg(feature = "test-utils")]
+            test_owner: None,
         };
 
         Ok(env)
@@ -667,6 +697,8 @@ impl Deref for DatabaseEnv {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    #[cfg(feature = "test-utils")]
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_consensus::Header;
@@ -1655,5 +1687,30 @@ mod tests {
             let list400 = IntegerList::new_pre_sorted([400u64]);
             assert_eq!(list400, list);
         }
+    }
+    /// Temporary ownership must outlive every provider/environment clone.
+    #[cfg(feature = "test-utils")]
+    #[test]
+    fn temporary_environment_retains_cleanup_and_transaction_hooks() {
+        let owner = crate::test_utils::create_test_rw_db();
+        let path = owner.path().to_path_buf();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let before = calls.clone();
+        owner.set_pre_transaction_hook(Box::new(move || {
+            before.fetch_add(1, Ordering::SeqCst);
+        }));
+        let after = calls.clone();
+        owner.set_post_transaction_hook(Box::new(move || {
+            after.fetch_add(1, Ordering::SeqCst);
+        }));
+        let database = DatabaseEnv::from(owner.clone());
+        let last = database.clone();
+        drop(owner);
+        drop(database);
+        assert!(path.exists());
+        drop(last.tx().unwrap());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        drop(last);
+        assert!(!path.exists());
     }
 }

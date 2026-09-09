@@ -10,7 +10,6 @@ use reth_cli_util::parse_socket_address;
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
     database::Database,
-    database_metrics::DatabaseMetrics,
     transaction::{DbTx, DbTxMut},
 };
 use reth_db_common::DbTool;
@@ -52,9 +51,9 @@ pub struct Command {
 
 impl Command {
     /// Execute `db repair-trie` command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    pub fn execute(
         self,
-        tool: &DbTool<DB>,
+        tool: &DbTool,
         task_executor: TaskExecutor,
         data_dir: &ChainPath<DataDirPath>,
     ) -> eyre::Result<()> {
@@ -102,9 +101,7 @@ impl Command {
     }
 }
 
-fn verify_only<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    tool: &DbTool<DB>,
-) -> eyre::Result<()> {
+fn verify_only(tool: &DbTool) -> eyre::Result<()> {
     // Log the database block tip from Finish stage checkpoint
     let finish_checkpoint = tool
         .provider_factory
@@ -207,9 +204,7 @@ fn verify_checkpoints(provider: impl StageCheckpointReader) -> eyre::Result<()> 
     Ok(())
 }
 
-fn verify_and_repair<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    tool: &DbTool<DB>,
-) -> eyre::Result<()> {
+fn verify_and_repair(tool: &DbTool) -> eyre::Result<()> {
     // Get a read-write database provider
     let mut provider_rw = tool.provider_factory.provider_rw()?;
 
@@ -222,7 +217,7 @@ fn verify_and_repair<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
 
     let inconsistent_nodes = {
         type A = reth_trie::PackedKeyAdapter;
-        do_verify_and_repair::<DB, A>(&mut provider_rw, finish_checkpoint.block_number)?
+        do_verify_and_repair::<A>(&mut provider_rw, finish_checkpoint.block_number)?
     };
 
     if inconsistent_nodes == 0 {
@@ -235,16 +230,10 @@ fn verify_and_repair<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     Ok(())
 }
 
-fn do_verify_and_repair<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    A: TrieTableAdapter,
->(
-    provider_rw: &mut reth_provider::DatabaseProviderRW<DB>,
+fn do_verify_and_repair<A: TrieTableAdapter>(
+    provider_rw: &mut reth_provider::DatabaseProviderRW,
     block_number: u64,
-) -> eyre::Result<usize>
-where
-    <DB as reth_db_api::database::Database>::TXMut: DbTxMut + DbTx,
-{
+) -> eyre::Result<usize> {
     // Create cursors for making modifications with
     let tx = provider_rw.tx_mut();
     tx.disable_long_read_transaction_safety();
@@ -346,22 +335,16 @@ where
     if inconsistent_nodes > 0 {
         // Refuse to commit repaired trie tables unless they reproduce the canonical tip state
         // root.
-        verify_repaired_state_root::<DB, A>(provider_rw, block_number)?;
+        verify_repaired_state_root::<A>(provider_rw, block_number)?;
     }
 
     Ok(inconsistent_nodes as usize)
 }
 
-fn verify_repaired_state_root<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    A: TrieTableAdapter,
->(
-    provider_rw: &reth_provider::DatabaseProviderRW<DB>,
+fn verify_repaired_state_root<A: TrieTableAdapter>(
+    provider_rw: &reth_provider::DatabaseProviderRW,
     block_number: u64,
-) -> eyre::Result<()>
-where
-    <DB as reth_db_api::database::Database>::TXMut: DbTxMut + DbTx,
-{
+) -> eyre::Result<()> {
     type DbStateRoot<'a, TX, A> = reth_trie::StateRoot<
         DatabaseTrieCursorFactory<&'a TX, A>,
         DatabaseHashedCursorFactory<&'a TX>,

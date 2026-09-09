@@ -16,7 +16,6 @@ tracing = { workspace = true }
 reth-exex = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
-reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
 base-common-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

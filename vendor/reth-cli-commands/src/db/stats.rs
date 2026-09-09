@@ -5,8 +5,8 @@ use comfy_table::{Cell, Row, Table as ComfyTable};
 use eyre::WrapErr;
 use human_bytes::human_bytes;
 use itertools::Itertools;
-use reth_db::{DatabaseEnv, mdbx, static_file::iter_static_files};
-use reth_db_api::{TableViewer, Tables, database::Database, database_metrics::DatabaseMetrics};
+use reth_db::{mdbx, static_file::iter_static_files};
+use reth_db_api::{TableViewer, Tables, database::Database};
 use reth_db_common::DbTool;
 use reth_fs_util as fs;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
@@ -42,11 +42,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db stats` command
-    pub fn execute(
-        self,
-        data_dir: ChainPath<DataDirPath>,
-        tool: &DbTool<DatabaseEnv>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, data_dir: ChainPath<DataDirPath>, tool: &DbTool) -> eyre::Result<()> {
         if self.checksum {
             let checksum_report = self.checksum_report(tool)?;
             println!("{checksum_report}");
@@ -69,7 +65,7 @@ impl Command {
         Ok(())
     }
 
-    fn db_stats_table(&self, tool: &DbTool<DatabaseEnv>) -> eyre::Result<ComfyTable> {
+    fn db_stats_table(&self, tool: &DbTool) -> eyre::Result<ComfyTable> {
         let mut table = ComfyTable::new();
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table.set_header([
@@ -150,10 +146,7 @@ impl Command {
         Ok(table)
     }
 
-    fn rocksdb_stats_table<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        &self,
-        tool: &DbTool<DB>,
-    ) -> ComfyTable {
+    fn rocksdb_stats_table(&self, tool: &DbTool) -> ComfyTable {
         let mut table = ComfyTable::new();
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table.set_header([
@@ -402,10 +395,7 @@ impl Command {
         Ok(table)
     }
 
-    fn checksum_report<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        &self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<ComfyTable> {
+    fn checksum_report(&self, tool: &DbTool) -> eyre::Result<ComfyTable> {
         let mut table = ComfyTable::new();
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table.set_header(vec![Cell::new("Table"), Cell::new("Checksum"), Cell::new("Elapsed")]);

@@ -1,7 +1,6 @@
 //! `reth db settings` command for managing storage settings
 
 use clap::{Parser, Subcommand};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_db_common::DbTool;
 use reth_provider::MetadataProvider;
 
@@ -31,19 +30,13 @@ enum Subcommands {
 
 impl Command {
     /// Execute the command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         match self.command {
             Subcommands::Get => self.get(tool),
         }
     }
 
-    fn get<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        &self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    fn get(&self, tool: &DbTool) -> eyre::Result<()> {
         // Read storage settings
         let provider = tool.provider_factory.provider()?;
         let storage_settings = provider.storage_settings()?;

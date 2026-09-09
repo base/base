@@ -134,8 +134,7 @@ mod tests {
     use reth_exex_types::FinishedExExHeight;
     use reth_provider::{
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
-        StaticFileWriter,
-        test_utils::{MockNodeDatabase, create_test_provider_factory},
+        StaticFileWriter, test_utils::create_test_provider_factory,
     };
     use reth_prune_types::{PruneMode, PruneProgress, PruneSegment};
     use reth_static_file_types::{
@@ -229,11 +228,7 @@ mod tests {
         }
     }
 
-    fn run_prune_test(
-        factory: &ProviderFactory<MockNodeDatabase>,
-        test_case: TestCase,
-        tip: BlockNumber,
-    ) {
+    fn run_prune_test(factory: &ProviderFactory, test_case: TestCase, tip: BlockNumber) {
         let (_, finished_exex_height_rx) = tokio::sync::watch::channel(FinishedExExHeight::NoExExs);
 
         // Capture highest block before pruning

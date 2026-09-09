@@ -9,7 +9,6 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use crossbeam_channel::Sender as CrossbeamSender;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
@@ -43,16 +42,13 @@ pub struct PersistenceResult {
 /// This should be spawned in its own thread with [`std::thread::spawn`], since this performs
 /// blocking I/O operations in an endless loop.
 #[derive(Debug)]
-pub struct PersistenceService<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+pub struct PersistenceService {
     /// The provider factory to use
-    provider: ProviderFactory<DB>,
+    provider: ProviderFactory,
     /// Incoming requests
     incoming: Receiver<PersistenceAction>,
     /// The pruner
-    pruner: PrunerWithFactory<ProviderFactory<DB>>,
+    pruner: PrunerWithFactory<ProviderFactory>,
     /// metrics
     metrics: PersistenceMetrics,
     /// Sender for sync metrics - we only submit sync metrics for persisted blocks
@@ -65,15 +61,12 @@ where
     pending_safe_block: Option<u64>,
 }
 
-impl<DB> PersistenceService<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl PersistenceService {
     /// Create a new persistence service
     pub fn new(
-        provider: ProviderFactory<DB>,
+        provider: ProviderFactory,
         incoming: Receiver<PersistenceAction>,
-        pruner: PrunerWithFactory<ProviderFactory<DB>>,
+        pruner: PrunerWithFactory<ProviderFactory>,
         sync_metrics_tx: MetricEventsSender,
     ) -> Self {
         Self {
@@ -88,10 +81,7 @@ where
     }
 }
 
-impl<DB> PersistenceService<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl PersistenceService {
     /// This is the main loop, that will listen to database events and perform the requested
     /// database actions
     pub fn run(mut self) -> Result<(), PersistenceError> {
@@ -306,14 +296,11 @@ impl PersistenceHandle {
     /// The returned handle can be cloned and shared. When all clones are dropped, the service
     /// thread will be joined, ensuring graceful shutdown before resources (like `RocksDB`) are
     /// released.
-    pub fn spawn_service<DB>(
-        provider_factory: ProviderFactory<DB>,
-        pruner: PrunerWithFactory<ProviderFactory<DB>>,
+    pub fn spawn_service(
+        provider_factory: ProviderFactory,
+        pruner: PrunerWithFactory<ProviderFactory>,
         sync_metrics_tx: MetricEventsSender,
-    ) -> PersistenceHandle
-    where
-        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    {
+    ) -> PersistenceHandle {
         // create the initial channels
         let (db_service_tx, db_service_rx) = std::sync::mpsc::channel();
 
@@ -416,13 +403,14 @@ mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
+    use reth_db_api::Database;
     use reth_db_common::init::init_genesis;
     use reth_exex_types::FinishedExExHeight;
     use reth_provider::{
         AccountReader, BalConfig, BalNotificationStream, BalStore, BalStoreHandle,
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,
         StorageSettingsCache, TryIntoHistoricalStateProvider,
-        providers::{ProviderFactoryBuilder, ReadOnlyConfig},
+        providers::{ReadOnlyConfig, RocksDBProvider, StaticFileProvider},
         test_utils::create_test_provider_factory,
     };
     use reth_prune::Pruner;
@@ -653,20 +641,26 @@ mod tests {
     fn test_read_only_consistency_across_reorg() {
         reth_tracing::init_test_tracing();
 
-        // Allow opening the same MDBX env twice in-process
-        reth_db::test_utils::enable_legacy_multiopen();
-
         let provider_factory = create_test_provider_factory();
         provider_factory.set_storage_settings_cache(reth_provider::StorageSettings::v2());
 
-        // Open the secondary provider concurrently with the primary.
-        let secondary = ProviderFactoryBuilder::default()
-            .open_read_only(
-                provider_factory.chain_spec(),
-                ReadOnlyConfig::from_db_dir(provider_factory.db_ref().path()),
-                reth_tasks::Runtime::test(),
-            )
-            .expect("failed to open read-only provider factory");
+        // Share MDBX's environment while keeping independent read-only transactions and
+        // secondary RocksDB/static-file views. This tests provider synchronization without
+        // relying on MDBX's process-global legacy multi-open mode.
+        let config = ReadOnlyConfig::from_db_dir(provider_factory.db_ref().path());
+        let secondary = ProviderFactory::new(
+            provider_factory.db_ref().clone(),
+            provider_factory.chain_spec(),
+            StaticFileProvider::read_only(config.static_files_dir).unwrap(),
+            RocksDBProvider::builder(&config.rocksdb_dir)
+                .with_default_tables()
+                .with_read_only(true)
+                .build()
+                .unwrap(),
+            reth_tasks::Runtime::test(),
+        )
+        .unwrap()
+        .with_read_only_sync(true);
         secondary.set_storage_settings_cache(reth_provider::StorageSettings::v2());
 
         // --- Phase 1: Write blocks 1 and 2 via the primary ---

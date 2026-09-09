@@ -5,7 +5,6 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{PoolTransaction, TransactionPool};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_network_api::NetworkInfo;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::EthStateCache;
@@ -48,11 +47,9 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
     fn provider(&self) -> &Self::Provider;
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RpcNodeCore
-    for base_node_context::BaseNodeContext<DB>
-{
-    type Provider = BlockchainProvider<DB>;
-    type Pool = base_node_context::BaseNodePool<BlockchainProvider<DB>>;
+impl RpcNodeCore for base_node_context::BaseNodeContext {
+    type Provider = BlockchainProvider;
+    type Pool = base_node_context::BaseNodePool<BlockchainProvider>;
 
     type Network = reth_network::NetworkHandle;
 

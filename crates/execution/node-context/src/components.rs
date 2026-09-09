@@ -1,7 +1,6 @@
 //! Shared components of a running Base node.
 
 use base_execution_evm::BaseEvmConfig;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskExecutor;
 
@@ -12,9 +11,9 @@ pub type BaseNodePool<Provider> =
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
 #[derive(Debug, Clone)]
-pub struct BaseNodeContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+pub struct BaseNodeContext {
     /// The node transaction pool.
-    pub transaction_pool: BaseNodePool<BlockchainProvider<DB>>,
+    pub transaction_pool: BaseNodePool<BlockchainProvider>,
     /// The Base EVM configuration.
     pub evm_config: BaseEvmConfig,
     /// The Base consensus validator.
@@ -26,12 +25,12 @@ pub struct BaseNodeContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'sta
     /// The task executor for the node.
     pub task_executor: TaskExecutor,
     /// The provider of the node.
-    pub provider: BlockchainProvider<DB>,
+    pub provider: BlockchainProvider,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BaseNodeContext<DB> {
+impl BaseNodeContext {
     /// Returns the Base transaction pool.
-    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider<DB>> {
+    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
         &self.transaction_pool
     }
 
@@ -56,7 +55,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BaseNodeContext<D
     }
 
     /// Returns the blockchain provider.
-    pub fn provider(&self) -> &BlockchainProvider<DB> {
+    pub fn provider(&self) -> &BlockchainProvider {
         &self.provider
     }
 

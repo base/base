@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use crate::{NodeHelperType, transaction::TransactionTestContext, wallet::Wallet};
 
 /// Base Node Helper type
-pub type BaseTestNode = NodeHelperType<base_node_core::BaseNodeAddOns<crate::TmpNodeAdapter>>;
+pub type BaseTestNode = NodeHelperType<base_node_core::BaseNodeAddOns>;
 
 /// Base node integration-test helpers.
 #[derive(Debug)]
@@ -23,10 +23,7 @@ pub struct BaseNodeTestUtils;
 
 impl BaseNodeTestUtils {
     /// Supplies Base components and add-ons for a temporary node.
-    pub fn test_setup() -> (
-        base_node_core::ComponentBuilder<crate::TmpDB>,
-        base_node_core::BaseNodeAddOns<crate::TmpDB>,
-    ) {
+    pub fn test_setup() -> (base_node_core::ComponentBuilder, base_node_core::BaseNodeAddOns) {
         let node = BaseNode::default();
         (node.components().into_builder(), node.add_ons_builder().build())
     }

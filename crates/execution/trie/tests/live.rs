@@ -18,7 +18,6 @@ use base_execution_trie::{
 };
 use derive_more::Constructor;
 use reth_db::Database;
-use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_db_common::init::init_genesis;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
@@ -153,14 +152,11 @@ fn create_block_from_spec(
 }
 
 /// Executes a block and returns the updated block with correct state root
-fn execute_block<DB>(
+fn execute_block(
     block: &mut RecoveredBlock,
-    provider_factory: &ProviderFactory<DB>,
+    provider_factory: &ProviderFactory,
     chain_spec: &Arc<BaseChainSpec>,
-) -> eyre::Result<base_execution_evm::BlockExecutionOutput>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<base_execution_evm::BlockExecutionOutput> {
     let provider = provider_factory.provider()?;
     let db = LatestStateProviderRef::new(&provider);
     let evm_config =
@@ -179,14 +175,11 @@ where
 }
 
 /// Commits a block and its execution output to the database
-fn commit_block_to_database<DB>(
+fn commit_block_to_database(
     block: &RecoveredBlock,
     execution_output: &base_execution_evm::BlockExecutionOutput,
-    provider_factory: &ProviderFactory<DB>,
-) -> eyre::Result<()>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+    provider_factory: &ProviderFactory,
+) -> eyre::Result<()> {
     let execution_outcome = ExecutionOutcome {
         bundle: execution_output.state.clone(),
         receipts: vec![execution_output.receipts.clone()],
@@ -213,16 +206,13 @@ where
 }
 
 /// Runs a test scenario with the given configuration
-fn run_test_scenario<DB>(
+fn run_test_scenario(
     scenario: TestScenario,
-    provider_factory: ProviderFactory<DB>,
+    provider_factory: ProviderFactory,
     chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
     storage: BaseProofsStorage<Arc<RocksdbProofsStorage>>,
-) -> eyre::Result<()>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<()> {
     let genesis_hash = chain_spec.genesis_hash();
     let mut nonce_counter = 0u64;
     let mut last_block_hash = genesis_hash;

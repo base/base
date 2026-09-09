@@ -15,7 +15,7 @@ use base_common_consensus::{
 };
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 #[cfg(feature = "db-api")]
-use reth_db_api::mock::{DatabaseMock, TxMock};
+use reth_db_api::mock::TxMock;
 use reth_db_models::{AccountBeforeTx, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
@@ -694,7 +694,6 @@ impl DBProvider for NoopProvider {
 
 #[cfg(feature = "db-api")]
 impl DatabaseProviderFactory for NoopProvider {
-    type DB = DatabaseMock;
     type Provider = Self;
     type ProviderRW = Self;
 

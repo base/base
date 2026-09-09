@@ -14,7 +14,6 @@ use jsonrpsee::core::{DeserializeOwned, Serialize};
 use reth_consensus_debug_client::{
     DebugConsensusClient, EtherscanBlockProvider, PayloadProvider, RpcBlockProvider,
 };
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_local::{LocalMiner, MiningMode};
 use reth_primitives_traits::SealedBlock;
 use reth_provider::providers::BlockchainProvider;
@@ -85,13 +84,7 @@ pub type DefaultDebugBlockProvider<R> =
 
 /// Future for the [`DebugNodeLauncher`].
 #[expect(missing_debug_implementations, clippy::type_complexity)]
-pub struct DebugNodeLauncherFuture<
-    L,
-    Target,
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    R,
-    B = DefaultDebugBlockProvider<R>,
-> {
+pub struct DebugNodeLauncherFuture<L, Target, R, B = DefaultDebugBlockProvider<R>> {
     inner: L,
     target: Target,
     config: DebugNodeConfig<R>,
@@ -107,15 +100,14 @@ pub struct DebugNodeLauncherFuture<
         Box<dyn Fn(BasePayloadBuilderAttributes) -> BasePayloadBuilderAttributes + Send + Sync>,
     >,
     debug_block_provider: Option<B>,
-    mining_mode: Option<MiningMode<base_node_context::BaseNodePool<BlockchainProvider<DB>>>>,
+    mining_mode: Option<MiningMode<base_node_context::BaseNodePool<BlockchainProvider>>>,
 }
 
-impl<L, Target, DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns, R, B>
-    DebugNodeLauncherFuture<L, Target, DB, R, B>
+impl<L, Target, AddOns, R, B> DebugNodeLauncherFuture<L, Target, R, B>
 where
     R: Serialize + DeserializeOwned + 'static,
-    AddOns: RethRpcAddOns<DB>,
-    L: LaunchNode<Target, Node = NodeHandle<DB, AddOns>>,
+    AddOns: RethRpcAddOns,
+    L: LaunchNode<Target, Node = NodeHandle<AddOns>>,
     B: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
     /// Sets a custom payload attributes builder for local mining in dev mode.
@@ -159,7 +151,7 @@ where
     /// (instant or interval). This can be used to provide a custom trigger-based mining mode.
     pub fn with_mining_mode(
         mut self,
-        mode: MiningMode<base_node_context::BaseNodePool<BlockchainProvider<DB>>>,
+        mode: MiningMode<base_node_context::BaseNodePool<BlockchainProvider>>,
     ) -> Self {
         self.mining_mode = Some(mode);
         self
@@ -172,7 +164,7 @@ where
     pub fn with_debug_block_provider<B2>(
         self,
         provider: B2,
-    ) -> DebugNodeLauncherFuture<L, Target, DB, R, B2>
+    ) -> DebugNodeLauncherFuture<L, Target, R, B2>
     where
         B2: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
     {
@@ -187,7 +179,7 @@ where
         }
     }
 
-    async fn launch_node(self) -> eyre::Result<NodeHandle<DB, AddOns>> {
+    async fn launch_node(self) -> eyre::Result<NodeHandle<AddOns>> {
         let Self {
             inner,
             target,
@@ -332,37 +324,35 @@ where
     }
 }
 
-impl<L, Target, DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns, R, B> IntoFuture
-    for DebugNodeLauncherFuture<L, Target, DB, R, B>
+impl<L, Target, AddOns, R, B> IntoFuture for DebugNodeLauncherFuture<L, Target, R, B>
 where
     Target: Send + 'static,
     R: Serialize + DeserializeOwned + 'static,
-    AddOns: RethRpcAddOns<DB> + 'static,
-    L: LaunchNode<Target, Node = NodeHandle<DB, AddOns>> + 'static,
+    AddOns: RethRpcAddOns + 'static,
+    L: LaunchNode<Target, Node = NodeHandle<AddOns>> + 'static,
     B: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData>
         + Clone
         + 'static,
 {
-    type Output = eyre::Result<NodeHandle<DB, AddOns>>;
-    type IntoFuture = Pin<Box<dyn Future<Output = eyre::Result<NodeHandle<DB, AddOns>>> + Send>>;
+    type Output = eyre::Result<NodeHandle<AddOns>>;
+    type IntoFuture = Pin<Box<dyn Future<Output = eyre::Result<NodeHandle<AddOns>>> + Send>>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.launch_node())
     }
 }
 
-impl<L, Target, DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns, R>
-    LaunchNode<Target> for DebugNodeLauncher<L, R>
+impl<L, Target, AddOns, R> LaunchNode<Target> for DebugNodeLauncher<L, R>
 where
     Target: Send + 'static,
     R: Serialize + DeserializeOwned + 'static,
-    AddOns: RethRpcAddOns<DB> + 'static,
-    L: LaunchNode<Target, Node = NodeHandle<DB, AddOns>> + 'static,
+    AddOns: RethRpcAddOns + 'static,
+    L: LaunchNode<Target, Node = NodeHandle<AddOns>> + 'static,
     DefaultDebugBlockProvider<R>:
         PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
-    type Node = NodeHandle<DB, AddOns>;
-    type Future = DebugNodeLauncherFuture<L, Target, DB, R>;
+    type Node = NodeHandle<AddOns>;
+    type Future = DebugNodeLauncherFuture<L, Target, R>;
 
     fn launch_node(self, target: Target) -> Self::Future {
         DebugNodeLauncherFuture {

@@ -43,9 +43,7 @@ use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
 use reth_config::{PruneConfig, config::EtlConfig};
-use reth_db_api::{
-    database::Database, database_metrics::DatabaseMetrics, models::PartialStateTrieUnwindMarker,
-};
+use reth_db_api::{database_metrics::DatabaseMetrics, models::PartialStateTrieUnwindMarker};
 use reth_db_common::init::{
     InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate,
 };
@@ -438,10 +436,7 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     }
 }
 
-impl<DB> LaunchContextWith<Attached<WithConfigs, DB>>
-where
-    DB: Database + Clone + 'static,
-{
+impl LaunchContextWith<Attached<WithConfigs, reth_db::DatabaseEnv>> {
     /// Returns the [`ProviderFactory`] for the attached storage after executing a consistent check
     /// between the database and static files. **It may execute a pipeline unwind if it fails this
     /// check.**
@@ -450,10 +445,7 @@ where
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
-    ) -> eyre::Result<ProviderFactory<DB>>
-    where
-        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    {
+    ) -> eyre::Result<ProviderFactory> {
         // Validate static files configuration
         let static_files_config = &self.toml_config().static_files;
         static_files_config.validate()?;
@@ -641,10 +633,7 @@ where
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory<DB>>>>
-    where
-        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    {
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory>>> {
         let factory = self
             .create_provider_factory(overlay_manager, rocksdb_provider, disabled_stages)
             .await?;
@@ -657,17 +646,14 @@ where
     }
 }
 
-impl<DB> LaunchContextWith<Attached<WithConfigs, ProviderFactory<DB>>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
     /// Returns access to the underlying database.
-    pub const fn database(&self) -> &DB {
+    pub const fn database(&self) -> &reth_db::DatabaseEnv {
         self.right().db_ref()
     }
 
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<DB> {
+    pub const fn provider_factory(&self) -> &ProviderFactory {
         self.right()
     }
 
@@ -757,7 +743,7 @@ where
     /// prometheus.
     pub fn with_metrics_task(
         self,
-    ) -> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<DB>>> {
+    ) -> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider>> {
         let (metrics_sender, metrics_receiver) = unbounded_channel();
 
         let with_metrics =
@@ -775,12 +761,9 @@ where
     }
 }
 
-impl<DB> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<DB>>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl LaunchContextWith<Attached<WithConfigs, WithMeteredProvider>> {
     /// Returns the configured `ProviderFactory`.
-    const fn provider_factory(&self) -> &ProviderFactory<DB> {
+    const fn provider_factory(&self) -> &ProviderFactory {
         &self.right().provider_factory
     }
 
@@ -794,9 +777,9 @@ where
     pub fn with_blockchain_db<F>(
         self,
         create_blockchain_provider: F,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<DB>>>>
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>>>
     where
-        F: FnOnce(ProviderFactory<DB>) -> eyre::Result<BlockchainProvider<DB>>,
+        F: FnOnce(ProviderFactory) -> eyre::Result<BlockchainProvider>,
     {
         let blockchain_db = create_blockchain_provider(self.provider_factory().clone())?;
 
@@ -817,17 +800,14 @@ where
     }
 }
 
-impl<DB> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<DB>>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
     /// Returns access to the underlying database.
-    pub const fn database(&self) -> &DB {
+    pub const fn database(&self) -> &reth_db::DatabaseEnv {
         self.provider_factory().db_ref()
     }
 
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<DB> {
+    pub const fn provider_factory(&self) -> &ProviderFactory {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -846,16 +826,16 @@ where
     }
 
     /// Returns a reference to the blockchain provider.
-    pub const fn blockchain_db(&self) -> &BlockchainProvider<DB> {
+    pub const fn blockchain_db(&self) -> &BlockchainProvider {
         &self.right().blockchain_db
     }
 
     /// Creates a `BaseNodeContext` and attaches it to the launch context.
     pub async fn with_components(
         self,
-        components_builder: ComponentBuilder<DB>,
-        on_component_initialized: Box<dyn OnComponentInitializedHook<BaseNodeContext<DB>>>,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<DB>>>> {
+        components_builder: ComponentBuilder,
+        on_component_initialized: Box<dyn OnComponentInitializedHook<BaseNodeContext>>,
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
 
@@ -890,12 +870,9 @@ where
     }
 }
 
-impl<DB> LaunchContextWith<Attached<WithConfigs, WithComponents<DB>>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<DB> {
+    pub const fn provider_factory(&self) -> &ProviderFactory {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -914,7 +891,7 @@ where
     }
 
     /// Creates a new [`StaticFileProducer`] with the attached database.
-    pub fn static_file_producer(&self) -> StaticFileProducer<ProviderFactory<DB>> {
+    pub fn static_file_producer(&self) -> StaticFileProducer<ProviderFactory> {
         StaticFileProducer::new(self.provider_factory().clone(), self.prune_modes())
     }
 
@@ -924,17 +901,17 @@ where
     }
 
     /// Returns the configured `BaseNodeContext`.
-    pub const fn node_adapter(&self) -> &BaseNodeContext<DB> {
+    pub const fn node_adapter(&self) -> &BaseNodeContext {
         &self.right().node_adapter
     }
 
     /// Returns mutable reference to the configured `BaseNodeContext`.
-    pub const fn node_adapter_mut(&mut self) -> &mut BaseNodeContext<DB> {
+    pub const fn node_adapter_mut(&mut self) -> &mut BaseNodeContext {
         &mut self.right_mut().node_adapter
     }
 
     /// Returns a reference to the blockchain provider.
-    pub const fn blockchain_db(&self) -> &BlockchainProvider<DB> {
+    pub const fn blockchain_db(&self) -> &BlockchainProvider {
         &self.node_adapter().provider
     }
 
@@ -1036,7 +1013,7 @@ where
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<DB>>)>,
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx>)>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1055,8 +1032,8 @@ where
     #[expect(clippy::type_complexity)]
     pub fn exex_launcher(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<DB>>)>,
-    ) -> ExExLauncher<DB> {
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx>)>,
+    ) -> ExExLauncher {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),
@@ -1074,7 +1051,7 @@ where
     /// Otherwise returns an empty stream.
     pub fn consensus_layer_events(&self) -> impl Stream<Item = NodeEvent> + 'static
     where
-        BlockchainProvider<DB>: reth_provider::CanonChainTracker,
+        BlockchainProvider: reth_provider::CanonChainTracker,
     {
         if self.node_config().debug.tip.is_none() && !self.is_dev() {
             Either::Left(
@@ -1209,37 +1186,29 @@ impl Clone for WithConfigs {
 /// Helper container type to bundle the [`ProviderFactory`] and the metrics
 /// sender.
 #[derive(Debug, Clone)]
-pub struct WithMeteredProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
-    provider_factory: ProviderFactory<DB>,
+pub struct WithMeteredProvider {
+    provider_factory: ProviderFactory,
     metrics_sender: UnboundedSender<MetricEvent>,
 }
 
 /// Helper container to bundle the [`ProviderFactory`], the Base blockchain provider
 /// and a metrics sender.
 #[expect(missing_debug_implementations)]
-pub struct WithMeteredProviders<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
-    db_provider_container: WithMeteredProvider<DB>,
-    blockchain_db: BlockchainProvider<DB>,
+pub struct WithMeteredProviders {
+    db_provider_container: WithMeteredProvider,
+    blockchain_db: BlockchainProvider,
 }
 
 /// Helper container to bundle the metered providers container and [`BaseNodeContext`].
 #[expect(missing_debug_implementations)]
-pub struct WithComponents<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
-    db_provider_container: WithMeteredProvider<DB>,
-    node_adapter: BaseNodeContext<DB>,
+pub struct WithComponents {
+    db_provider_container: WithMeteredProvider,
+    node_adapter: BaseNodeContext,
     head: Head,
 }
 
 /// Returns the metrics hooks for the node.
-pub fn metrics_hooks<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    provider_factory: &ProviderFactory<DB>,
-) -> Hooks {
+pub fn metrics_hooks(provider_factory: &ProviderFactory) -> Hooks {
     Hooks::builder()
         .with_hook({
             let db = provider_factory.db_ref().clone();

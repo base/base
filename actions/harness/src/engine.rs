@@ -32,7 +32,6 @@ use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,
     NoopPayloadTransactions, PayloadConfig,
 };
-use base_execution_payload_types::{BuiltPayload, PayloadAttributes};
 use base_execution_txpool::{BasePooledTransaction, NoopTransactionPool};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_state_api::CachedReads;
@@ -54,10 +53,10 @@ use crate::{SharedBlockHashRegistry, SharedL1Chain};
 pub type TestNodeTypes = Arc<TempDatabase<DatabaseEnv>>;
 
 /// Type alias for the test provider factory used by the engine client.
-pub type TestProviderFactory = ProviderFactory<TestNodeTypes>;
+pub type TestProviderFactory = ProviderFactory;
 
 /// Type alias for the test blockchain provider used by the engine client.
-pub type TestBlockchainProvider = BlockchainProvider<TestNodeTypes>;
+pub type TestBlockchainProvider = BlockchainProvider;
 
 /// Type alias for the noop pool used by the engine client.
 pub type TestPool = NoopTransactionPool<BasePooledTransaction>;

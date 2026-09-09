@@ -5,7 +5,6 @@ use std::{fmt, fmt::Debug};
 use alloy_eips::{BlockNumHash, eip2124::Head};
 use futures::future;
 use reth_chain_state::ForkChoiceSubscriptions;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
@@ -17,10 +16,10 @@ use tracing::Instrument;
 use crate::{WithConfigs, exex::BoxedLaunchExEx};
 
 /// Can launch execution extensions.
-pub struct ExExLauncher<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+pub struct ExExLauncher {
     head: Head,
-    extensions: Vec<(String, Box<dyn BoxedLaunchExEx<DB>>)>,
-    components: base_node_context::BaseNodeContext<DB>,
+    extensions: Vec<(String, Box<dyn BoxedLaunchExEx>)>,
+    components: base_node_context::BaseNodeContext,
     config_container: WithConfigs,
     /// The threshold for the number of blocks in the WAL before emitting a warning.
     wal_blocks_warning: usize,
@@ -28,12 +27,12 @@ pub struct ExExLauncher<DB: Database + DatabaseMetrics + Clone + Unpin + 'static
     capacity: usize,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ExExLauncher<DB> {
+impl ExExLauncher {
     /// Create a new `ExExLauncher` with the given extensions.
     pub const fn new(
         head: Head,
-        components: base_node_context::BaseNodeContext<DB>,
-        extensions: Vec<(String, Box<dyn BoxedLaunchExEx<DB>>)>,
+        components: base_node_context::BaseNodeContext,
+        extensions: Vec<(String, Box<dyn BoxedLaunchExEx>)>,
         config_container: WithConfigs,
     ) -> Self {
         Self {
@@ -173,7 +172,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ExExLauncher<DB> 
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Debug for ExExLauncher<DB> {
+impl Debug for ExExLauncher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExExLauncher")
             .field("head", &self.head)

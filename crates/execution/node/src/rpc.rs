@@ -18,7 +18,6 @@ pub use jsonrpsee::{
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
 use reth_chain_state::CanonStateSubscriptions;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::TreeConfig;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
@@ -44,15 +43,14 @@ pub struct RethRpcServerHandles {
 }
 
 /// Contains hooks that are called during the rpc setup.
-pub struct RpcHooks<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> {
+pub struct RpcHooks<EthApi> {
     /// Hooks to run once RPC server is running.
-    pub on_rpc_started: Box<dyn OnRpcStarted<DB, EthApi>>,
+    pub on_rpc_started: Box<dyn OnRpcStarted<EthApi>>,
     /// Hooks to run to configure RPC server API.
-    pub extend_rpc_modules: Box<dyn ExtendRpcModules<DB, EthApi>>,
+    pub extend_rpc_modules: Box<dyn ExtendRpcModules<EthApi>>,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> Default
-    for RpcHooks<DB, EthApi>
+impl<EthApi> Default for RpcHooks<EthApi>
 where
     EthApi: RpcNodeCore,
 {
@@ -61,14 +59,14 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> RpcHooks<DB, EthApi>
+impl<EthApi> RpcHooks<EthApi>
 where
     EthApi: RpcNodeCore,
 {
     /// Sets the hook that is run once the rpc server is started.
     pub(crate) fn set_on_rpc_started<F>(&mut self, hook: F) -> &mut Self
     where
-        F: OnRpcStarted<DB, EthApi> + 'static,
+        F: OnRpcStarted<EthApi> + 'static,
     {
         self.on_rpc_started = Box::new(hook);
         self
@@ -78,7 +76,7 @@ where
     #[expect(unused)]
     pub(crate) fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
-        F: OnRpcStarted<DB, EthApi> + 'static,
+        F: OnRpcStarted<EthApi> + 'static,
     {
         self.set_on_rpc_started(hook);
         self
@@ -87,7 +85,7 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub(crate) fn set_extend_rpc_modules<F>(&mut self, hook: F) -> &mut Self
     where
-        F: ExtendRpcModules<DB, EthApi> + 'static,
+        F: ExtendRpcModules<EthApi> + 'static,
     {
         self.extend_rpc_modules = Box::new(hook);
         self
@@ -97,15 +95,14 @@ where
     #[expect(unused)]
     pub(crate) fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
-        F: ExtendRpcModules<DB, EthApi> + 'static,
+        F: ExtendRpcModules<EthApi> + 'static,
     {
         self.set_extend_rpc_modules(hook);
         self
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> fmt::Debug
-    for RpcHooks<DB, EthApi>
+impl<EthApi> fmt::Debug for RpcHooks<EthApi>
 where
     EthApi: RpcNodeCore,
 {
@@ -118,42 +115,36 @@ where
 }
 
 /// Event hook that is called once the rpc server is started.
-pub trait OnRpcStarted<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    EthApi: RpcNodeCore,
->: Send
-{
+pub trait OnRpcStarted<EthApi: RpcNodeCore>: Send {
     /// The hook that is called once the rpc server is started.
     fn on_rpc_started(
         self: Box<Self>,
-        ctx: RpcContext<'_, DB, EthApi>,
+        ctx: RpcContext<'_, EthApi>,
         handles: RethRpcServerHandles,
     ) -> eyre::Result<()>;
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi, F> OnRpcStarted<DB, EthApi>
-    for F
+impl<EthApi, F> OnRpcStarted<EthApi> for F
 where
-    F: FnOnce(RpcContext<'_, DB, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send,
+    F: FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send,
     EthApi: RpcNodeCore,
 {
     fn on_rpc_started(
         self: Box<Self>,
-        ctx: RpcContext<'_, DB, EthApi>,
+        ctx: RpcContext<'_, EthApi>,
         handles: RethRpcServerHandles,
     ) -> eyre::Result<()> {
         (*self)(ctx, handles)
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> OnRpcStarted<DB, EthApi>
-    for ()
+impl<EthApi> OnRpcStarted<EthApi> for ()
 where
     EthApi: RpcNodeCore,
 {
     fn on_rpc_started(
         self: Box<Self>,
-        _: RpcContext<'_, DB, EthApi>,
+        _: RpcContext<'_, EthApi>,
         _: RethRpcServerHandles,
     ) -> eyre::Result<()> {
         Ok(())
@@ -161,32 +152,26 @@ where
 }
 
 /// Event hook that is called when the rpc server is started.
-pub trait ExtendRpcModules<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    EthApi: RpcNodeCore,
->: Send
-{
+pub trait ExtendRpcModules<EthApi: RpcNodeCore>: Send {
     /// The hook that is called once the rpc server is started.
-    fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, DB, EthApi>) -> eyre::Result<()>;
+    fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, EthApi>) -> eyre::Result<()>;
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi, F>
-    ExtendRpcModules<DB, EthApi> for F
+impl<EthApi, F> ExtendRpcModules<EthApi> for F
 where
-    F: FnOnce(RpcContext<'_, DB, EthApi>) -> eyre::Result<()> + Send,
+    F: FnOnce(RpcContext<'_, EthApi>) -> eyre::Result<()> + Send,
     EthApi: RpcNodeCore,
 {
-    fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, DB, EthApi>) -> eyre::Result<()> {
+    fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, EthApi>) -> eyre::Result<()> {
         (*self)(ctx)
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> ExtendRpcModules<DB, EthApi>
-    for ()
+impl<EthApi> ExtendRpcModules<EthApi> for ()
 where
     EthApi: RpcNodeCore,
 {
-    fn extend_rpc_modules(self: Box<Self>, _: RpcContext<'_, DB, EthApi>) -> eyre::Result<()> {
+    fn extend_rpc_modules(self: Box<Self>, _: RpcContext<'_, EthApi>) -> eyre::Result<()> {
         Ok(())
     }
 }
@@ -194,26 +179,22 @@ where
 /// Helper wrapper type to encapsulate the [`RpcRegistryInner`] over components trait.
 #[derive(Debug, Clone)]
 #[expect(clippy::type_complexity)]
-pub struct RpcRegistry<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    EthApi: RpcNodeCore,
-> {
+pub struct RpcRegistry<EthApi: RpcNodeCore> {
     pub(crate) registry: RpcRegistryInner<
-        BlockchainProvider<DB>,
-        base_node_context::BaseNodePool<BlockchainProvider<DB>>,
+        BlockchainProvider,
+        base_node_context::BaseNodePool<BlockchainProvider>,
         reth_network::NetworkHandle,
         EthApi,
     >,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> Deref
-    for RpcRegistry<DB, EthApi>
+impl<EthApi> Deref for RpcRegistry<EthApi>
 where
     EthApi: RpcNodeCore,
 {
     type Target = RpcRegistryInner<
-        BlockchainProvider<DB>,
-        base_node_context::BaseNodePool<BlockchainProvider<DB>>,
+        BlockchainProvider,
+        base_node_context::BaseNodePool<BlockchainProvider>,
         reth_network::NetworkHandle,
         EthApi,
     >;
@@ -223,8 +204,7 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> DerefMut
-    for RpcRegistry<DB, EthApi>
+impl<EthApi> DerefMut for RpcRegistry<EthApi>
 where
     EthApi: RpcNodeCore,
 {
@@ -235,15 +215,11 @@ where
 
 /// Helper container for the parameters commonly passed to RPC module extension functions.
 #[expect(missing_debug_implementations)]
-pub struct RpcModuleContainer<
-    'a,
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    EthApi: RpcNodeCore,
-> {
+pub struct RpcModuleContainer<'a, EthApi: RpcNodeCore> {
     /// Holds installed modules per transport type.
     pub modules: &'a mut TransportRpcModules,
     /// A Helper type the holds instances of the configured modules.
-    pub registry: &'a mut RpcRegistry<DB, EthApi>,
+    pub registry: &'a mut RpcRegistry<EthApi>,
 }
 
 /// Helper container for [`RpcRegistryInner`], [`TransportRpcModules`] and
@@ -253,13 +229,9 @@ pub struct RpcModuleContainer<
 /// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`].
 #[expect(missing_debug_implementations)]
-pub struct RpcContext<
-    'a,
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    EthApi: RpcNodeCore,
-> {
+pub struct RpcContext<'a, EthApi: RpcNodeCore> {
     /// The node components.
-    pub(crate) node: base_node_context::BaseNodeContext<DB>,
+    pub(crate) node: base_node_context::BaseNodeContext,
 
     /// Gives access to the node configuration.
     pub(crate) config: &'a NodeConfig,
@@ -267,14 +239,14 @@ pub struct RpcContext<
     /// A Helper type the holds instances of the configured modules.
     ///
     /// This provides easy access to rpc handlers, such as [`RpcRegistryInner::eth_api`].
-    pub registry: &'a mut RpcRegistry<DB, EthApi>,
+    pub registry: &'a mut RpcRegistry<EthApi>,
     /// Holds installed modules per transport type.
     ///
     /// This can be used to merge additional modules into the configured HTTP and WebSocket transports. See [`TransportRpcModules::merge_configured`]
     pub modules: &'a mut TransportRpcModules,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi> RpcContext<'_, DB, EthApi>
+impl<EthApi> RpcContext<'_, EthApi>
 where
     EthApi: RpcNodeCore,
 {
@@ -286,17 +258,17 @@ where
     /// Returns a reference to the configured node.
     ///
     /// This gives access to the node's components.
-    pub const fn node(&self) -> &base_node_context::BaseNodeContext<DB> {
+    pub const fn node(&self) -> &base_node_context::BaseNodeContext {
         &self.node
     }
 
     /// Returns the transaction pool instance.
-    pub fn pool(&self) -> &base_node_context::BaseNodePool<BlockchainProvider<DB>> {
+    pub fn pool(&self) -> &base_node_context::BaseNodePool<BlockchainProvider> {
         self.node.pool()
     }
 
     /// Returns provider to interact with the node.
-    pub fn provider(&self) -> &BlockchainProvider<DB> {
+    pub fn provider(&self) -> &BlockchainProvider {
         self.node.provider()
     }
 
@@ -312,17 +284,14 @@ where
 }
 
 /// Handle to the launched RPC servers.
-pub struct RpcHandle<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCore>
-{
+pub struct RpcHandle<EthApi: RpcNodeCore> {
     /// Handles to launched servers.
     pub rpc_server_handles: RethRpcServerHandles,
     /// Configured RPC modules.
-    pub rpc_registry: RpcRegistry<DB, EthApi>,
+    pub rpc_registry: RpcRegistry<EthApi>,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCore> Clone
-    for RpcHandle<DB, EthApi>
-{
+impl<EthApi: RpcNodeCore> Clone for RpcHandle<EthApi> {
     fn clone(&self) -> Self {
         Self {
             rpc_server_handles: self.rpc_server_handles.clone(),
@@ -331,20 +300,17 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCo
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCore> Deref
-    for RpcHandle<DB, EthApi>
-{
-    type Target = RpcRegistry<DB, EthApi>;
+impl<EthApi: RpcNodeCore> Deref for RpcHandle<EthApi> {
+    type Target = RpcRegistry<EthApi>;
 
     fn deref(&self) -> &Self::Target {
         &self.rpc_registry
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCore> Debug
-    for RpcHandle<DB, EthApi>
+impl<EthApi: RpcNodeCore> Debug for RpcHandle<EthApi>
 where
-    RpcRegistry<DB, EthApi>: Debug,
+    RpcRegistry<EthApi>: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcHandle")
@@ -354,9 +320,7 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCore>
-    RpcHandle<DB, EthApi>
-{
+impl<EthApi: RpcNodeCore> RpcHandle<EthApi> {
     /// Returns the RPC server handles.
     pub const fn rpc_server_handles(&self) -> &RethRpcServerHandles {
         &self.rpc_server_handles
@@ -370,30 +334,22 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCo
     /// Returns an instance of the [`AdminApi`] for the rpc server.
     pub fn admin_api(
         &self,
-    ) -> AdminApi<
-        reth_network::NetworkHandle,
-        base_node_context::BaseNodePool<BlockchainProvider<DB>>,
-    > {
+    ) -> AdminApi<reth_network::NetworkHandle, base_node_context::BaseNodePool<BlockchainProvider>>
+    {
         self.rpc_registry.registry.admin_api()
     }
 }
 
 /// Prepared public RPC modules and lifecycle hooks.
-pub struct RpcSetupContext<
-    'a,
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    EthApi: RpcNodeCore,
-> {
-    pub node: base_node_context::BaseNodeContext<DB>,
+pub struct RpcSetupContext<'a, EthApi: RpcNodeCore> {
+    pub node: base_node_context::BaseNodeContext,
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
-    pub registry: RpcRegistry<DB, EthApi>,
-    pub on_rpc_started: Box<dyn OnRpcStarted<DB, EthApi>>,
+    pub registry: RpcRegistry<EthApi>,
+    pub on_rpc_started: Box<dyn OnRpcStarted<EthApi>>,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCore> fmt::Debug
-    for RpcSetupContext<'_, DB, EthApi>
-{
+impl<EthApi: RpcNodeCore> fmt::Debug for RpcSetupContext<'_, EthApi> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcSetupContext").field("modules", &self.modules).finish_non_exhaustive()
     }
@@ -409,12 +365,9 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, EthApi: RpcNodeCo
 /// takes a closure that provides access to all the configured modules (namespaces), and is invoked
 /// just before the servers are launched. This can be used to extend the node with custom RPC
 /// methods or even replace existing method handlers, see also [`TransportRpcModules`].
-pub struct RpcAddOns<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    RpcMiddleware = Identity,
-> {
+pub struct RpcAddOns<RpcMiddleware = Identity> {
     /// Additional RPC add-ons.
-    pub hooks: RpcHooks<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+    pub hooks: RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>>,
     /// Builder for `EthApi`
     eth_api_builder: BaseEthApiBuilder,
 
@@ -427,9 +380,7 @@ pub struct RpcAddOns<
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> Debug
-    for RpcAddOns<DB, RpcMiddleware>
-{
+impl<RpcMiddleware> Debug for RpcAddOns<RpcMiddleware> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcAddOns")
             .field("hooks", &self.hooks)
@@ -439,9 +390,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> De
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
-    RpcAddOns<DB, RpcMiddleware>
-{
+impl<RpcMiddleware> RpcAddOns<RpcMiddleware> {
     /// Creates a new instance of the RPC add-ons.
     pub fn new(eth_api_builder: BaseEthApiBuilder, rpc_middleware: RpcMiddleware) -> Self {
         Self { hooks: RpcHooks::default(), eth_api_builder, rpc_middleware, tokio_runtime: None }
@@ -485,7 +434,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     /// - Middleware is applied to the RPC service layer, not the HTTP transport layer
     /// - The default middleware is `Identity` (no-op), which passes through requests unchanged
     /// - Middleware layers are applied in the order they are added via `.layer()`
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> RpcAddOns<DB, T> {
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> RpcAddOns<T> {
         let Self { hooks, eth_api_builder, tokio_runtime, .. } = self;
         RpcAddOns { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
     }
@@ -499,7 +448,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     }
 
     /// Add a new layer `T` to the configured [`RpcServiceBuilder`].
-    pub fn layer_rpc_middleware<T>(self, layer: T) -> RpcAddOns<DB, Stack<RpcMiddleware, T>> {
+    pub fn layer_rpc_middleware<T>(self, layer: T) -> RpcAddOns<Stack<RpcMiddleware, T>> {
         let Self { hooks, eth_api_builder, rpc_middleware, tokio_runtime } = self;
         let rpc_middleware = Stack::new(rpc_middleware, layer);
         RpcAddOns { hooks, eth_api_builder, rpc_middleware, tokio_runtime }
@@ -510,7 +459,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     pub fn option_layer_rpc_middleware<T>(
         self,
         layer: Option<T>,
-    ) -> RpcAddOns<DB, Stack<RpcMiddleware, Either<T, Identity>>> {
+    ) -> RpcAddOns<Stack<RpcMiddleware, Either<T, Identity>>> {
         let layer = layer.map(Either::Left).unwrap_or(Either::Right(Identity::new()));
         self.layer_rpc_middleware(layer)
     }
@@ -519,7 +468,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -533,7 +482,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
             ) -> eyre::Result<()>
             + Send
             + 'static,
@@ -543,26 +492,25 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Default for RpcAddOns<DB, Identity> {
+impl Default for RpcAddOns<Identity> {
     fn default() -> Self {
         Self::new(BaseEthApiBuilder::default(), Default::default())
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
-    RpcAddOns<DB, RpcMiddleware>
+impl<RpcMiddleware> RpcAddOns<RpcMiddleware>
 where
     RpcMiddleware: RethRpcMiddleware,
 {
     /// Launches public RPC and invokes the configured extension and lifecycle hooks.
     pub async fn launch_add_ons_with<F>(
         self,
-        ctx: AddOnsContext<'_, DB>,
+        ctx: AddOnsContext<'_>,
         ext: F,
-    ) -> eyre::Result<RpcHandle<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>>
+    ) -> eyre::Result<RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>>
     where
         F: FnOnce(
-            RpcModuleContainer<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+            RpcModuleContainer<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
         ) -> eyre::Result<()>,
     {
         let rpc_middleware = self.rpc_middleware.clone();
@@ -591,12 +539,12 @@ where
     /// Common setup for RPC server initialization
     async fn setup_rpc_components<'a, F>(
         self,
-        ctx: AddOnsContext<'a, DB>,
+        ctx: AddOnsContext<'a>,
         ext: F,
-    ) -> eyre::Result<RpcSetupContext<'a, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>>
+    ) -> eyre::Result<RpcSetupContext<'a, BaseNodeEthApi<base_node_context::BaseNodeContext>>>
     where
         F: FnOnce(
-            RpcModuleContainer<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+            RpcModuleContainer<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
         ) -> eyre::Result<()>,
     {
         let Self { eth_api_builder, hooks, .. } = self;
@@ -684,40 +632,31 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> NodeAddOns<DB>
-    for RpcAddOns<DB, RpcMiddleware>
+impl<RpcMiddleware> NodeAddOns for RpcAddOns<RpcMiddleware>
 where
     RpcMiddleware: RethRpcMiddleware,
 {
-    type Handle = RpcHandle<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>;
+    type Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
 
-    async fn launch_add_ons(self, ctx: AddOnsContext<'_, DB>) -> eyre::Result<Self::Handle> {
+    async fn launch_add_ons(self, ctx: AddOnsContext<'_>) -> eyre::Result<Self::Handle> {
         self.launch_add_ons_with(ctx, |_| Ok(())).await
     }
 }
 
 /// Helper trait implemented for add-ons producing [`RpcHandle`]. Used by common node launcher
 /// implementations.
-pub trait RethRpcAddOns<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>:
-    NodeAddOns<DB, Handle = RpcHandle<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>>
+pub trait RethRpcAddOns:
+    NodeAddOns<Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>>
 {
     /// Returns a mutable reference to RPC hooks.
-    fn hooks_mut(
-        &mut self,
-    ) -> &mut RpcHooks<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>;
+    fn hooks_mut(&mut self) -> &mut RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> RethRpcAddOns<DB>
-    for RpcAddOns<DB, RpcMiddleware>
+impl<RpcMiddleware> RethRpcAddOns for RpcAddOns<RpcMiddleware>
 where
-    Self: NodeAddOns<
-            DB,
-            Handle = RpcHandle<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
-        >,
+    Self: NodeAddOns<Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>>,
 {
-    fn hooks_mut(
-        &mut self,
-    ) -> &mut RpcHooks<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>> {
+    fn hooks_mut(&mut self) -> &mut RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>> {
         &mut self.hooks
     }
 }
@@ -728,11 +667,11 @@ pub struct BasicEngineValidatorBuilder;
 
 impl BasicEngineValidatorBuilder {
     /// Constructs the Base execution validator and its caches.
-    pub async fn build_tree_validator<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        ctx: &AddOnsContext<'_, DB>,
+    pub async fn build_tree_validator(
+        ctx: &AddOnsContext<'_>,
         tree_config: TreeConfig,
         overlay_manager: OverlayManager,
-    ) -> eyre::Result<BasicEngineValidator<BlockchainProvider<DB>>> {
+    ) -> eyre::Result<BasicEngineValidator<BlockchainProvider>> {
         let validator = BaseEngineValidator::new(Arc::clone(&ctx.config.chain));
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = InvalidBlockHookBuilder::build(

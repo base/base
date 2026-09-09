@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, BlockNumber};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_provider::{DatabaseProviderFactory, ProviderFactory};
 use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
@@ -70,14 +69,13 @@ impl<Provider> PipelineBuilder<Provider> {
     }
 
     /// Builds the final [`Pipeline`] using the given database.
-    pub fn build<DB>(
+    pub fn build(
         self,
-        provider_factory: ProviderFactory<DB>,
-        static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
-    ) -> Pipeline<DB>
+        provider_factory: ProviderFactory,
+        static_file_producer: StaticFileProducer<ProviderFactory>,
+    ) -> Pipeline
     where
-        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        ProviderFactory<DB>: DatabaseProviderFactory<ProviderRW = Provider>,
+        ProviderFactory: DatabaseProviderFactory<ProviderRW = Provider>,
     {
         let Self { stages, max_block, tip_tx, metrics_tx, fail_on_unwind } = self;
         Pipeline {

@@ -6,7 +6,6 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_node_context::BaseNodeContext;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_provider::providers::BlockchainProvider;
 
 use crate::{
@@ -51,21 +50,17 @@ impl<Node, Payload> BaseComponentsBuilder<Node, Payload> {
     }
 }
 
-impl<DB, Txs> BaseComponentsBuilder<DB, BasePayloadBuilder<Txs>>
+impl<Txs> BaseComponentsBuilder<reth_db::DatabaseEnv, BasePayloadBuilder<Txs>>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Txs: BasePayloadTransactions<base_node_context::BaseNodePool<BlockchainProvider<DB>>>,
+    Txs: BasePayloadTransactions<base_node_context::BaseNodePool<BlockchainProvider>>,
 {
     /// Converts Base component construction into a single launch callback.
-    pub fn into_builder(self) -> ComponentBuilder<DB> {
+    pub fn into_builder(self) -> ComponentBuilder {
         ComponentBuilder { build: Box::new(move |ctx| Box::pin(self.build_components(ctx))) }
     }
 
     /// Constructs the Base pool, network, payload service, and consensus validator.
-    pub async fn build_components(
-        self,
-        ctx: &BuilderContext<DB>,
-    ) -> eyre::Result<BaseNodeContext<DB>> {
+    pub async fn build_components(self, ctx: &BuilderContext) -> eyre::Result<BaseNodeContext> {
         let evm_config = BaseEvmConfig::new(ctx.chain_spec());
         let pool = self.pool_builder.build_pool(ctx, evm_config.clone()).await?;
         let network = self.network_builder.build_network(ctx, pool.clone()).await?;

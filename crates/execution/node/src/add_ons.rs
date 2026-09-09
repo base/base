@@ -5,7 +5,6 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{BasePooledTx, TransactionPool};
 use base_node_context::NodeAddOns;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
@@ -20,25 +19,20 @@ use crate::{
 /// This type provides Base-specific addons to the node and exposes the RPC server and engine
 /// API.
 #[derive(Debug)]
-pub struct BaseAddOns<
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    RpcMiddleware = Identity,
-> {
+pub struct BaseAddOns<RpcMiddleware = Identity> {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
-    pub rpc_add_ons: RpcAddOns<DB, RpcMiddleware>,
+    pub rpc_add_ons: RpcAddOns<RpcMiddleware>,
     /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
-    BaseAddOns<DB, RpcMiddleware>
-{
+impl<RpcMiddleware> BaseAddOns<RpcMiddleware> {
     /// Creates a new instance from components.
     pub const fn new(
-        rpc_add_ons: RpcAddOns<DB, RpcMiddleware>,
+        rpc_add_ons: RpcAddOns<RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
     ) -> Self {
@@ -46,22 +40,20 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Default for BaseAddOns<DB> {
+impl Default for BaseAddOns {
     fn default() -> Self {
         Self::builder().build()
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BaseAddOns<DB> {
+impl BaseAddOns {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder {
         BaseAddOnsBuilder::default()
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
-    BaseAddOns<DB, RpcMiddleware>
-{
+impl<RpcMiddleware> BaseAddOns<RpcMiddleware> {
     /// Sets the RPC middleware stack for processing RPC requests.
     ///
     /// This method configures a custom middleware stack that will be applied to all RPC requests
@@ -69,7 +61,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     /// layer, allowing you to intercept, modify, or enhance RPC request processing.
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<DB, T> {
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<T> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_rpc_middleware(rpc_middleware),
@@ -82,7 +74,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -96,7 +88,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>,
+                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
             ) -> eyre::Result<()>
             + Send
             + 'static,
@@ -106,16 +98,15 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware>
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> NodeAddOns<DB>
-    for BaseAddOns<DB, RpcMiddleware>
+impl<RpcMiddleware> NodeAddOns for BaseAddOns<RpcMiddleware>
 where
     RpcMiddleware: RethRpcMiddleware,
 {
-    type Handle = RpcHandle<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>>;
+    type Handle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
 
     async fn launch_add_ons(
         self,
-        ctx: base_node_context::AddOnsContext<'_, DB>,
+        ctx: base_node_context::AddOnsContext<'_>,
     ) -> eyre::Result<Self::Handle> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         let eth_config =
@@ -155,16 +146,15 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, RpcMiddleware> RethRpcAddOns<DB>
-    for BaseAddOns<DB, RpcMiddleware>
+impl<RpcMiddleware> RethRpcAddOns for BaseAddOns<RpcMiddleware>
 where
-    <base_node_context::BaseNodePool<BlockchainProvider<DB>> as TransactionPool>::Transaction:
+    <base_node_context::BaseNodePool<BlockchainProvider> as TransactionPool>::Transaction:
         BasePooledTx,
     RpcMiddleware: RethRpcMiddleware,
 {
     fn hooks_mut(
         &mut self,
-    ) -> &mut crate::RpcHooks<DB, BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>> {
+    ) -> &mut crate::RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>> {
         self.rpc_add_ons.hooks_mut()
     }
 }
@@ -268,9 +258,7 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
 
 impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     /// Builds an instance of [`BaseAddOns`].
-    pub fn build<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-    ) -> BaseAddOns<DB, RpcMiddleware> {
+    pub fn build(self) -> BaseAddOns<RpcMiddleware> {
         let Self {
             sequencer_url,
             sequencer_headers,

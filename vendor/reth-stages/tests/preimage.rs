@@ -52,8 +52,7 @@ use reth_testing_utils::generators::{self, generate_key};
 use reth_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
-type TestProviderFactory =
-    reth_provider::ProviderFactory<reth_provider::test_utils::MockNodeDatabase>;
+type TestProviderFactory = reth_provider::ProviderFactory;
 
 const TEST_SELFDESTRUCT_BENEFICIARY: Address = Address::new([0x77; 20]);
 const TEST_CREATE2_SALT: B256 = B256::with_last_byte(0x42);
@@ -1295,7 +1294,7 @@ fn build_pipeline_without_history<H, B>(
     body_downloader: B,
     max_block: u64,
     tip: B256,
-) -> Pipeline<reth_provider::test_utils::MockNodeDatabase>
+) -> Pipeline
 where
     H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = Block> + 'static,
@@ -1325,7 +1324,7 @@ where
     .add_set(HashingStages::default())
     .add_stage(FinishStage::default());
 
-    let pipeline = Pipeline::<reth_provider::test_utils::MockNodeDatabase>::builder()
+    let pipeline = Pipeline::builder()
         .with_tip_sender(tip_tx)
         .with_max_block(max_block)
         .with_fail_on_unwind(true)

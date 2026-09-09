@@ -8,7 +8,6 @@
 use std::future::Future;
 
 use base_node_context::{BaseNodeContext, NodeAddOns};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::RocksDBProvider;
@@ -24,36 +23,32 @@ use crate::{
 /// A fully type configured node builder.
 ///
 /// Supports adding additional addons to the node.
-pub struct NodeBuilderWithComponents<DB, AO>
+pub struct NodeBuilderWithComponents<AO>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: NodeAddOns<DB>,
+    AO: NodeAddOns,
 {
     /// All settings for how the node should be configured.
     pub config: NodeConfig,
     /// Adapter for the underlying node types and database
-    pub database: DB,
+    pub database: reth_db::DatabaseEnv,
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
     pub rocksdb_provider: Option<RocksDBProvider>,
     /// container for type specific components
-    pub components_builder: ComponentBuilder<DB>,
+    pub components_builder: ComponentBuilder,
     /// Additional node extensions.
     pub add_ons: AO,
     /// Hooks invoked as the node starts.
-    pub hooks: NodeHooks<DB, AO>,
+    pub hooks: NodeHooks<AO>,
     /// Execution extensions installed on this node.
-    pub exexs: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<DB>>)>,
+    pub exexs: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx>)>,
 }
 
-impl<DB> NodeBuilderWithComponents<DB, ()>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl NodeBuilderWithComponents<()> {
     /// Advances the state of the node builder to the next state where all customizable
     /// [`NodeAddOns`] types are configured.
-    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<DB, AO>
+    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<AO>
     where
-        AO: NodeAddOns<DB>,
+        AO: NodeAddOns,
     {
         let Self { config, database, rocksdb_provider, components_builder, .. } = self;
 
@@ -69,15 +64,14 @@ where
     }
 }
 
-impl<DB, AO> NodeBuilderWithComponents<DB, AO>
+impl<AO> NodeBuilderWithComponents<AO>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: NodeAddOns<DB>,
+    AO: NodeAddOns,
 {
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(BaseNodeContext<DB>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(BaseNodeContext) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_on_component_initialized(hook);
         self
@@ -86,7 +80,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<DB, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<AO>) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_on_node_started(hook);
         self
@@ -99,7 +93,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<DB>) -> R + Send + 'static,
+        F: FnOnce(ExExContext) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -153,10 +147,9 @@ where
     }
 }
 
-impl<DB, AO> NodeBuilderWithComponents<DB, AO>
+impl<AO> NodeBuilderWithComponents<AO>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<DB>,
+    AO: RethRpcAddOns,
 {
     /// Launches the node with the given launcher.
     pub fn launch_with<L>(self, launcher: L) -> L::Future
@@ -170,7 +163,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>>,
+                RpcContext<'_, base_execution_rpc::BaseEthApi<BaseNodeContext>>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -186,7 +179,7 @@ where
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>>,
+                RpcContext<'_, base_execution_rpc::BaseEthApi<BaseNodeContext>>,
             ) -> eyre::Result<()>
             + Send
             + 'static,

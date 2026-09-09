@@ -21,7 +21,6 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
 aquamarine = { workspace = true }
-reth-db-api = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
@@ -52,7 +51,6 @@ tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
 [features]
 test-utils = [
     "base-execution-consensus/test-utils",
-    "reth-db-api/test-utils",
     "reth-db/test-utils",
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",

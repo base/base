@@ -4,7 +4,6 @@ use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonical
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_network_api::NetworkInfo;
@@ -27,10 +26,7 @@ impl ShadowIndexerExEx {
     }
 
     /// Runs the shadow indexer `ExEx` loop.
-    pub async fn run<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        mut ctx: ExExContext<DB>,
-    ) -> Result<()> {
+    pub async fn run(self, mut ctx: ExExContext) -> Result<()> {
         let mut last_finished_height = None;
 
         while let Some(notification) = ctx.notifications.try_next().await? {

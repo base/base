@@ -288,7 +288,7 @@ mod tests {
     fn setup_frontiers(
         state_trie_tip_index: usize,
         finish_tip_index: usize,
-    ) -> (ProviderFactory<MockNodeDatabase>, Vec<ExecutedBlock>) {
+    ) -> (ProviderFactory, Vec<ExecutedBlock>) {
         let factory = create_test_provider_factory();
         let blocks = test_blocks();
         let provider_rw = factory.provider_rw().unwrap();

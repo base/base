@@ -47,7 +47,7 @@ async fn test_base_node_custom_genesis_number() {
             .db(),
     );
     let runtime = reth_tasks::Runtime::test();
-    let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
+    let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_components(BaseNode::default().components().into_builder())

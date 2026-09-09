@@ -17,7 +17,7 @@ use revm::{database::BundleState, state::AccountInfo};
 use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};
 
 /// Assert genesis block
-pub fn assert_genesis_block<DB: Database>(provider: &DatabaseProviderRW<DB>, g: SealedBlock) {
+pub fn assert_genesis_block<DB: Database>(provider: &DatabaseProviderRW, g: SealedBlock) {
     let n = g.number;
     let h = B256::ZERO;
     let tx = provider;

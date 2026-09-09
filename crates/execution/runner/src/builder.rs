@@ -10,16 +10,16 @@ use eyre::Result;
 use futures::future::BoxFuture;
 use reth_exex::ExExContext;
 
-use crate::types::{BaseNodeAddOns, BaseNodeComponents, BaseNodeTypes};
+use crate::types::{BaseNodeAddOns, BaseNodeComponents};
 
 /// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
 type BaseEthApi = base_execution_rpc::BaseEthApi<BaseNodeComponents>;
 
 /// Convenience alias for the full Base node handle produced after launch.
-type BaseFullNode = FullNode<reth_db::DatabaseEnv, BaseNodeAddOns>;
+type BaseFullNode = FullNode<BaseNodeAddOns>;
 
 /// Alias for the RPC context used by Base extensions.
-pub type BaseRpcContext<'a> = RpcContext<'a, reth_db::DatabaseEnv, BaseEthApi>;
+pub type BaseRpcContext<'a> = RpcContext<'a, BaseEthApi>;
 
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;
@@ -33,15 +33,14 @@ type NodeStartedHook = Box<dyn FnOnce(BaseFullNode) -> Result<()> + Send + 'stat
 /// Type-erased `ExEx` factory.
 type BoxExExFactory = Box<
     dyn FnOnce(
-            ExExContext<reth_db::DatabaseEnv>,
+            ExExContext,
         ) -> BoxFuture<'static, eyre::Result<BoxFuture<'static, eyre::Result<()>>>>
         + Send
         + 'static,
 >;
 
 /// The configured Base builder shared by standard and full-block payload services.
-pub type RethNodeBuilder =
-    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, BaseNodeAddOns>>;
+pub type RethNodeBuilder = WithLaunchContext<NodeBuilderWithComponents<BaseNodeAddOns>>;
 
 /// Pure hook accumulator for the Base node builder.
 ///
@@ -75,8 +74,7 @@ impl NodeHooks {
 
         // Install ExEx hooks
         for (id, factory) in exex_hooks {
-            builder = builder
-                .install_exex(id, move |ctx: ExExContext<reth_db::DatabaseEnv>| factory(ctx));
+            builder = builder.install_exex(id, move |ctx: ExExContext| factory(ctx));
         }
 
         for hook in add_ons_hooks {
@@ -136,7 +134,7 @@ impl NodeHooks {
     /// Installs an `ExEx` extension with the given name and closure.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<reth_db::DatabaseEnv>) -> R + Send + 'static,
+        F: FnOnce(ExExContext) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send + 'static,
     {

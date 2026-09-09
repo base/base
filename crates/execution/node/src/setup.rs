@@ -7,7 +7,6 @@ use base_common_consensus::BaseBlock;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use reth_config::{PruneConfig, config::StageConfig};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
@@ -25,22 +24,21 @@ use tokio::sync::watch;
 
 /// Constructs a [Pipeline] that's wired to the network
 #[expect(clippy::too_many_arguments)]
-pub fn build_networked_pipeline<DB, Client>(
+pub fn build_networked_pipeline<Client>(
     config: &StageConfig,
     client: Client,
     consensus: Arc<BaseBeaconConsensus>,
-    provider_factory: ProviderFactory<DB>,
+    provider_factory: ProviderFactory,
     task_executor: &TaskExecutor,
     metrics_tx: reth_stages::MetricEventsSender,
     prune_config: PruneConfig,
     max_block: Option<BlockNumber>,
-    static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
+    static_file_producer: StaticFileProducer<ProviderFactory>,
     evm_config: BaseEvmConfig,
     exex_manager_handle: ExExManagerHandle,
     disabled_stages: &[StageId],
-) -> eyre::Result<Pipeline<DB>>
+) -> eyre::Result<Pipeline>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     Client: BlockClient<Block = BaseBlock> + 'static,
 {
     // building network downloaders using the fetch client
@@ -72,8 +70,8 @@ where
 
 /// Builds the [Pipeline] with the given [`ProviderFactory`] and downloaders.
 #[expect(clippy::too_many_arguments)]
-pub fn build_pipeline<DB, H, B>(
-    provider_factory: ProviderFactory<DB>,
+pub fn build_pipeline<H, B>(
+    provider_factory: ProviderFactory,
     stage_config: &StageConfig,
     header_downloader: H,
     body_downloader: B,
@@ -81,17 +79,16 @@ pub fn build_pipeline<DB, H, B>(
     max_block: Option<u64>,
     metrics_tx: reth_stages::MetricEventsSender,
     prune_config: PruneConfig,
-    static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
+    static_file_producer: StaticFileProducer<ProviderFactory>,
     evm_config: BaseEvmConfig,
     exex_manager_handle: ExExManagerHandle,
     disabled_stages: &[StageId],
-) -> eyre::Result<Pipeline<DB>>
+) -> eyre::Result<Pipeline>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = BaseBlock> + 'static,
 {
-    let mut builder = Pipeline::<DB>::builder();
+    let mut builder = Pipeline::builder();
 
     if let Some(max_block) = max_block {
         debug!(target: "reth::cli", max_block, "Configuring builder to use max block");

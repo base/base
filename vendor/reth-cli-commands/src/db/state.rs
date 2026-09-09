@@ -5,10 +5,7 @@ use std::{
 
 use alloy_primitives::{Address, B256, BlockNumber, U256, keccak256};
 use clap::Parser;
-use reth_db_api::{
-    cursor::DbDupCursorRO, database::Database, database_metrics::DatabaseMetrics, tables,
-    transaction::DbTx,
-};
+use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};
 use reth_db_common::DbTool;
 use reth_provider::StaticFileProviderFactory;
 use reth_storage_api::BlockNumReader;
@@ -38,10 +35,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db state` command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         let address = self.address;
         let limit = self.limit;
 
@@ -52,12 +46,7 @@ impl Command {
         }
     }
 
-    fn execute_current<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        &self,
-        tool: &DbTool<DB>,
-        address: Address,
-        limit: usize,
-    ) -> eyre::Result<()> {
+    fn execute_current(&self, tool: &DbTool, address: Address, limit: usize) -> eyre::Result<()> {
         let entries = tool.provider_factory.db_ref().view(|tx| {
             let (account, walker_entries) = {
                 let hashed_address = keccak256(address);
@@ -97,9 +86,9 @@ impl Command {
         Ok(())
     }
 
-    fn execute_historical<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    fn execute_historical(
         &self,
-        tool: &DbTool<DB>,
+        tool: &DbTool,
         address: Address,
         block: BlockNumber,
         limit: usize,
@@ -162,9 +151,9 @@ impl Command {
     }
 
     /// Collects storage keys from static file StorageChangeSets (storage_v2).
-    fn collect_staticfile_storage_keys<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    fn collect_staticfile_storage_keys(
         &self,
-        tool: &DbTool<DB>,
+        tool: &DbTool,
         address: Address,
         keys: &mut BTreeSet<B256>,
     ) -> eyre::Result<()> {

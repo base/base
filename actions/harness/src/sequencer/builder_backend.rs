@@ -139,14 +139,10 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
     ) -> EngineClientResult<PayloadId> {
         let parent = attributes.parent.block_info.hash;
         // BasePayloadBuilderAttributes currently computes payload IDs with version 3 in its
-        // PayloadAttributes implementation. Keep this constructor in sync with that engine-side
+        // payload ID calculation. Keep this constructor in sync with that engine-side
         // contract; changing only this value would make getPayload miss the registered build.
-        let builder_attrs = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
-            parent,
-            attributes.attributes,
-            3,
-        )
-        .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
+        let builder_attrs = BasePayloadBuilderAttributes::try_new(parent, attributes.attributes, 3)
+            .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         let fcu = self
             .engine()
             .update_forkchoice(parent, parent, Some(builder_attrs))

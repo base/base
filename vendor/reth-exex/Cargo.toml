@@ -22,7 +22,6 @@ thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
-reth-db-api = { workspace = true }
 reth-config = { workspace = true }
 reth-network = { workspace = true }
 reth-fs-util = { workspace = true }
@@ -47,7 +46,6 @@ tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
 [dev-dependencies]
-reth-db-api = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }

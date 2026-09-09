@@ -5,7 +5,6 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{DatabaseStateRoot, StateRoot};
@@ -32,7 +31,7 @@ pub use reth_chain_state::test_utils::TestCanonStateSubscriptions;
 pub type MockNodeDatabase = Arc<TempDatabase<DatabaseEnv>>;
 
 /// Creates test provider factory with mainnet chain spec.
-pub fn create_test_provider_factory() -> ProviderFactory<MockNodeDatabase> {
+pub fn create_test_provider_factory() -> ProviderFactory {
     create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
         base_execution_chainspec::BaseChainSpec::mainnet(),
     ))
@@ -41,7 +40,7 @@ pub fn create_test_provider_factory() -> ProviderFactory<MockNodeDatabase> {
 /// Creates test provider factory with provided chain spec.
 pub fn create_test_provider_factory_with_chain_spec(
     chain_spec: Arc<BaseChainSpec>,
-) -> ProviderFactory<MockNodeDatabase> {
+) -> ProviderFactory {
     let genesis_block_number = chain_spec.genesis.number.unwrap_or_default();
     create_test_provider_factory_with_genesis(chain_spec, genesis_block_number)
 }
@@ -49,7 +48,7 @@ pub fn create_test_provider_factory_with_chain_spec(
 /// Creates a test provider factory whose chain starts at `genesis_block_number`.
 pub fn create_test_provider_factory_with_genesis_block_number(
     genesis_block_number: u64,
-) -> ProviderFactory<MockNodeDatabase> {
+) -> ProviderFactory {
     let mut genesis = BaseChainSpec::mainnet().genesis;
     genesis.number = Some(genesis_block_number);
     let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).build());
@@ -59,7 +58,7 @@ pub fn create_test_provider_factory_with_genesis_block_number(
 fn create_test_provider_factory_with_genesis(
     chain_spec: Arc<BaseChainSpec>,
     genesis_block_number: u64,
-) -> ProviderFactory<Arc<TempDatabase<DatabaseEnv>>> {
+) -> ProviderFactory {
     // Create a single temp directory that contains all data dirs (db, static_files, rocksdb).
     // TempDatabase will clean up the entire directory on drop.
     let datadir_path = reth_db::test_utils::tempdir_path();
@@ -96,7 +95,7 @@ fn create_test_provider_factory_with_genesis(
 pub fn create_test_provider_factory_with_chain_spec_and_db_args(
     chain_spec: Arc<BaseChainSpec>,
     db_args: DatabaseArguments,
-) -> ProviderFactory<MockNodeDatabase> {
+) -> ProviderFactory {
     let datadir_path = reth_db::test_utils::tempdir_path();
 
     let db_path = datadir_path.join("db");
@@ -122,9 +121,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
 }
 
 /// Inserts the provider's genesis allocation into the trie.
-pub fn insert_genesis<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    provider_factory: &ProviderFactory<DB>,
-) -> ProviderResult<B256> {
+pub fn insert_genesis(provider_factory: &ProviderFactory) -> ProviderResult<B256> {
     let provider = provider_factory.provider_rw()?;
 
     // Hash accounts and insert them into hashing table.

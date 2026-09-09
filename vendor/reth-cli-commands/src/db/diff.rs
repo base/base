@@ -8,7 +8,7 @@ use std::{
 };
 
 use clap::Parser;
-use reth_db::{DatabaseEnv, open_db_read_only, tables_to_generic};
+use reth_db::{open_db_read_only, tables_to_generic};
 use reth_db_api::{
     Tables, cursor::DbCursorRO, database::Database, table::Table, transaction::DbTx,
 };
@@ -53,7 +53,7 @@ impl Command {
     ///
     /// The discrepancies and extra elements, along with a brief summary of the diff results are
     /// then written to a file in the output directory.
-    pub fn execute(self, tool: &DbTool<DatabaseEnv>) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         warn!("Make sure the node is not running when running `reth db diff`!");
         // open second db
         let second_db_path: PathBuf = self.secondary_datadir.join("db").into();

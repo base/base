@@ -303,10 +303,10 @@ impl TestBuilder {
     /// Run the test scenario
     pub async fn run<AO>(
         mut self,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     ) -> Result<()>
     where
-        AO: RethRpcAddOns<crate::TmpDB> + 'static,
+        AO: RethRpcAddOns + 'static,
     {
         let mut setup = self.setup.take();
 

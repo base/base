@@ -7,7 +7,7 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use futures::StreamExt;
 use reth_config::Config;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics, tables, transaction::DbTx};
+use reth_db_api::{tables, transaction::DbTx};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     file_client::{ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient},
@@ -80,18 +80,15 @@ impl ImportResult {
 /// This function reads RLP-encoded blocks from a file in chunks and imports them
 /// using the pipeline infrastructure. It's designed to be used both from the CLI
 /// and from test code.
-pub async fn import_blocks_from_file<DB>(
+pub async fn import_blocks_from_file(
     path: &Path,
     import_config: ImportConfig,
-    provider_factory: ProviderFactory<DB>,
+    provider_factory: ProviderFactory,
     config: &Config,
     executor: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<ImportResult>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<ImportResult> {
     if import_config.no_state {
         info!(target: "reth::import", "Disabled stages requiring state");
     }
@@ -273,19 +270,16 @@ where
 /// If configured to execute, all stages will run. Otherwise, only stages that don't require state
 /// will run.
 #[expect(clippy::too_many_arguments)]
-pub fn build_import_pipeline_impl<DB>(
+pub fn build_import_pipeline_impl(
     config: &Config,
-    provider_factory: ProviderFactory<DB>,
+    provider_factory: ProviderFactory,
     consensus: &Arc<BaseBeaconConsensus>,
     file_client: Arc<FileClient>,
-    static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
+    static_file_producer: StaticFileProducer<ProviderFactory>,
     disable_exec: bool,
     evm_config: BaseEvmConfig,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<(Pipeline<DB>, impl futures::Stream<Item = NodeEvent> + use<DB>)>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<(Pipeline, impl futures::Stream<Item = NodeEvent> + use<>)> {
     if !file_client.has_canonical_blocks() {
         eyre::bail!("unable to import non canonical blocks");
     }
@@ -317,7 +311,7 @@ where
 
     let max_block = file_client.max_block().unwrap_or(0);
 
-    let pipeline = Pipeline::<DB>::builder()
+    let pipeline = Pipeline::builder()
         .with_tip_sender(tip_tx)
         // we want to sync all blocks the file client provides or 0 if empty
         .with_max_block(max_block)

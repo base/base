@@ -7,7 +7,6 @@ use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
-use reth_db::DatabaseEnv;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory, providers::BlockchainProvider};
 use reth_storage_api::errors::ProviderError;
 use reth_trie_common::HashedStorage;
@@ -16,7 +15,7 @@ use reth_trie_common::HashedStorage;
 #[derive(Debug, Clone)]
 pub struct LocalL2Provider {
     /// The execution provider, including unpersisted canonical blocks.
-    pub provider: BlockchainProvider<DatabaseEnv>,
+    pub provider: BlockchainProvider,
     /// Configuration used to interpret L1 information in L2 blocks.
     pub rollup_config: Arc<RollupConfig>,
 }
@@ -46,7 +45,7 @@ impl LocalL2Provider {
     pub async fn read<T, F>(&self, read: F) -> Result<T, LocalL2Error>
     where
         T: Send + 'static,
-        F: FnOnce(BlockchainProvider<DatabaseEnv>) -> Result<T, ProviderError> + Send + 'static,
+        F: FnOnce(BlockchainProvider) -> Result<T, ProviderError> + Send + 'static,
     {
         let provider = self.provider.clone();
         Ok(tokio::task::spawn_blocking(move || read(provider)).await??)

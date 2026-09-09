@@ -6,7 +6,6 @@ pub use proofs::*;
 mod transaction;
 
 use base_execution_evm::BaseEvmConfig;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 
 use crate::{BaseTimeCache, RpcNodeCore};
 
@@ -245,10 +244,10 @@ impl BaseEthApiBuilder {
 
 impl BaseEthApiBuilder {
     /// Constructs the Base eth API from the node components and RPC settings.
-    pub async fn build_eth_api<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    pub async fn build_eth_api(
         self,
-        ctx: EthApiCtx<'_, DB>,
-    ) -> eyre::Result<BaseNodeEthApi<base_node_context::BaseNodeContext<DB>>> {
+        ctx: EthApiCtx<'_>,
+    ) -> eyre::Result<BaseNodeEthApi<base_node_context::BaseNodeContext>> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let base_time = BaseTimeCache::default();
 

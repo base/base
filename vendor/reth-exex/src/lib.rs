@@ -32,11 +32,10 @@
 //! use base_common_consensus::BlockHeader;
 //! use futures::StreamExt;
 //! use reth_exex::ExExContext;
-//! use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 //! use reth_provider::CanonStateNotification;
 //!
-//! async fn my_indexer<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-//!     mut ctx: ExExContext<DB>,
+//! async fn my_indexer(
+//!     mut ctx: ExExContext,
 //! ) -> Result<(), Box<dyn std::error::Error>> {
 //!     // Subscribe to canonical state notifications
 //!

@@ -2,16 +2,15 @@
 
 use std::future::Future;
 
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_node_core::node_config::NodeConfig;
 use reth_tokio_util::EventSender;
 
 /// Context passed to [`NodeAddOns::launch_add_ons`],
 #[derive(Debug, Clone)]
-pub struct AddOnsContext<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+pub struct AddOnsContext<'a> {
     /// Node with all configured components.
-    pub node: crate::BaseNodeContext<DB>,
+    pub node: crate::BaseNodeContext,
     /// Node configuration.
     pub config: &'a NodeConfig,
     /// Handle to the beacon consensus engine.
@@ -21,7 +20,7 @@ pub struct AddOnsContext<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 's
 }
 
 /// Starts node services and returns their shared handles.
-pub trait NodeAddOns<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>: Send {
+pub trait NodeAddOns: Send {
     /// Handle to add-ons.
     ///
     /// This type is returned by [`launch_add_ons`](Self::launch_add_ons) and represents a
@@ -56,17 +55,14 @@ pub trait NodeAddOns<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>: 
     /// for example due to port binding issues or invalid configuration.
     fn launch_add_ons(
         self,
-        ctx: AddOnsContext<'_, DB>,
+        ctx: AddOnsContext<'_>,
     ) -> impl Future<Output = eyre::Result<Self::Handle>> + Send;
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> NodeAddOns<DB> for () {
+impl NodeAddOns for () {
     type Handle = ();
 
-    async fn launch_add_ons(
-        self,
-        _components: AddOnsContext<'_, DB>,
-    ) -> eyre::Result<Self::Handle> {
+    async fn launch_add_ons(self, _components: AddOnsContext<'_>) -> eyre::Result<Self::Handle> {
         Ok(())
     }
 }

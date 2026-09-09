@@ -20,7 +20,6 @@ use base_execution_trie::{
     metrics::BlockMetrics,
 };
 use futures::TryStreamExt;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_provider::{
@@ -52,9 +51,8 @@ const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
 
 /// Builder for [`BaseProofsExEx`].
 #[derive(Debug)]
-pub struct BaseProofsExExBuilder<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
-{
-    ctx: ExExContext<DB>,
+pub struct BaseProofsExExBuilder<Storage> {
+    ctx: ExExContext,
     storage: BaseProofsStorage<Storage>,
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
@@ -62,11 +60,9 @@ pub struct BaseProofsExExBuilder<DB: Database + DatabaseMetrics + Clone + Unpin 
     max_prune_blocks_startup: u64,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
-    BaseProofsExExBuilder<DB, Storage>
-{
+impl<Storage> BaseProofsExExBuilder<Storage> {
     /// Create a new builder with required parameters and defaults.
-    pub const fn new(ctx: ExExContext<DB>, storage: BaseProofsStorage<Storage>) -> Self {
+    pub const fn new(ctx: ExExContext, storage: BaseProofsStorage<Storage>) -> Self {
         Self {
             ctx,
             storage,
@@ -103,7 +99,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
     }
 
     /// Builds the [`BaseProofsExEx`].
-    pub fn build(self) -> BaseProofsExEx<DB, Storage> {
+    pub fn build(self) -> BaseProofsExEx<Storage> {
         BaseProofsExEx {
             ctx: self.ctx,
             storage: self.storage,
@@ -180,10 +176,10 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
 ///     .check_launch();
 /// ```
 #[derive(Debug)]
-pub struct BaseProofsExEx<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage> {
+pub struct BaseProofsExEx<Storage> {
     /// The `ExEx` context containing the node related utilities e.g. provider, notifications,
     /// events.
-    ctx: ExExContext<DB>,
+    ctx: ExExContext,
     /// The type of storage DB.
     storage: BaseProofsStorage<Storage>,
     /// The window to span blocks for proofs history. Value is the number of blocks, received as
@@ -200,24 +196,22 @@ pub struct BaseProofsExEx<DB: Database + DatabaseMetrics + Clone + Unpin + 'stat
     max_prune_blocks_startup: u64,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage>
-    BaseProofsExEx<DB, Storage>
-{
+impl<Storage> BaseProofsExEx<Storage> {
     /// Create a new `BaseProofsExEx` instance.
-    pub fn new(ctx: ExExContext<DB>, storage: BaseProofsStorage<Storage>) -> Self {
+    pub fn new(ctx: ExExContext, storage: BaseProofsStorage<Storage>) -> Self {
         BaseProofsExExBuilder::new(ctx, storage).build()
     }
 
     /// Create a new builder for `BaseProofsExEx`.
     pub const fn builder(
-        ctx: ExExContext<DB>,
+        ctx: ExExContext,
         storage: BaseProofsStorage<Storage>,
-    ) -> BaseProofsExExBuilder<DB, Storage> {
+    ) -> BaseProofsExExBuilder<Storage> {
         BaseProofsExExBuilder::new(ctx, storage)
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Storage> BaseProofsExEx<DB, Storage>
+impl<Storage> BaseProofsExEx<Storage>
 where
     Storage: BaseProofsBatchStore + Clone + 'static,
 {
@@ -342,8 +336,8 @@ where
     async fn sync_loop(
         sync_target: Arc<SyncTarget>,
         storage: BaseProofsStorage<Storage>,
-        provider: BlockchainProvider<DB>,
-        collector: &LiveTrieCollector<'_, BlockchainProvider<DB>, Storage>,
+        provider: BlockchainProvider,
+        collector: &LiveTrieCollector<'_, BlockchainProvider, Storage>,
         verification_interval: u64,
     ) {
         info!(target: "base::exex", "Starting proofs storage sync loop");
@@ -389,7 +383,7 @@ where
 
     fn handle_revert(
         storage: &BaseProofsStorage<Storage>,
-        collector: &LiveTrieCollector<'_, BlockchainProvider<DB>, Storage>,
+        collector: &LiveTrieCollector<'_, BlockchainProvider, Storage>,
         revert_to: BlockWithParent,
     ) {
         let latest = match storage.get_latest_block_number() {
@@ -424,8 +418,8 @@ where
     async fn sync_forward(
         sync_target: &SyncTarget,
         storage: &BaseProofsStorage<Storage>,
-        provider: &BlockchainProvider<DB>,
-        collector: &LiveTrieCollector<'_, BlockchainProvider<DB>, Storage>,
+        provider: &BlockchainProvider,
+        collector: &LiveTrieCollector<'_, BlockchainProvider, Storage>,
         verification_interval: u64,
         target: u64,
     ) {
@@ -486,7 +480,7 @@ where
     fn build_batch_entry(
         block_number: u64,
         cached: Option<CachedBlockTrieData>,
-        provider: &BlockchainProvider<DB>,
+        provider: &BlockchainProvider,
         verification_interval: u64,
     ) -> eyre::Result<BatchBlock> {
         let should_verify =
@@ -786,10 +780,10 @@ mod tests {
     }
 
     // Initialize exex with config
-    fn build_test_exex<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, Store>(
-        ctx: ExExContext<DB>,
+    fn build_test_exex<Store>(
+        ctx: ExExContext,
         storage: BaseProofsStorage<Store>,
-    ) -> BaseProofsExEx<DB, Store>
+    ) -> BaseProofsExEx<Store>
     where
         Store: BaseProofsStore + Clone + 'static,
     {

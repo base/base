@@ -1,7 +1,6 @@
 //! `reth db prune-checkpoints` command for viewing and setting prune checkpoint values.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_db_common::DbTool;
 use reth_provider::{DBProvider, DatabaseProviderFactory};
 use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
@@ -110,20 +109,14 @@ pub enum PruneModeArg {
 
 impl Command {
     /// Execute the command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         match self.command {
             Subcommands::Get { segment } => Self::get(tool, segment),
             Subcommands::Set(args) => Self::set(tool, args),
         }
     }
 
-    fn get<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        tool: &DbTool<DB>,
-        segment: Option<SegmentArg>,
-    ) -> eyre::Result<()> {
+    fn get(tool: &DbTool, segment: Option<SegmentArg>) -> eyre::Result<()> {
         let provider = tool.provider_factory.provider()?;
 
         match segment {
@@ -161,10 +154,7 @@ impl Command {
         Ok(())
     }
 
-    fn set<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        tool: &DbTool<DB>,
-        args: SetArgs,
-    ) -> eyre::Result<()> {
+    fn set(tool: &DbTool, args: SetArgs) -> eyre::Result<()> {
         eyre::ensure!(
             args.block_number.is_some() || args.tx_number.is_some(),
             "at least one of --block-number or --tx-number must be provided"

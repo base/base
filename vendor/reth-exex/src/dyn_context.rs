@@ -4,7 +4,6 @@
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_node_core::node_config::NodeConfig;
 use tokio::sync::mpsc;
 
@@ -48,10 +47,8 @@ impl Debug for ExExContextDyn {
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> From<ExExContext<DB>>
-    for ExExContextDyn
-{
-    fn from(ctx: ExExContext<DB>) -> Self {
+impl From<ExExContext> for ExExContextDyn {
+    fn from(ctx: ExExContext) -> Self {
         let notifications = Box::new(ctx.notifications) as Box<_>;
 
         Self {

@@ -18,11 +18,8 @@ use base_common_consensus::{
 use base_execution_chainspec::BaseChainSpec;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
-use reth_db_api::{
-    database::Database, database_metrics::DatabaseMetrics, models::StoredBlockBodyIndices, tables,
-    transaction::DbTx,
-};
+use reth_db::{init_db, mdbx::DatabaseArguments};
+use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment};
 use reth_stages_types::{PipelineTarget, StageCheckpoint, StageId};
@@ -72,9 +69,9 @@ struct ReadOnlySyncState {
 /// A common provider that fetches data from a database or static file.
 ///
 /// This provider implements most provider or provider factory traits.
-pub struct ProviderFactory<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+pub struct ProviderFactory {
     /// Database instance
-    db: DB,
+    db: reth_db::DatabaseEnv,
     /// Chain spec
     chain_spec: Arc<BaseChainSpec>,
     /// Static File Provider
@@ -103,14 +100,14 @@ pub struct ProviderFactory<DB: Database + DatabaseMetrics + Clone + Unpin + 'sta
     read_only_sync: Option<Arc<ReadOnlySyncState>>,
 }
 
-impl ProviderFactory<DatabaseEnv> {
+impl ProviderFactory {
     /// Instantiates the builder for this type
     pub fn builder() -> ProviderFactoryBuilder {
         ProviderFactoryBuilder
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<DB> {
+impl ProviderFactory {
     /// Create new database provider factory.
     ///
     /// The storage backends used by the produced factory MAY be inconsistent.
@@ -119,12 +116,13 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     /// If the function returns unwind targets, the caller MUST unwind the
     /// inner database to the minimum of the two targets to ensure consistency.
     pub fn new(
-        db: DB,
+        db: impl Into<reth_db::DatabaseEnv>,
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
     ) -> ProviderResult<Self> {
+        let db = db.into();
         // Load storage settings from database at init time. Creates a temporary provider
         // to read persisted settings, using v2 defaults for empty databases.
         //
@@ -178,7 +176,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     /// return any [`ProviderError`] that [`Self::new`] may return, or that are
     /// encountered during consistency checks.
     pub fn new_checked(
-        db: DB,
+        db: reth_db::DatabaseEnv,
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
@@ -189,7 +187,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<DB> {
+impl ProviderFactory {
     /// Sets the pruning configuration for an existing [`ProviderFactory`].
     pub fn with_prune_modes(mut self, prune_modes: PruneModes) -> Self {
         self.prune_modes = prune_modes;
@@ -227,10 +225,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     ///
     /// Should be used for read-only factories that are running concurrently to a reth node writing
     /// new data to the database. Would effectively be a no-op if database directory is unchanged.
-    pub fn with_read_only_sync(mut self, watch: bool) -> Self
-    where
-        DB: Database,
-    {
+    pub fn with_read_only_sync(mut self, watch: bool) -> Self {
         // Initialize to 0 so the first `sync_providers_if_needed` call always
         // triggers a RocksDB/static-file catch-up, regardless of what MDBX txnid
         // the database was at when we opened it.
@@ -248,10 +243,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
 
     /// Watches the MDBX data directory for changes and eagerly syncs `RocksDB` secondary and
     /// static file indexes when modifications are detected.
-    fn watch_db_directory(&self)
-    where
-        DB: Database,
-    {
+    fn watch_db_directory(&self) {
         let factory = self.clone();
         let db_path = self.db.path();
         reth_tasks::spawn_os_thread("ro-sync", move || {
@@ -319,20 +311,18 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     }
 
     /// Returns reference to the underlying database.
-    pub const fn db_ref(&self) -> &DB {
+    pub const fn db_ref(&self) -> &reth_db::DatabaseEnv {
         &self.db
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     /// Consumes Self and returns DB
-    pub fn into_db(self) -> DB {
+    pub fn into_db(self) -> reth_db::DatabaseEnv {
         self.db
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StorageSettingsCache
-    for ProviderFactory<DB>
-{
+impl StorageSettingsCache for ProviderFactory {
     fn cached_storage_settings(&self) -> StorageSettings {
         *self.storage_settings.read()
     }
@@ -342,9 +332,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StorageSettingsCa
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RocksDBProviderFactory
-    for ProviderFactory<DB>
-{
+impl RocksDBProviderFactory for ProviderFactory {
     fn rocksdb_provider(&self) -> RocksDBProvider {
         self.rocksdb_provider.clone()
     }
@@ -362,7 +350,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RocksDBProviderFa
     }
 }
 
-impl ProviderFactory<DatabaseEnv> {
+impl ProviderFactory {
     /// Create new database provider by passing a path. [`ProviderFactory`] will own the database
     /// instance.
     pub fn new_with_database_path<P: AsRef<Path>>(
@@ -383,7 +371,7 @@ impl ProviderFactory<DatabaseEnv> {
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<DB> {
+impl ProviderFactory {
     /// Returns a provider with a created `DbTx` inside, which allows fetching data from the
     /// database using different types of providers. Example: [`HeaderProvider`]
     /// [`BlockHashReader`]. This may fail if the inner read database transaction fails to open.
@@ -391,7 +379,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     /// This sets the [`PruneModes`] to [`None`], because they should only be relevant for writing
     /// data.
     #[track_caller]
-    pub fn provider(&self) -> ProviderResult<DatabaseProviderRO<DB>> {
+    pub fn provider(&self) -> ProviderResult<DatabaseProviderRO> {
         let db_tx = self.db.tx()?;
 
         // Sync providers after opening the database transaction to make
@@ -421,7 +409,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     /// [`BlockHashReader`].  This may fail if the inner read/write database transaction fails to
     /// open.
     #[track_caller]
-    pub fn provider_rw(&self) -> ProviderResult<DatabaseProviderRW<DB>> {
+    pub fn provider_rw(&self) -> ProviderResult<DatabaseProviderRW> {
         Ok(DatabaseProviderRW(
             DatabaseProvider::new_rw(
                 self.db.tx_mut()?,
@@ -447,7 +435,9 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     /// Unwind commits may wait for pre-existing readers to drain before finishing later
     /// cross-store steps. Drop any long-lived read providers before committing this provider.
     #[track_caller]
-    pub fn unwind_provider_rw(&self) -> ProviderResult<DatabaseProvider<<DB as Database>::TXMut>> {
+    pub fn unwind_provider_rw(
+        &self,
+    ) -> ProviderResult<DatabaseProvider<<reth_db::DatabaseEnv as Database>::TXMut>> {
         Ok(DatabaseProvider::new_unwind_rw(
             self.db.tx_mut()?,
             self.chain_spec.clone(),
@@ -559,7 +549,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     /// header, resets it to the highest header.
     fn heal_chain_state_block_numbers(
         &self,
-        provider_ro: &DatabaseProvider<<DB as Database>::TX>,
+        provider_ro: &DatabaseProvider<<reth_db::DatabaseEnv as Database>::TX>,
     ) -> ProviderResult<()> {
         let highest_header = self.last_block_number()?;
 
@@ -606,18 +596,15 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ProviderFactory<D
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BalProvider for ProviderFactory<DB> {
+impl BalProvider for ProviderFactory {
     fn bal_store(&self) -> &BalStoreHandle {
         &self.bal_store
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> DatabaseProviderFactory
-    for ProviderFactory<DB>
-{
-    type DB = DB;
-    type Provider = DatabaseProvider<<DB as Database>::TX>;
-    type ProviderRW = DatabaseProvider<<DB as Database>::TXMut>;
+impl DatabaseProviderFactory for ProviderFactory {
+    type Provider = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TX>;
+    type ProviderRW = DatabaseProvider<<reth_db::DatabaseEnv as Database>::TXMut>;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         self.provider()
@@ -628,9 +615,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> DatabaseProviderF
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProviderFactory
-    for ProviderFactory<DB>
-{
+impl StaticFileProviderFactory for ProviderFactory {
     /// Returns static file provider
     fn static_file_provider(&self) -> StaticFileProvider {
         self.static_file_provider.clone()
@@ -645,9 +630,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProvide
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderSyncGapProvider
-    for ProviderFactory<DB>
-{
+impl HeaderSyncGapProvider for ProviderFactory {
     type Header = base_common_consensus::Header;
     fn local_tip_header(
         &self,
@@ -657,9 +640,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderSyncGapProv
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
-    for ProviderFactory<DB>
-{
+impl HeaderProvider for ProviderFactory {
     fn header(
         &self,
         block_hash: BlockHash,
@@ -701,9 +682,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockHashReader
-    for ProviderFactory<DB>
-{
+impl BlockHashReader for ProviderFactory {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         self.caught_up_static_file_provider()?.block_hash(number)
     }
@@ -717,9 +696,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockHashReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockNumReader
-    for ProviderFactory<DB>
-{
+impl BlockNumReader for ProviderFactory {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         self.provider()?.chain_info()
     }
@@ -743,7 +720,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockNumReader
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader for ProviderFactory<DB> {
+impl BlockReader for ProviderFactory {
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -807,9 +784,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader for P
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TransactionsProvider
-    for ProviderFactory<DB>
-{
+impl TransactionsProvider for ProviderFactory {
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -871,9 +846,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TransactionsProvi
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProvider
-    for ProviderFactory<DB>
-{
+impl ReceiptProvider for ProviderFactory {
     type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -917,9 +890,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProvider
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockBodyIndicesProvider
-    for ProviderFactory<DB>
-{
+impl BlockBodyIndicesProvider for ProviderFactory {
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -935,9 +906,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockBodyIndicesP
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StageCheckpointReader
-    for ProviderFactory<DB>
-{
+impl StageCheckpointReader for ProviderFactory {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.provider()?.get_stage_checkpoint(id)
     }
@@ -950,17 +919,13 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StageCheckpointRe
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChainSpecProvider
-    for ProviderFactory<DB>
-{
+impl ChainSpecProvider for ProviderFactory {
     fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.chain_spec.clone()
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PruneCheckpointReader
-    for ProviderFactory<DB>
-{
+impl PruneCheckpointReader for ProviderFactory {
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -973,18 +938,13 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PruneCheckpointRe
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> MetadataProvider
-    for ProviderFactory<DB>
-{
+impl MetadataProvider for ProviderFactory {
     fn get_metadata(&self, key: &str) -> ProviderResult<Option<Vec<u8>>> {
         self.provider()?.get_metadata(key)
     }
 }
 
-impl<DB> fmt::Debug for ProviderFactory<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl fmt::Debug for ProviderFactory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             db,
@@ -1020,7 +980,7 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Clone for ProviderFactory<DB> {
+impl Clone for ProviderFactory {
     fn clone(&self) -> Self {
         Self {
             db: self.db.clone(),
@@ -1062,7 +1022,7 @@ mod tests {
         BlockHashReader, BlockNumReader, BlockWriter, HeaderSyncGapProvider, MetadataWriter,
         TransactionsProvider,
         providers::{StaticFileProvider, StaticFileWriter},
-        test_utils::{MockNodeDatabase, blocks::TEST_BLOCK, create_test_provider_factory},
+        test_utils::{blocks::TEST_BLOCK, create_test_provider_factory},
     };
 
     #[test]
@@ -1072,7 +1032,7 @@ mod tests {
         provider.write_metadata("storage_settings", br#"{"storage_v2":false}"#.to_vec()).unwrap();
         provider.commit().unwrap();
 
-        let result = ProviderFactory::<MockNodeDatabase>::new(
+        let result = ProviderFactory::new(
             factory.db.clone(),
             factory.chain_spec.clone(),
             factory.static_file_provider.clone(),
@@ -1092,7 +1052,7 @@ mod tests {
             .unwrap();
         provider.commit().unwrap();
 
-        let result = ProviderFactory::<MockNodeDatabase>::new(
+        let result = ProviderFactory::new(
             factory.db.clone(),
             factory.chain_spec.clone(),
             factory.static_file_provider.clone(),
@@ -1134,7 +1094,7 @@ mod tests {
         let (_static_dir, static_dir_path) = create_test_static_files_dir();
         let (_rocksdb_dir, rocksdb_path) = create_test_rocksdb_dir();
         let _db_tempdir = tempfile::TempDir::new().expect(ERROR_TEMPDIR);
-        let factory = ProviderFactory::<DatabaseEnv>::new_with_database_path(
+        let factory = ProviderFactory::new_with_database_path(
             _db_tempdir.path(),
             Arc::new(chain_spec),
             DatabaseArguments::new(Default::default()),

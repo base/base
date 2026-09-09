@@ -66,7 +66,6 @@ mod tests {
         ProviderFactory, ProviderResult, PruneCheckpointWriter, ReceiptProvider,
         StageCheckpointWriter, StaticFileProviderFactory, StorageReader,
         providers::{StaticFileProvider, StaticFileWriter},
-        test_utils::MockNodeDatabase,
     };
     use reth_prune_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_stages_api::{
@@ -142,7 +141,7 @@ mod tests {
             .unwrap();
         provider_rw.commit().unwrap();
 
-        let check_pruning = |factory: ProviderFactory<MockNodeDatabase>,
+        let check_pruning = |factory: ProviderFactory,
                              prune_modes: PruneModes,
                              expect_num_receipts: usize,
                              expect_num_acc_changesets: usize,

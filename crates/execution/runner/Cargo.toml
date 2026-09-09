@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 reth-exex = { workspace = true }
-reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }

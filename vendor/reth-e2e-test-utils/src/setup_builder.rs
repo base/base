@@ -99,10 +99,10 @@ where
     /// Builds and launches the test nodes.
     pub async fn build<AO>(
         self,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
     where
-        AO: RethRpcAddOns<crate::TmpDB> + 'static,
+        AO: RethRpcAddOns + 'static,
     {
         let runtime = Runtime::test();
 

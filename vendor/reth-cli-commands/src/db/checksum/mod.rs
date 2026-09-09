@@ -6,10 +6,10 @@ use std::{
 use alloy_primitives::map::foldhash::fast::FixedState;
 use clap::Parser;
 use itertools::Itertools;
-use reth_db::{DatabaseEnv, static_file::iter_static_files};
+use reth_db::static_file::iter_static_files;
 use reth_db_api::{
-    Database, RawKey, RawTable, RawValue, TableViewer, Tables, cursor::DbCursorRO,
-    database_metrics::DatabaseMetrics, table::Table, transaction::DbTx,
+    RawKey, RawTable, RawValue, TableViewer, Tables, cursor::DbCursorRO, table::Table,
+    transaction::DbTx,
 };
 use reth_db_common::DbTool;
 use reth_provider::{DBProvider, StaticFileProviderFactory};
@@ -83,7 +83,7 @@ enum Subcommand {
 
 impl Command {
     /// Execute `db checksum` command
-    pub fn execute(self, tool: &DbTool<DatabaseEnv>) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         warn!("This command should be run without the node running!");
 
         match self.subcommand {
@@ -108,7 +108,7 @@ fn checksum_hasher() -> impl Hasher {
 }
 
 fn checksum_static_file(
-    tool: &DbTool<DatabaseEnv>,
+    tool: &DbTool,
     segment: StaticFileSegment,
     start_block: Option<u64>,
     end_block: Option<u64>,
@@ -206,22 +206,20 @@ fn checksum_static_file(
     Ok(())
 }
 
-pub(crate) struct ChecksumViewer<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
-    tool: &'a DbTool<DB>,
+pub(crate) struct ChecksumViewer<'a> {
+    tool: &'a DbTool,
     start_key: Option<String>,
     end_key: Option<String>,
     limit: Option<usize>,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChecksumViewer<'_, DB> {
-    pub(crate) const fn new(tool: &'_ DbTool<DB>) -> ChecksumViewer<'_, DB> {
+impl ChecksumViewer<'_> {
+    pub(crate) const fn new(tool: &'_ DbTool) -> ChecksumViewer<'_> {
         ChecksumViewer { tool, start_key: None, end_key: None, limit: None }
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TableViewer<(u64, Duration)>
-    for ChecksumViewer<'_, DB>
-{
+impl TableViewer<(u64, Duration)> for ChecksumViewer<'_> {
     type Error = eyre::Report;
 
     fn view<T: Table>(&self) -> Result<(u64, Duration), Self::Error> {

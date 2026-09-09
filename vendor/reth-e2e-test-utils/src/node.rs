@@ -11,7 +11,6 @@ use base_node_core::{FullNode, RethRpcAddOns};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::Block;
 use reth_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
@@ -25,29 +24,29 @@ use crate::{network::NetworkTestContext, payload::PayloadTestContext, rpc::RpcTe
 
 /// A helper struct to handle node actions
 #[expect(missing_debug_implementations)]
-pub struct NodeTestContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns>
+pub struct NodeTestContext<AddOns>
 where
-    AddOns: RethRpcAddOns<DB>,
+    AddOns: RethRpcAddOns,
 {
     /// The core structure representing the full node.
-    pub inner: FullNode<DB, AddOns>,
+    pub inner: FullNode<AddOns>,
     /// Context for testing payload-related features.
     pub payload: PayloadTestContext,
     /// Context for testing network functionalities.
     pub network: NetworkTestContext<reth_network::NetworkHandle>,
     /// Context for testing RPC features.
-    pub rpc: RpcTestContext<DB, BaseEthApi<base_node_context::BaseNodeContext<DB>>>,
+    pub rpc: RpcTestContext<BaseEthApi<base_node_context::BaseNodeContext>>,
     /// Canonical state events.
     pub canonical_stream: CanonStateNotificationStream,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, AddOns> NodeTestContext<DB, AddOns>
+impl<AddOns> NodeTestContext<AddOns>
 where
-    AddOns: RethRpcAddOns<DB>,
+    AddOns: RethRpcAddOns,
 {
     /// Creates a new test node
     pub async fn new(
-        node: FullNode<DB, AddOns>,
+        node: FullNode<AddOns>,
         attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + 'static,
     ) -> eyre::Result<Self> {
         Ok(Self {
@@ -79,7 +78,7 @@ where
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
     ) -> eyre::Result<Vec<BaseBuiltPayload>>
     where
-        AddOns: RethRpcAddOns<DB>,
+        AddOns: RethRpcAddOns,
     {
         let mut chain = Vec::with_capacity(length as usize);
         for i in 0..length {

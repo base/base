@@ -5,8 +5,7 @@ use reth_db_api::{
     DatabaseError,
     common::KeyValue,
     cursor::DbCursorRO,
-    database::Database,
-    table::Table,
+    table::{Table, TableImporter},
     transaction::{DbTx, DbTxMut},
 };
 use reth_prune_types::PruneModes;
@@ -151,14 +150,11 @@ pub trait DBProvider: DbTxProvider + Sized {
 /// Database provider factory.
 #[auto_impl::auto_impl(&, Arc)]
 pub trait DatabaseProviderFactory: Send + Sync {
-    /// Database this factory produces providers for.
-    type DB: Database;
-
     /// Provider type returned by the factory.
-    type Provider: DBProvider<Tx = <Self::DB as Database>::TX>;
+    type Provider: DBProvider<Tx: Sync>;
 
     /// Read-write provider type returned by the factory.
-    type ProviderRW: DBProvider<Tx = <Self::DB as Database>::TXMut>;
+    type ProviderRW: DBProvider<Tx: DbTxMut + TableImporter + Sync>;
 
     /// Create new read-only database provider.
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider>;
@@ -168,7 +164,7 @@ pub trait DatabaseProviderFactory: Send + Sync {
 }
 
 /// Helper type alias to get the associated transaction type from a [`DatabaseProviderFactory`].
-pub type FactoryTx<F> = <<F as DatabaseProviderFactory>::DB as Database>::TX;
+pub type FactoryTx<F> = <<F as DatabaseProviderFactory>::Provider as DbTxProvider>::Tx;
 
 /// A trait which can be used to describe any factory-like type which returns a read-only provider.
 pub trait DatabaseProviderROFactory {

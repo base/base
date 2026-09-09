@@ -8,7 +8,6 @@ use base_common_consensus::{
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
 use secp256k1::Keypair;
@@ -46,14 +45,11 @@ pub(crate) fn chain_spec(address: Address) -> Arc<BaseChainSpec> {
     )
 }
 
-pub(crate) fn execute_block_and_commit_to_database<DB>(
-    provider_factory: &ProviderFactory<DB>,
+pub(crate) fn execute_block_and_commit_to_database(
+    provider_factory: &ProviderFactory,
     chain_spec: Arc<BaseChainSpec>,
     block: &RecoveredBlock,
-) -> eyre::Result<BlockExecutionOutput>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<BlockExecutionOutput> {
     let provider = provider_factory.provider()?;
 
     // Execute the block to produce a block execution output
@@ -141,14 +137,11 @@ fn blocks(
     Ok((block1, block2))
 }
 
-pub(crate) fn blocks_and_execution_outputs<DB>(
-    provider_factory: ProviderFactory<DB>,
+pub(crate) fn blocks_and_execution_outputs(
+    provider_factory: ProviderFactory,
     chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<Vec<(RecoveredBlock, BlockExecutionOutput)>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<Vec<(RecoveredBlock, BlockExecutionOutput)>> {
     let (block1, block2) = blocks(chain_spec.clone(), key_pair)?;
 
     let block_output1 =
@@ -159,14 +152,11 @@ where
     Ok(vec![(block1, block_output1), (block2, block_output2)])
 }
 
-pub(crate) fn blocks_and_execution_outcome<DB>(
-    provider_factory: ProviderFactory<DB>,
+pub(crate) fn blocks_and_execution_outcome(
+    provider_factory: ProviderFactory,
     chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<(Vec<RecoveredBlock>, ExecutionOutcome)>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+) -> eyre::Result<(Vec<RecoveredBlock>, ExecutionOutcome)> {
     let (block1, block2) = blocks(chain_spec.clone(), key_pair)?;
 
     let provider = provider_factory.provider()?;

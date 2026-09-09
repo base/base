@@ -96,8 +96,8 @@ impl RpcCommand {
                 execution.standard.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution = execution
                 .into_launch_config(execution_chain)
-
                 .with_upgrade_signal_startup_already_applied();
+
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;

@@ -6,10 +6,7 @@ use base_execution_evm::BaseEvmConfig;
 use eyre::Result;
 use reth_config::config::EtlConfig;
 use reth_db::DatabaseEnv;
-use reth_db_api::{
-    database::Database, database_metrics::DatabaseMetrics, models::BlockNumberAddress,
-    table::TableImporter, tables,
-};
+use reth_db_api::{database::Database, models::BlockNumberAddress, table::TableImporter, tables};
 use reth_db_common::DbTool;
 use reth_exex::ExExManagerHandle;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
@@ -30,7 +27,7 @@ use super::setup;
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn dump_merkle_stage(
-    db_tool: &DbTool<DatabaseEnv>,
+    db_tool: &DbTool,
     from: BlockNumber,
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
@@ -61,7 +58,7 @@ pub(crate) async fn dump_merkle_stage(
 
     if should_run {
         dry_run(
-            ProviderFactory::<DatabaseEnv>::new(
+            ProviderFactory::new(
                 output_db,
                 db_tool.chain(),
                 StaticFileProvider::read_write(output_datadir.static_files())?,
@@ -77,8 +74,8 @@ pub(crate) async fn dump_merkle_stage(
 }
 
 /// Dry-run an unwind to FROM block and copy the necessary table data to the new database.
-fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-    db_tool: &DbTool<DB>,
+fn unwind_and_copy(
+    db_tool: &DbTool,
     range: (u64, u64),
     tip_block_number: u64,
     output_db: &DatabaseEnv,
@@ -159,10 +156,7 @@ fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
 }
 
 /// Try to re-execute the stage straight away
-fn dry_run<DB>(output_provider_factory: ProviderFactory<DB>, to: u64, from: u64) -> eyre::Result<()>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+fn dry_run(output_provider_factory: ProviderFactory, to: u64, from: u64) -> eyre::Result<()> {
     info!(target: "reth::cli", "Executing stage.");
     let provider = output_provider_factory.database_provider_rw()?;
 

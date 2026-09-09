@@ -26,7 +26,6 @@ use reth_provider::{
     providers::{
         RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut, StaticFileWriter,
     },
-    test_utils::MockNodeDatabase,
 };
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::ProviderResult;
@@ -36,7 +35,7 @@ use tempfile::TempDir;
 /// Test database that is used for testing stage implementations.
 #[derive(Debug)]
 pub struct TestStageDB {
-    pub factory: ProviderFactory<MockNodeDatabase>,
+    pub factory: ProviderFactory,
     pub temp_static_files_dir: TempDir,
     pub temp_rocksdb_dir: TempDir,
 }
@@ -103,9 +102,7 @@ impl TestStageDB {
     /// static files.
     pub fn query_with_provider<F, Ok>(&self, f: F) -> ProviderResult<Ok>
     where
-        F: FnOnce(
-            <ProviderFactory<MockNodeDatabase> as DatabaseProviderFactory>::Provider,
-        ) -> ProviderResult<Ok>,
+        F: FnOnce(<ProviderFactory as DatabaseProviderFactory>::Provider) -> ProviderResult<Ok>,
     {
         f(self.factory.provider()?)
     }
@@ -113,9 +110,7 @@ impl TestStageDB {
     /// Invoke a callback with a writable provider, committing afterwards.
     pub fn commit_with_provider<F>(&self, f: F) -> ProviderResult<()>
     where
-        F: FnOnce(
-            &<ProviderFactory<MockNodeDatabase> as DatabaseProviderFactory>::ProviderRW,
-        ) -> ProviderResult<()>,
+        F: FnOnce(&<ProviderFactory as DatabaseProviderFactory>::ProviderRW) -> ProviderResult<()>,
     {
         let provider = self.factory.provider_rw()?;
         f(&provider)?;

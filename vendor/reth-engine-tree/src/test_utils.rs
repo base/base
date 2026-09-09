@@ -5,7 +5,7 @@ use base_common_consensus::BaseBlockBody as BlockBody;
 use base_execution_chainspec::BaseChainSpec;
 use reth_network_p2p::test_utils::TestFullBlockClient;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::test_utils::{MockNodeDatabase, create_test_provider_factory_with_chain_spec};
+use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use reth_prune_types::PruneModes;
 use reth_stages::{ExecOutput, StageError, test_utils::TestStages};
 use reth_stages_api::Pipeline;
@@ -46,12 +46,12 @@ impl TestPipelineBuilder {
     }
 
     /// Builds the pipeline.
-    pub fn build(self, chain_spec: Arc<BaseChainSpec>) -> Pipeline<MockNodeDatabase> {
+    pub fn build(self, chain_spec: Arc<BaseChainSpec>) -> Pipeline {
         reth_tracing::init_test_tracing();
 
         // Setup pipeline
         let (tip_tx, _tip_rx) = watch::channel(B256::default());
-        let pipeline = Pipeline::<MockNodeDatabase>::builder()
+        let pipeline = Pipeline::builder()
             .add_stages(TestStages::new(self.pipeline_exec_outputs, Default::default()))
             .with_tip_sender(tip_tx);
 

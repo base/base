@@ -10,8 +10,6 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
 use reth_config::Config;
-use reth_db::DatabaseEnv;
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_exex::ExExManagerHandle;
 use reth_provider::{BlockNumReader, ProviderFactory};
@@ -75,19 +73,19 @@ impl<C: ChainSpecParser> Command<C> {
         Ok(())
     }
 
-    fn build_pipeline<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    fn build_pipeline(
         self,
         config: Config,
-        provider_factory: ProviderFactory<DB>,
+        provider_factory: ProviderFactory,
         evm_config: BaseEvmConfig,
-    ) -> Result<Pipeline<DB>, eyre::Error> {
+    ) -> Result<Pipeline, eyre::Error> {
         let stage_conf = &config.stages;
         let prune_modes = config.prune.segments.clone();
 
         let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
 
         let builder = if self.offline {
-            Pipeline::<DB>::builder().add_stages(
+            Pipeline::builder().add_stages(
                 OfflineStages::new(
                     evm_config,
                     Arc::new(BaseBeaconConsensus::noop()),
@@ -98,7 +96,7 @@ impl<C: ChainSpecParser> Command<C> {
                 .disable(reth_stages::StageId::SenderRecovery),
             )
         } else {
-            Pipeline::<DB>::builder().with_tip_sender(tip_tx).add_stages(
+            Pipeline::builder().with_tip_sender(tip_tx).add_stages(
                 DefaultStages::new(
                     provider_factory.clone(),
                     tip_rx,
@@ -154,7 +152,7 @@ enum Subcommands {
 
 impl Subcommands {
     /// Returns the block to unwind to. The returned block will stay in database.
-    fn unwind_target(&self, factory: ProviderFactory<DatabaseEnv>) -> eyre::Result<u64> {
+    fn unwind_target(&self, factory: ProviderFactory) -> eyre::Result<u64> {
         let provider = factory.provider()?;
         let last = provider.last_block_number()?;
         let target = match self {

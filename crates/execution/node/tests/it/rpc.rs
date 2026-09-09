@@ -31,7 +31,7 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
         .with_network(network_args)
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
-    let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
+    let add_ons: base_node_core::BaseNodeAddOns = BaseNode::default().add_ons_builder().build();
 
     let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
         .testing_node(exec)

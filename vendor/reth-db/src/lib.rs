@@ -69,9 +69,9 @@ pub mod test_utils {
         db: Option<DB>,
         path: PathBuf,
         /// Executed right before a database transaction is created.
-        pre_tx_hook: RwLock<Box<dyn Fn() + Send + Sync>>,
+        pub pre_tx_hook: RwLock<Box<dyn Fn() + Send + Sync>>,
         /// Executed right after a database transaction is created.
-        post_tx_hook: RwLock<Box<dyn Fn() + Send + Sync>>,
+        pub post_tx_hook: RwLock<Box<dyn Fn() + Send + Sync>>,
     }
 
     impl<DB: std::fmt::Debug> std::fmt::Debug for TempDatabase<DB> {

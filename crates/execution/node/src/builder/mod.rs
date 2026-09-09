@@ -11,7 +11,6 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{PoolConfig, PoolTransaction, TransactionPool};
 use base_node_context::{BaseNodeContext, NodeAddOns};
 use futures::Future;
-use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
@@ -194,8 +193,15 @@ impl<DB> NodeBuilder<DB> {
 
 impl<DB> NodeBuilder<DB> {
     /// Configures the underlying database that the node will use.
-    pub fn with_database<D>(self, database: D) -> NodeBuilder<D> {
-        NodeBuilder { config: self.config, database, rocksdb_provider: self.rocksdb_provider }
+    pub fn with_database(
+        self,
+        database: impl Into<reth_db::DatabaseEnv>,
+    ) -> NodeBuilder<reth_db::DatabaseEnv> {
+        NodeBuilder {
+            config: self.config,
+            database: database.into(),
+            rocksdb_provider: self.rocksdb_provider,
+        }
     }
 
     /// Sets the [`RocksDBProvider`] to use instead of creating one during launch.
@@ -216,8 +222,7 @@ impl<DB> NodeBuilder<DB> {
     pub fn testing_node(
         self,
         task_executor: TaskExecutor,
-    ) -> WithLaunchContext<NodeBuilder<Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>>>
-    {
+    ) -> WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
         let path = reth_db::test_utils::tempdir_path();
         self.testing_node_with_datadir(task_executor, path)
     }
@@ -230,8 +235,7 @@ impl<DB> NodeBuilder<DB> {
         mut self,
         task_executor: TaskExecutor,
         datadir: impl Into<std::path::PathBuf>,
-    ) -> WithLaunchContext<NodeBuilder<Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>>>
-    {
+    ) -> WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
         let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(datadir.into());
         self.config = self.config.with_datadir_args(reth_node_core::args::DatadirArgs {
             datadir: path.clone(),
@@ -247,15 +251,12 @@ impl<DB> NodeBuilder<DB> {
     }
 }
 
-impl<DB> NodeBuilder<DB>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl NodeBuilder<reth_db::DatabaseEnv> {
     /// Advances the state of the node builder to the next state where all components are configured
     pub fn with_components(
         self,
-        components_builder: ComponentBuilder<DB>,
-    ) -> NodeBuilderWithComponents<DB, ()> {
+        components_builder: ComponentBuilder,
+    ) -> NodeBuilderWithComponents<()> {
         NodeBuilderWithComponents {
             config: self.config,
             database: self.database,
@@ -296,10 +297,7 @@ impl<DB> WithLaunchContext<NodeBuilder<DB>> {
     }
 }
 
-impl<DB> WithLaunchContext<NodeBuilder<DB>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
     /// Sets the [`RocksDBProvider`] to use instead of creating one during launch.
     pub fn with_rocksdb_provider(mut self, rocksdb_provider: RocksDBProvider) -> Self {
         self.builder.rocksdb_provider = Some(rocksdb_provider);
@@ -307,12 +305,12 @@ where
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> WithLaunchContext<NodeBuilder<DB>> {
+impl WithLaunchContext<NodeBuilder<reth_db::DatabaseEnv>> {
     /// Advances the state of the node builder to the next state where all components are configured
     pub fn with_components(
         self,
-        components_builder: ComponentBuilder<DB>,
-    ) -> WithLaunchContext<NodeBuilderWithComponents<DB, ()>> {
+        components_builder: ComponentBuilder,
+    ) -> WithLaunchContext<NodeBuilderWithComponents<()>> {
         WithLaunchContext {
             builder: self.builder.with_components(components_builder),
             task_executor: self.task_executor,
@@ -320,18 +318,12 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> WithLaunchContext
     }
 }
 
-impl<DB> WithLaunchContext<NodeBuilderWithComponents<DB, ()>>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-{
+impl WithLaunchContext<NodeBuilderWithComponents<()>> {
     /// Advances the state of the node builder to the next state where all customizable
     /// [`NodeAddOns`] types are configured.
-    pub fn with_add_ons<AO>(
-        self,
-        add_ons: AO,
-    ) -> WithLaunchContext<NodeBuilderWithComponents<DB, AO>>
+    pub fn with_add_ons<AO>(self, add_ons: AO) -> WithLaunchContext<NodeBuilderWithComponents<AO>>
     where
-        AO: NodeAddOns<DB>,
+        AO: NodeAddOns,
     {
         WithLaunchContext {
             builder: self.builder.with_add_ons(add_ons),
@@ -340,10 +332,9 @@ where
     }
 }
 
-impl<DB, AO> WithLaunchContext<NodeBuilderWithComponents<DB, AO>>
+impl<AO> WithLaunchContext<NodeBuilderWithComponents<AO>>
 where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<DB>,
+    AO: RethRpcAddOns,
 {
     /// Returns a reference to the node builder's config.
     pub const fn config(&self) -> &NodeConfig {
@@ -356,12 +347,12 @@ where
     }
 
     /// Returns a reference to node's database.
-    pub const fn db(&self) -> &DB {
+    pub const fn db(&self) -> &reth_db::DatabaseEnv {
         &self.builder.database
     }
 
     /// Returns a mutable reference to node's database.
-    pub const fn db_mut(&mut self) -> &mut DB {
+    pub const fn db_mut(&mut self) -> &mut reth_db::DatabaseEnv {
         &mut self.builder.database
     }
 
@@ -400,7 +391,7 @@ where
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(self, hook: F) -> Self
     where
-        F: FnOnce(BaseNodeContext<DB>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(BaseNodeContext) -> eyre::Result<()> + Send + 'static,
     {
         Self {
             builder: self.builder.on_component_initialized(hook),
@@ -411,7 +402,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<DB, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<AO>) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
     }
@@ -449,7 +440,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>>,
+                RpcContext<'_, base_execution_rpc::BaseEthApi<BaseNodeContext>>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -497,7 +488,7 @@ where
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, DB, base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>>,
+                RpcContext<'_, base_execution_rpc::BaseEthApi<BaseNodeContext>>,
             ) -> eyre::Result<()>
             + Send
             + 'static,
@@ -512,7 +503,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<DB>) -> R + Send + 'static,
+        F: FnOnce(ExExContext) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -529,7 +520,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex_if<F, R, E>(self, cond: bool, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<DB>) -> R + Send + 'static,
+        F: FnOnce(ExExContext) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -539,7 +530,7 @@ where
     /// Launches the node with the given launcher.
     pub async fn launch_with<L>(self, launcher: L) -> eyre::Result<L::Node>
     where
-        L: LaunchNode<NodeBuilderWithComponents<DB, AO>>,
+        L: LaunchNode<NodeBuilderWithComponents<AO>>,
     {
         launcher.launch_node(self.builder).await
     }
@@ -562,9 +553,9 @@ where
     /// Launches the node with the [`EngineNodeLauncher`] that sets up engine API consensus and rpc
     pub async fn launch(
         self,
-    ) -> eyre::Result<<EngineNodeLauncher as LaunchNode<NodeBuilderWithComponents<DB, AO>>>::Node>
+    ) -> eyre::Result<<EngineNodeLauncher as LaunchNode<NodeBuilderWithComponents<AO>>>::Node>
     where
-        EngineNodeLauncher: LaunchNode<NodeBuilderWithComponents<DB, AO>>,
+        EngineNodeLauncher: LaunchNode<NodeBuilderWithComponents<AO>>,
     {
         let launcher = self.engine_api_launcher();
         self.builder.launch_with(launcher).await
@@ -578,9 +569,9 @@ where
         self,
         config: DebugNodeConfig<R>,
     ) -> <DebugNodeLauncher<EngineNodeLauncher, R> as LaunchNode<
-        NodeBuilderWithComponents<DB, AO>,
+        NodeBuilderWithComponents<AO>,
     >>::Future
-    where DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents<DB, AO>>,
+    where DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents<AO>>,
 {
         let Self { builder, task_executor } = self;
 
@@ -606,11 +597,11 @@ where
 }
 
 /// Captures the necessary context for building the components of the node.
-pub struct BuilderContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+pub struct BuilderContext {
     /// The current head of the blockchain at launch.
     pub(crate) head: Head,
     /// The configured provider to interact with the blockchain.
-    pub(crate) provider: BlockchainProvider<DB>,
+    pub(crate) provider: BlockchainProvider,
     /// The executor of the node.
     pub(crate) executor: TaskExecutor,
     /// Config container
@@ -619,11 +610,11 @@ pub struct BuilderContext<DB: Database + DatabaseMetrics + Clone + Unpin + 'stat
     sender_recovery_cache: Option<base_execution_evm::SenderRecoveryCache>,
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB> {
+impl BuilderContext {
     /// Create a new instance of [`BuilderContext`]
     pub fn new(
         head: Head,
-        provider: BlockchainProvider<DB>,
+        provider: BlockchainProvider,
         executor: TaskExecutor,
         config_container: WithConfigs,
     ) -> Self {
@@ -636,7 +627,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
     }
 
     /// Returns the configured provider to interact with the blockchain.
-    pub const fn provider(&self) -> &BlockchainProvider<DB> {
+    pub const fn provider(&self) -> &BlockchainProvider {
         &self.provider
     }
 
@@ -710,7 +701,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
                 >,
             > + Unpin
             + 'static,
-        BlockchainProvider<DB>: BlockReaderFor,
+        BlockchainProvider: BlockReaderFor,
     {
         self.start_network_with(
             builder,
@@ -742,7 +733,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
                 >,
             > + Unpin
             + 'static,
-        BlockchainProvider<DB>: BlockReaderFor,
+        BlockchainProvider: BlockReaderFor,
         Policy: TransactionPropagationPolicy,
     {
         self.start_network_with_policies(
@@ -778,7 +769,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
                 >,
             > + Unpin
             + 'static,
-        BlockchainProvider<DB>: BlockReaderFor,
+        BlockchainProvider: BlockReaderFor,
         PropPolicy: TransactionPropagationPolicy,
         AnnPolicy: AnnouncementFilteringPolicy,
     {
@@ -837,12 +828,12 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
     pub fn build_network_config(
         &self,
         network_builder: NetworkConfigBuilder,
-    ) -> NetworkConfig<BlockchainProvider<DB>> {
+    ) -> NetworkConfig<BlockchainProvider> {
         network_builder.build(self.provider.clone())
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB> {
+impl BuilderContext {
     /// Creates the [`NetworkBuilder`] for the node.
     pub async fn network_builder(&self) -> eyre::Result<NetworkBuilder<(), ()>> {
         let network_config = self.network_config()?;
@@ -851,7 +842,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
     }
 
     /// Returns the default network config for the node.
-    pub fn network_config(&self) -> eyre::Result<NetworkConfig<BlockchainProvider<DB>>> {
+    pub fn network_config(&self) -> eyre::Result<NetworkConfig<BlockchainProvider>> {
         let network_builder = self.network_config_builder();
         Ok(self.build_network_config(network_builder?))
     }
@@ -876,13 +867,11 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BuilderContext<DB
     }
 }
 
-impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> std::fmt::Debug
-    for BuilderContext<DB>
-{
+impl std::fmt::Debug for BuilderContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BuilderContext")
             .field("head", &self.head)
-            .field("provider", &std::any::type_name::<BlockchainProvider<DB>>())
+            .field("provider", &std::any::type_name::<BlockchainProvider>())
             .field("executor", &self.executor)
             .field("config", &self.config())
             .finish()

@@ -23,7 +23,7 @@ use rayon::slice::ParallelSliceMut;
 use reth_chain_state::ExecutedBlock;
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    database::{Database, ReaderTxnTracker},
+    database::ReaderTxnTracker,
     models::{
         AccountBeforeTx, BlockNumberAddress, StorageBeforeTx, StorageSettings,
         StoredBlockBodyIndices,
@@ -100,43 +100,43 @@ impl CommitOrder {
 }
 
 /// A [`DatabaseProvider`] that holds a read-only database transaction.
-pub type DatabaseProviderRO<DB> = DatabaseProvider<<DB as Database>::TX>;
+pub type DatabaseProviderRO = DatabaseProvider<reth_db::mdbx::tx::Tx<reth_db::mdbx::RO>>;
 
 /// A [`DatabaseProvider`] that holds a read-write database transaction.
 ///
 /// Ideally this would be an alias type. However, there's some weird compiler error (<https://github.com/rust-lang/rust/issues/102211>), that forces us to wrap this in a struct instead.
 /// Once that issue is solved, we can probably revert back to being an alias type.
 #[derive(Debug)]
-pub struct DatabaseProviderRW<DB: Database>(pub DatabaseProvider<<DB as Database>::TXMut>);
+pub struct DatabaseProviderRW(pub DatabaseProvider<reth_db::mdbx::tx::Tx<reth_db::mdbx::RW>>);
 
-impl<DB: Database> Deref for DatabaseProviderRW<DB> {
-    type Target = DatabaseProvider<<DB as Database>::TXMut>;
+impl Deref for DatabaseProviderRW {
+    type Target = DatabaseProvider<reth_db::mdbx::tx::Tx<reth_db::mdbx::RW>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<DB: Database> DerefMut for DatabaseProviderRW<DB> {
+impl DerefMut for DatabaseProviderRW {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<DB: Database> AsRef<DatabaseProvider<<DB as Database>::TXMut>> for DatabaseProviderRW<DB> {
-    fn as_ref(&self) -> &DatabaseProvider<<DB as Database>::TXMut> {
+impl AsRef<DatabaseProvider<reth_db::mdbx::tx::Tx<reth_db::mdbx::RW>>> for DatabaseProviderRW {
+    fn as_ref(&self) -> &DatabaseProvider<reth_db::mdbx::tx::Tx<reth_db::mdbx::RW>> {
         &self.0
     }
 }
 
-impl<DB: Database> DatabaseProviderRW<DB> {
+impl DatabaseProviderRW {
     /// Commit database transaction and static file if it exists.
     pub fn commit(self) -> ProviderResult<()> {
         self.0.commit()
     }
 
     /// Consume `DbTx` or `DbTxMut`.
-    pub fn into_tx(self) -> <DB as Database>::TXMut {
+    pub fn into_tx(self) -> reth_db::mdbx::tx::Tx<reth_db::mdbx::RW> {
         self.0.into_tx()
     }
 
@@ -148,8 +148,8 @@ impl<DB: Database> DatabaseProviderRW<DB> {
     }
 }
 
-impl<DB: Database> From<DatabaseProviderRW<DB>> for DatabaseProvider<<DB as Database>::TXMut> {
-    fn from(provider: DatabaseProviderRW<DB>) -> Self {
+impl From<DatabaseProviderRW> for DatabaseProvider<reth_db::mdbx::tx::Tx<reth_db::mdbx::RW>> {
+    fn from(provider: DatabaseProviderRW) -> Self {
         provider.0
     }
 }
@@ -2246,7 +2246,7 @@ impl<TX: DbTxMut + DbTx + 'static> StateWriter for DatabaseProvider<TX> {
         // [`PruneSegment::ContractLogs`].
         //
         // Receipts can only be skipped if we're dealing with legacy nodes that write them to
-        // Database, OR if receipts_in_static_files is enabled but no receipts exist in static
+        // OR if receipts_in_static_files is enabled but no receipts exist in static
         // files yet. Once receipts exist in static files, we must continue writing to maintain
         // continuity and have no gaps.
         let prunable_receipts = (EitherWriter::receipts_destination(self).is_database()

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_db_common::DbTool;
 use reth_provider::StaticFileProviderFactory;
 use reth_static_file_types::StaticFileSegment;
@@ -34,10 +33,7 @@ enum Source {
 
 impl Command {
     /// Execute `db static-file-header` command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         let static_file_provider = tool.provider_factory.static_file_provider();
         if let Err(err) = static_file_provider.check_consistency(&tool.provider_factory.provider()?)
         {

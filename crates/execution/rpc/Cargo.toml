@@ -18,7 +18,6 @@ tower = { workspace = true }
 thiserror = { workspace = true }
 itertools = { workspace = true }
 dyn-clone = { workspace = true }
-reth-db-api = { workspace = true }
 alloy-serde = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }

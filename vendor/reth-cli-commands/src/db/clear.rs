@@ -3,7 +3,6 @@ use reth_db::static_file::iter_static_files;
 use reth_db_api::{
     TableViewer, Tables,
     database::Database,
-    database_metrics::DatabaseMetrics,
     table::Table,
     transaction::{DbTx, DbTxMut},
 };
@@ -20,10 +19,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db clear` command
-    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
-        self,
-        tool: &DbTool<DB>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         match self.subcommand {
             Subcommands::Mdbx { table } => {
                 table.view(&ClearViewer { db: tool.provider_factory.db_ref() })?

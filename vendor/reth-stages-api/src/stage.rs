@@ -332,7 +332,7 @@ mod tests {
     use reth_db_api::{models::StoredBlockBodyIndices, tables, transaction::DbTxMut};
     use reth_provider::{
         ProviderFactory, StaticFileProviderBuilder, StaticFileProviderFactory, StaticFileSegment,
-        providers::RocksDBProvider, test_utils::MockNodeDatabase,
+        providers::RocksDBProvider,
     };
     use reth_stages_types::StageCheckpoint;
     use reth_testing_utils::{BaseTestData, generators};
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn test_exec_input_next_block_range_with_transaction_threshold() {
         let mut rng = generators::rng();
-        let provider_factory = ProviderFactory::<MockNodeDatabase>::new(
+        let provider_factory = ProviderFactory::new(
             create_test_rw_db(),
             std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
             StaticFileProviderBuilder::read_write(create_test_static_files_dir().0.keep())

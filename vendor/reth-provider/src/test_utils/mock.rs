@@ -24,7 +24,7 @@ use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
 use reth_db::transaction::DbTx;
 use reth_db_api::{
-    mock::{DatabaseMock, TxMock},
+    mock::TxMock,
     models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
 };
 use reth_execution_types::ExecutionOutcome;
@@ -460,7 +460,6 @@ impl ExtendedAccount {
 }
 
 impl DatabaseProviderFactory for MockEthProvider {
-    type DB = DatabaseMock;
     type Provider = Self;
     type ProviderRW = Self;
 

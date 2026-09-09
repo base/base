@@ -131,10 +131,10 @@ impl Setup {
     pub async fn apply<AO>(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     ) -> Result<()>
     where
-        AO: RethRpcAddOns<crate::TmpDB> + 'static,
+        AO: RethRpcAddOns + 'static,
     {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_(env, node_factory)).await
@@ -144,10 +144,10 @@ impl Setup {
     async fn apply_<AO>(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder, AO) + Send + Sync,
     ) -> Result<()>
     where
-        AO: RethRpcAddOns<crate::TmpDB> + 'static,
+        AO: RethRpcAddOns + 'static,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;

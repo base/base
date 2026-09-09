@@ -23,7 +23,6 @@ thiserror = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
-reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
 base-state-api = { workspace = true }
 reth-stages-api = { workspace = true }
@@ -69,6 +68,7 @@ reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
 base-execution-evm = { workspace = true, features = ["metrics", "optional-balance-check", "optional-no-base-fee"] }
 [dev-dependencies]
+reth-db-api = { workspace = true }
 reth-db-common = { workspace = true }
 assert_matches = { workspace = true }
 base-common-evm = { workspace = true }

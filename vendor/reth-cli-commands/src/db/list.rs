@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use alloy_primitives::hex;
 use clap::{Parser, builder::RangedU64ValueParser};
 use eyre::WrapErr;
-use reth_db::{DatabaseEnv, transaction::DbTx};
+use reth_db::transaction::DbTx;
 use reth_db_api::{RawValue, TableViewer, Tables, database::Database, table::Table};
 use reth_db_common::{DbTool, ListFilter};
 use tracing::error;
@@ -53,7 +53,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db list` command
-    pub fn execute(self, tool: &DbTool<DatabaseEnv>) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool) -> eyre::Result<()> {
         self.table.view(&ListTableViewer { tool, args: &self })
     }
 
@@ -86,7 +86,7 @@ impl Command {
 }
 
 struct ListTableViewer<'a> {
-    tool: &'a DbTool<DatabaseEnv>,
+    tool: &'a DbTool,
     args: &'a Command,
 }
 
