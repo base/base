@@ -10,7 +10,7 @@ use std::{
 
 use alloy_primitives::bytes::Bytes;
 use alloy_rlp::Encodable;
-use reth_net_banlist::BanList;
+use base_execution_network_types::BanList;
 use reth_net_nat::{NatResolver, ResolveNatInterval};
 use base_execution_network_types::NodeRecord;
 

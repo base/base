@@ -31,7 +31,6 @@ pin-project = { workspace = true }
 reth-discv5 = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-eth-wire = { workspace = true }
-reth-net-banlist = { workspace = true }
 reth-network-api = { workspace = true }
 reth-dns-discovery = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -59,8 +58,8 @@ reth-eth-wire-types = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-execution-network-types = { workspace = true, features = ["net"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
+base-execution-network-types = {features = ["net", "std"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }

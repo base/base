@@ -1,29 +1,6 @@
-//! Support for banning peers.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-type PeerId = alloy_primitives::B512;
-
 use std::{collections::HashMap, net::IpAddr, str::FromStr, time::Instant};
 
-/// Determines whether or not the IP is globally routable.
-/// Should be replaced with [`IpAddr::is_global`](std::net::IpAddr::is_global) once it is stable.
-pub const fn is_global(ip: &IpAddr) -> bool {
-    if ip.is_unspecified() || ip.is_loopback() {
-        return false;
-    }
-
-    match ip {
-        IpAddr::V4(ip) => !ip.is_private() && !ip.is_link_local(),
-        IpAddr::V6(_) => true,
-    }
-}
+use crate::PeerId;
 
 /// Stores peers that should be taken out of circulation either indefinitely or until a certain
 /// timestamp
@@ -161,58 +138,9 @@ impl BanList {
     /// This does not ban non-global IPs.
     /// If the IP is already banned, the timeout will be updated to the new value.
     pub fn ban_ip_with(&mut self, ip: IpAddr, until: Option<Instant>) {
-        if is_global(&ip) {
+        if IpFilter::is_global(&ip) {
             self.banned_ips.insert(ip, until);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn can_ban_unban_peer() {
-        let peer = PeerId::new([1; 64]);
-        let mut banlist = BanList::default();
-        banlist.ban_peer(peer);
-        assert!(banlist.is_banned_peer(&peer));
-        banlist.unban_peer(&peer);
-        assert!(!banlist.is_banned_peer(&peer));
-    }
-
-    #[test]
-    fn can_ban_unban_ip() {
-        let ip = IpAddr::from([1, 1, 1, 1]);
-        let mut banlist = BanList::default();
-        banlist.ban_ip(ip);
-        assert!(banlist.is_banned_ip(&ip));
-        banlist.unban_ip(&ip);
-        assert!(!banlist.is_banned_ip(&ip));
-    }
-
-    #[test]
-    fn cannot_ban_non_global() {
-        let mut ip = IpAddr::from([0, 0, 0, 0]);
-        let mut banlist = BanList::default();
-        banlist.ban_ip(ip);
-        assert!(!banlist.is_banned_ip(&ip));
-
-        ip = IpAddr::from([10, 0, 0, 0]);
-        banlist.ban_ip(ip);
-        assert!(!banlist.is_banned_ip(&ip));
-
-        ip = IpAddr::from([127, 0, 0, 0]);
-        banlist.ban_ip(ip);
-        assert!(!banlist.is_banned_ip(&ip));
-
-        ip = IpAddr::from([172, 17, 0, 0]);
-        banlist.ban_ip(ip);
-        assert!(!banlist.is_banned_ip(&ip));
-
-        ip = IpAddr::from([172, 16, 0, 0]);
-        banlist.ban_ip(ip);
-        assert!(!banlist.is_banned_ip(&ip));
     }
 }
 
@@ -225,6 +153,19 @@ pub struct IpFilter {
 }
 
 impl IpFilter {
+    /// Determines whether or not the IP is globally routable.
+    /// Should be replaced with [`IpAddr::is_global`](std::net::IpAddr::is_global) once it is stable.
+    pub const fn is_global(ip: &IpAddr) -> bool {
+        if ip.is_unspecified() || ip.is_loopback() {
+            return false;
+        }
+
+        match ip {
+            IpAddr::V4(ip) => !ip.is_private() && !ip.is_link_local(),
+            IpAddr::V6(_) => true,
+        }
+    }
+
     /// Creates a new IP filter with the given CIDR networks.
     ///
     /// If the list is empty, all IPs will be allowed.
@@ -371,5 +312,54 @@ mod ip_filter_tests {
         let filter = IpFilter::from_cidr_string("192.168.1.100/32").unwrap();
         assert!(filter.is_allowed(&IpAddr::from([192, 168, 1, 100])));
         assert!(!filter.is_allowed(&IpAddr::from([192, 168, 1, 101])));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_ban_unban_peer() {
+        let peer = PeerId::new([1; 64]);
+        let mut banlist = BanList::default();
+        banlist.ban_peer(peer);
+        assert!(banlist.is_banned_peer(&peer));
+        banlist.unban_peer(&peer);
+        assert!(!banlist.is_banned_peer(&peer));
+    }
+
+    #[test]
+    fn can_ban_unban_ip() {
+        let ip = IpAddr::from([1, 1, 1, 1]);
+        let mut banlist = BanList::default();
+        banlist.ban_ip(ip);
+        assert!(banlist.is_banned_ip(&ip));
+        banlist.unban_ip(&ip);
+        assert!(!banlist.is_banned_ip(&ip));
+    }
+
+    #[test]
+    fn cannot_ban_non_global() {
+        let mut ip = IpAddr::from([0, 0, 0, 0]);
+        let mut banlist = BanList::default();
+        banlist.ban_ip(ip);
+        assert!(!banlist.is_banned_ip(&ip));
+
+        ip = IpAddr::from([10, 0, 0, 0]);
+        banlist.ban_ip(ip);
+        assert!(!banlist.is_banned_ip(&ip));
+
+        ip = IpAddr::from([127, 0, 0, 0]);
+        banlist.ban_ip(ip);
+        assert!(!banlist.is_banned_ip(&ip));
+
+        ip = IpAddr::from([172, 17, 0, 0]);
+        banlist.ban_ip(ip);
+        assert!(!banlist.is_banned_ip(&ip));
+
+        ip = IpAddr::from([172, 16, 0, 0]);
+        banlist.ban_ip(ip);
+        assert!(!banlist.is_banned_ip(&ip));
     }
 }

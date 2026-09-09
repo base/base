@@ -25,7 +25,7 @@ use reth_discv5::{
     DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL, DEFAULT_SECONDS_LOOKUP_INTERVAL,
     discv5::ListenConfig,
 };
-use reth_net_banlist::IpFilter;
+use base_execution_network_types::IpFilter;
 use reth_net_nat::{DEFAULT_NET_IF_NAME, NatResolver};
 use reth_network::{
     HelloMessageWithProtocols, NetworkConfigBuilder,

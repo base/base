@@ -3579,6 +3579,7 @@ dependencies = [
  "alloy-rlp",
  "base-common-chain-config",
  "enr",
+ "ipnet",
  "rand 0.8.7",
  "rand 0.9.5",
  "secp256k1 0.30.0",
@@ -13825,7 +13826,6 @@ dependencies = [
  "itertools 0.14.0",
  "parking_lot",
  "rand 0.8.7",
- "reth-net-banlist",
  "reth-net-nat",
  "schnellru",
  "secp256k1 0.30.0",
@@ -14360,14 +14360,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-net-banlist"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "ipnet",
-]
-
-[[package]]
 name = "reth-net-nat"
 version = "0.0.0"
 dependencies = [
@@ -14424,7 +14416,6 @@ dependencies = [
  "reth-ecies",
  "reth-eth-wire",
  "reth-eth-wire-types",
- "reth-net-banlist",
  "reth-network",
  "reth-network-api",
  "reth-network-p2p",
@@ -14501,7 +14492,6 @@ dependencies = [
  "alloy-eip2124",
  "base-execution-network-types",
  "humantime-serde",
- "reth-net-banlist",
  "serde",
  "serde_json",
  "tracing",
@@ -14559,7 +14549,6 @@ dependencies = [
  "reth-discv5",
  "reth-engine-local",
  "reth-engine-primitives",
- "reth-net-banlist",
  "reth-net-nat",
  "reth-network",
  "reth-network-p2p",

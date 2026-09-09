@@ -15,7 +15,7 @@ use alloy_primitives::map::{FbBuildHasher, HashMap, HashSet, hash_map::Entry};
 use futures::StreamExt;
 use rand::Rng;
 use reth_eth_wire::{DisconnectReason, errors::EthStreamError};
-use reth_net_banlist::BanList;
+use base_execution_network_types::BanList;
 use reth_network_api::test_utils::{PeerCommand, PeersHandle};
 use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
 use reth_network_types::{
@@ -95,7 +95,7 @@ pub struct PeersManager {
     /// How long to temporarily ban ip on an incoming connection attempt.
     incoming_ip_throttle_duration: Duration,
     /// IP address filter for restricting network connections to specific IP ranges.
-    ip_filter: reth_net_banlist::IpFilter,
+    ip_filter: base_execution_network_types::IpFilter,
     /// If true, discovered peers without a confirmed ENR fork ID will not be added until their
     /// fork ID is verified via EIP-868.
     enforce_enr_fork_id: bool,
@@ -1517,7 +1517,7 @@ mod tests {
         DisconnectReason,
         errors::{EthHandshakeError, EthStreamError, P2PHandshakeError, P2PStreamError},
     };
-    use reth_net_banlist::BanList;
+    use base_execution_network_types::BanList;
     use reth_network_api::Direction;
     use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
     use reth_network_types::{
@@ -3423,7 +3423,7 @@ mod tests {
     async fn test_ip_filter_blocks_inbound_connection() {
         use std::net::IpAddr;
 
-        use reth_net_banlist::IpFilter;
+        use base_execution_network_types::IpFilter;
 
         // Create a filter that only allows 192.168.0.0/16
         let ip_filter = IpFilter::from_cidr_string("192.168.0.0/16").unwrap();
@@ -3443,7 +3443,7 @@ mod tests {
     async fn test_ip_filter_blocks_outbound_connection() {
         use std::net::SocketAddr;
 
-        use reth_net_banlist::IpFilter;
+        use base_execution_network_types::IpFilter;
 
         // Create a filter that only allows 192.168.0.0/16
         let ip_filter = IpFilter::from_cidr_string("192.168.0.0/16").unwrap();
@@ -3468,7 +3468,7 @@ mod tests {
     async fn test_ip_filter_ipv6() {
         use std::net::IpAddr;
 
-        use reth_net_banlist::IpFilter;
+        use base_execution_network_types::IpFilter;
 
         // Create a filter that only allows IPv6 range 2001:db8::/32
         let ip_filter = IpFilter::from_cidr_string("2001:db8::/32").unwrap();
@@ -3488,7 +3488,7 @@ mod tests {
     async fn test_ip_filter_multiple_ranges() {
         use std::net::IpAddr;
 
-        use reth_net_banlist::IpFilter;
+        use base_execution_network_types::IpFilter;
 
         // Create a filter that allows multiple ranges
         let ip_filter = IpFilter::from_cidr_string("192.168.0.0/16,10.0.0.0/8").unwrap();
@@ -3510,7 +3510,7 @@ mod tests {
     async fn test_ip_filter_no_restriction() {
         use std::net::IpAddr;
 
-        use reth_net_banlist::IpFilter;
+        use base_execution_network_types::IpFilter;
 
         // Create a filter with no restrictions (allow all)
         let ip_filter = IpFilter::allow_all();

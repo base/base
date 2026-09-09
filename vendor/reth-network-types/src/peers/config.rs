@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use reth_net_banlist::{BanList, IpFilter};
+use base_execution_network_types::{BanList, IpFilter};
 use base_execution_network_types::{NodeRecord, TrustedPeer};
 
 use crate::{BackoffKind, ReputationChangeWeights, peers::PersistedPeerInfo};

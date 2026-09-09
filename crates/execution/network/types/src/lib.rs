@@ -11,14 +11,19 @@
 extern crate alloc;
 
 mod identity;
-pub use identity::{PeerId, AnyNode, WithPeerId};
-#[cfg(feature = "secp256k1")]
-pub use identity::{pk2id, id2pk};
 #[cfg(feature = "secp256k1")]
 pub use enr::Enr;
+pub use identity::{AnyNode, PeerId, WithPeerId};
+#[cfg(feature = "secp256k1")]
+pub use identity::{id2pk, pk2id};
 mod node_record;
 pub use node_record::{NodeRecord, NodeRecordParseError};
 mod trusted_peer;
 pub use trusted_peer::TrustedPeer;
 mod bootnodes;
 pub use bootnodes::*;
+
+#[cfg(feature = "std")]
+mod banlist;
+#[cfg(feature = "std")]
+pub use banlist::{BanList, IpFilter};

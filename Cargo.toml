@@ -152,7 +152,6 @@ members = [
   "vendor/reth-invalid-block-hooks",
   "vendor/reth-libmdbx",
   "vendor/reth-mdbx-sys",
-  "vendor/reth-net-banlist",
   "vendor/reth-net-nat",
   "vendor/reth-network",
   "vendor/reth-network-api",
@@ -494,7 +493,6 @@ reth-engine-util = { path = "vendor/reth-engine-util", default-features = false 
 reth-engine-tree = { path = "vendor/reth-engine-tree", default-features = false }
 reth-trie-sparse = { path = "vendor/reth-trie-sparse", default-features = false }
 reth-node-events = { path = "vendor/reth-node-events", default-features = false }
-reth-net-banlist = { path = "vendor/reth-net-banlist", default-features = false }
 reth-payload-util = { path = "vendor/reth-payload-util", default-features = false }
 reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }
 reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
