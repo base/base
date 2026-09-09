@@ -290,21 +290,22 @@ dependencies = [
 
 [[package]]
 name = "alloy-hardforks"
-version = "0.4.7"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83ba208044232d14d4adbfa77e57d6329f51bc1acc21f5667bb7db72d88a0831"
+checksum = "3165210652f71dfc094b051602bafd691f506c54050a174b1cba18fb5ef706a3"
 dependencies = [
  "alloy-chains",
  "alloy-eip2124",
  "alloy-primitives",
  "auto_impl",
  "dyn-clone",
- "serde",
 ]
 
 [[package]]
-name = "alloy-hardforks-legacy"
-version = "0.0.0"
+name = "alloy-hardforks"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83ba208044232d14d4adbfa77e57d6329f51bc1acc21f5667bb7db72d88a0831"
 dependencies = [
  "alloy-chains",
  "alloy-eip2124",
@@ -355,7 +356,7 @@ name = "alloy-node-bindings"
 version = "0.0.0"
 dependencies = [
  "alloy-genesis",
- "alloy-hardforks-legacy",
+ "alloy-hardforks 0.2.13",
  "alloy-primitives",
  "alloy-signer",
  "base-common-network",
@@ -2645,7 +2646,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-contract",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-provider",
@@ -2873,7 +2874,7 @@ dependencies = [
  "alloy-chains",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
@@ -2929,7 +2930,7 @@ name = "base-common-evm"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-sol-types",
  "auto_impl",
@@ -2970,7 +2971,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-sol-types",
  "arbitrary",
@@ -3527,7 +3528,7 @@ name = "base-evm-handler"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-signer",
@@ -3559,7 +3560,7 @@ dependencies = [
  "alloy-eip2124",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-trie",
  "auto_impl",
@@ -3581,7 +3582,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "axum",
  "backon",
@@ -3644,7 +3645,7 @@ dependencies = [
  "alloy-chains",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-trie",
  "base-common-chains",
@@ -3729,7 +3730,7 @@ dependencies = [
  "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-debug",
@@ -3788,7 +3789,7 @@ name = "base-execution-payload-builder"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
@@ -3876,7 +3877,7 @@ dependencies = [
  "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-rlp",
@@ -3970,7 +3971,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-debug",
@@ -4024,7 +4025,7 @@ name = "base-execution-txpool"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-signer",
@@ -4243,7 +4244,7 @@ dependencies = [
  "alloy-eip2124",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
@@ -5284,7 +5285,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-provider",
@@ -13971,7 +13972,7 @@ name = "reth-chain-state"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-signer",
  "base-common-consensus",
@@ -14003,7 +14004,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "arbitrary",
@@ -14290,7 +14291,7 @@ name = "reth-discv5"
 version = "0.0.0"
 dependencies = [
  "alloy-eip2124",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "base-execution-chainspec",
@@ -14317,7 +14318,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-eip2124",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "base-execution-chainspec",
@@ -14382,7 +14383,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
@@ -14640,7 +14641,7 @@ dependencies = [
  "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
@@ -14715,7 +14716,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "base-common-consensus",
  "base-execution-chainspec",
@@ -14902,7 +14903,7 @@ dependencies = [
  "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
@@ -15064,7 +15065,7 @@ dependencies = [
  "alloy-chains",
  "alloy-eip2124",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "base-common-consensus",
@@ -15235,7 +15236,7 @@ dependencies = [
  "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "assert_matches",
@@ -15511,7 +15512,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "assert_matches",
@@ -15656,7 +15657,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eip7928",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "auto_impl",
@@ -15962,7 +15963,7 @@ dependencies = [
 name = "revm-inspectors"
 version = "0.0.0"
 dependencies = [
- "alloy-hardforks",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-trace",

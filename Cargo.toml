@@ -324,7 +324,7 @@ alloy-rpc-types-beacon = { path = "vendor/alloy-rpc-types-beacon", default-featu
 alloy-rpc-types-txpool = { path = "vendor/alloy-rpc-types-txpool", default-features = false }
 alloy-rpc-types-engine = { path = "vendor/alloy-rpc-types-engine", default-features = false }
 alloy-network-primitives = { path = "vendor/alloy-network-primitives", default-features = false }
-alloy-hardforks-legacy = { path = "vendor/alloy-hardforks-legacy", default-features = false, package = "alloy-hardforks-legacy" }
+alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }
 
 # reth
 reth-db = { path = "vendor/reth-db", default-features = false }
