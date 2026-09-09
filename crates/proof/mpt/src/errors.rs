@@ -1,4 +1,4 @@
-//! Errors for the `base-consensus-derive` crate.
+//! Errors for the `base-consensus-derive-pipeline` crate.
 
 use alloc::string::String;
 

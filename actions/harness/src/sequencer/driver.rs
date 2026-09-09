@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope};
-use base_consensus_derive::StatefulAttributesBuilder;
+use base_consensus_derive_pipeline::StatefulAttributesBuilder;
 use base_consensus_driver_service::SequencerAdminAPIError;
 use base_consensus_driver_service::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,

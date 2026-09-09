@@ -14,7 +14,7 @@ use base_action_harness::{
 use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_chain_config::SystemConfigUpdate;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_consensus_derive::{
+use base_consensus_derive_pipeline::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,
 };

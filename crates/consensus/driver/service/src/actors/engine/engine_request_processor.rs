@@ -4,7 +4,7 @@ use alloy_eips::BlockNumberOrTag;
 use base_common_chain_config::RollupConfig;
 use base_common_types_chain::BaseTxEnvelope;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_derive::{ResetSignal, Signal};
+use base_consensus_derive_pipeline::{ResetSignal, Signal};
 use base_consensus_engine::{
     ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
@@ -693,7 +693,7 @@ mod tests {
     use base_common_types_rpc::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
-    use base_consensus_derive::Signal;
+    use base_consensus_derive_pipeline::Signal;
     use base_consensus_engine::{
         ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
         EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,

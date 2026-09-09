@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
-use base_consensus_derive::ChainProvider;
+use base_consensus_derive_pipeline::ChainProvider;
 use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_consensus_batch_types::BlockInfo;

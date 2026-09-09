@@ -15,7 +15,7 @@ use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::BaseBlock;
-use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
+use base_consensus_derive_pipeline::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
 use lru::LruCache;

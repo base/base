@@ -15,7 +15,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_ethereum::Provider;
 use base_common_runtime_tasks::RetryConfig;
-use base_consensus_derive::ChainProvider;
+use base_consensus_derive_pipeline::ChainProvider;
 use base_consensus_network_service::BootNode;
 use base_consensus_network_service::BootStoreFile;
 use base_consensus_network_service::ConnectionLimitsConfig;

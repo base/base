@@ -1,4 +1,4 @@
-//! Result types for the `base-consensus-derive` pipeline.
+//! Result types for the `base-consensus-derive-pipeline` pipeline.
 
 use crate::PipelineErrorKind;
 

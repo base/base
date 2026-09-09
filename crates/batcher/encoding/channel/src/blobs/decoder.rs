@@ -40,7 +40,7 @@ pub enum BlobDecodeError {
 ///
 /// This is the inverse of
 /// [`BlobEncoder::encode`](super::BlobEncoder::encode) and mirrors the
-/// decoding logic from `BlobData::decode()` in `base-consensus-derive`.
+/// decoding logic from `BlobData::decode()` in `base-consensus-derive-pipeline`.
 #[derive(Debug)]
 pub struct BlobDecoder;
 

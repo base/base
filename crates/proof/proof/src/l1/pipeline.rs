@@ -7,7 +7,7 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealable;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_consensus_derive::{
+use base_consensus_derive_pipeline::{
     ChainProvider, DataAvailabilityProvider, DerivationPipeline, EthereumDataSource,
     L2ChainProvider, OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
     PolledAttributesQueueStage, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder,

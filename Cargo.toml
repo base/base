@@ -47,7 +47,7 @@ members = [
   "crates/common/types/payload",
   "crates/execution/state/memory",
   "crates/consensus/cli",
-  "crates/consensus/derive",
+  "crates/consensus/derive/pipeline",
   "crates/consensus/engine",
   "crates/consensus/network/service",
   "crates/consensus/batch/types",
@@ -322,7 +322,7 @@ base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
 base-consensus-batch-types = { path = "crates/consensus/batch/types", default-features = false }
 base-consensus-network-service = { path = "crates/consensus/network/service", default-features = false }
 base-consensus-driver-service = { path = "crates/consensus/driver/service", default-features = false }
-base-consensus-derive = { path = "crates/consensus/derive", default-features = false }
+base-consensus-derive-pipeline = { path = "crates/consensus/derive/pipeline", default-features = false }
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
 base-consensus-source-providers = { path = "crates/consensus/source/providers", default-features = false }
 

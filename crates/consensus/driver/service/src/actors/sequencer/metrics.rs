@@ -1,6 +1,6 @@
 //! Metrics helpers for the sequencer actor.
 
-use base_consensus_derive::AttributesBuilder;
+use base_consensus_derive_pipeline::AttributesBuilder;
 
 use crate::{
     Conductor, Metrics, OriginSelector, SequencerActor, SequencerEngineClient,

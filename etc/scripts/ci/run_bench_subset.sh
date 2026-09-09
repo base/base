@@ -29,7 +29,7 @@ run cargo bench -p base-proof-mpt --bench trie_node \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-consensus-batch-types --bench batch_transaction \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-consensus-derive --bench batch_queue --features test-utils \
+run cargo bench -p base-consensus-derive-pipeline --bench batch_queue --features test-utils \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-execution-evm-precompiles --bench base_precompiles --features test-utils \
   -- --save-baseline "$baseline" --noplot

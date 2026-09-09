@@ -15,7 +15,7 @@ no_std_packages=(
   # consensus protocol crates
   base-common-observability-metrics
   base-common-chain-config
-  base-consensus-derive
+  base-consensus-derive-pipeline
   base-consensus-batch-types
 
   # proof crates are checked via check-no-std-proof.sh (nightly, -Zbuild-std=core,alloc),

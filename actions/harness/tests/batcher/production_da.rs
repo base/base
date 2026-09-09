@@ -8,7 +8,7 @@ use base_action_harness::{
 use base_batcher_encoding_channel::{DaType, EncoderConfig};
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{Transaction, transaction::SignerRecoverable};
-use base_consensus_derive::{DataAvailabilityProvider, EthereumDataSource};
+use base_consensus_derive_pipeline::{DataAvailabilityProvider, EthereumDataSource};
 
 fn test_l1_signer() -> PrivateKeySigner {
     PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")

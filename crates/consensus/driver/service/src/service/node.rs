@@ -15,7 +15,7 @@ use alloy_primitives::Address;
 use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::RootProvider;
-use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
+use base_consensus_derive_pipeline::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_source_providers::{
     AlloyChainProvider, LocalL2Provider, OnlineBeaconClient, OnlineBlobProvider, OnlinePipeline,

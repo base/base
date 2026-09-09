@@ -1,4 +1,4 @@
-use base_consensus_derive::Signal;
+use base_consensus_derive_pipeline::Signal;
 use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 use thiserror::Error;
 

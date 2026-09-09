@@ -1,6 +1,6 @@
-# `base-consensus-derive`
+# `base-consensus-derive-pipeline`
 
-<a href="https://crates.io/crates/base-consensus-derive"><img src="https://img.shields.io/crates/v/base-consensus-derive.svg?label=base-consensus-derive&labelColor=2a2f35" alt="base-consensus-derive"></a>
+<a href="https://crates.io/crates/base-consensus-derive-pipeline"><img src="https://img.shields.io/crates/v/base-consensus-derive-pipeline.svg?label=base-consensus-derive-pipeline&labelColor=2a2f35" alt="base-consensus-derive-pipeline"></a>
 
 A `no_std` compatible implementation of Base's [derivation pipeline][derive].
 
@@ -18,14 +18,14 @@ wires all stages together. The crate is `no_std` compatible for use in fault pro
 
 ## Usage
 
-The intended way of working with `base-consensus-derive` is to use the [`DerivationPipeline`][dp] which implements the [`Pipeline`][p] trait. To create an instance of the [`DerivationPipeline`][dp], it's recommended to use the [`PipelineBuilder`][pb] as follows.
+The intended way of working with `base-consensus-derive-pipeline` is to use the [`DerivationPipeline`][dp] which implements the [`Pipeline`][p] trait. To create an instance of the [`DerivationPipeline`][dp], it's recommended to use the [`PipelineBuilder`][pb] as follows.
 
 ```rust,ignore
 use std::sync::Arc;
 use base_common_chain_config::RollupConfig;
-use base_consensus_derive::EthereumDataSource;
-use base_consensus_derive::PipelineBuilder;
-use base_consensus_derive::StatefulAttributesBuilder;
+use base_consensus_derive_pipeline::EthereumDataSource;
+use base_consensus_derive_pipeline::PipelineBuilder;
+use base_consensus_derive_pipeline::StatefulAttributesBuilder;
 
 let chain_provider = todo!();
 let l2_chain_provider = todo!();
@@ -61,15 +61,15 @@ let pipeline = PipelineBuilder::new()
 
 ## Features
 
-The most up-to-date feature list will be available in the [`Cargo.toml`][ff] of the `base-consensus-derive` crate.
+The most up-to-date feature list will be available in the [`Cargo.toml`][ff] of the `base-consensus-derive-pipeline` crate.
 
 Some features include the following.
-- `serde`: Serialization and Deserialization support for `base-consensus-derive` types.
+- `serde`: Serialization and Deserialization support for `base-consensus-derive-pipeline` types.
 - `test-utils`: Test utilities for downstream libraries.
 
-By default, `base-consensus-derive` enables the `serde` feature.
+By default, `base-consensus-derive-pipeline` enables the `serde` feature.
 
-[ff]: https://github.com/base/base/blob/main/crates/consensus/derive/Cargo.toml
+[ff]: https://github.com/base/base/blob/main/crates/consensus/derive/pipeline/Cargo.toml
 
 ## License
 

@@ -5,7 +5,7 @@ use alloy_genesis::ChainConfig;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
-use base_consensus_derive::{
+use base_consensus_derive_pipeline::{
     DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
 };
 use base_consensus_driver_service::GossipTransport;

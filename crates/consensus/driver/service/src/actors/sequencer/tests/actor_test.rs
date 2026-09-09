@@ -14,7 +14,7 @@ use base_common_types_chain::BaseTxEnvelope;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
 };
-use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
+use base_consensus_derive_pipeline::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
 use base_consensus_engine::SealTaskError;
 use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;

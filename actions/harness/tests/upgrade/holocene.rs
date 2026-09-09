@@ -26,8 +26,8 @@ use base_common_chain_config::UpgradeConfig;
 ///
 /// All 4 blocks must derive successfully.
 ///
-/// [`ChannelBank`]: base_consensus_derive::stages::ChannelBank
-/// [`ChannelAssembler`]: base_consensus_derive::stages::ChannelAssembler
+/// [`ChannelBank`]: base_consensus_derive_pipeline::stages::ChannelBank
+/// [`ChannelAssembler`]: base_consensus_derive_pipeline::stages::ChannelAssembler
 #[tokio::test]
 async fn holocene_derivation_crosses_activation_boundary() {
     let batcher_cfg = BatcherConfig {
@@ -98,8 +98,8 @@ async fn holocene_derivation_crosses_activation_boundary() {
 /// - Mine enough empty L1 blocks to exhaust any in-progress channel.
 /// - Verify safe head never advances.
 ///
-/// [`FrameQueue::prune`]: base_consensus_derive::stages::FrameQueue::prune
-/// [`ChannelBank`]: base_consensus_derive::stages::ChannelBank
+/// [`FrameQueue::prune`]: base_consensus_derive_pipeline::stages::FrameQueue::prune
+/// [`ChannelBank`]: base_consensus_derive_pipeline::stages::ChannelBank
 #[tokio::test]
 async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     let batcher_cfg = BatcherConfig {
@@ -203,7 +203,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 /// B's frame 0 arrives. Channel B assembles and derives L2 block 2, but L2
 /// block 1 (from the abandoned channel A) is never derived.
 ///
-/// [`FrameQueue::prune`]: base_consensus_derive::stages::FrameQueue::prune
+/// [`FrameQueue::prune`]: base_consensus_derive_pipeline::stages::FrameQueue::prune
 #[tokio::test]
 async fn holocene_new_channel_abandons_incomplete_old_channel() {
     let batcher_cfg = BatcherConfig {

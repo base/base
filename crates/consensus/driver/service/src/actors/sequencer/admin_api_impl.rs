@@ -1,6 +1,6 @@
 use crate::SequencerAdminAPIError;
 use alloy_primitives::B256;
-use base_consensus_derive::AttributesBuilder;
+use base_consensus_derive_pipeline::AttributesBuilder;
 use tokio::sync::oneshot;
 
 use super::{SequencerActor, build::UnsealedPayloadHandle};

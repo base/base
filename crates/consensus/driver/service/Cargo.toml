@@ -25,7 +25,6 @@ libp2p-stream = { workspace = true }
 alloy-transport = { workspace = true }
 base-consensus-engine = {workspace = true}
 base-execution-trie = { workspace = true }
-base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = {features = ["std"], workspace = true}
@@ -38,6 +37,7 @@ strum = { workspace = true, features = ["derive"] }
 base-consensus-source-providers = {workspace = true}
 bytes = { workspace = true, features = ["default"] }
 ipnet = { workspace = true, features = ["default"] }
+base-consensus-derive-pipeline = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
@@ -78,10 +78,10 @@ metrics-util = { workspace = true, features = ["debugging"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
-base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = {features = ["test-utils"], workspace = true}
 base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
+base-consensus-derive-pipeline = { workspace = true, features = ["test-utils"] }
 base-common-types-payload = { workspace = true, features = ["arbitrary", "std"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
 tokio = {features = ["default", "macros", "rt", "sync", "test-util"], workspace = true}
@@ -89,7 +89,7 @@ tokio = {features = ["default", "macros", "rt", "sync", "test-util"], workspace 
 [features]
 default = []
 metrics = [
-    "base-consensus-derive/metrics",
+    "base-consensus-derive-pipeline/metrics",
     "base-consensus-network-service/metrics",
     "base-consensus-engine/metrics",
     "base-consensus-source-providers/metrics",

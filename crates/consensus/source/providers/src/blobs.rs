@@ -5,7 +5,7 @@ use std::{boxed::Box, string::ToString, vec::Vec};
 use alloy_eips::eip4844::{Blob, Bytes48, env_settings::EnvKzgSettings};
 use alloy_primitives::{B256, FixedBytes};
 use async_trait::async_trait;
-use base_consensus_derive::{BlobProvider, BlobProviderError};
+use base_consensus_derive_pipeline::{BlobProvider, BlobProviderError};
 use base_consensus_batch_types::BlockInfo;
 use tracing::warn;
 
@@ -217,7 +217,7 @@ mod tests {
     use alloy_eips::eip4844::{Blob, env_settings::EnvKzgSettings, kzg_to_versioned_hash};
     use alloy_primitives::{B256, FixedBytes};
     use async_trait::async_trait;
-    use base_consensus_derive::{BlobProvider, BlobProviderError};
+    use base_consensus_derive_pipeline::{BlobProvider, BlobProviderError};
     use base_consensus_batch_types::BlockInfo;
 
     use super::{BlobWithCommitmentAndProof, BoxedBlob, OnlineBlobProvider};

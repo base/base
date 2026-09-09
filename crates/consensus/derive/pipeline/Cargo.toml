@@ -1,5 +1,5 @@
 [package]
-name = "base-consensus-derive"
+name = "base-consensus-derive-pipeline"
 description = "A no_std derivation pipeline implementation for Base"
 version.workspace = true
 edition.workspace = true

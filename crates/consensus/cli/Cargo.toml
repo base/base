@@ -20,7 +20,6 @@ alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-primitives = { workspace = true }
-base-consensus-derive = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-consensus-batch-types = { workspace = true }
@@ -31,6 +30,7 @@ discv5 = { workspace = true, features = ["libp2p"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
+base-consensus-derive-pipeline = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }

@@ -2167,7 +2167,7 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",
@@ -2944,7 +2944,7 @@ dependencies = [
  "base-common-client-ethereum",
  "base-common-runtime-tasks",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",
@@ -2970,7 +2970,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-derive"
+name = "base-consensus-derive-pipeline"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -3021,7 +3021,7 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-consensus-engine",
  "base-consensus-network-service",
  "base-consensus-source-providers",
@@ -3163,7 +3163,7 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-execution-state-api",
  "base-execution-state-types",
  "c-kzg",
@@ -4269,7 +4269,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof-driver",
@@ -4297,7 +4297,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof",
@@ -4340,7 +4340,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-execution-evm-runtime",
  "base-proof-executor",
  "spin 0.10.1",
@@ -5019,7 +5019,7 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-batch-types",
- "base-consensus-derive",
+ "base-consensus-derive-pipeline",
  "base-consensus-driver-service",
  "base-consensus-engine",
  "base-consensus-network-service",

@@ -1,4 +1,4 @@
-use base_consensus_derive::PipelineErrorKind;
+use base_consensus_derive_pipeline::PipelineErrorKind;
 use base_consensus_engine::BuildTaskError;
 
 use crate::{

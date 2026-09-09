@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::{Predeploys, TxDeposit};
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
-use base_consensus_derive::{
+use base_consensus_derive_pipeline::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
 };
 use base_consensus_engine::{Engine, EngineClient, EngineState};
@@ -325,7 +325,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256};
     use base_common_chain_config::{RollupConfig, SystemConfig};
     use base_common_types_chain::{BaseTxEnvelope, Transaction as _};
-    use base_consensus_derive::AttributesBuilder;
+    use base_consensus_derive_pipeline::AttributesBuilder;
     use base_consensus_batch_types::{
         BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L1BlockInfoTx, L2BlockInfo,
     };

@@ -12,7 +12,7 @@ use base_common_types_payload::{
     PayloadStatusEnum,
 };
 use base_common_types_rpc::{BaseTransaction, Block as RpcBlock, BlockTransactions};
-use base_consensus_derive::Signal;
+use base_consensus_derive_pipeline::Signal;
 use base_consensus_engine::{
     Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader,

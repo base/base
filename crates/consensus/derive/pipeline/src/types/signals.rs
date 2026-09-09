@@ -1,4 +1,4 @@
-//! Signal types for the `base-consensus-derive` pipeline.
+//! Signal types for the `base-consensus-derive-pipeline` pipeline.
 //!
 //! Signals are the primary method of communication in the downwards direction
 //! of the pipeline. They allow the pipeline driver to perform actions such as

@@ -1,7 +1,7 @@
 //! Metrics for the derivation pipeline.
 
 base_common_observability_metrics::define_metrics! {
-    base_consensus_derive
+    base_consensus_derive_pipeline
 
     #[describe("The number of decoded singular batches")]
     pipeline_read_batches: gauge,

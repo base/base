@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use base_common_chain_config::RollupConfig;
-use base_consensus_derive::test_utils::TestAttributesBuilder;
+use base_consensus_derive_pipeline::test_utils::TestAttributesBuilder;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 

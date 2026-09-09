@@ -6,7 +6,7 @@ use alloy_rlp::Decodable;
 use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_types_payload::ForkchoiceState;
-use base_consensus_derive::{
+use base_consensus_derive_pipeline::{
     ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
     PipelineErrorKind, PolledAttributesQueueStage, ResetSignal, SignalReceiver,
     StatefulAttributesBuilder, StepResult,

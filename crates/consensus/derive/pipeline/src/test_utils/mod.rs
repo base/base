@@ -1,4 +1,4 @@
-//! Test Utilities for `base-consensus-derive`.
+//! Test Utilities for `base-consensus-derive-pipeline`.
 
 mod pipeline;
 pub use pipeline::{

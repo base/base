@@ -1,6 +1,6 @@
 use alloy_primitives::BlockHash;
 use async_trait::async_trait;
-use base_consensus_derive::ChainProvider;
+use base_consensus_derive_pipeline::ChainProvider;
 use base_consensus_source_providers::AlloyChainProvider;
 use base_consensus_batch_types::{BlockInfo, L2BlockInfo, SyncStatus};
 use thiserror::Error;

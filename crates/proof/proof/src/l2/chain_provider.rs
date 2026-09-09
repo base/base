@@ -8,7 +8,7 @@ use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, BlockBody, Header};
-use base_consensus_derive::L2ChainProvider;
+use base_consensus_derive_pipeline::L2ChainProvider;
 use base_proof_driver::PipelineCursor;
 use base_proof_executor::TrieDBProvider;
 use base_proof_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};

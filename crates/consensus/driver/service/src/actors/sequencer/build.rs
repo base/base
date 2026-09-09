@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Instant};
 
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::PayloadId;
-use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
+use base_consensus_derive_pipeline::{AttributesBuilder, PipelineErrorKind};
 use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;
 

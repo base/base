@@ -1,4 +1,4 @@
-//! Primitive types for `base-consensus-derive`.
+//! Primitive types for `base-consensus-derive-pipeline`.
 
 mod results;
 pub use results::{PipelineResult, StepResult};

@@ -196,7 +196,7 @@ bench-protocol:
 
 # Runs consensus derive batch queue benchmarks
 bench-consensus-derive:
-    cargo bench -p base-consensus-derive --bench batch_queue --features test-utils
+    cargo bench -p base-consensus-derive-pipeline --bench batch_queue --features test-utils
 
 # Runs precompile benchmarks
 bench-precompiles:

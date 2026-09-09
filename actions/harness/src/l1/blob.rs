@@ -1,7 +1,7 @@
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_consensus_derive::{BlobProvider, BlobProviderError};
+use base_consensus_derive_pipeline::{BlobProvider, BlobProviderError};
 use base_consensus_batch_types::BlockInfo;
 
 use crate::SharedL1Chain;

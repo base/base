@@ -2,7 +2,7 @@
 
 use alloc::boxed::Box;
 
-use base_consensus_derive::PipelineErrorKind;
+use base_consensus_derive_pipeline::PipelineErrorKind;
 use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 
