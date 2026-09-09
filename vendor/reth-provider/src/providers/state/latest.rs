@@ -329,12 +329,12 @@ base_execution_state_api::delegate_provider_impls!(LatestStateProvider<Provider>
 mod tests {
     use alloy_primitives::{U256, address, b256, keccak256};
     use base_execution_state_api::{StateReadProvider, StorageSettingsCache};
+    use base_execution_state_types::StorageEntry;
     use reth_db_api::{
         models::StorageSettings,
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::StorageEntry;
 
     use super::*;
     use crate::test_utils::create_test_provider_factory;

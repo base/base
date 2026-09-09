@@ -110,11 +110,11 @@ fn stage_checkpoint_progress(provider: &impl StatsReader) -> ProviderResult<Enti
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, U256};
+    use base_execution_state_types::StorageEntry;
     use reth_db_api::{
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::StorageEntry;
     use reth_provider::test_utils::create_test_provider_factory;
     use reth_stages_api::{ExecInput, Stage, StageCheckpoint};
 

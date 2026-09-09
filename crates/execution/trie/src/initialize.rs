@@ -5,6 +5,10 @@ use std::{collections::HashMap, marker::PhantomData, time::Instant};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
+use base_execution_state_types::StorageEntry;
+use base_execution_state_types::{
+    BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
+};
 use derive_more::Constructor;
 use reth_db::{
     DatabaseError,
@@ -12,11 +16,8 @@ use reth_db::{
     tables,
     transaction::DbTx,
 };
-use reth_primitives_traits::{Account, StorageEntry};
+use reth_primitives_traits::Account;
 use reth_trie::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
-use base_execution_state_types::{
-    BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
-};
 use tracing::{debug, info};
 
 use crate::{

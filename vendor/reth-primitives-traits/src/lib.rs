@@ -161,9 +161,6 @@ pub use alloy_primitives::{Log, LogData, logs_bloom};
 
 pub mod proofs;
 
-mod storage;
-pub use storage::{StorageEntry, ValueWithSubKey};
-
 pub mod sync;
 
 /// Common header types

@@ -28,6 +28,7 @@ use base_execution_network_wire::GetByteCodesMessage;
 use base_execution_network_wire::GetStorageRangesMessage;
 use base_execution_network_wire::Protocol;
 use base_execution_network_wire::StorageRangesMessage;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_network::{
     BlockDownloaderProvider,
@@ -35,7 +36,7 @@ use reth_network::{
     test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
 };
 use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
-use reth_primitives_traits::{Account, Block as _, StorageEntry};
+use reth_primitives_traits::{Account, Block as _};
 use reth_provider::{
     BalProvider, BalStoreHandle, BlockReader, BlockWriter, ChainSpecProvider, HashingWriter,
     HeaderProvider, InMemoryBalStore, ProviderFactory, RawBal, StateProviderFactory,

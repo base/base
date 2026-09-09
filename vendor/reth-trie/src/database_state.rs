@@ -358,12 +358,13 @@ mod tests {
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_types::StateRootError;
+    use base_execution_state_types::StorageEntry;
     use reth_db_api::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,
         transaction::DbTxMut,
     };
-    use reth_primitives_traits::{Account, StorageEntry};
+    use reth_primitives_traits::Account;
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
 
     use super::*;

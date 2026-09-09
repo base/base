@@ -11,6 +11,7 @@ use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_api::{ChangeSetReader, DBProvider, DbTxProvider};
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use rayon::slice::ParallelSliceMut;
 use reth_db::{
@@ -26,7 +27,6 @@ use reth_db_api::{
     tables,
     tables::BlockNumberList,
 };
-use reth_primitives_traits::StorageEntry;
 use strum::{Display, EnumIs};
 
 use crate::{

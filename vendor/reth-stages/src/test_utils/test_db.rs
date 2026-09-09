@@ -4,6 +4,7 @@ use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
 use base_common_types_chain::{BaseReceipt as Receipt, BaseTxEnvelope};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
 use reth_db::{
     DatabaseEnv,
     test_utils::{
@@ -21,7 +22,7 @@ use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::{Account, SealedBlock, SealedHeader, StorageEntry};
+use reth_primitives_traits::{Account, SealedBlock, SealedHeader};
 use reth_provider::{
     DatabaseProviderFactory, EitherWriter, HistoryWriter, ProviderError, ProviderFactory,
     RocksBatchArg, StaticFileProviderFactory, StatsReader,

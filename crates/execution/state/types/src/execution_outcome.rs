@@ -1,6 +1,7 @@
 use alloc::{vec, vec::Vec};
 
 use crate::HashedPostState;
+use crate::StorageEntry;
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{
     Address, B256, BlockNumber, Bloom, Log, U256, logs_bloom,
@@ -10,7 +11,7 @@ use base_common_types_chain::{BaseReceipt, TxReceipt};
 use base_execution_state_memory::AccountInfo;
 use base_execution_state_memory::BundleAccount;
 use base_execution_state_memory::BundleState;
-use reth_primitives_traits::{Account, Bytecode, StorageEntry};
+use reth_primitives_traits::{Account, Bytecode};
 
 use crate::{BlockExecutionOutput, BlockExecutionResult};
 

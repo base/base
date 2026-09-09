@@ -881,13 +881,14 @@ mod tests {
         StorageSettingsCache,
     };
     use base_execution_state_types::ProviderError;
+    use base_execution_state_types::StorageEntry;
     use reth_db_api::{
         BlockNumberList,
         models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::{Account, StorageEntry};
+    use reth_primitives_traits::Account;
     use reth_storage_overlay::OverlayManager;
 
     use super::needs_prev_shard_check;

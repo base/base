@@ -159,3 +159,6 @@ mod execution_outcome;
 pub use execution_outcome::{
     AccountRevertInit, BundleStateInit, ChangedAccount, ExecutionOutcome, RevertsInit,
 };
+
+mod storage_entry;
+pub use storage_entry::{StorageEntry, ValueWithSubKey};

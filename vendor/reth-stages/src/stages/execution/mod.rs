@@ -741,12 +741,13 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_runtime::database::{AccountStatus, BundleAccount};
+    use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
     use reth_db_api::{
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock, StorageEntry};
+    use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock};
     use reth_provider::{
         AccountReader, BlockWriter, DatabaseProviderFactory, HashingWriter, ReceiptProvider,
         StaticFileProviderFactory,

@@ -38,4 +38,5 @@ assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-stages = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
+base-execution-state-types = {workspace = true, features = ["arbitrary"]}
 base-common-observability-tracing = { workspace = true, features = ["default"] }

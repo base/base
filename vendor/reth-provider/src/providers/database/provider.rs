@@ -24,6 +24,7 @@ use base_execution_state_api::{
     WriteStateInput,
 };
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
     BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
 };
@@ -49,7 +50,7 @@ use reth_db_api::{
 };
 use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
-    SealedHeader, StorageEntry,
+    SealedHeader,
 };
 use reth_storage_overlay::OverlayManager;
 use reth_trie::{

@@ -3,13 +3,14 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
+use base_execution_state_types::StorageEntry;
 use proptest::prelude::*;
 use reth_db::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRW},
     tables,
     transaction::DbTxMut,
 };
-use reth_primitives_traits::{Account, StorageEntry};
+use reth_primitives_traits::Account;
 use reth_provider::test_utils::create_test_provider_factory;
 use reth_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseTrieCursorFactory,

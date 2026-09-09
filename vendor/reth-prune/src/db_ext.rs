@@ -190,8 +190,8 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::{B256, U256};
+    use base_execution_state_types::StorageEntry;
     use reth_db_api::{tables, transaction::DbTxMut};
-    use reth_primitives_traits::StorageEntry;
     use reth_provider::{DBProvider, DatabaseProviderFactory};
     use reth_stages::test_utils::TestStageDB;
 

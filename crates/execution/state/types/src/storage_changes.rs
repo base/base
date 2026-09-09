@@ -1,5 +1,5 @@
+use crate::ValueWithSubKey;
 use alloy_primitives::{Address, B256, U256};
-use reth_primitives_traits::ValueWithSubKey;
 
 /// Storage entry as it is saved in the static files.
 ///
@@ -7,7 +7,10 @@ use reth_primitives_traits::ValueWithSubKey;
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
+#[cfg_attr(
+    any(test, feature = "reth-codec"),
+    base_common_types_chain::add_arbitrary_tests(compact)
+)]
 pub struct StorageBeforeTx {
     /// Address for the storage entry. Acts as `DupSort::SubKey` in static files.
     pub address: Address,

@@ -5,8 +5,9 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_state_types::ProviderResult;
+use base_execution_state_types::StorageEntry;
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
-use reth_primitives_traits::{Account, StorageEntry};
+use reth_primitives_traits::Account;
 use reth_trie::{DatabaseStateRoot, StateRoot};
 
 use crate::{

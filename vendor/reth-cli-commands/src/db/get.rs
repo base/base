@@ -2,6 +2,7 @@ use alloy_primitives::{Address, B256, BlockHash, hex};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use base_execution_state_api::StorageChangeSetReader;
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::ValueWithSubKey;
 use clap::Parser;
 use reth_db::{
     RawDupSort,
@@ -20,7 +21,6 @@ use reth_db_api::{
     transaction::DbTx,
 };
 use reth_db_common::DbTool;
-use reth_primitives_traits::ValueWithSubKey;
 use reth_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
 use tracing::error;
 
@@ -150,7 +150,7 @@ impl Command {
                         )?;
 
                         if let Some(entry) = entry {
-                            let se: reth_primitives_traits::StorageEntry = entry;
+                            let se: base_execution_state_types::StorageEntry = entry;
                             println!("{}", serde_json::to_string_pretty(&se)?);
                         } else {
                             error!(target: "reth::cli", "No content for the given table key.");
@@ -162,7 +162,7 @@ impl Command {
                     let serializable: Vec<_> = changesets
                         .into_iter()
                         .map(|(addr, entry)| {
-                            let se: reth_primitives_traits::StorageEntry = entry;
+                            let se: base_execution_state_types::StorageEntry = entry;
                             (addr, se)
                         })
                         .collect();
@@ -591,7 +591,7 @@ impl TableViewer<()> for GetValueViewer<'_> {
 
     fn view_dupsort<T: DupSort>(&self) -> Result<(), Self::Error>
     where
-        T::Value: reth_primitives_traits::ValueWithSubKey<SubKey = T::SubKey>,
+        T::Value: base_execution_state_types::ValueWithSubKey<SubKey = T::SubKey>,
     {
         // get a key for given table
         let key = table_key::<T>(&self.key)?;

@@ -1,10 +1,10 @@
 use base_common_types_chain::DecompressError;
+use base_execution_state_types::ValueWithSubKey;
 use bytes::{Buf, BufMut};
 use reth_db::{
     DatabaseError,
     table::{Compress, Decompress},
 };
-use reth_primitives_traits::ValueWithSubKey;
 use serde::{Deserialize, Serialize};
 
 /// Wrapper type for `Option<T>` that implements [`Compress`] and [`Decompress`]

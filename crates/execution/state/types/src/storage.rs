@@ -1,4 +1,4 @@
-use reth_primitives_traits::ValueWithSubKey;
+use crate::ValueWithSubKey;
 
 use super::{BranchNodeCompact, PackedStoredNibblesSubKey, StoredNibblesSubKey};
 

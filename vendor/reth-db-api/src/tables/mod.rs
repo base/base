@@ -21,13 +21,14 @@ use std::fmt;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_types_chain::{EthereumReceipt as Receipt, Header};
 use base_execution_state_types::StageCheckpoint;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
     BranchNodeCompact, PackedStorageTrieEntry, PackedStoredNibbles, PackedStoredNibblesSubKey,
     StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
-use reth_primitives_traits::{Account, Bytecode, StorageEntry};
+use reth_primitives_traits::{Account, Bytecode};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -100,7 +101,7 @@ pub trait TableViewer<R> {
     /// By default, the `view` function is invoked unless overridden.
     fn view_dupsort<T: DupSort>(&self) -> Result<R, Self::Error>
     where
-        T::Value: reth_primitives_traits::ValueWithSubKey<SubKey = T::SubKey>,
+        T::Value: base_execution_state_types::ValueWithSubKey<SubKey = T::SubKey>,
     {
         self.view::<T>()
     }

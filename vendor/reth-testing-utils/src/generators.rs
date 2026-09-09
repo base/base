@@ -18,11 +18,11 @@ use base_common_types_chain::{
     EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
     SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
 };
+use base_execution_state_types::StorageEntry;
 pub use rand::Rng;
 use rand::{SeedableRng, distr::uniform::SampleRange, rngs::StdRng};
 use reth_primitives_traits::{
-    Account, Block as _, Log, SealedBlock, SealedHeader, StorageEntry,
-    crypto::secp256k1::sign_message, proofs,
+    Account, Block as _, Log, SealedBlock, SealedHeader, crypto::secp256k1::sign_message, proofs,
 };
 use secp256k1::{Keypair, Secp256k1};
 

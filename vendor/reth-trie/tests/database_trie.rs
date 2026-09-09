@@ -7,6 +7,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::Encodable;
 use base_common_types_chain::EMPTY_ROOT_HASH;
+use base_execution_state_types::StorageEntry;
 use proptest::{prelude::ProptestConfig, proptest};
 use proptest_arbitrary_interop::arb;
 use reth_db::tables;
@@ -14,7 +15,7 @@ use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
     transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::{Account, StorageEntry};
+use reth_primitives_traits::Account;
 use reth_provider::{
     DatabaseProviderRW, StorageTrieWriter, TrieWriter, test_utils::create_test_provider_factory,
 };

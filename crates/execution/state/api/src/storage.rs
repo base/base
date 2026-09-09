@@ -6,7 +6,7 @@ use core::ops::RangeInclusive;
 
 use alloy_primitives::{Address, B256, BlockNumber};
 use base_execution_state_types::ProviderResult;
-use reth_primitives_traits::StorageEntry;
+use base_execution_state_types::StorageEntry;
 
 /// Storage reader
 #[auto_impl::auto_impl(&, Arc, Box)]

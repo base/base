@@ -49,6 +49,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["reth-codec"] }
+base-execution-state-types = {workspace = true, features = ["reth-codec"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [features]
@@ -71,11 +72,13 @@ test-utils = [
     "reth-db-api/test-utils",
     "reth-nippy-jar/test-utils",
     "reth-primitives-traits/test-utils",
+    "base-execution-state-types/test-utils",
 ]
 arbitrary = [
     "reth-db-api/arbitrary",
     "alloy-primitives/arbitrary",
     "base-common-types-chain/arbitrary",
     "reth-primitives-traits/arbitrary",
+    "base-execution-state-types/arbitrary",
 ]
 disable-lock = []

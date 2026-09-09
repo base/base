@@ -6,9 +6,10 @@ use alloy_primitives::{
 };
 use alloy_rlp::EMPTY_STRING_CODE;
 use base_common_types_chain::EMPTY_ROOT_HASH;
+use base_execution_state_types::StorageEntry;
 use reth_db::{cursor::DbCursorRW, tables};
 use reth_db_api::transaction::DbTxMut;
-use reth_primitives_traits::{Account, StorageEntry};
+use reth_primitives_traits::Account;
 use reth_provider::{HashingWriter, test_utils::create_test_provider_factory};
 use reth_trie::{
     DatabaseHashedCursorFactory, DatabaseProof, DatabaseStateRoot, DatabaseStorageRoot,

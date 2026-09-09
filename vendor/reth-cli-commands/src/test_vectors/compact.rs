@@ -17,6 +17,7 @@ use base_common_types_chain::{
         withdrawal::Withdrawal,
     },
 };
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
     AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint, ExecutionCheckpoint,
     HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint, StageUnitCheckpoint,
@@ -38,7 +39,7 @@ use reth_db::{
         StoredBlockWithdrawals,
     },
 };
-use reth_primitives_traits::{Account, Log, LogData, StorageEntry};
+use reth_primitives_traits::{Account, Log, LogData};
 use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
 
 pub const VECTORS_FOLDER: &str = "testdata/micro/compact";

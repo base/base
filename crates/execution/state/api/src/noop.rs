@@ -424,7 +424,7 @@ impl StorageChangeSetReader for NoopProvider {
         &self,
         _block_number: BlockNumber,
     ) -> ProviderResult<
-        Vec<(reth_db_api::models::BlockNumberAddress, reth_primitives_traits::StorageEntry)>,
+        Vec<(reth_db_api::models::BlockNumberAddress, base_execution_state_types::StorageEntry)>,
     > {
         Ok(Vec::default())
     }
@@ -434,7 +434,7 @@ impl StorageChangeSetReader for NoopProvider {
         _block_number: BlockNumber,
         _address: Address,
         _storage_key: B256,
-    ) -> ProviderResult<Option<reth_primitives_traits::StorageEntry>> {
+    ) -> ProviderResult<Option<base_execution_state_types::StorageEntry>> {
         Ok(None)
     }
 
@@ -442,7 +442,7 @@ impl StorageChangeSetReader for NoopProvider {
         &self,
         _range: impl core::ops::RangeBounds<BlockNumber>,
     ) -> ProviderResult<
-        Vec<(reth_db_api::models::BlockNumberAddress, reth_primitives_traits::StorageEntry)>,
+        Vec<(reth_db_api::models::BlockNumberAddress, base_execution_state_types::StorageEntry)>,
     > {
         Ok(Vec::default())
     }

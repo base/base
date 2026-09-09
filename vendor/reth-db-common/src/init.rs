@@ -9,6 +9,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
 use base_execution_state_types::StateRootError;
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_config::config::EtlConfig;
 use reth_db_api::{
@@ -19,7 +20,7 @@ use reth_db_api::{
     transaction::DbTxMut,
 };
 use reth_etl::Collector;
-use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader, StorageEntry};
+use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader};
 use reth_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,

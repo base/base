@@ -304,8 +304,8 @@ mod tests {
     fn dense_block_advances_rocksdb_checkpoint() {
         use alloy_primitives::U256;
         use base_execution_state_api::StorageSettings;
+        use base_execution_state_types::StorageEntry;
         use reth_db_api::models::storage_sharded_key::StorageShardedKey;
-        use reth_primitives_traits::StorageEntry;
         use reth_provider::RocksDBProviderFactory;
 
         let db = TestStageDB::default();

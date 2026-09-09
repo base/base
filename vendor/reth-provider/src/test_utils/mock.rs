@@ -27,6 +27,7 @@ use base_execution_state_api::{
     StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use base_execution_state_types::ExecutionOutcome;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
@@ -39,7 +40,7 @@ use reth_db_api::{
 };
 use reth_primitives_traits::{
     Account, Block, BlockBody, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
-    SignerRecoverable, StorageEntry,
+    SignerRecoverable,
 };
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
@@ -254,9 +255,8 @@ impl MockEthProvider {
             provider.insert_account_for_hashing([(*address, Some(account.account))])?;
             provider.insert_storage_for_hashing([(
                 *address,
-                account.storage.iter().map(|(key, value)| reth_primitives_traits::StorageEntry {
-                    key: *key,
-                    value: *value,
+                account.storage.iter().map(|(key, value)| {
+                    base_execution_state_types::StorageEntry { key: *key, value: *value }
                 }),
             )])?;
             if let Some(bytecode) = &account.bytecode {

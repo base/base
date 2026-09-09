@@ -364,13 +364,13 @@ impl<T: DupSort> DbDupCursorRW<T> for Cursor<RW, T> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
+    use base_execution_state_types::StorageEntry;
     use reth_db_api::{
         cursor::{DbCursorRO, DbDupCursorRW},
         models::{BlockNumberAddress, ClientVersion},
         table::TableImporter,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::StorageEntry;
     use tempfile::TempDir;
 
     use crate::{

@@ -20,6 +20,7 @@ use base_execution_state_api::{
 };
 use base_execution_state_types::PipelineTarget;
 use base_execution_state_types::PruneSegment;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
     DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles, SegmentHeader, SegmentRangeInclusive,
     StaticFileMap, StaticFileSegment, find_fixed_range,
@@ -43,7 +44,7 @@ use reth_db_api::{
 };
 use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
-    AlloyBlockHeader as _, RecoveredBlock, SealedHeader, StorageEntry, dashmap::DashMap,
+    AlloyBlockHeader as _, RecoveredBlock, SealedHeader, dashmap::DashMap,
 };
 use tracing::{debug, info, info_span, instrument, trace, warn};
 

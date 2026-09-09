@@ -28,10 +28,10 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-execution-state-types = {features = ["rayon"], workspace = true}
 base-execution-state-api = { workspace = true, features = ["db-api"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
+base-execution-state-types = {features = ["rayon", "std"], workspace = true}
 base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
 
 [dev-dependencies]

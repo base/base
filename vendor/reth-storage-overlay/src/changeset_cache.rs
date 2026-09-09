@@ -619,13 +619,14 @@ mod tests {
     };
     use base_common_types_chain::Header;
     use base_execution_state_api::TrieWriter;
+    use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
     use reth_db::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,
         transaction::DbTxMut,
     };
-    use reth_primitives_traits::{Account, StorageEntry};
+    use reth_primitives_traits::Account;
     use reth_provider::{
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
         test_utils::create_test_provider_factory,

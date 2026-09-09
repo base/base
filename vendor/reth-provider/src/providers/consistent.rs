@@ -18,13 +18,12 @@ use base_execution_state_api::{
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
-use reth_primitives_traits::{
-    BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
-};
+use reth_primitives_traits::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{
