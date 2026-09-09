@@ -37,12 +37,12 @@ ripemd = { workspace = true }
 arrayref = { workspace = true }
 sha2_0_11_0 = { workspace = true }
 ark-serialize = { workspace = true }
-revm-primitives = { workspace = true }
 aurora-engine-modexp = { workspace = true }
 ark-ff = { workspace = true, features = ["asm"] }
 base-execution-evm-machine = { workspace = true }
 k256 = { workspace = true, features = ["ecdsa"] }
 p256 = { workspace = true, features = ["ecdsa"] }
+base-execution-evm-primitives = { workspace = true }
 gmp-mpfr-sys = { workspace = true, optional = true }
 substrate-bn = { workspace = true, optional = true }
 ark-bls12-381 = { workspace = true, features = ["curve"] }
@@ -68,7 +68,7 @@ codspeed-criterion-compat_5_0 = { workspace = true, features = ["default"] }
 workspace = true
 
 [features]
-asm-keccak = ["revm-primitives/asm-keccak"]
+asm-keccak = ["base-execution-evm-primitives/asm-keccak"]
 blst = ["dep:blst"]
 bn = ["dep:substrate-bn"]
 c-kzg = ["dep:c-kzg"]
@@ -80,12 +80,12 @@ default = [
     "portable",
 ]
 gmp = ["dep:gmp-mpfr-sys"]
-hashbrown = ["revm-primitives/hashbrown"]
+hashbrown = ["base-execution-evm-primitives/hashbrown"]
 p256-aws-lc-rs = ["dep:aws-lc-rs"]
 portable = ["c-kzg?/portable", "blst?/portable"]
 secp256k1 = ["dep:secp256k1_0_31_1"]
 std = [
-    "revm-primitives/std",
+    "base-execution-evm-primitives/std",
     "base-execution-evm-machine/std",
     "k256/std",
     "c-kzg?/std",

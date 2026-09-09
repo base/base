@@ -1,13 +1,13 @@
 use std::{borrow::Cow, format};
 
-use revm_primitives::B256;
+use base_execution_evm_primitives::B256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::ExtBytecode;
 
 #[derive(Serialize, Deserialize)]
 struct ExtBytecodeSerde<'a> {
-    base: Cow<'a, revm_bytecode::Bytecode>,
+    base: Cow<'a, base_execution_evm_primitives::Bytecode>,
     program_counter: usize,
     bytecode_hash: Option<B256>,
 }

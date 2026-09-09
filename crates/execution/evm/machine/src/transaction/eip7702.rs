@@ -1,6 +1,6 @@
 //! EIP-7702 Account Abstraction transaction interface.
 use auto_impl::auto_impl;
-use revm_primitives::{Address, U256};
+use base_execution_evm_primitives::{Address, U256};
 
 /// Authorization trait.
 #[auto_impl(&, Box, Arc, Rc)]

@@ -1,6 +1,6 @@
 [package]
-name = "revm-primitives"
-description = "Revm primitives types"
+name = "base-execution-evm-primitives"
+description = "Base EVM constants, fork identifiers, bytecode, and opcodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,7 @@ build = false
 autolib = false
 autobins = false
 autoexamples = false
-autotests = false
+autotests = true
 autobenches = false
 readme = "README.md"
 
@@ -27,10 +27,13 @@ rustdoc-args = [
 ]
 
 [lib]
-name = "revm_primitives"
 path = "src/lib.rs"
 
 [dependencies]
+paste = { workspace = true, optional = true }
+bitvec = { workspace = true, features = ["alloc"] }
+phf = { workspace = true, features = ["macros"], optional = true }
+serde = {optional = true, features = ["derive", "rc"], workspace = true}
 once_cell = { workspace = true, features = [
     "alloc",
     "race",
@@ -40,32 +43,37 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
     "map",
 ] }
-serde = { workspace = true, features = [
-    "derive",
-    "rc",
-    "derive",
-    "rc",
-], optional = true }
+
 [lints]
 workspace = true
 
+[dev-dependencies]
+serde_json = { workspace = true }
+anyhow = { workspace = true, features = ["default"] }
+rand_0_10_2 = { workspace = true, features = ["default"] }
+
 [features]
-arbitrary = [
-    "std",
-    "alloy-primitives/arbitrary",
-]
+arbitrary = ["std", "alloy-primitives/arbitrary"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-default = ["std"]
+default = ["std", "parse"]
 hashbrown = ["alloy-primitives/map-hashbrown"]
 map-foldhash = ["alloy-primitives/map-foldhash"]
 rand = ["alloy-primitives/rand"]
 serde = [
     "dep:serde",
     "alloy-primitives/serde",
+    "bitvec/serde",
+    "phf?/serde",
 ]
 sha3-keccak = ["alloy-primitives/sha3-keccak"]
 std = [
     "alloy-primitives/std",
     "serde?/std",
     "once_cell/std",
+    "serde_json/std",
+    "bitvec/std",
+    "phf?/std",
 ]
+parse = ["phf", "paste"]
+serde-json = ["serde"]
+

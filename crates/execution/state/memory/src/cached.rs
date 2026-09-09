@@ -5,8 +5,8 @@ use alloy_primitives::{
     Address, B256, U256,
     map::{AddressMap, B256Map, Entry, HashMap, U256Map},
 };
+use base_execution_evm_primitives::Bytecode;
 use base_execution_state_memory::AccountInfo;
-use revm_bytecode::Bytecode;
 
 use crate::{Database, DatabaseRef};
 

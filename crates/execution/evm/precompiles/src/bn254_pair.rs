@@ -60,8 +60,8 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> Precompi
 
 #[cfg(test)]
 mod tests {
+    use base_execution_evm_primitives::hex;
     use revm_precompile::bn254;
-    use revm_primitives::hex;
 
     use crate::{JOVIAN_MAX_INPUT_SIZE, run_pair_granite, run_pair_jovian};
 

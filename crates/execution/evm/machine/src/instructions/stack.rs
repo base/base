@@ -1,4 +1,4 @@
-use revm_primitives::U256;
+use base_execution_evm_primitives::U256;
 
 use crate::{InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult};
 
@@ -121,8 +121,8 @@ const fn decode_pair(x: usize) -> Option<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use revm_bytecode::{Bytecode, opcode::*};
-    use revm_primitives::{Bytes, U256, hardfork::SpecId};
+    use base_execution_evm_primitives::{Bytecode, opcode::*};
+    use base_execution_evm_primitives::{Bytes, U256, hardfork::SpecId};
 
     use crate::{
         DummyHost, Interpreter,

@@ -4,7 +4,7 @@ use base_execution_evm_machine::{
     Host, Instruction,
     instructions::{GasTable, InstructionTable, gas_table_spec},
 };
-use revm_primitives::hardfork::SpecId;
+use base_execution_evm_primitives::hardfork::SpecId;
 
 /// Ethereum instruction contains list of mainnet instructions that is used for Interpreter execution.
 #[derive(Debug)]

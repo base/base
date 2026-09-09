@@ -7,9 +7,9 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 
-pub use revm_bytecode as bytecode;
-pub use revm_bytecode::Bytecode;
-pub use revm_primitives as primitives;
+pub use base_execution_evm_primitives as bytecode;
+pub use base_execution_evm_primitives as primitives;
+pub use base_execution_evm_primitives::Bytecode;
 extern crate self as base_execution_state_memory;
 
 mod stored_account;

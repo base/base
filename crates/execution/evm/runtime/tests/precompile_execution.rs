@@ -7,17 +7,17 @@ use base_execution_evm_machine::{
 use base_execution_evm_runtime::EvmMachine;
 use base_execution_state_memory::InMemoryDB;
 
+use base_execution_evm_primitives::{TxKind, U256, address, hardfork::SpecId};
 use base_execution_state_memory::AccountInfo;
-use revm_primitives::{TxKind, U256, address, hardfork::SpecId};
 
 use base_execution_evm_machine::{CallInputs, InstructionResult, InterpreterResult};
 use base_execution_evm_machine::{Cfg, ContextTr};
 use base_execution_evm_precompiles::{
     EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
 };
+use base_execution_evm_primitives::{Address, AddressSet, Bytes};
 use base_execution_evm_runtime::{EthInstructions, ExecuteEvm, MainContext};
 use revm_precompile::{PrecompileOutput, PrecompileStatus};
-use revm_primitives::{Address, AddressSet, Bytes};
 
 /// Test-only address that hosts an over-spending precompile.
 const OVERSPEND_PRECOMPILE: Address = address!("0000000000000000000000000000000000000100");

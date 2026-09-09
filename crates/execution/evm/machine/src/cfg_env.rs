@@ -1,6 +1,6 @@
 //! This module contains [`CfgEnv`] and implements [`Cfg`] trait for it.
 use base_execution_evm_machine::{Cfg, GasParams};
-use revm_primitives::{eip170, eip3860, eip7825, eip7954, hardfork::SpecId};
+use base_execution_evm_primitives::{eip170, eip3860, eip7825, eip7954, hardfork::SpecId};
 
 /// EVM configuration
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -55,8 +55,8 @@ pub struct CfgEnv<SPEC = SpecId> {
     /// If this config is not set, the blob base fee update fraction will be set to the default value.
     /// See also [CfgEnv::blob_base_fee_update_fraction].
     ///
-    /// Default values for Cancun is [`revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN`]
-    /// and for Prague is [`revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE`].
+    /// Default values for Cancun is [`base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN`]
+    /// and for Prague is [`base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE`].
     pub blob_base_fee_update_fraction: Option<u64>,
     /// Configures the gas limit cap for the transaction.
     ///
@@ -380,15 +380,15 @@ impl<SPEC: Into<SpecId> + Clone> CfgEnv<SPEC> {
     ///
     /// If this field is not set, return the default value for the spec.
     ///
-    /// Default values for Cancun is [`revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN`]
-    /// and for Prague is [`revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE`].
+    /// Default values for Cancun is [`base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN`]
+    /// and for Prague is [`base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE`].
     pub fn blob_base_fee_update_fraction(&self) -> u64 {
         self.blob_base_fee_update_fraction.unwrap_or_else(|| {
             let spec: SpecId = self.spec.clone().into();
             if spec.is_enabled_in(SpecId::PRAGUE) {
-                revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+                base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
             } else {
-                revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+                base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
             }
         })
     }

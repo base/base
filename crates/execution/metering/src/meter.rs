@@ -16,6 +16,7 @@ use base_execution_evm_machine::GasParams;
 use base_execution_evm_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
+use base_execution_evm_primitives::opcode::OpCode;
 use base_execution_evm_runtime::TxResult as _;
 use base_execution_evm_runtime::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_execution_evm_runtime::{
@@ -25,7 +26,6 @@ use base_execution_evm_runtime::{
 };
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::{Account, SealedHeader};
-use revm_bytecode::opcode::OpCode;
 
 use crate::{inspector::MeteringInspector, transaction::validate_tx};
 

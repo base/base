@@ -27,13 +27,12 @@ bitflags = { workspace = true }
 auto_impl = { workspace = true }
 thiserror = { workspace = true }
 alloy-trie = { workspace = true }
-revm-bytecode = {workspace = true}
 alloy-eip7928 = { workspace = true }
 alloy-genesis = { workspace = true }
-revm-primitives = {workspace = true}
 alloy-primitives = { workspace = true }
 bytes = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
+base-execution-evm-primitives = {workspace = true}
 modular-bitfield = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref", "debug"] }
 arbitrary = { workspace = true, optional = true, features = ["derive"]}
@@ -55,24 +54,22 @@ workspace = true
 default = ["std"]
 serde = [
     "dep:serde",
-    "revm-primitives/serde",
+    "base-execution-evm-primitives/serde",
     "either/serde",
     "alloy-primitives/serde",
-    "revm-bytecode/serde",
     "bitflags/serde",
     "alloy-eip7928/serde",
     "nonmax/serde",
 ]
 std = [
     "serde?/std",
-    "revm-primitives/std",
+    "base-execution-evm-primitives/std",
     "either/std",
     "thiserror/std",
     "base-common-types-chain/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
     "alloy-trie/std",
-    "revm-bytecode/std",
     "derive_more/std",
     "serde_json/std",
     "bitflags/std",
@@ -82,4 +79,4 @@ std = [
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
 reth-codec = ["dep:bytes", "dep:modular-bitfield", "base-common-types-chain/alloy"]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils"]
-map-foldhash = ["revm-primitives/map-foldhash"]
+map-foldhash = ["base-execution-evm-primitives/map-foldhash"]

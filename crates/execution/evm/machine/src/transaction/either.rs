@@ -1,5 +1,5 @@
+use base_execution_evm_primitives::{Address, B256, Bytes, TxKind, U256};
 use either::Either;
-use revm_primitives::{Address, B256, Bytes, TxKind, U256};
 
 use super::Transaction;
 

@@ -1,6 +1,6 @@
 //! Gas constants and functions for gas calculation.
 
-use revm_primitives::hardfork::SpecId;
+use base_execution_evm_primitives::hardfork::SpecId;
 
 use crate::{
     Transaction,

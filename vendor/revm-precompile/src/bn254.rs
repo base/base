@@ -208,7 +208,7 @@ pub fn run_pair(
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::hex;
+    use base_execution_evm_primitives::hex;
 
     use super::*;
     use crate::{

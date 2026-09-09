@@ -21,9 +21,9 @@
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
 use base_execution_evm_machine::InterpreterResult;
 use base_execution_evm_machine::{ContextSetters, ContextTr, ExecResultAndState, TxEnv};
+use base_execution_evm_primitives::{Address, Bytes, TxKind, address, eip8037};
 use base_execution_evm_runtime::EvmMachine;
 use base_execution_state_memory::DatabaseCommit;
-use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
 
 use crate::{ExecuteCommitEvm, ExecuteEvm, Handler, MainnetHandler, PrecompileProvider};
 
@@ -266,9 +266,9 @@ mod tests {
     use base_execution_evm_machine::{
         Context, ExecutionResult, Output, ResultGas, SuccessReason, Transaction,
     };
+    use base_execution_evm_primitives::{StorageKey, U256, b256, bytes};
     use base_execution_state_memory::InMemoryDB;
     use base_execution_state_memory::{AccountInfo, Bytecode};
-    use revm_primitives::{StorageKey, U256, b256, bytes};
 
     use super::*;
     use crate::{MainBuilder, MainContext};

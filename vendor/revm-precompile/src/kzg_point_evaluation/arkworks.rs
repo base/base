@@ -5,7 +5,7 @@ use ark_bls12_381::{Fr, G1Affine, G2Affine};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::CanonicalDeserialize;
-use revm_primitives::OnceLock;
+use base_execution_evm_primitives::OnceLock;
 
 use crate::{
     PrecompileHalt, bls12_381::arkworks::pairing_check, bls12_381_const::TRUSTED_SETUP_TAU_G2_BYTES,

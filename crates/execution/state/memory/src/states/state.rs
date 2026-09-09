@@ -3,12 +3,14 @@ use std::{borrow::Cow, boxed::Box, sync::Arc};
 use crate::{
     BalState, Database, DatabaseCommit, DatabaseRef, EmptyDB, EvmDatabaseError, OnStateHook,
 };
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{
+    Address, AddressMap, B256, HashMap, StorageKey, StorageValue, hash_map,
+};
 use base_execution_state_memory::{
     Account, AccountId, AccountInfo, EvmStorage,
     bal::{Bal, BlockAccessIndex, alloy::AlloyBal},
 };
-use revm_bytecode::Bytecode;
-use revm_primitives::{Address, AddressMap, B256, HashMap, StorageKey, StorageValue, hash_map};
 
 use super::{
     BundleState, CacheAccount, StateBuilder, TransitionAccount, TransitionState,
@@ -534,8 +536,8 @@ impl<DB: DatabaseRef> DatabaseRef for State<DB> {
 
 #[cfg(test)]
 mod tests {
+    use base_execution_evm_primitives::{BLOCK_HASH_HISTORY, U256, keccak256};
     use base_execution_state_memory::{EvmStorageSlot, TransactionId};
-    use revm_primitives::{BLOCK_HASH_HISTORY, U256, keccak256};
 
     use super::*;
     use crate::{

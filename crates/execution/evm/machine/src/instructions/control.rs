@@ -1,5 +1,5 @@
 use base_execution_evm_machine::{GasParams, Host};
-use revm_primitives::{Bytes, U256, hints_util::cold_path};
+use base_execution_evm_primitives::{Bytes, U256, hints_util::cold_path};
 
 use crate::{
     InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,

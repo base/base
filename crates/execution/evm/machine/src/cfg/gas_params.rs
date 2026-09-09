@@ -3,7 +3,7 @@
 use core::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use revm_primitives::{
+use base_execution_evm_primitives::{
     OnceLock, U256, eip2780, eip7702, eip8037, eip8038,
     hardfork::SpecId::{self},
 };
@@ -105,7 +105,7 @@ impl GasParams {
     ///
     /// ```rust
     /// use base_execution_evm_machine::{GasParams, GasId};
-    /// use revm_primitives::hardfork::SpecId;
+    /// use base_execution_evm_primitives::hardfork::SpecId;
     ///
     /// let mut gas_table = GasParams::new_spec(SpecId::default());
     /// gas_table.override_gas([(GasId::memory_linear_cost(), 2), (GasId::memory_quadratic_reduction(), 512)].into_iter());
@@ -365,7 +365,7 @@ impl GasParams {
             table[GasId::tx_access_list_floor_byte_multiplier().as_usize()] = 4;
 
             // EIP-8038: State-access gas cost update (ethereum/EIPs#11802;
-            // preliminary draft values). Constants live in `revm_primitives::eip8038`.
+            // preliminary draft values). Constants live in `base_execution_evm_primitives::eip8038`.
             //   WARM_ACCESS                    100 ->    100  (unchanged)
             //   COLD_ACCOUNT_ACCESS          2,600 ->  3,000
             //   ACCOUNT_WRITE                6,700 ->  8,000
@@ -921,7 +921,7 @@ impl GasParams {
     ///
     /// ```
     /// use base_execution_evm_machine::GasParams;
-    /// use revm_primitives::hardfork::SpecId;
+    /// use base_execution_evm_primitives::hardfork::SpecId;
     ///
     /// let gas_params = GasParams::new_spec(SpecId::BERLIN);
     /// // Calculate cost for 2 addresses and 5 storage keys

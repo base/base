@@ -40,7 +40,7 @@ pub use base_execution_evm_machine::{
     WARM_SSTORE_RESET, WARM_STORAGE_READ_COST, ZERO, calculate_initial_tx_gas,
     calculate_initial_tx_gas_for_tx, get_tokens_in_calldata, get_tokens_in_calldata_istanbul,
 };
-use revm_primitives::hardfork::SpecId;
+use base_execution_evm_primitives::hardfork::SpecId;
 
 use crate::{Host, InstructionContext, InstructionExecResult};
 
@@ -99,7 +99,7 @@ pub const fn gas_table() -> GasTable {
 #[inline]
 pub const fn gas_table_spec(spec: SpecId) -> GasTable {
     use SpecId::*;
-    use revm_bytecode::opcode::*;
+    use base_execution_evm_primitives::opcode::*;
     let mut table = gas_table();
 
     if spec.is_enabled_in(TANGERINE) {
@@ -142,7 +142,7 @@ pub const fn gas_table_spec(spec: SpecId) -> GasTable {
         // account access. WARM_ACCESS itself is unchanged by EIP-8038 (100), so
         // every other access opcode keeps its Berlin warm base; only these two
         // change. The dynamic cold premium is still added by `load_account`.
-        let warm = revm_primitives::eip8038::WARM_ACCESS as u16;
+        let warm = base_execution_evm_primitives::eip8038::WARM_ACCESS as u16;
         table[EXTCODESIZE as usize] = warm + warm;
         table[EXTCODECOPY as usize] = warm + warm;
     }
@@ -151,7 +151,7 @@ pub const fn gas_table_spec(spec: SpecId) -> GasTable {
 }
 
 const fn instruction_table_impl<H: Host>() -> InstructionTable<H> {
-    use revm_bytecode::opcode::*;
+    use base_execution_evm_primitives::opcode::*;
     let mut table = [Instruction::unknown(); 256];
 
     table[STOP as usize] = Instruction::new(control::stop);
@@ -324,7 +324,7 @@ const fn instruction_table_impl<H: Host>() -> InstructionTable<H> {
 }
 
 const fn gas_table_impl() -> GasTable {
-    use revm_bytecode::opcode::*;
+    use base_execution_evm_primitives::opcode::*;
     let mut table = [0u16; 256];
 
     table[STOP as usize] = 0;
@@ -500,7 +500,7 @@ const fn gas_table_impl() -> GasTable {
 
 #[cfg(test)]
 mod tests {
-    use revm_bytecode::opcode::*;
+    use base_execution_evm_primitives::opcode::*;
 
     use super::instruction_table;
     use crate::DummyHost;
@@ -522,11 +522,11 @@ mod tests {
 
     #[test]
     fn amsterdam_eip8038_ext_family_second_read() {
-        use revm_primitives::hardfork::SpecId;
+        use base_execution_evm_primitives::hardfork::SpecId;
 
         use super::gas_table_spec;
 
-        let warm = revm_primitives::eip8038::WARM_ACCESS as u16;
+        let warm = base_execution_evm_primitives::eip8038::WARM_ACCESS as u16;
         let table = gas_table_spec(SpecId::AMSTERDAM);
         // EIP-8038 §"EXT* family update": EXTCODESIZE / EXTCODECOPY make a second
         // database read, charged an extra WARM_ACCESS on the static base.

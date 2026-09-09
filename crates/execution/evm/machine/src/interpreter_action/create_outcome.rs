@@ -1,4 +1,4 @@
-use revm_primitives::{Address, Bytes};
+use base_execution_evm_primitives::{Address, Bytes};
 
 use crate::{Gas, InstructionResult, InterpreterResult};
 

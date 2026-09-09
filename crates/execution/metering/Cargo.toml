@@ -16,7 +16,6 @@ jsonrpsee = { workspace = true }
 derive_more = { workspace = true }
 base-bundles = { workspace = true }
 reth-provider = { workspace = true }
-revm-bytecode = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
@@ -24,6 +23,7 @@ serde = { workspace = true, features = ["std"] }
 base-execution-evm-machine = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }
+base-execution-evm-primitives = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-evm-precompiles = { workspace = true }
 base-execution-payload-builder = { workspace = true }
@@ -33,7 +33,6 @@ base-execution-evm-blocks = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-revm-bytecode = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-common-network = { workspace = true }
@@ -41,6 +40,7 @@ base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 url = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
+base-execution-evm-primitives = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 base-node-core = { workspace = true, features = ["default"] }

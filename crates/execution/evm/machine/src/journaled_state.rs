@@ -6,13 +6,13 @@ mod entry;
 use core::ops::{Deref, DerefMut};
 use std::{borrow::Cow, vec::Vec};
 
-use base_execution_state_memory::Database;
-use base_execution_state_memory::{Account, AccountInfo, Bytecode};
-pub use entry::*;
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, AddressMap, AddressSet, B256, Bytes, HashSet, Log, StorageKey, StorageValue, U256,
     hardfork::SpecId,
 };
+use base_execution_state_memory::Database;
+use base_execution_state_memory::{Account, AccountInfo, Bytecode};
+pub use entry::*;
 
 use crate::{
     ErasedError,

@@ -1,11 +1,11 @@
 use core::{cmp::min, ops::Range};
 
 use base_execution_evm_machine::{GasParams, Host, LoadError};
-use base_execution_state_memory::Bytecode;
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, B256, U256,
     hardfork::SpecId::{self, *},
 };
+use base_execution_state_memory::Bytecode;
 
 use crate::{InstructionContext as Ictx, InstructionResult, interpreter::Interpreter};
 

@@ -1,7 +1,7 @@
 //! bitcoin_secp256k1 implementation of `ecrecover`. More about it in [`crate::secp256k1`].
 // Silence the unused crate dependency warning.
+use base_execution_evm_primitives::{B256, alloy_primitives::B512, keccak256};
 use k256 as _;
-use revm_primitives::{B256, alloy_primitives::B512, keccak256};
 use secp256k1_0_31_1::{
     Message, SECP256K1,
     ecdsa::{RecoverableSignature, RecoveryId},

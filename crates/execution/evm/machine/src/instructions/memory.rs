@@ -1,7 +1,7 @@
 use core::cmp::max;
 
 use base_execution_evm_machine::Host;
-use revm_primitives::U256;
+use base_execution_evm_primitives::U256;
 
 use crate::{
     InstructionContext as Ictx, InstructionExecResult as Result, interpreter::resize_memory,

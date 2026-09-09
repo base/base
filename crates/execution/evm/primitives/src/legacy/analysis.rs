@@ -1,7 +1,7 @@
 use std::vec::Vec;
 
+use base_execution_evm_primitives::Bytes;
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};
-use revm_primitives::Bytes;
 
 use super::JumpTable;
 use crate::opcode;

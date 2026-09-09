@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use revm_primitives::U256;
+use base_execution_evm_primitives::U256;
 
 /// Represents the sign of a 256-bit signed integer value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -142,7 +142,7 @@ pub fn i256_mod(mut first: U256, mut second: U256) -> U256 {
 mod tests {
     use core::num::Wrapping;
 
-    use revm_primitives::uint;
+    use base_execution_evm_primitives::uint;
 
     use super::*;
 

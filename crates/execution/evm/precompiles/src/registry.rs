@@ -991,10 +991,10 @@ impl core::error::Error for MovePrecompileError {}
 mod tests {
     use alloy_primitives::{Bytes, address};
     use base_execution_evm_machine::BlockEnv;
+    use base_execution_evm_primitives::hardfork::SpecId;
     use base_execution_state_memory::EmptyDB;
     use revm_precompile::PrecompileId;
     use revm_precompile::PrecompileOutput;
-    use revm_primitives::hardfork::SpecId;
 
     use super::*;
     use base_execution_evm_machine::EthEvmContext;

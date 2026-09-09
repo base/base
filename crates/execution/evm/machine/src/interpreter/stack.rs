@@ -1,7 +1,7 @@
 use core::fmt;
 use std::vec::Vec;
 
-use revm_primitives::{U256, hints_util::cold_path};
+use base_execution_evm_primitives::{U256, hints_util::cold_path};
 
 use crate::InstructionResult;
 

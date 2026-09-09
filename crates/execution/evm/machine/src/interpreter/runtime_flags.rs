@@ -1,4 +1,4 @@
-use revm_primitives::hardfork::SpecId;
+use base_execution_evm_primitives::hardfork::SpecId;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

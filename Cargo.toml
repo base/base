@@ -204,10 +204,9 @@ members = [
   "vendor/reth-trie-common",
   "vendor/reth-trie-sparse",
   "vendor/reth-zstd-compressors",
-  "vendor/revm-bytecode",
   "vendor/revm-inspectors",
   "vendor/revm-precompile",
-  "vendor/revm-primitives",
+  "crates/execution/evm/primitives",
 ]
 default-members = [
   "bin/audit-archiver",
@@ -445,10 +444,9 @@ base-balance-monitor = { path = "crates/utilities/balance-monitor", default-feat
 
 # revm
 base-execution-evm-machine = { path = "crates/execution/evm/machine", default-features = false }
-revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
 revm-precompile = { path = "vendor/revm-precompile", default-features = false }
 revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
-revm-primitives = { path = "vendor/revm-primitives", default-features = false }
+base-execution-evm-primitives = { path = "crates/execution/evm/primitives", default-features = false }
 base-execution-state-memory = { path = "crates/execution/state/memory", default-features = false }
 
 # alloy

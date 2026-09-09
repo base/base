@@ -1,6 +1,8 @@
 //! This module contains [`BlockEnv`] and it implements [`Block`] trait.
 use base_execution_evm_machine::{BlobExcessGasAndPrice, Block};
-use revm_primitives::{Address, B256, U256, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE};
+use base_execution_evm_primitives::{
+    Address, B256, U256, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+};
 
 /// The block environment
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

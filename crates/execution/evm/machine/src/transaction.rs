@@ -13,9 +13,9 @@ pub use alloy_types::{
     SignedAuthorization,
 };
 use auto_impl::auto_impl;
+use base_execution_evm_primitives::{Address, B256, Bytes, TxKind, U256, eip4844::GAS_PER_BLOB};
 pub use eip2930::AccessListItemTr;
 pub use eip7702::AuthorizationTr;
-use revm_primitives::{Address, B256, Bytes, TxKind, U256, eip4844::GAS_PER_BLOB};
 pub use transaction_type::TransactionType;
 
 use crate::result::InvalidTransaction;

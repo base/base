@@ -3,9 +3,9 @@ use core::{
     hash::{Hash, Hasher},
 };
 
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{B256, KECCAK_EMPTY, U256};
 use nonmax::NonMaxU32;
-use revm_bytecode::Bytecode;
-use revm_primitives::{B256, KECCAK_EMPTY, U256};
 
 /// Account ID is a custom type that wraps a `NonMaxU32`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

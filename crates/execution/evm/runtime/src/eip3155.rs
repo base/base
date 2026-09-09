@@ -4,8 +4,8 @@ use base_execution_evm_machine::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterResult,
 };
 use base_execution_evm_machine::{Cfg, ContextTr, JournalTr, Transaction};
+use base_execution_evm_primitives::{B256, HashMap, U256, hex};
 use base_execution_state_memory::bytecode::opcode::OpCode;
-use revm_primitives::{B256, HashMap, U256, hex};
 use serde::Serialize;
 
 use crate::{GasInspector, Inspector};

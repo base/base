@@ -1,8 +1,8 @@
 use std::vec::Vec;
 
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{Address, B256, StorageKey, StorageValue};
 use base_execution_state_memory::AccountInfo;
-use revm_bytecode::Bytecode;
-use revm_primitives::{Address, B256, StorageKey, StorageValue};
 
 use super::RevertToSlot;
 

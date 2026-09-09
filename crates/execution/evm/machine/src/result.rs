@@ -10,9 +10,9 @@
 use core::fmt::{self, Debug};
 use std::{borrow::Cow, boxed::Box, string::String, sync::Arc, vec::Vec};
 
+use base_execution_evm_primitives::{Address, Bytes, Log, U256};
 use base_execution_state_memory::DBErrorMarker;
 use base_execution_state_memory::EvmState;
-use revm_primitives::{Address, Bytes, Log, U256};
 
 use crate::{context::ContextError, transaction::TransactionError};
 

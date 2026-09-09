@@ -1,7 +1,7 @@
 use core::ops::Deref;
 
-use revm_bytecode::{Bytecode, utils::read_u16};
-use revm_primitives::B256;
+use base_execution_evm_primitives::B256;
+use base_execution_evm_primitives::{Bytecode, utils::read_u16};
 
 use crate::{InstructionResult, InterpreterAction};
 
@@ -217,12 +217,12 @@ impl ExtBytecode {
 }
 
 impl ExtBytecode {
-    /// Returns current bytecode original length. Used in [`revm_bytecode::opcode::CODESIZE`] opcode.
+    /// Returns current bytecode original length. Used in [`base_execution_evm_primitives::opcode::CODESIZE`] opcode.
     pub fn bytecode_len(&self) -> usize {
         self.base.len()
     }
 
-    /// Returns current bytecode original slice. Used in [`revm_bytecode::opcode::CODECOPY`] opcode.
+    /// Returns current bytecode original slice. Used in [`base_execution_evm_primitives::opcode::CODECOPY`] opcode.
     pub fn bytecode_slice(&self) -> &[u8] {
         self.base.original_byte_slice()
     }
@@ -230,7 +230,7 @@ impl ExtBytecode {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::Bytes;
+    use base_execution_evm_primitives::Bytes;
 
     use super::*;
 

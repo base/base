@@ -5,11 +5,11 @@ mod create_outcome;
 
 use std::boxed::Box;
 
+use base_execution_evm_primitives::Bytes;
 pub use call_inputs::{CallInput, CallInputs, CallScheme, CallValue};
 pub use call_outcome::CallOutcome;
 pub use create_inputs::CreateInputs;
 pub use create_outcome::CreateOutcome;
-use revm_primitives::Bytes;
 
 use crate::{Gas, InstructionResult, InterpreterResult, SharedMemory};
 

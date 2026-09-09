@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, map::HashMap};
 use base_execution_evm_machine::ContextTr;
+use base_execution_evm_primitives::opcode::{self, OpCode};
 use base_execution_evm_runtime::{
     Inspector,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
     },
 };
-use revm_bytecode::opcode::{self, OpCode};
 
 use crate::meter::MeteredOpcodes;
 

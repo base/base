@@ -10,11 +10,11 @@ use base_execution_evm_machine::{
     Cfg, ContextTr, DBErrorMarker, InvalidTransaction, JournalCheckpoint, JournalLoadError,
     JournalTr, JournaledAccountTr, TransferError,
 };
+use base_execution_evm_primitives::StorageKey;
+use base_execution_evm_primitives::StorageValue;
 use base_execution_state_memory::Account;
 use base_execution_state_memory::AccountInfo;
 use base_execution_state_memory::Bytecode;
-use revm_primitives::StorageKey;
-use revm_primitives::StorageValue;
 
 use base_execution_evm_machine::BlockEnvironment;
 use base_execution_state_memory::Database;

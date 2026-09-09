@@ -3,10 +3,10 @@
 //! It is used to optimize access to precompile addresses.
 
 use base_execution_evm_machine::JournalLoadError;
-use bitvec::{bitvec, vec::BitVec};
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, AddressMap, AddressSet, HashSet, SHORT_ADDRESS_CAP, StorageKey, short_address,
 };
+use bitvec::{bitvec, vec::BitVec};
 
 /// Stores addresses that are warm loaded. Contains precompiles and coinbase address.
 ///
@@ -176,7 +176,7 @@ impl WarmAddresses {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::{Address, address};
+    use base_execution_evm_primitives::{Address, address};
 
     use super::*;
 

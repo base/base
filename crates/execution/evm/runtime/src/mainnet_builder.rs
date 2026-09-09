@@ -2,7 +2,7 @@ use base_execution_evm_machine::{Cfg, CfgEnv, Context, Database, FrameStack, Tra
 use base_execution_evm_runtime::EvmMachine;
 use base_execution_state_memory::EmptyDB;
 
-use revm_primitives::hardfork::SpecId;
+use base_execution_evm_primitives::hardfork::SpecId;
 
 use crate::{EthPrecompiles, instructions::EthInstructions};
 
@@ -76,12 +76,12 @@ mod test {
     use alloy_signer::{Either, SignerSync};
     use base_common_network::PrivateKeySigner;
     use base_execution_evm_machine::{Authorization, Context, TxEnv};
-    use base_execution_state_memory::{BenchmarkDB, EEADDRESS, FFADDRESS};
-    use revm_bytecode::{
+    use base_execution_evm_primitives::{
         Bytecode,
         opcode::{PUSH1, SSTORE},
     };
-    use revm_primitives::{StorageKey, StorageValue, TxKind, U256, hardfork::SpecId};
+    use base_execution_evm_primitives::{StorageKey, StorageValue, TxKind, U256, hardfork::SpecId};
+    use base_execution_state_memory::{BenchmarkDB, EEADDRESS, FFADDRESS};
 
     use crate::{ExecuteEvm, MainBuilder, MainContext};
 

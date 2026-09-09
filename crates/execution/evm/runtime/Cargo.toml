@@ -18,17 +18,16 @@ auto_impl = {workspace = true}
 thiserror = {workspace = true}
 tracing = { workspace = true }
 alloy-eips = {workspace = true}
-revm-bytecode = { workspace = true }
 alloy-primitives = {workspace = true}
 alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
 revm-precompile = { workspace = true }
-revm-primitives = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-types-rpc = { workspace = true}
 base-execution-evm-machine = {workspace = true}
 metrics = { workspace = true, optional = true }
 base-execution-state-memory = {workspace = true}
+base-execution-evm-primitives = {workspace = true}
 base-execution-evm-precompiles = {workspace = true }
 base-metrics = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -76,9 +75,8 @@ std = [
     "base-execution-state-memory/std",
     "derive_more/std",
     "either/std",
-    "revm-bytecode/std",
+    "base-execution-evm-primitives/std",
     "revm-precompile/std",
-    "revm-primitives/std",
     "serde?/std",
     "serde_json?/preserve_order",
     "serde_json?/std",
@@ -94,8 +92,7 @@ serde = [
     "base-execution-state-memory/serde",
     "dep:serde",
     "either/serde",
-    "revm-bytecode/serde",
-    "revm-primitives/serde",
+    "base-execution-evm-primitives/serde",
 ]
 metrics = [
     "base-metrics/metrics",
@@ -122,11 +119,11 @@ tracer = [
     "serde",
     "std",
 ]
-asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "base-execution-evm-primitives/asm-keccak"]
 call-util = ["overrides"]
 gmp = ["revm-precompile/gmp"]
 overrides = []
-arbitrary = ["revm-primitives/arbitrary"]
+arbitrary = ["base-execution-evm-primitives/arbitrary"]
 dev = [
     "memory_limit",
     "optional_balance_check",
@@ -137,9 +134,9 @@ dev = [
     "optional_no_base_fee",
 ]
 hashbrown = ["base-execution-evm-machine/hashbrown", "revm-precompile/hashbrown"]
-map-foldhash = ["revm-primitives/map-foldhash"]
+map-foldhash = ["base-execution-evm-primitives/map-foldhash"]
 optional_eip7623 = ["base-execution-evm-machine/optional_eip7623"]
 optional_priority_fee_check = ["base-execution-evm-machine/optional_priority_fee_check"]
 p256-aws-lc-rs = ["revm-precompile/p256-aws-lc-rs"]
-parse = ["revm-bytecode/parse"]
-sha3-keccak = ["revm-primitives/sha3-keccak"]
+parse = ["base-execution-evm-primitives/parse"]
+sha3-keccak = ["base-execution-evm-primitives/sha3-keccak"]

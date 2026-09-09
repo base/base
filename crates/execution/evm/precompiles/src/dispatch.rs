@@ -3,8 +3,8 @@ use alloc::string::{String, ToString};
 use auto_impl::auto_impl;
 use base_execution_evm_machine::{CallInputs, Gas, InstructionResult, InterpreterResult};
 use base_execution_evm_machine::{Cfg, ContextTr, JournalTr, LocalContextTr};
+use base_execution_evm_primitives::{Address, AddressSet, Bytes, hardfork::SpecId};
 use revm_precompile::{PrecompileOutput, PrecompileSpecId, PrecompileStatus, Precompiles};
-use revm_primitives::{Address, AddressSet, Bytes, hardfork::SpecId};
 
 /// Provider for precompiled contracts in the EVM.
 #[auto_impl(&mut, Box)]

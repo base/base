@@ -2,8 +2,8 @@ pub use alloy_eip2930::{AccessList, AccessListItem};
 pub use alloy_eip7702::{
     Authorization, RecoveredAuthority, RecoveredAuthorization, SignedAuthorization,
 };
+use base_execution_evm_primitives::{Address, B256, U256};
 use either::{Either, for_both};
-use revm_primitives::{Address, B256, U256};
 
 use super::{AccessListItemTr, AuthorizationTr};
 

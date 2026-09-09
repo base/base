@@ -11,8 +11,8 @@ use alloy_eip7928::{
     CodeChange as AlloyCodeChange, NonceChange as AlloyNonceChange,
     SlotChanges as AlloySlotChanges, StorageChange as AlloyStorageChange,
 };
-use revm_bytecode::{Bytecode, BytecodeDecodeError};
-use revm_primitives::{Address, B256, StorageKey, StorageValue, U256};
+use base_execution_evm_primitives::{Address, B256, StorageKey, StorageValue, U256};
+use base_execution_evm_primitives::{Bytecode, BytecodeDecodeError};
 
 use crate::{
     Account, AccountInfo, EvmStorage,

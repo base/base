@@ -5,8 +5,8 @@
 //! They are created when there is change to the state from loading (making it warm), changes to the balance,
 //! or removal of the storage slot. Check [`JournalEntry`] for more details.
 
+use base_execution_evm_primitives::{Address, B256, PRECOMPILE3, StorageKey, StorageValue, U256};
 use base_execution_state_memory::{Bytecode, EvmState, TransientStorage};
-use revm_primitives::{Address, B256, PRECOMPILE3, StorageKey, StorageValue, U256};
 
 /// Status of selfdestruction revert.
 ///

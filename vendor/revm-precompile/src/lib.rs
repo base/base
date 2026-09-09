@@ -29,9 +29,9 @@ pub mod utilities;
 
 use core::fmt::{self, Debug};
 
+pub use base_execution_evm_primitives as primitives;
 pub use id::PrecompileId;
 pub use interface::*;
-pub use revm_primitives as primitives;
 
 // silence arkworks lint as bn impl will be used as default if both are enabled.
 cfg_if::cfg_if! {
@@ -62,12 +62,12 @@ use std::boxed::Box;
 #[cfg(feature = "gmp")]
 use aurora_engine_modexp as _;
 // silence p256 lint as aws-lc-rs will be used if both are enabled.
-#[cfg(feature = "p256-aws-lc-rs")]
-use p256 as _;
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, AddressMap, AddressSet, HashMap, OnceLock, SHORT_ADDRESS_CAP, hardfork::SpecId,
     short_address,
 };
+#[cfg(feature = "p256-aws-lc-rs")]
+use p256 as _;
 
 /// Calculate the linear cost of a precompile.
 #[inline]

@@ -3,8 +3,8 @@
 //! [`Block`] trait is used to retrieve block information required for execution.
 mod blob;
 use auto_impl::auto_impl;
+use base_execution_evm_primitives::{Address, B256, U256};
 pub use blob::{BlobExcessGasAndPrice, calc_blob_gasprice, *};
-use revm_primitives::{Address, B256, U256};
 
 /// Trait for retrieving block information required for execution.
 #[auto_impl(&, &mut, Box, Arc)]

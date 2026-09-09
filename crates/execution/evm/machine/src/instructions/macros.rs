@@ -17,7 +17,10 @@ macro_rules! require_non_staticcall {
 #[collapse_debuginfo(yes)]
 macro_rules! check {
     ($interpreter:expr, $min:ident) => {
-        if !$interpreter.runtime_flag.spec_id.is_enabled_in(revm_primitives::hardfork::SpecId::$min)
+        if !$interpreter
+            .runtime_flag
+            .spec_id
+            .is_enabled_in(base_execution_evm_primitives::hardfork::SpecId::$min)
         {
             $crate::primitives::hints_util::cold_path();
             return Err($crate::InstructionResult::NotActivated);

@@ -6,7 +6,7 @@
 //! The main purpose of this precompile is to verify ECDSA signatures that use the secp256r1, or
 //! P256 elliptic curve. The [`P256VERIFY`] const represents the implementation of this precompile,
 //! with the address that it is currently deployed at.
-use revm_primitives::{B256, Bytes, alloy_primitives::B512};
+use base_execution_evm_primitives::{B256, Bytes, alloy_primitives::B512};
 
 use crate::{
     EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId, crypto,
@@ -131,7 +131,7 @@ pub(crate) fn verify_signature(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) ->
 
 #[cfg(test)]
 mod test {
-    use revm_primitives::hex::FromHex;
+    use base_execution_evm_primitives::hex::FromHex;
     use rstest::rstest;
 
     use super::*;

@@ -3,11 +3,11 @@ mod call_helpers;
 use std::boxed::Box;
 
 use base_execution_evm_machine::CreateScheme;
+use base_execution_evm_primitives::{Bytes, U256, hardfork::SpecId};
 pub use call_helpers::{
     get_memory_input_and_out_ranges, load_acc_and_calc_gas, load_account_delegated,
     load_account_delegated_handle_error, resize_memory,
 };
-use revm_primitives::{Bytes, U256, hardfork::SpecId};
 
 use crate::{
     CallInput, CallInputs, CallScheme, CallValue, CreateInputs, Host, InstructionContext as Ictx,
@@ -116,7 +116,7 @@ pub fn create<const IS_CREATE2: bool, H: Host + ?Sized>(context: Ictx<'_, H>) ->
 
 /// Implements the CALL, CALLCODE, DELEGATECALL, and STATICCALL instructions.
 pub fn call<const KIND: u8, H: Host + ?Sized>(mut context: Ictx<'_, H>) -> Result {
-    use revm_bytecode::opcode::{CALL, CALLCODE, DELEGATECALL, STATICCALL};
+    use base_execution_evm_primitives::opcode::{CALL, CALLCODE, DELEGATECALL, STATICCALL};
 
     if !matches!(KIND, CALL | CALLCODE | DELEGATECALL | STATICCALL) {
         unreachable!("invalid call kind")

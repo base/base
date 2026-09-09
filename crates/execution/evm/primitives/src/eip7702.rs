@@ -2,7 +2,13 @@
 
 use core::fmt;
 
-use revm_primitives::{B256, b256, hex};
+use base_execution_evm_primitives::{B256, b256, hex};
+
+/// Base cost of updating authorized account.
+pub const PER_AUTH_BASE_COST: u64 = 12500;
+
+/// Cost of creating authorized account that was previously empty.
+pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
 
 /// Hash of EF01 bytes that is used for EXTCODEHASH when called from legacy bytecode.
 pub const EIP7702_MAGIC_HASH: B256 =
@@ -53,7 +59,7 @@ impl core::error::Error for Eip7702DecodeError {}
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::keccak256;
+    use base_execution_evm_primitives::keccak256;
 
     use super::*;
 

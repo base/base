@@ -4,12 +4,12 @@ use std::{
     vec::Vec,
 };
 
-use base_execution_state_memory::AccountInfo;
-use revm_bytecode::Bytecode;
-use revm_primitives::{
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{
     Address, AddressMap, AddressSet, B256, B256Map, HashMap, KECCAK_EMPTY, StorageKey,
     StorageKeyMap, StorageValue, hash_map::Entry,
 };
+use base_execution_state_memory::AccountInfo;
 
 use super::{
     AccountRevert, AccountStatus, BundleAccount, PlainStateReverts, RevertToSlot, StorageSlot,
@@ -845,7 +845,7 @@ impl BundleState {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::U256;
+    use base_execution_evm_primitives::U256;
 
     use super::*;
     use crate::{StorageWithOriginalValues, TransitionAccount};

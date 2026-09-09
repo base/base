@@ -3344,13 +3344,12 @@ dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
  "auto_impl",
+ "base-execution-evm-primitives",
  "base-execution-state-memory",
  "bitvec",
  "cfg-if",
  "derive-where",
  "either",
- "revm-bytecode",
- "revm-primitives",
  "serde",
  "serde_json",
 ]
@@ -3376,6 +3375,7 @@ dependencies = [
  "base-common-types-chain",
  "base-execution-evm-machine",
  "base-execution-evm-macros",
+ "base-execution-evm-primitives",
  "base-execution-state-memory",
  "base64 0.22.1",
  "criterion",
@@ -3384,11 +3384,25 @@ dependencies = [
  "p256",
  "proptest",
  "revm-precompile",
- "revm-primitives",
  "rstest",
  "sha2 0.10.9",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "base-execution-evm-primitives"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "anyhow",
+ "bitvec",
+ "once_cell",
+ "paste",
+ "phf 0.14.0",
+ "rand 0.10.2",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3409,15 +3423,14 @@ dependencies = [
  "base-common-types-rpc",
  "base-execution-evm-machine",
  "base-execution-evm-precompiles",
+ "base-execution-evm-primitives",
  "base-execution-state-memory",
  "base-metrics",
  "derive_more",
  "either",
  "k256",
  "metrics",
- "revm-bytecode",
  "revm-precompile",
- "revm-primitives",
  "rstest",
  "serde",
  "serde_json",
@@ -3618,6 +3631,7 @@ dependencies = [
  "arbitrary",
  "auto_impl",
  "base-common-types-chain",
+ "base-execution-evm-primitives",
  "bitflags 2.13.1",
  "bytes",
  "derive_more",
@@ -3627,8 +3641,6 @@ dependencies = [
  "nonmax",
  "proptest",
  "proptest-arbitrary-interop",
- "revm-bytecode",
- "revm-primitives",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -3847,6 +3859,7 @@ dependencies = [
  "base-execution-evm-blocks",
  "base-execution-evm-machine",
  "base-execution-evm-precompiles",
+ "base-execution-evm-primitives",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
  "base-execution-txpool",
@@ -3861,7 +3874,6 @@ dependencies = [
  "reth-db-common",
  "reth-primitives-traits",
  "reth-provider",
- "revm-bytecode",
  "serde",
  "serde_json",
  "tokio",
@@ -15416,20 +15428,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "revm-bytecode"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bitvec",
- "paste",
- "phf 0.14.0",
- "rand 0.10.2",
- "revm-primitives",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "revm-inspectors"
 version = "0.0.0"
 dependencies = [
@@ -15464,6 +15462,7 @@ dependencies = [
  "aurora-engine-modexp",
  "aws-lc-rs",
  "base-execution-evm-machine",
+ "base-execution-evm-primitives",
  "blst",
  "c-kzg",
  "cfg-if",
@@ -15472,21 +15471,11 @@ dependencies = [
  "k256",
  "p256",
  "rand 0.10.2",
- "revm-primitives",
  "ripemd 0.2.0",
  "rstest",
  "secp256k1 0.31.1",
  "sha2 0.11.0",
  "substrate-bn",
-]
-
-[[package]]
-name = "revm-primitives"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "once_cell",
- "serde",
 ]
 
 [[package]]

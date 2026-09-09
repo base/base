@@ -1,7 +1,7 @@
 //! Benchmarks for the ecrecover precompile
+use base_execution_evm_primitives::{Bytes, hex, keccak256};
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, measurement::Measurement};
 use revm_precompile::secp256k1::ec_recover_run;
-use revm_primitives::{Bytes, hex, keccak256};
 use secp256k1_0_31_1::{Message, SECP256K1, SecretKey};
 
 /// Add benches for the ecrecover precompile

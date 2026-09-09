@@ -4,11 +4,11 @@ use base_execution_evm_machine::{
     JournalTr, LoadError, SStoreResult, SelfDestructResult, StateLoad, Transaction,
     TransactionType,
 };
-use base_execution_state_memory::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
-use derive_where::derive_where;
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, B256, Log, StorageKey, StorageValue, U256, hardfork::SpecId, hints_util::cold_path,
 };
+use base_execution_state_memory::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
+use derive_where::derive_where;
 
 use crate::{BlockEnv, CfgEnv, LocalContext, journal::Journal, tx::TxEnv};
 

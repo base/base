@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-use revm_primitives::{Address, AddressMap, StorageKey, StorageKeyMap, StorageValue};
+use base_execution_evm_primitives::{Address, AddressMap, StorageKey, StorageKeyMap, StorageValue};
 
 use super::{Account, EvmStorageSlot};
 
@@ -48,7 +48,7 @@ impl TransientStorage {
     /// Returns the transient storage value for the given account `address` and
     /// storage `key`.
     ///
-    /// Returns [`StorageValue::ZERO`](revm_primitives::StorageValue) (the default) if
+    /// Returns [`StorageValue::ZERO`](base_execution_evm_primitives::StorageValue) (the default) if
     /// the slot was never set.
     #[inline]
     pub fn get_value(&self, address: Address, key: StorageKey) -> StorageValue {

@@ -9,10 +9,10 @@ mod stack;
 
 // re-exports
 use base_execution_evm_machine::{GasParams, LoadError};
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{Bytes, hardfork::SpecId, hints_util::cold_path};
 pub use ext_bytecode::ExtBytecode;
 pub use input::InputsImpl;
-use revm_bytecode::Bytecode;
-use revm_primitives::{Bytes, hardfork::SpecId, hints_util::cold_path};
 pub use runtime_flags::RuntimeFlags;
 pub use shared_memory::{SharedMemory, num_words, resize_memory};
 pub use stack::{STACK_LIMIT, Stack};
@@ -363,8 +363,8 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_interpreter_serde() {
-        use revm_bytecode::Bytecode;
-        use revm_primitives::Bytes;
+        use base_execution_evm_primitives::Bytecode;
+        use base_execution_evm_primitives::Bytes;
 
         use super::*;
 
@@ -391,8 +391,8 @@ mod tests {
 
 #[test]
 fn test_mstore_big_offset_memory_oog() {
-    use revm_bytecode::Bytecode;
-    use revm_primitives::Bytes;
+    use base_execution_evm_primitives::Bytecode;
+    use base_execution_evm_primitives::Bytes;
 
     use super::*;
     use crate::{
@@ -431,8 +431,8 @@ fn test_mstore_big_offset_memory_oog() {
 #[test]
 #[cfg(feature = "memory_limit")]
 fn test_mstore_big_offset_memory_limit_oog() {
-    use revm_bytecode::Bytecode;
-    use revm_primitives::Bytes;
+    use base_execution_evm_primitives::Bytecode;
+    use base_execution_evm_primitives::Bytes;
 
     use super::*;
     use crate::{

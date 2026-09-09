@@ -1,7 +1,7 @@
 use core::cmp::min;
 
 use base_execution_evm_machine::{AccountInfoLoad, LoadError, SStoreResult, StateLoad};
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, B256, BLOCK_HASH_HISTORY, Bytes, Log, LogData, U256,
     hardfork::SpecId::{self, *},
 };
@@ -17,7 +17,7 @@ use crate::{
 fn load_account<'a, H: Host + ?Sized>(
     gas: &mut Gas,
     host: &'a mut H,
-    address: revm_primitives::Address,
+    address: base_execution_evm_primitives::Address,
     load_code: bool,
 ) -> core::result::Result<AccountInfoLoad<'a>, LoadError> {
     let cold_load_gas = host.gas_params().cold_account_additional_cost();

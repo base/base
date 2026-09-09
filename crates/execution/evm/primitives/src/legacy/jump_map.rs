@@ -1,8 +1,8 @@
 use core::{cmp::Ordering, fmt, hash};
 use std::{borrow::Cow, vec::Vec};
 
+use base_execution_evm_primitives::hex;
 use bitvec::vec::BitVec;
-use revm_primitives::hex;
 
 /// A table of valid `jump` destinations.
 ///

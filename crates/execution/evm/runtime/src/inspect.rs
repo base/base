@@ -1,6 +1,6 @@
 use base_execution_evm_machine::ExecResultAndState;
+use base_execution_evm_primitives::{Address, Bytes};
 use base_execution_evm_runtime::{ExecuteCommitEvm, ExecuteEvm, SYSTEM_ADDRESS, SystemCallEvm};
-use revm_primitives::{Address, Bytes};
 
 /// InspectEvm is a API that allows inspecting the EVM.
 ///

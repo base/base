@@ -1,5 +1,5 @@
 use base_execution_evm_machine::Host;
-use revm_primitives::U256;
+use base_execution_evm_primitives::U256;
 
 use super::i256::{i256_div, i256_mod};
 use crate::{InstructionContext as Ictx, InstructionExecResult as Result};

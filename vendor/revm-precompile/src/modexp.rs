@@ -3,7 +3,7 @@
 use core::cmp::{max, min};
 use std::vec::Vec;
 
-use revm_primitives::{Bytes, U256, eip7823};
+use base_execution_evm_primitives::{Bytes, U256, eip7823};
 
 use crate::{
     EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId, crypto,
@@ -306,7 +306,7 @@ where
 mod tests {
     use std::vec::Vec;
 
-    use revm_primitives::hex;
+    use base_execution_evm_primitives::hex;
 
     use super::*;
 

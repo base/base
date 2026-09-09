@@ -1,8 +1,8 @@
 use base_execution_evm_machine::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
 };
+use base_execution_evm_primitives::{Address, Log, U256};
 use either::Either;
-use revm_primitives::{Address, Log, U256};
 
 use crate::inspector::Inspector;
 

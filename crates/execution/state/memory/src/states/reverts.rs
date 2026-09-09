@@ -4,8 +4,8 @@ use core::{
 };
 use std::vec::Vec;
 
+use base_execution_evm_primitives::{Address, StorageKeyMap, StorageValue};
 use base_execution_state_memory::AccountInfo;
-use revm_primitives::{Address, StorageKeyMap, StorageValue};
 
 use super::{
     AccountStatus, BundleAccount, PlainStateReverts, StorageWithOriginalValues,

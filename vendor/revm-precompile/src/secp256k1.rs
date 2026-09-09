@@ -16,7 +16,7 @@
 pub mod bitcoin_secp256k1;
 pub mod k256;
 
-use revm_primitives::{B256, Bytes, alloy_primitives::B512};
+use base_execution_evm_primitives::{B256, Bytes, alloy_primitives::B512};
 
 use crate::{
     EthPrecompileOutput, EthPrecompileResult, Precompile, PrecompileHalt, PrecompileId, crypto,

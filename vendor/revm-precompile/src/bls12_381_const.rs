@@ -1,6 +1,6 @@
 //! Constants specifying the precompile addresses for each precompile in EIP-2537
 
-use revm_primitives::{Address, hex};
+use base_execution_evm_primitives::{Address, hex};
 
 use crate::u64_to_address;
 

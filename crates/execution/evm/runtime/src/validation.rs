@@ -5,7 +5,7 @@ use base_execution_evm_machine::{
     Block, Cfg, ContextTr, GasParams, InvalidHeader, InvalidTransaction, Transaction,
     TransactionType,
 };
-use revm_primitives::{B256, eip4844, hardfork::SpecId};
+use base_execution_evm_primitives::{B256, eip4844, hardfork::SpecId};
 
 /// Validates the execution environment including block and transaction parameters.
 pub fn validate_env<CTX: ContextTr, ERROR: From<InvalidHeader> + From<InvalidTransaction>>(
@@ -319,10 +319,12 @@ mod tests {
         Context, ContextTr, EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output,
         TxEnv,
     };
+    use base_execution_evm_primitives::opcode;
+    use base_execution_evm_primitives::{
+        B256, Bytes, TxKind, address, eip3860, eip7954, hardfork::SpecId,
+    };
     use base_execution_state_memory::{AccountInfo, Bytecode};
     use base_execution_state_memory::{CacheDB, EmptyDB};
-    use revm_bytecode::opcode;
-    use revm_primitives::{B256, Bytes, TxKind, address, eip3860, eip7954, hardfork::SpecId};
 
     use crate::{ExecuteCommitEvm, MainBuilder, MainContext, execution_api::ExecuteEvm};
 
@@ -655,7 +657,7 @@ mod tests {
 
     #[test]
     fn test_transact_many_success() {
-        use revm_primitives::{U256, address};
+        use base_execution_evm_primitives::{U256, address};
 
         let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();

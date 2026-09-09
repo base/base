@@ -7,7 +7,7 @@ use base_execution_evm_machine::{
 use base_execution_evm_machine::{
     GasTracker, InitialAndFloorGas, SharedMemory, interpreter_action::FrameInit,
 };
-use revm_primitives::{TxKind, U256};
+use base_execution_evm_primitives::{TxKind, U256};
 
 use crate::{
     EvmTr, FrameResult, ItemOrResult, execution, frame::handle_reservoir_remaining_gas,

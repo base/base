@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
+use base_execution_evm_primitives::{Address, AddressMap, HashMap, hash_map::Entry};
 use base_execution_state_memory::EvmStorage;
-use revm_primitives::{Address, AddressMap, HashMap, hash_map::Entry};
 
 use super::{StorageSlot, TransitionAccount};
 

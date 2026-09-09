@@ -4,7 +4,7 @@ use base_execution_evm_machine::{
     CallOutcome, CreateOutcome, Gas, InstructionResult, InterpreterResult,
 };
 use base_execution_evm_machine::{GasParams, Output};
-use revm_primitives::Address;
+use base_execution_evm_primitives::Address;
 
 /// Call Frame
 #[derive(Debug, Clone)]

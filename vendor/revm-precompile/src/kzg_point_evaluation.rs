@@ -9,7 +9,7 @@ pub mod arkworks;
 #[cfg(feature = "blst")]
 pub mod blst;
 
-use revm_primitives::hex_literal::hex;
+use base_execution_evm_primitives::hex_literal::hex;
 
 eth_precompile_fn!(kzg_precompile, run);
 

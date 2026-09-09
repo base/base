@@ -3,7 +3,7 @@
 use std::string::String;
 
 use auto_impl::auto_impl;
-use revm_primitives::StorageValue;
+use base_execution_evm_primitives::StorageValue;
 
 use crate::{
     BlockEnv, Cfg, Database, Host, Journal, JournalTr, LocalContext, Transaction,

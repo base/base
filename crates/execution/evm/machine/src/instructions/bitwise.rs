@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use revm_primitives::U256;
+use base_execution_evm_primitives::U256;
 
 use super::i256::i256_cmp;
 use crate::{InstructionContext as Ictx, InstructionExecResult as Result};
@@ -150,7 +150,7 @@ pub fn sar<H: ?Sized>(context: Ictx<'_, H>) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::{U256, hardfork::SpecId, uint};
+    use base_execution_evm_primitives::{U256, hardfork::SpecId, uint};
 
     use crate::{
         DummyHost, InstructionContext as Ictx, Interpreter,

@@ -1,10 +1,10 @@
 //! Host interface for external blockchain state access.
 
 use auto_impl::auto_impl;
-use base_execution_state_memory::Bytecode;
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, B256, Bytes, Log, StorageKey, StorageValue, U256, hardfork::SpecId,
 };
+use base_execution_state_memory::Bytecode;
 
 use crate::{
     StateLoad,
@@ -323,8 +323,8 @@ impl Host for DummyHost {
 mod tests {
     use std::borrow::Cow;
 
+    use base_execution_evm_primitives::{Address, U256, hardfork::SpecId};
     use base_execution_state_memory::{AccountInfo, Bytecode};
-    use revm_primitives::{Address, U256, hardfork::SpecId};
 
     use super::*;
 

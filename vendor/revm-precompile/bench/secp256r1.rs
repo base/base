@@ -1,8 +1,8 @@
 //! Benchmarks for the secp256r1 (P256) precompile
+use base_execution_evm_primitives::Bytes;
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, measurement::Measurement};
 use p256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 use revm_precompile::secp256r1::p256_verify;
-use revm_primitives::Bytes;
 
 /// Add benches for the secp256r1 precompile
 pub fn add_benches<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {

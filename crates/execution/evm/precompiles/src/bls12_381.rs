@@ -98,8 +98,8 @@ pub fn run_jovian_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> Preco
 
 #[cfg(test)]
 mod tests {
+    use base_execution_evm_primitives::Bytes;
     use revm_precompile::Precompile;
-    use revm_primitives::Bytes;
     use rstest::rstest;
 
     use crate::{

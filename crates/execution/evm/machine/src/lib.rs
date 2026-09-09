@@ -6,12 +6,12 @@
 extern crate alloc as std;
 extern crate self as base_execution_evm_machine;
 
+pub use base_execution_evm_primitives as bytecode;
+pub use base_execution_evm_primitives as primitives;
 pub use base_execution_state_memory as database;
 pub use base_execution_state_memory as state;
 pub use base_execution_state_memory::{DBErrorMarker, Database, ErasedError};
 pub use either;
-pub use revm_bytecode as bytecode;
-pub use revm_primitives as primitives;
 
 mod block;
 pub use block::*;

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
+use base_execution_evm_primitives::{HashMap, StorageKey, StorageValue, U256};
 use base_execution_state_memory::{Account, AccountInfo, EvmStorage};
-use revm_primitives::{HashMap, StorageKey, StorageValue, U256};
 
 use super::{
     AccountStatus, BundleAccount, PlainAccount, TransitionAccount, plain_account::PlainStorage,

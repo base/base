@@ -3,7 +3,7 @@ use base_execution_evm_machine::{
     JournalTr, JournaledAccountTr, LocalContextTr, ResultGas, Transaction,
 };
 use base_execution_evm_machine::{Gas, InitialAndFloorGas, SuccessOrHalt};
-use revm_primitives::{U256, hardfork::SpecId};
+use base_execution_evm_primitives::{U256, hardfork::SpecId};
 
 use crate::FrameResult;
 

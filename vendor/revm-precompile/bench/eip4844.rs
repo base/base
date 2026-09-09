@@ -1,7 +1,7 @@
 //! Benchmarks for the KZG point evaluation precompile
+use base_execution_evm_primitives::{eip4844::VERSIONED_HASH_VERSION_KZG, hex};
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, measurement::Measurement};
 use revm_precompile::kzg_point_evaluation::run;
-use revm_primitives::{eip4844::VERSIONED_HASH_VERSION_KZG, hex};
 use sha2_0_11_0::{Digest, Sha256};
 
 /// Add benches for the KZG point evaluation precompile

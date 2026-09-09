@@ -19,7 +19,7 @@ pub mod writes;
 pub use account::{AccountBal, AccountInfoBal, StorageBal};
 pub use alloy_eip7928::BlockAccessIndex;
 use alloy_eip7928::BlockAccessList as AlloyBal;
-use revm_primitives::{Address, AddressIndexMap, StorageKey, StorageValue};
+use base_execution_evm_primitives::{Address, AddressIndexMap, StorageKey, StorageValue};
 pub use writes::BalWrites;
 
 use crate::{Account, AccountId, AccountInfo};
@@ -308,8 +308,8 @@ mod tests {
         CodeChange as AlloyCodeChange, NonceChange as AlloyNonceChange,
         SlotChanges as AlloySlotChanges, StorageChange as AlloyStorageChange,
     };
-    use revm_bytecode::Bytecode;
-    use revm_primitives::{B256, Bytes, U256};
+    use base_execution_evm_primitives::Bytecode;
+    use base_execution_evm_primitives::{B256, Bytes, U256};
 
     use super::*;
 

@@ -9,7 +9,7 @@ mod serde_impl;
 
 use std::sync::Arc;
 
-use revm_primitives::{
+use base_execution_evm_primitives::{
     Address, B256, Bytes, KECCAK_EMPTY, OnceLock, alloy_primitives::Sealable, keccak256,
 };
 
@@ -353,8 +353,8 @@ impl Bytecode {
 
 #[cfg(test)]
 mod tests {
+    use base_execution_evm_primitives::bytes;
     use bitvec::{bitvec, order::Lsb0};
-    use revm_primitives::bytes;
 
     use super::*;
     use crate::{eip7702::Eip7702DecodeError, opcode};

@@ -1,6 +1,6 @@
 //! CountInspector - Inspector that counts all opcodes that were called.
 
-use revm_primitives::Log;
+use base_execution_evm_primitives::Log;
 
 use crate::inspector::Inspector;
 
@@ -197,9 +197,9 @@ impl<CTX> Inspector<CTX> for CountInspector {
 
     fn selfdestruct(
         &mut self,
-        _contract: revm_primitives::Address,
-        _target: revm_primitives::Address,
-        _value: revm_primitives::U256,
+        _contract: base_execution_evm_primitives::Address,
+        _target: base_execution_evm_primitives::Address,
+        _value: base_execution_evm_primitives::U256,
     ) {
         self.selfdestruct_count += 1;
     }
@@ -208,10 +208,10 @@ impl<CTX> Inspector<CTX> for CountInspector {
 #[cfg(test)]
 mod tests {
     use base_execution_evm_machine::Context;
+    use base_execution_evm_primitives::{Bytes, TxKind};
     use base_execution_evm_runtime::{MainBuilder, MainContext};
     use base_execution_state_memory::BenchmarkDB;
     use base_execution_state_memory::bytecode::{Bytecode, opcode};
-    use revm_primitives::{Bytes, TxKind};
 
     use super::*;
     use crate::InspectEvm;

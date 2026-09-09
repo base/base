@@ -9,7 +9,7 @@ use core::{
 use std::{rc::Rc, vec::Vec};
 
 use base_execution_evm_machine::GasParams;
-use revm_primitives::{B256, U256, hex};
+use base_execution_evm_primitives::{B256, U256, hex};
 
 use crate::InstructionResult;
 

@@ -1,6 +1,6 @@
+use base_execution_evm_primitives::hex;
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, black_box};
 use revm_precompile::blake2;
-use revm_primitives::hex;
 
 pub fn add_benches(
     group: &mut BenchmarkGroup<'_, codspeed_criterion_compat_5_0::measurement::WallTime>,

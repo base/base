@@ -1,5 +1,5 @@
 //! Identity precompile returns
-use revm_primitives::Bytes;
+use base_execution_evm_primitives::Bytes;
 
 use super::calc_linear_cost;
 use crate::{

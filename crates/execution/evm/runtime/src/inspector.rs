@@ -3,9 +3,9 @@ use base_execution_evm_machine::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter,
 };
 use base_execution_evm_machine::{Database, Journal, JournalEntry, JournalTr};
+use base_execution_evm_primitives::{Address, Log, U256};
 use base_execution_evm_runtime::FrameResult;
 use base_execution_state_memory::EvmState;
-use revm_primitives::{Address, Log, U256};
 
 /// EVM hooks into execution.
 ///
@@ -239,9 +239,9 @@ mod tests {
     use ::base_execution_evm_runtime::{InspectEvm, MainBuilder, MainContext};
     use base_execution_evm_machine::InstructionResult;
     use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
+    use base_execution_evm_primitives::TxKind;
     use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
     use base_execution_state_memory::{Bytecode, bytecode::opcode};
-    use revm_primitives::TxKind;
 
     use super::*;
 

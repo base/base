@@ -1,4 +1,4 @@
-use revm_primitives::{Address, B256, U256};
+use base_execution_evm_primitives::{Address, B256, U256};
 
 /// Trait for converting types into U256 values.
 pub trait IntoU256 {
@@ -32,7 +32,7 @@ impl IntoAddress for U256 {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::address;
+    use base_execution_evm_primitives::address;
 
     use super::*;
 

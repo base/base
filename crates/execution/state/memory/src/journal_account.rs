@@ -7,7 +7,7 @@ use bitflags::bitflags;
 use nonmax::NonMaxU32;
 
 use crate::EvmStorage;
-use revm_primitives::{HashMap, StorageKey, StorageValue, U256, hardfork::SpecId};
+use base_execution_evm_primitives::{HashMap, StorageKey, StorageValue, U256, hardfork::SpecId};
 
 /// Transaction id used to track when account or storage slot was touched/loaded into the journal.
 ///
@@ -598,7 +598,7 @@ impl EvmStorageSlot {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::{KECCAK_EMPTY, StorageKey, U256};
+    use base_execution_evm_primitives::{KECCAK_EMPTY, StorageKey, U256};
 
     use super::*;
     use crate::EvmStorageSlot;

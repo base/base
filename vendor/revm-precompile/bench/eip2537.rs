@@ -3,9 +3,9 @@ use ark_bls12_381::{Fq, Fr, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
 use ark_std::rand::{SeedableRng, rngs::StdRng};
 use arkworks_general::{encode_base_field, encode_field_32_bytes, random_field, random_points};
+use base_execution_evm_primitives::Bytes;
 use codspeed_criterion_compat_5_0::{BenchmarkGroup, measurement::Measurement};
 use revm_precompile::bls12_381_const::{PADDED_FP_LENGTH, PADDED_G1_LENGTH, PADDED_G2_LENGTH};
-use revm_primitives::Bytes;
 
 const RNG_SEED: u64 = 42;
 const MAX_MSM_SIZE: usize = 256;

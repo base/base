@@ -8,8 +8,8 @@ pub use alloy_eip7928::{
     BlockAccessList as AlloyBal, CodeChange as AlloyCodeChange, NonceChange as AlloyNonceChange,
     StorageChange as AlloyStorageChange,
 };
-use revm_bytecode::{Bytecode, BytecodeDecodeError};
-use revm_primitives::{AddressIndexMap, B256, U256};
+use base_execution_evm_primitives::{AddressIndexMap, B256, U256};
+use base_execution_evm_primitives::{Bytecode, BytecodeDecodeError};
 
 use crate::bal::{AccountBal, Bal, BalWrites};
 

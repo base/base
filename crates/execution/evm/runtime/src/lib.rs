@@ -76,13 +76,13 @@ mod rpc_transaction;
 
 pub use base_execution_evm_machine as interpreter;
 pub use base_execution_evm_machine::{Context, Journal, JournalEntry};
+pub use base_execution_evm_primitives as bytecode;
+pub use base_execution_evm_primitives as primitives;
 pub use base_execution_state_memory as database;
 pub use base_execution_state_memory as state;
 pub use base_execution_state_memory::{DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
-pub use revm_bytecode as bytecode;
 pub use revm_precompile as precompile;
 pub use revm_precompile::install_crypto;
-pub use revm_primitives as primitives;
 
 mod execution_api;
 pub use execution_api::*;

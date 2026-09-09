@@ -1,4 +1,4 @@
-use revm_primitives::{Address, U256};
+use base_execution_evm_primitives::{Address, U256};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

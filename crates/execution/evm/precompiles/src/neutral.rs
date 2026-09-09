@@ -16,12 +16,12 @@ use alloc::string::String;
 use core::result;
 
 use alloy_primitives::{B256, Bytes, U256};
+use base_execution_evm_primitives::KECCAK_EMPTY;
 use base_execution_state_memory::AccountInfo as RevmAccountInfo;
 use revm_precompile::PrecompileError as RevmPrecompileError;
 use revm_precompile::PrecompileHalt as RevmPrecompileHalt;
 use revm_precompile::PrecompileOutput as RevmPrecompileOutput;
 use revm_precompile::PrecompileStatus as RevmPrecompileStatus;
-use revm_primitives::KECCAK_EMPTY;
 
 /// Engine-neutral account information.
 ///

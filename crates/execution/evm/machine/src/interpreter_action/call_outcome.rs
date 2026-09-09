@@ -1,7 +1,7 @@
 use core::ops::Range;
 use std::vec::Vec;
 
-use revm_primitives::{Bytes, Log};
+use base_execution_evm_primitives::{Bytes, Log};
 
 use crate::{Gas, InstructionResult, InterpreterResult};
 

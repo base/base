@@ -25,11 +25,10 @@ bitvec = { workspace = true }
 cfg-if = { workspace = true }
 either = { workspace = true }
 auto_impl = { workspace = true }
-revm-bytecode = {workspace = true}
 derive-where = { workspace = true }
 alloy-eip2930 = { workspace = true }
-revm-primitives = {workspace = true}
 base-execution-state-memory = {workspace = true}
+base-execution-evm-primitives = {workspace = true}
 alloy-eip7702 = { workspace = true, features = ["k256"] }
 serde = {features = ["derive", "rc"], optional = true, workspace = true}
 
@@ -56,7 +55,7 @@ dev = [
     "optional_priority_fee_check",
     "optional_fee_charge",
 ]
-map-foldhash = ["revm-primitives/map-foldhash", "base-execution-state-memory/map-foldhash"]
+map-foldhash = ["base-execution-evm-primitives/map-foldhash", "base-execution-state-memory/map-foldhash"]
 memory_limit = []
 optional_balance_check = []
 optional_block_gas_limit = []
@@ -68,9 +67,8 @@ optional_no_base_fee = []
 optional_priority_fee_check = []
 serde = [
     "dep:serde",
-    "revm-primitives/serde",
+    "base-execution-evm-primitives/serde",
     "base-execution-state-memory/serde",
-    "revm-bytecode/serde",
     "derive-where/serde",
     "bitvec/serde",
     "alloy-eip7702/serde",
@@ -79,9 +77,8 @@ serde = [
 ]
 std = [
     "serde?/std",
-    "revm-bytecode/std",
+    "base-execution-evm-primitives/std",
     "base-execution-state-memory/std",
-    "revm-primitives/std",
     "bitvec/std",
     "alloy-eip7702/std",
     "alloy-eip2930/std",
@@ -89,6 +86,6 @@ std = [
     "serde_json/std",
 ]
 serde-json = ["serde"]
-arbitrary = ["std", "revm-primitives/arbitrary"]
-hashbrown = ["revm-primitives/hashbrown"]
+arbitrary = ["std", "base-execution-evm-primitives/arbitrary"]
+hashbrown = ["base-execution-evm-primitives/hashbrown"]
 

@@ -5,7 +5,7 @@
 //!
 //!
 //! [`BlobExcessGasAndPrice`] is used to store the blob gas price and excess blob gas.s
-use revm_primitives::{
+use base_execution_evm_primitives::{
     eip4844::{
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
         MIN_BLOB_GASPRICE,
@@ -94,7 +94,7 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN;
+    use base_execution_evm_primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN;
 
     use super::*;
 

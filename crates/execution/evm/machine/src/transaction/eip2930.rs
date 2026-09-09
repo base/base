@@ -1,6 +1,6 @@
 //! EIP-2930 Access list transaction interface.
 use auto_impl::auto_impl;
-use revm_primitives::{Address, B256};
+use base_execution_evm_primitives::{Address, B256};
 
 /// Access list type is introduced in EIP-2930, and every
 /// transaction after it contains access list.

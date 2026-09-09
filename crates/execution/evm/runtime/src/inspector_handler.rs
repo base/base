@@ -7,10 +7,10 @@ use base_execution_evm_machine::{
     instructions::{GasTable, InstructionTable},
     interpreter_action::FrameInit,
 };
+use base_execution_evm_primitives::hints_util::cold_path;
 use base_execution_evm_runtime::{
     EvmTr, FrameResult, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
 };
-use revm_primitives::hints_util::cold_path;
 
 use crate::{Inspector, InspectorEvmTr, JournalExt};
 

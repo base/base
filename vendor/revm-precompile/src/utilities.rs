@@ -1,7 +1,7 @@
 //! Utility function that precompiles use, padding and converting between types.
 use std::borrow::Cow;
 
-use revm_primitives::{B256, Bytes, b256};
+use base_execution_evm_primitives::{B256, Bytes, b256};
 
 /// Right-pads the given slice at `offset` with zeroes until `LEN`.
 ///

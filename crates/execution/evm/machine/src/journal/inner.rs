@@ -7,16 +7,16 @@ use base_execution_evm_machine::{
     JournaledAccountTr, SStoreResult, SelfDestructResult, SelfdestructionRevertStatus, StateLoad,
     TransferError,
 };
-use base_execution_state_memory::Database;
-use base_execution_state_memory::{Account, EvmState, TransactionId, TransientStorage};
-use revm_bytecode::Bytecode;
-use revm_primitives::{
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{
     Address, B256, Bytes, HashMap, KECCAK_EMPTY, Log, LogData, StorageKey, StorageValue, U256,
     eip7708::{ETH_TRANSFER_LOG_ADDRESS, ETH_TRANSFER_LOG_TOPIC},
     hardfork::SpecId::{self, *},
     hash_map::Entry,
     hints_util::unlikely,
 };
+use base_execution_state_memory::Database;
+use base_execution_state_memory::{Account, EvmState, TransactionId, TransientStorage};
 
 use super::warm_addresses::WarmAddresses;
 
@@ -1114,9 +1114,9 @@ impl JournalInner {
 
 #[cfg(test)]
 mod tests {
+    use base_execution_evm_primitives::{HashSet, U256, address};
     use base_execution_state_memory::AccountInfo;
     use base_execution_state_memory::EmptyDB;
-    use revm_primitives::{HashSet, U256, address};
 
     use super::*;
 

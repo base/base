@@ -7,7 +7,7 @@ use alloc::{format, string::String, vec::Vec};
 use base_execution_evm_machine::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
 };
-use revm_primitives::{Address, Log, U256};
+use base_execution_evm_primitives::{Address, Log, U256};
 
 use crate::Inspector;
 
@@ -177,8 +177,8 @@ impl<CTX> Inspector<CTX> for TestInspector {
 pub mod default_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
+    use base_execution_evm_primitives::Bytes;
     use base_execution_state_memory::bytecode::opcode;
-    use revm_primitives::Bytes;
 
     use super::*;
 
@@ -257,14 +257,14 @@ pub mod default_tests {
 #[cfg(test)]
 mod tests {
     use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
-    use base_execution_evm_runtime::{ExecuteEvm, MainBuilder, MainContext};
-    use base_execution_state_memory::{AccountInfo, Bytecode, bytecode::opcode};
-    use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use revm_primitives::{
+    use base_execution_evm_primitives::{
         Address, B256, Bytes, TxKind, U256, address,
         eip7708::{ETH_TRANSFER_LOG_ADDRESS, ETH_TRANSFER_LOG_TOPIC},
         hardfork::SpecId,
     };
+    use base_execution_evm_runtime::{ExecuteEvm, MainBuilder, MainContext};
+    use base_execution_state_memory::{AccountInfo, Bytecode, bytecode::opcode};
+    use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
 
     use crate::{
         InspectCommitEvm, InspectEvm, InspectSystemCallEvm, InspectorEvent, TestInspector,
@@ -453,7 +453,7 @@ mod tests {
             AccountInfo {
                 balance: U256::from(1_000_000_000_000_000_000u64),
                 nonce: 0,
-                code_hash: revm_primitives::keccak256(&caller_code),
+                code_hash: base_execution_evm_primitives::keccak256(&caller_code),
                 code: Some(Bytecode::new_raw(caller_code)),
                 ..Default::default()
             },
@@ -469,7 +469,7 @@ mod tests {
             AccountInfo {
                 balance: U256::ZERO,
                 nonce: 0,
-                code_hash: revm_primitives::keccak256(&callee_code),
+                code_hash: base_execution_evm_primitives::keccak256(&callee_code),
                 code: Some(Bytecode::new_raw(callee_code)),
                 ..Default::default()
             },
@@ -951,9 +951,9 @@ mod tests {
     /// is non-zero and triggers the divergence.
     #[test]
     fn test_system_call_gas_consistency_with_reservoir() {
+        use base_execution_evm_primitives::hardfork::SpecId;
         use base_execution_evm_runtime::SystemCallEvm;
         use base_execution_state_memory::{CacheDB, EmptyDB};
-        use revm_primitives::hardfork::SpecId;
 
         let child_addr = address!("0x000000000000000000000000000000000000c0de");
 
@@ -1021,7 +1021,7 @@ mod tests {
                 AccountInfo {
                     balance: U256::ZERO,
                     nonce: 0,
-                    code_hash: revm_primitives::keccak256(&system_code),
+                    code_hash: base_execution_evm_primitives::keccak256(&system_code),
                     code: Some(Bytecode::new_raw(system_code.clone())),
                     ..Default::default()
                 },
@@ -1031,7 +1031,7 @@ mod tests {
                 AccountInfo {
                     balance: U256::ZERO,
                     nonce: 0,
-                    code_hash: revm_primitives::keccak256(&child_code),
+                    code_hash: base_execution_evm_primitives::keccak256(&child_code),
                     code: Some(Bytecode::new_raw(child_code.clone())),
                     ..Default::default()
                 },

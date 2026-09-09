@@ -2,12 +2,12 @@ use crate::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chain_config::BaseUpgrade;
 use base_execution_evm_precompiles::StorageFeatures;
+use base_execution_evm_primitives::OnceLock;
 use revm_precompile as precompile;
 use revm_precompile::Precompiles;
 use revm_precompile::bn254;
 use revm_precompile::modexp;
 use revm_precompile::secp256r1;
-use revm_primitives::OnceLock;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistry, B20Factory, BerylLookup, NonceManager,
@@ -239,12 +239,12 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use base_common_chain_config::BaseUpgrade;
     use base_execution_evm_precompiles::StorageFeatures;
+    use base_execution_evm_primitives::eip7823;
     use revm_precompile::Precompiles;
     use revm_precompile::bls12_381_const;
     use revm_precompile::bn254;
     use revm_precompile::modexp;
     use revm_precompile::secp256r1;
-    use revm_primitives::eip7823;
     use rstest::rstest;
 
     use crate::{

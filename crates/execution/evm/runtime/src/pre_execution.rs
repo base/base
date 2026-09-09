@@ -9,9 +9,11 @@ use base_execution_evm_machine::{
     AccessListItemTr, AuthorizationTr, Block, Cfg, ContextTr, Database, InvalidTransaction,
     JournalCheckpoint, JournalTr, JournaledAccountTr, Transaction, TransactionType,
 };
+use base_execution_evm_primitives::Bytecode;
+use base_execution_evm_primitives::{
+    Address, AddressMap, HashSet, StorageKey, TxKind, U256, hardfork::SpecId,
+};
 use base_execution_state_memory::AccountInfo;
-use revm_bytecode::Bytecode;
-use revm_primitives::{Address, AddressMap, HashSet, StorageKey, TxKind, U256, hardfork::SpecId};
 
 use crate::{EvmTr, PrecompileProvider};
 

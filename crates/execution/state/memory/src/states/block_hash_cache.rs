@@ -1,6 +1,6 @@
 use std::boxed::Box;
 
-use revm_primitives::{BLOCK_HASH_HISTORY, alloy_primitives::B256};
+use base_execution_evm_primitives::{BLOCK_HASH_HISTORY, alloy_primitives::B256};
 
 const BLOCK_HASH_HISTORY_USIZE: usize = BLOCK_HASH_HISTORY as usize;
 

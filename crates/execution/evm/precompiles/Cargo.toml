@@ -18,7 +18,6 @@ thiserror = {workspace = true}
 tracing = { workspace = true }
 alloy-sol-types = {workspace = true}
 revm-precompile = {workspace = true}
-revm-primitives = {workspace = true}
 alloy-primitives = {workspace = true}
 sha2 = { workspace = true, optional = true}
 base-common-types-chain = {workspace = true}
@@ -26,6 +25,7 @@ base-execution-evm-macros = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-evm-machine = {workspace = true}
 base-execution-state-memory = {workspace = true}
+base-execution-evm-primitives = {workspace = true}
 derive_more = { workspace = true, features = ["from", "try_into"] }
 base64 = { workspace = true, features = ["default"], optional = true}
 k256 = { workspace = true, features = ["default", "ecdsa"], optional = true}
@@ -91,7 +91,7 @@ std = [
     "base-execution-evm-machine/std",
     "base-execution-state-memory/std",
     "revm-precompile/std",
-    "revm-primitives/std",
+    "base-execution-evm-primitives/std",
     "base-common-types-chain/std",
     "derive_more/std",
     "thiserror/std",

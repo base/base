@@ -1,8 +1,8 @@
 //! Database implementations for `either::Either` type.
 
+use base_execution_evm_primitives::{Address, AddressMap, B256, StorageKey, StorageValue};
 use base_execution_state_memory::{Account, AccountId, AccountInfo, Bytecode};
 use either::Either;
-use revm_primitives::{Address, AddressMap, B256, StorageKey, StorageValue};
 
 use crate::{Database, DatabaseCommit, DatabaseRef};
 

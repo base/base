@@ -1,4 +1,4 @@
-use revm_primitives::{Address, Bytes};
+use base_execution_evm_primitives::{Address, Bytes};
 use serde::{Deserialize, Serialize};
 
 use super::{Bytecode, BytecodeKind, JumpTable};

@@ -14,12 +14,12 @@ use base_execution_evm_machine::{
     instructions::instruction_table,
     interpreter::{ExtBytecode, InputsImpl, SharedMemory},
 };
-use revm_bytecode::{
+use base_execution_evm_primitives::{
     Bytecode, JumpTable,
     bitvec::{bitvec, order::Lsb0},
     opcode,
 };
-use revm_primitives::{Bytes, hardfork::SpecId};
+use base_execution_evm_primitives::{Bytes, hardfork::SpecId};
 
 /// Demonstrates that `Bytecode::new_analyzed` with insufficient padding causes
 /// an OOB read in `ExtBytecode::read_slice`, caught by Miri.

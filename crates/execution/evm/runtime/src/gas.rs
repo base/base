@@ -103,10 +103,10 @@ impl GasInspector {
 mod tests {
     use base_execution_evm_machine::{CallInputs, CreateInputs, Interpreter, InterpreterResult};
     use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
+    use base_execution_evm_primitives::{Address, Bytes, TxKind, hardfork::SpecId};
     use base_execution_evm_runtime::{MainBuilder, MainContext};
     use base_execution_state_memory::bytecode::{Bytecode, opcode};
     use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use revm_primitives::{Address, Bytes, TxKind, hardfork::SpecId};
 
     use super::*;
     use crate::{InspectEvm, Inspector};

@@ -1,7 +1,7 @@
 use core::ptr;
 
 use base_execution_evm_machine::{GasParams, Host};
-use revm_primitives::{B256, KECCAK_EMPTY, U256};
+use base_execution_evm_primitives::{B256, KECCAK_EMPTY, U256};
 
 use crate::{
     CallInput, InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
@@ -26,7 +26,7 @@ pub fn keccak256<H: Host + ?Sized>(context: Ictx<'_, H>) -> Result {
             from,
             len,
         )?;
-        revm_primitives::keccak256(&*context.interpreter.memory.slice_len(from, len))
+        base_execution_evm_primitives::keccak256(&*context.interpreter.memory.slice_len(from, len))
     };
     *top = hash.into();
     Ok(())

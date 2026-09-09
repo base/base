@@ -1,7 +1,7 @@
 //! BLS12-381 pairing precompile. More details in [`pairing`]
 use std::vec::Vec;
 
-use revm_primitives::B256;
+use base_execution_evm_primitives::B256;
 
 use super::{
     PairingPair,

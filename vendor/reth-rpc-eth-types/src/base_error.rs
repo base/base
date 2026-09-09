@@ -27,7 +27,7 @@ pub enum BaseEthApiError {
     /// EVM error originating from invalid Base data.
     #[error(transparent)]
     Evm(#[from] BaseBlockExecutionError),
-    /// Wrapper for [`revm_primitives::InvalidTransaction`](InvalidTransaction).
+    /// Wrapper for [`base_execution_evm_primitives::InvalidTransaction`](InvalidTransaction).
     #[error(transparent)]
     InvalidTransaction(#[from] BaseInvalidTransactionError),
     /// Sequencer client error.

@@ -1,7 +1,7 @@
 use core::cell::OnceCell;
 
 use base_execution_evm_machine::CreateScheme;
-use revm_primitives::{Address, B256, Bytes, U256, keccak256};
+use base_execution_evm_primitives::{Address, B256, Bytes, U256, keccak256};
 
 /// Inputs for a create call
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

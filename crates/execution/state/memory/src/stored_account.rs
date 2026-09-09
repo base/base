@@ -2,11 +2,11 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::TrieAccount;
 use base_common_types_chain::{InMemorySize, constants::KECCAK_EMPTY};
+use base_execution_evm_primitives::{Bytecode as RevmBytecode, BytecodeDecodeError};
 use base_execution_state_memory::AccountInfo;
 #[cfg(feature = "reth-codec")]
 use bytes::Buf;
 use derive_more::Deref;
-use revm_bytecode::{Bytecode as RevmBytecode, BytecodeDecodeError};
 
 /// Identifier for legacy raw bytecode in the persisted encoding.
 pub const LEGACY_RAW_BYTECODE_ID: u8 = 0;
@@ -72,7 +72,9 @@ impl StoredAccount {
         Self {
             balance: revm_account.info.balance,
             nonce: revm_account.info.nonce,
-            bytecode_hash: if revm_account.info.code_hash == revm_primitives::KECCAK_EMPTY {
+            bytecode_hash: if revm_account.info.code_hash
+                == base_execution_evm_primitives::KECCAK_EMPTY
+            {
                 None
             } else {
                 Some(revm_account.info.code_hash)
@@ -129,7 +131,7 @@ impl StoredBytecode {
         Self(RevmBytecode::new_raw(bytes))
     }
 
-    /// Creates a new raw [`revm_bytecode::Bytecode`].
+    /// Creates a new raw [`base_execution_evm_primitives::Bytecode`].
     ///
     /// Returns an error on incorrect StoredBytecode format.
     #[inline]
@@ -196,7 +198,7 @@ impl base_common_types_chain::Compact for StoredBytecode {
                     RevmBytecode::new_analyzed(
                         bytes,
                         original_len,
-                        revm_bytecode::JumpTable::from_slice(buf, jump_table_len),
+                        base_execution_evm_primitives::JumpTable::from_slice(buf, jump_table_len),
                     )
                 })
             }
@@ -259,7 +261,7 @@ impl From<StoredAccount> for AccountInfo {
 mod tests {
     use alloy_primitives::{B256, U256, hex_literal::hex};
     use base_common_types_chain::Compact;
-    use revm_bytecode::JumpTable;
+    use base_execution_evm_primitives::JumpTable;
 
     use super::*;
 

@@ -85,7 +85,7 @@ impl core::iter::FusedIterator for BytecodeIterator<'_> {}
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::Bytes;
+    use base_execution_evm_primitives::Bytes;
 
     use super::*;
 

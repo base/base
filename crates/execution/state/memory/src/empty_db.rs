@@ -2,8 +2,8 @@
 use core::{convert::Infallible, fmt, marker::PhantomData};
 use std::string::ToString;
 
+use base_execution_evm_primitives::{Address, B256, StorageKey, StorageValue, keccak256};
 use base_execution_state_memory::{AccountInfo, Bytecode};
-use revm_primitives::{Address, B256, StorageKey, StorageValue, keccak256};
 
 use crate::{DBErrorMarker, Database, DatabaseRef};
 
@@ -114,7 +114,7 @@ impl<E: DBErrorMarker + core::error::Error + Send + Sync + 'static> DatabaseRef
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::b256;
+    use base_execution_evm_primitives::b256;
 
     use super::*;
 

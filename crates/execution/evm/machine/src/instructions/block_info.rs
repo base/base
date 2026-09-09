@@ -1,4 +1,4 @@
-use revm_primitives::hardfork::SpecId::*;
+use base_execution_evm_primitives::hardfork::SpecId::*;
 
 use crate::{Host, InstructionContext as Ictx, InstructionExecResult as Result};
 

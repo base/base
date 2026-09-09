@@ -1,6 +1,6 @@
 //! k256 implementation of `ecrecover`. More about it in [`crate::secp256k1`].
+use base_execution_evm_primitives::{B256, alloy_primitives::B512, keccak256};
 use k256::ecdsa::{Error, RecoveryId, Signature, VerifyingKey};
-use revm_primitives::{B256, alloy_primitives::B512, keccak256};
 
 /// Recover the public key from a signature and a message.
 ///

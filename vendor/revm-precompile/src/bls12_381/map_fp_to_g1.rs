@@ -36,7 +36,7 @@ pub fn map_fp_to_g1(input: &[u8], gas_limit: u64) -> EthPrecompileResult {
 
 #[cfg(test)]
 mod test {
-    use revm_primitives::{Bytes, hex};
+    use base_execution_evm_primitives::{Bytes, hex};
 
     use super::*;
 

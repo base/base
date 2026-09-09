@@ -25,8 +25,8 @@ pub const unsafe fn read_u16(ptr: *const u8) -> u16 {
 #[cfg(test)]
 pub mod test {
     use anyhow::Result;
+    use base_execution_evm_primitives::U256;
     use rand_0_10_2::RngExt;
-    use revm_primitives::U256;
 
     use crate::opcode;
 
