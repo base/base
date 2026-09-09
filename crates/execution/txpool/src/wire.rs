@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
-use base_execution_txpool::{PoolTransaction, ValidPoolTransaction};
+use base_execution_txpool::ValidPoolTransaction;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Default extension payload for [`ValidatedTransaction`], contributing no
@@ -27,7 +27,7 @@ pub struct ExtensionError(pub String);
 /// Implementors are constrained by `#[serde(flatten)]`: the payload must
 /// serialize as a JSON map, and it must not use `u128`/`i128` fields, which
 /// `serde_json` cannot represent through flattening.
-pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
+pub trait ValidatedTransactionExtensions:
     Serialize + DeserializeOwned + Debug + Clone + Send + Sync + Unpin + 'static
 {
     /// Returns whether the payload carries no extension data.
@@ -49,25 +49,31 @@ pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
     /// Extracts extension data from an outbound pooled transaction.
     ///
     /// Called by the forwarder for each transaction it relays to a builder.
-    fn extract(tx: &ValidPoolTransaction<T>) -> Self;
+    fn extract(tx: &ValidPoolTransaction) -> Self;
 
     /// Applies extension data to an inbound pooled transaction.
     ///
     /// Called by the builder RPC handler before the transaction is inserted
     /// into the pool.
-    fn apply(self, tx: T) -> Result<T, ExtensionError>;
+    fn apply(
+        self,
+        tx: crate::BasePooledTransaction,
+    ) -> Result<crate::BasePooledTransaction, ExtensionError>;
 }
 
-impl<T: PoolTransaction> ValidatedTransactionExtensions<T> for NoExtensions {
+impl ValidatedTransactionExtensions for NoExtensions {
     fn is_empty(&self) -> bool {
         true
     }
 
-    fn extract(_tx: &ValidPoolTransaction<T>) -> Self {
+    fn extract(_tx: &ValidPoolTransaction) -> Self {
         Self {}
     }
 
-    fn apply(self, tx: T) -> Result<T, ExtensionError> {
+    fn apply(
+        self,
+        tx: crate::BasePooledTransaction,
+    ) -> Result<crate::BasePooledTransaction, ExtensionError> {
         Ok(tx)
     }
 }

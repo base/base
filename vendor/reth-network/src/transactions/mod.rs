@@ -33,8 +33,8 @@ use alloy_rlp::Encodable;
 use base_common_consensus::TxType;
 use base_execution_evm::SenderRecoveryCache;
 use base_execution_txpool::{
-    AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PoolTransaction,
-    PropagateKind, PropagatedTransactions, TransactionPool, ValidPoolTransaction,
+    AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
+    PropagatedTransactions, TransactionPool, ValidPoolTransaction,
 };
 use config::AnnouncementAcceptance;
 pub use config::{
@@ -861,10 +861,6 @@ impl<Pool: TransactionPool> TransactionsManager<Pool> {
 impl<Pool> TransactionsManager<Pool>
 where
     Pool: TransactionPool + Unpin + 'static,
-    Pool::Transaction: PoolTransaction<
-            Consensus = BaseTxEnvelope,
-            Pooled = base_common_consensus::BasePooledTransaction,
-        >,
 {
     /// Invoked when transactions in the local mempool are considered __pending__.
     ///
@@ -1457,9 +1453,9 @@ where
 
         let recover = |tx| {
             let recovered = if let Some(cache) = &self.sender_recovery_cache {
-                Pool::Transaction::try_recover_with_cache(tx, cache)
+                base_execution_txpool::BasePooledTransaction::try_recover_with_cache(tx, cache)
             } else {
-                Pool::Transaction::try_recover(tx)
+                base_execution_txpool::BasePooledTransaction::try_recover(tx)
             };
             match recovered {
                 Ok(tx) => Some(tx),
@@ -1565,13 +1561,7 @@ where
 //
 // spawned in `NodeConfig::start_network`(reth_node_core::NodeConfig) and
 // `NetworkConfig::start_network`(reth_network::NetworkConfig)
-impl<Pool: TransactionPool + Unpin + 'static> Future for TransactionsManager<Pool>
-where
-    Pool::Transaction: PoolTransaction<
-            Consensus = BaseTxEnvelope,
-            Pooled = base_common_consensus::BasePooledTransaction,
-        >,
-{
+impl<Pool: TransactionPool + Unpin + 'static> Future for TransactionsManager<Pool> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -1802,7 +1792,7 @@ impl PropagateTransaction {
     /// Pool transactions already cache the network encoded size used by txpool admission and
     /// pooled hash announcements. For blob transactions, this includes the sidecar size expected in
     /// a `PooledTransactions` response.
-    fn pool_tx<P: PoolTransaction>(tx: Arc<ValidPoolTransaction<P>>) -> Self {
+    fn pool_tx(tx: Arc<ValidPoolTransaction>) -> Self {
         let is_broadcastable_in_full = tx.transaction.consensus_ref().is_broadcastable_in_full();
         let propagation_size = tx.encoded_length();
         Self {
@@ -1836,12 +1826,12 @@ impl PropagateTransaction {
 
 /// A pooled transaction encoder that avoids cloning into the consensus transaction for propagation.
 #[derive(Debug)]
-struct PropagatePooledTransactionEncoder<P: PoolTransaction> {
-    transaction: Arc<ValidPoolTransaction<P>>,
+struct PropagatePooledTransactionEncoder {
+    transaction: Arc<ValidPoolTransaction>,
 }
 
-impl<P: PoolTransaction> PropagatePooledTransactionEncoder<P> {
-    const fn new(transaction: Arc<ValidPoolTransaction<P>>) -> Self {
+impl PropagatePooledTransactionEncoder {
+    const fn new(transaction: Arc<ValidPoolTransaction>) -> Self {
         Self { transaction }
     }
 
@@ -1850,7 +1840,7 @@ impl<P: PoolTransaction> PropagatePooledTransactionEncoder<P> {
     }
 }
 
-impl<P: PoolTransaction> Encodable for PropagatePooledTransactionEncoder<P> {
+impl Encodable for PropagatePooledTransactionEncoder {
     fn encode(&self, out: &mut dyn BufMut) {
         self.encode_uncached(out);
     }
@@ -1860,13 +1850,13 @@ impl<P: PoolTransaction> Encodable for PropagatePooledTransactionEncoder<P> {
     }
 }
 
-impl<P: PoolTransaction> TxHashRef for PropagatePooledTransactionEncoder<P> {
+impl TxHashRef for PropagatePooledTransactionEncoder {
     fn tx_hash(&self) -> &TxHash {
         self.transaction.hash()
     }
 }
 
-impl<P: PoolTransaction> Typed2718 for PropagatePooledTransactionEncoder<P> {
+impl Typed2718 for PropagatePooledTransactionEncoder {
     fn ty(&self) -> u8 {
         self.transaction.transaction.ty()
     }
@@ -2036,7 +2026,7 @@ enum PooledTransactionsHashesBuilder {
 
 impl PooledTransactionsHashesBuilder {
     /// Push a transaction from the pool to the list.
-    fn push_pooled<T: PoolTransaction>(&mut self, pooled_tx: Arc<ValidPoolTransaction<T>>) {
+    fn push_pooled(&mut self, pooled_tx: Arc<ValidPoolTransaction>) {
         match self {
             Self::Eth66(msg) => msg.push(*pooled_tx.hash()),
             Self::Eth68(msg) => {
@@ -2349,10 +2339,10 @@ mod tests {
     use alloy_rlp::Decodable;
     use base_common_consensus::{
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
-        BaseTypedTransaction as Transaction, TxEip1559, TxLegacy,
+        BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
     };
     use base_execution_txpool::{
-        CoinbaseTipOrdering, Eip4844PoolTransactionError, EthPooledTransaction, InMemoryBlobStore,
+        BasePooledTransaction, CoinbaseTipOrdering, Eip4844PoolTransactionError, InMemoryBlobStore,
         InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
         ValidPoolTransaction,
         test_utils::{
@@ -2381,11 +2371,7 @@ mod tests {
         transactions::config::RelaxedEthAnnouncementFilter,
     };
 
-    type BaseTestPool = Pool<
-        OkValidator<BaseTestTransaction>,
-        CoinbaseTipOrdering<BaseTestTransaction>,
-        InMemoryBlobStore,
-    >;
+    type BaseTestPool = Pool<OkValidator, CoinbaseTipOrdering, InMemoryBlobStore>;
 
     async fn new_base_tx_manager() -> (TransactionsManager<BaseTestPool>, NetworkManager) {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -2414,7 +2400,9 @@ mod tests {
         (transactions, network)
     }
 
-    fn valid_pool_transaction<P: PoolTransaction>(transaction: P) -> Arc<ValidPoolTransaction<P>> {
+    fn valid_pool_transaction(
+        transaction: base_execution_txpool::BasePooledTransaction,
+    ) -> Arc<ValidPoolTransaction> {
         let mut ids = SenderIdentifiers::default();
         let transaction_id =
             ids.sender_id_or_create(transaction.sender()).into_transaction_id(transaction.nonce());
@@ -2433,7 +2421,7 @@ mod tests {
         tx_gen: &mut TransactionGenerator<R>,
         nonce: u64,
     ) -> BaseTestTransaction {
-        let transaction: EthPooledTransaction = EthPooledTransaction::try_from_consensus(
+        let transaction: BasePooledTransaction = BasePooledTransaction::try_from_consensus(
             tx_gen.transaction().nonce(nonce).into_eip1559().try_into_recovered().unwrap(),
         )
         .unwrap();
@@ -3238,31 +3226,6 @@ mod tests {
         assert_eq!(txs.len(), 1);
     }
 
-    #[test]
-    fn test_transaction_builder_eip4844() {
-        let mut builder = PropagateTransactionsBuilder::full(EthVersion::Eth68, 0);
-        assert!(builder.is_empty());
-
-        let mut tx_gen = TransactionGenerator::new(rand::rng());
-        let tx = PropagateTransaction::pool_tx(valid_pool_transaction(tx_gen.gen_eip4844_pooled()));
-        builder.push(&tx);
-        assert!(!builder.is_empty());
-
-        let txs = builder.clone().build();
-        assert!(txs.full.is_none());
-        let txs = txs.pooled.unwrap();
-        assert_eq!(txs.len(), 1);
-
-        let tx = PropagateTransaction::pool_tx(valid_pool_transaction(tx_gen.gen_eip1559_pooled()));
-        builder.push(&tx);
-
-        let txs = builder.clone().build();
-        let pooled = txs.pooled.unwrap();
-        assert_eq!(pooled.len(), 1);
-        let txs = txs.full.unwrap();
-        assert_eq!(txs.len(), 1);
-    }
-
     #[tokio::test]
     async fn test_propagate_full() {
         reth_tracing::init_test_tracing();
@@ -3293,7 +3256,7 @@ mod tests {
         let eip1559_tx =
             valid_pool_transaction(NetworkTestData::transaction(tx_gen.gen_eip1559_pooled()));
         propagate.push(eip1559_tx.clone());
-        let large_tx: EthPooledTransaction = EthPooledTransaction::try_from_consensus(
+        let large_tx: BasePooledTransaction = BasePooledTransaction::try_from_consensus(
             tx_gen
                 .transaction()
                 .input(vec![0; DEFAULT_SOFT_LIMIT_BYTE_SIZE_TRANSACTIONS_BROADCAST_MESSAGE + 1])
@@ -3443,10 +3406,10 @@ mod tests {
         let mut tx_factory = MockTransactionFactory::default();
 
         let valid_known_tx = tx_factory.create_eip1559();
-        let known_tx_signed: Arc<ValidPoolTransaction<MockTransaction>> = Arc::new(valid_known_tx);
+        let known_tx_signed: Arc<ValidPoolTransaction> = Arc::new(valid_known_tx);
 
         let known_tx_hash = *known_tx_signed.hash();
-        let known_tx_type_byte = known_tx_signed.transaction.tx_type();
+        let known_tx_type_byte = known_tx_signed.transaction.ty();
         let known_tx_size = known_tx_signed.encoded_length();
 
         let unknown_tx_hash = B256::random();

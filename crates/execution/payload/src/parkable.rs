@@ -6,7 +6,7 @@ use alloy_primitives::{Address, TxHash};
 use base_common_consensus::Transaction;
 use base_execution_txpool::{
     BasePooledTransaction, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
-    PoolTransaction, PoolTransactionError, ValidPoolTransaction,
+    PoolTransactionError, ValidPoolTransaction,
 };
 pub use reth_payload_util::NoopPayloadTransactions;
 use reth_payload_util::PayloadTransactions;
@@ -31,10 +31,7 @@ impl PoolTransactionError for PayloadTransactionInvalidated {
 /// A transaction returned by [`PayloadTransactions::next`] becomes current until the caller parks,
 /// commits, or invalidates it. Current-transaction callbacks use the exact validated pool
 /// transaction retained by the adapter rather than reconstructing its identity from a hash.
-pub trait ParkablePayloadTransactions: PayloadTransactions
-where
-    Self::Transaction: PoolTransaction,
-{
+pub trait ParkablePayloadTransactions: PayloadTransactions {
     /// Parks and clears the current transaction.
     ///
     /// Returns `false` when this iterator does not support parking or has no current transaction.
@@ -50,10 +47,9 @@ where
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
 }
 
-impl<T, I> ParkablePayloadTransactions for reth_payload_util::BestPayloadTransactions<T, I>
+impl<I> ParkablePayloadTransactions for reth_payload_util::BestPayloadTransactions<I>
 where
-    T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: Iterator<Item = Arc<ValidPoolTransaction>>,
 {
     fn park_current(&mut self) -> bool {
         false
@@ -70,9 +66,8 @@ where
     }
 }
 
-impl<T> ParkablePayloadTransactions for reth_payload_util::NoopPayloadTransactions<T>
-where
-    T: PoolTransaction,
+impl ParkablePayloadTransactions
+    for reth_payload_util::NoopPayloadTransactions<base_execution_txpool::BasePooledTransaction>
 {
     fn park_current(&mut self) -> bool {
         false
@@ -123,7 +118,6 @@ where
 impl<I> ParkablePayloadTransactions for NonParkablePayloadTransactions<I>
 where
     I: PayloadTransactions,
-    I::Transaction: PoolTransaction,
 {
     fn park_current(&mut self) -> bool {
         false
@@ -142,8 +136,8 @@ where
 
 /// Converts a parkable best iterator into the payload-transaction interface used by the builder.
 pub struct ParkableBestPayloadTransactions {
-    inner: Box<dyn ParkableBestTransactions<BasePooledTransaction>>,
-    current: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    inner: Box<dyn ParkableBestTransactions>,
+    current: Option<Arc<ValidPoolTransaction>>,
 }
 
 impl std::fmt::Debug for ParkableBestPayloadTransactions {
@@ -156,7 +150,7 @@ impl std::fmt::Debug for ParkableBestPayloadTransactions {
 
 impl ParkableBestPayloadTransactions {
     /// Creates a payload adapter over a parkable best iterator.
-    pub fn new(inner: Box<dyn ParkableBestTransactions<BasePooledTransaction>>) -> Self {
+    pub fn new(inner: Box<dyn ParkableBestTransactions>) -> Self {
         Self { inner, current: None }
     }
 }

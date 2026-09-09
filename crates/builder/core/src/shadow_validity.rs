@@ -2,8 +2,8 @@
 
 use alloy_primitives::U256;
 use base_execution_txpool::{
-    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, TransactionPool, TransactionValidity,
-    ValidatedTransaction, ValidityOperator, ValidityPredicate,
+    BuilderApiImpl, BuilderApiServer, TransactionPool, TransactionValidity, ValidatedTransaction,
+    ValidityOperator, ValidityPredicate,
 };
 use jsonrpsee::core::RpcResult;
 
@@ -130,7 +130,7 @@ impl<P> ShadowValidityBuilderApi<P> {
 #[async_trait::async_trait]
 impl<P> BuilderApiServer<TransactionValidity> for ShadowValidityBuilderApi<P>
 where
-    P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
+    P: TransactionPool + Send + Sync + 'static,
 {
     async fn insert_validated_transaction(
         &self,

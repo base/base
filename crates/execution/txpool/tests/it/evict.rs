@@ -13,9 +13,8 @@ use base_execution_txpool::{
 use rand::distr::Uniform;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn only_blobs_eviction() {
-    // This test checks that blob transactions can be inserted into the pool, and at each step the
-    // blob pool can be truncated to the correct size
+async fn dynamic_fee_eviction() {
+    // Dynamic-fee transactions are evicted as needed to keep each subpool within its limits.
 
     // set the pool limits to something small
     let pool_config = PoolConfig {
@@ -43,11 +42,11 @@ async fn only_blobs_eviction() {
     // lot of large txs
     let size_range = 10..1100;
 
-    // create mock tx distribution, 100% blobs
+    // Exercise dynamic-fee transactions with varying calldata sizes.
     let tx_ratio = MockTransactionRatio {
         legacy_pct: 0,
-        dynamic_fee_pct: 0,
-        blob_pct: 100,
+        dynamic_fee_pct: 100,
+        blob_pct: 0,
         access_list_pct: 0,
     };
 
@@ -94,7 +93,17 @@ async fn only_blobs_eviction() {
             assert_eq!(set[0].nonce(), 0);
 
             // and finally insert it into the pool
-            let results = pool.add_transactions(TransactionOrigin::External, set).await;
+            let results = pool
+                .add_transactions(
+                    TransactionOrigin::External,
+                    set.into_iter()
+                        .map(|mut tx| {
+                            tx.set_input(vec![0; *tx.get_size()].into());
+                            tx.try_into().expect("Base transaction fixture")
+                        })
+                        .collect(),
+                )
+                .await;
             for (i, result) in results.iter().enumerate() {
                 match result {
                     Ok(AddedTransactionOutcome { hash, .. }) => {
@@ -163,8 +172,8 @@ async fn mixed_eviction() {
     // Adjust the ratios to include a mix of transaction types
     let tx_ratio = MockTransactionRatio {
         legacy_pct: 25,
-        dynamic_fee_pct: 25,
-        blob_pct: 25,
+        dynamic_fee_pct: 50,
+        blob_pct: 0,
         access_list_pct: 25,
     };
 
@@ -205,7 +214,17 @@ async fn mixed_eviction() {
             let set = set.into_inner().into_vec();
             assert_eq!(set[0].nonce(), 0);
 
-            let results = pool.add_transactions(TransactionOrigin::External, set).await;
+            let results = pool
+                .add_transactions(
+                    TransactionOrigin::External,
+                    set.into_iter()
+                        .map(|mut tx| {
+                            tx.set_input(vec![0; *tx.get_size()].into());
+                            tx.try_into().expect("Base transaction fixture")
+                        })
+                        .collect(),
+                )
+                .await;
             for (i, result) in results.iter().enumerate() {
                 match result {
                     Ok(_) => {
@@ -245,7 +264,7 @@ async fn mixed_eviction() {
 async fn nonce_gaps_eviction() {
     // This test checks that many transaction types can be inserted into the pool.
     //
-    // This test also inserts nonce gaps into the non-blob transactions.
+    // This test also inserts nonce gaps into the transactions.
     let pool_config = PoolConfig {
         pending_limit: SubPoolLimit { max_txs: 20, max_size: 2000 },
         queued_limit: SubPoolLimit { max_txs: 20, max_size: 2000 },
@@ -270,8 +289,8 @@ async fn nonce_gaps_eviction() {
     // Adjust the ratios to include a mix of transaction types
     let tx_ratio = MockTransactionRatio {
         legacy_pct: 25,
-        dynamic_fee_pct: 25,
-        blob_pct: 25,
+        dynamic_fee_pct: 50,
+        blob_pct: 0,
         access_list_pct: 25,
     };
 
@@ -318,7 +337,17 @@ async fn nonce_gaps_eviction() {
             set.with_nonce_gaps(gap_pct, gap_range.clone(), &mut rand::rng());
             let set = set.into_inner().into_vec();
 
-            let results = pool.add_transactions(TransactionOrigin::External, set).await;
+            let results = pool
+                .add_transactions(
+                    TransactionOrigin::External,
+                    set.into_iter()
+                        .map(|mut tx| {
+                            tx.set_input(vec![0; *tx.get_size()].into());
+                            tx.try_into().expect("Base transaction fixture")
+                        })
+                        .collect(),
+                )
+                .await;
             for (i, result) in results.iter().enumerate() {
                 match result {
                     Ok(_) => {

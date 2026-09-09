@@ -12,9 +12,7 @@ use std::{
 
 use alloy_primitives::{TxHash, U256};
 use base_common_consensus::{CoinbaseTip, Transaction};
-use base_execution_txpool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
-
-use crate::BasePooledTransaction;
+use base_execution_txpool::{Priority, TransactionOrdering, ValidPoolTransaction};
 
 /// Complete priority key used when merging best-transaction sources.
 ///
@@ -29,14 +27,9 @@ pub struct BestTransactionPriority<P: Ord + Clone> {
 
 impl<P: Ord + Clone> BestTransactionPriority<P> {
     /// Computes a complete priority key for a validated pool transaction.
-    pub fn new<T, O>(
-        ordering: &O,
-        transaction: &Arc<ValidPoolTransaction<T>>,
-        base_fee: u64,
-    ) -> Self
+    pub fn new<O>(ordering: &O, transaction: &Arc<ValidPoolTransaction>, base_fee: u64) -> Self
     where
-        T: PoolTransaction,
-        O: TransactionOrdering<Transaction = T, PriorityValue = P>,
+        O: TransactionOrdering<PriorityValue = P>,
     {
         Self {
             priority: ordering.priority(&transaction.transaction, base_fee),
@@ -170,11 +163,10 @@ impl Clone for UnifiedTipOrdering {
 
 impl TransactionOrdering for UnifiedTipOrdering {
     type PriorityValue = UnifiedTipPriority;
-    type Transaction = BasePooledTransaction;
 
     fn priority(
         &self,
-        transaction: &Self::Transaction,
+        transaction: &crate::BasePooledTransaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
         let Some(effective_tip) = transaction.effective_tip_per_gas(base_fee) else {
@@ -248,11 +240,10 @@ impl Clone for TimestampOrdering {
 
 impl TransactionOrdering for TimestampOrdering {
     type PriorityValue = u128;
-    type Transaction = BasePooledTransaction;
 
     fn priority(
         &self,
-        transaction: &Self::Transaction,
+        transaction: &crate::BasePooledTransaction,
         _base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
         // Reth sorts descending (higher value = picked first).
@@ -264,11 +255,10 @@ impl TransactionOrdering for TimestampOrdering {
 
 impl TransactionOrdering for BaseOrdering {
     type PriorityValue = BasePriority;
-    type Transaction = BasePooledTransaction;
 
     fn priority(
         &self,
-        transaction: &Self::Transaction,
+        transaction: &crate::BasePooledTransaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
         match self {
@@ -297,7 +287,7 @@ mod tests {
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{
-        CoinbaseTipOrdering, PoolTransaction, TransactionOrdering, test_utils::TransactionBuilder,
+        CoinbaseTipOrdering, TransactionOrdering, test_utils::TransactionBuilder,
     };
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
@@ -569,7 +559,7 @@ mod tests {
     #[test]
     fn standard_tx_ranking_matches_reth_coinbase_tip_order() {
         let unified = UnifiedTipOrdering::default();
-        let reth = CoinbaseTipOrdering::<BasePooledTransaction>::default();
+        let reth = CoinbaseTipOrdering::default();
         let higher = eip1559_pooled(1, 10, 2, 21_000);
         let lower = eip1559_pooled(2, 10, 1, 21_000);
 

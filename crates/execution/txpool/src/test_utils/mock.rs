@@ -14,13 +14,12 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256};
 use base_common_consensus::{
-    EthereumTxEnvelope, EthereumTypedTransaction, Signed, TxEip1559, TxEip2930, TxEip4844,
-    TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType, Typed2718,
+    EthereumTxEnvelope, EthereumTypedTransaction, Signed, Transaction, TxEip1559, TxEip2930,
+    TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType, Typed2718,
     constants::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         LEGACY_TX_TYPE_ID,
     },
-    error::ValueError,
 };
 use paste::paste;
 use rand::{
@@ -33,8 +32,7 @@ use reth_primitives_traits::{
 };
 
 use crate::{
-    CoinbaseTipOrdering, EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction, TxPool,
-    ValidPoolTransaction,
+    CoinbaseTipOrdering, EthBlobTransactionSidecar, TxPool, ValidPoolTransaction,
     identifier::{SenderIdentifiers, TransactionId},
     traits::TransactionOrigin,
 };
@@ -48,7 +46,7 @@ pub type MockTxPool = TxPool<MockOrdering>;
 /// type.
 ///
 /// This type is an alias for [`ValidPoolTransaction<MockTransaction>`].
-pub type MockValidTx = ValidPoolTransaction<MockTransaction>;
+pub type MockValidTx = ValidPoolTransaction;
 
 /// Create an empty `TxPool`
 pub fn mock_tx_pool() -> MockTxPool {
@@ -708,36 +706,28 @@ impl MockTransaction {
     }
 }
 
-impl PoolTransaction for MockTransaction {
-    type TryFromConsensusError = ValueError<EthereumTxEnvelope<TxEip4844>>;
-
-    type Consensus = EthereumTxEnvelope<TxEip4844>;
-
-    type Pooled = EthereumTxEnvelope<
-        TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarVariant>,
-    >;
-
-    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
+impl MockTransaction {
+    pub fn consensus_ref(&self) -> Recovered<&EthereumTxEnvelope<TxEip4844>> {
         unimplemented!("mock transaction does not wrap a consensus transaction")
     }
 
-    fn into_consensus(self) -> Recovered<Self::Consensus> {
+    pub fn into_consensus(self) -> Recovered<EthereumTxEnvelope<TxEip4844>> {
         self.into()
     }
 
-    fn from_pooled(pooled: Recovered<Self::Pooled>) -> Self {
+    pub fn from_pooled(pooled: Recovered<EthereumTxEnvelope<TxEip4844WithSidecar>>) -> Self {
         pooled.into()
     }
 
-    fn hash(&self) -> &TxHash {
+    pub fn hash(&self) -> &TxHash {
         self.get_hash()
     }
 
-    fn sender(&self) -> Address {
+    pub fn sender(&self) -> Address {
         *self.get_sender()
     }
 
-    fn sender_ref(&self) -> &Address {
+    pub fn sender_ref(&self) -> &Address {
         self.get_sender()
     }
 
@@ -745,7 +735,7 @@ impl PoolTransaction for MockTransaction {
     // want to also generate the error-prone cost setters. For now cost should be
     // correct at construction and auto-updated per field update via `update_cost`,
     // not to be manually set.
-    fn cost(&self) -> &U256 {
+    pub fn cost(&self) -> &U256 {
         match self {
             Self::Legacy { cost, .. }
             | Self::Eip2930 { cost, .. }
@@ -756,7 +746,7 @@ impl PoolTransaction for MockTransaction {
     }
 
     /// Returns the encoded length of the transaction.
-    fn encoded_length(&self) -> usize {
+    pub fn encoded_length(&self) -> usize {
         self.size()
     }
 }
@@ -919,8 +909,8 @@ impl base_common_consensus::Transaction for MockTransaction {
     }
 }
 
-impl EthPoolTransaction for MockTransaction {
-    fn take_blob(&mut self) -> EthBlobTransactionSidecar {
+impl MockTransaction {
+    pub fn take_blob(&mut self) -> EthBlobTransactionSidecar {
         match self {
             Self::Eip4844 { sidecar, .. } => {
                 EthBlobTransactionSidecar::Present(sidecar.clone().into())
@@ -929,18 +919,18 @@ impl EthPoolTransaction for MockTransaction {
         }
     }
 
-    fn try_into_pooled_eip4844(
+    pub fn try_into_pooled_eip4844(
         self,
         sidecar: Arc<BlobTransactionSidecarVariant>,
-    ) -> Option<Recovered<Self::Pooled>> {
+    ) -> Option<Recovered<EthereumTxEnvelope<TxEip4844WithSidecar>>> {
         let (tx, signer) = self.into_consensus().into_parts();
         tx.try_into_pooled_eip4844(Arc::unwrap_or_clone(sidecar))
             .map(|tx| tx.with_signer(signer))
             .ok()
     }
 
-    fn try_from_eip4844(
-        tx: Recovered<Self::Consensus>,
+    pub fn try_from_eip4844(
+        tx: Recovered<EthereumTxEnvelope<TxEip4844>>,
         sidecar: BlobTransactionSidecarVariant,
     ) -> Option<Self> {
         let (tx, signer) = tx.into_parts();
@@ -950,7 +940,7 @@ impl EthPoolTransaction for MockTransaction {
             .map(Self::from_pooled)
     }
 
-    fn validate_blob(
+    pub fn validate_blob(
         &self,
         _blob: &BlobTransactionSidecarVariant,
         _settings: &KzgSettings,
@@ -1238,6 +1228,93 @@ impl
     }
 }
 
+impl crate::BasePooledTransaction {
+    /// Mutates a simple transaction fixture, rebuilding its caches and retaining arrival time.
+    pub fn mutate_fixture(&mut self, change: impl FnOnce(&mut MockTransaction)) -> &mut Self {
+        let timestamp = self.received_at();
+        let recovered: Recovered<EthereumTxEnvelope<TxEip4844>> = self
+            .clone_into_consensus()
+            .map(|tx| tx.try_into_eth_envelope().expect("Ethereum-compatible fixture").into());
+        let mut fixture = MockTransaction::try_from(recovered).expect("simple Base fixture");
+        change(&mut fixture);
+        let rebuilt: Self = fixture.try_into().expect("Base transaction fixture");
+        *self = Self::new_with_received_at(rebuilt.transaction, rebuilt.encoded_length, timestamp);
+        self
+    }
+    /// Updates the fixture's sender and rebuilds cached transaction metadata.
+    pub fn set_sender(&mut self, value: Address) -> &mut Self {
+        self.mutate_fixture(|tx| {
+            tx.set_sender(value);
+        })
+    }
+    /// Updates the fixture's nonce and rebuilds cached transaction metadata.
+    pub fn set_nonce(&mut self, value: u64) -> &mut Self {
+        self.mutate_fixture(|tx| {
+            tx.set_nonce(value);
+        })
+    }
+    /// Updates the fixture's priority_fee and rebuilds cached transaction metadata.
+    pub fn set_priority_fee(&mut self, value: u128) -> &mut Self {
+        self.mutate_fixture(|tx| {
+            tx.set_priority_fee(value);
+        })
+    }
+    /// Updates the fixture's max_fee and rebuilds cached transaction metadata.
+    pub fn set_max_fee(&mut self, value: u128) -> &mut Self {
+        self.mutate_fixture(|tx| {
+            tx.set_max_fee(value);
+        })
+    }
+    /// Creates a modified transaction fixture and refreshes its cached metadata.
+    pub fn rng_hash(mut self) -> Self {
+        self.mutate_fixture(|tx| {
+            *tx = tx.clone().rng_hash();
+        });
+        self
+    }
+    /// Creates a modified transaction fixture and refreshes its cached metadata.
+    pub fn inc_nonce(mut self) -> Self {
+        self.mutate_fixture(|tx| {
+            *tx = tx.clone().inc_nonce();
+        });
+        self
+    }
+    /// Creates a modified transaction fixture and refreshes its cached metadata.
+    /// Creates a fixture with a higher price and refreshed metadata.
+    pub fn inc_price(mut self) -> Self {
+        self.mutate_fixture(|tx| {
+            *tx = tx.inc_price();
+        });
+        self
+    }
+
+    pub fn decr_price(mut self) -> Self {
+        self.mutate_fixture(|tx| {
+            *tx = tx.decr_price();
+        });
+        self
+    }
+}
+
+impl TryFrom<MockTransaction> for crate::BasePooledTransaction {
+    type Error = &'static str;
+
+    fn try_from(transaction: MockTransaction) -> Result<Self, Self::Error> {
+        let encoded_length = transaction.encoded_length();
+        let (tx, sender) = transaction.into_consensus().into_parts();
+        let tx = match tx {
+            EthereumTxEnvelope::Legacy(tx) => base_common_consensus::BaseTxEnvelope::Legacy(tx),
+            EthereumTxEnvelope::Eip2930(tx) => base_common_consensus::BaseTxEnvelope::Eip2930(tx),
+            EthereumTxEnvelope::Eip1559(tx) => base_common_consensus::BaseTxEnvelope::Eip1559(tx),
+            EthereumTxEnvelope::Eip7702(tx) => base_common_consensus::BaseTxEnvelope::Eip7702(tx),
+            EthereumTxEnvelope::Eip4844(_) => {
+                return Err("Base does not support blob transactions");
+            }
+        };
+        Ok(Self::new(Recovered::new_unchecked(tx, sender), encoded_length))
+    }
+}
+
 impl From<MockTransaction> for Recovered<EthereumTxEnvelope<TxEip4844>> {
     fn from(tx: MockTransaction) -> Self {
         let hash = *tx.hash();
@@ -1387,18 +1464,24 @@ pub struct MockTransactionFactory {
 
 impl MockTransactionFactory {
     /// Generates a transaction ID for the given [`MockTransaction`].
-    pub fn tx_id(&mut self, tx: &MockTransaction) -> TransactionId {
+    pub fn tx_id(&mut self, tx: &crate::BasePooledTransaction) -> TransactionId {
         let sender = self.ids.sender_id_or_create(tx.sender());
-        TransactionId::new(sender, *tx.get_nonce())
+        TransactionId::new(sender, tx.nonce())
     }
 
     /// Validates a [`MockTransaction`] and returns a [`MockValidTx`].
-    pub fn validated(&mut self, transaction: MockTransaction) -> MockValidTx {
+    pub fn validated(
+        &mut self,
+        transaction: impl TryInto<crate::BasePooledTransaction, Error: std::fmt::Debug>,
+    ) -> MockValidTx {
         self.validated_with_origin(TransactionOrigin::External, transaction)
     }
 
     /// Validates a [`MockTransaction`] and returns a shared [`Arc<MockValidTx>`].
-    pub fn validated_arc(&mut self, transaction: MockTransaction) -> Arc<MockValidTx> {
+    pub fn validated_arc(
+        &mut self,
+        transaction: impl TryInto<crate::BasePooledTransaction, Error: std::fmt::Debug>,
+    ) -> Arc<MockValidTx> {
         Arc::new(self.validated(transaction))
     }
 
@@ -1406,8 +1489,9 @@ impl MockTransactionFactory {
     pub fn validated_with_origin(
         &mut self,
         origin: TransactionOrigin,
-        transaction: MockTransaction,
+        transaction: impl TryInto<crate::BasePooledTransaction, Error: std::fmt::Debug>,
     ) -> MockValidTx {
+        let transaction = transaction.try_into().expect("Base transaction fixture");
         MockValidTx {
             propagate: false,
             transaction_id: self.tx_id(&transaction),
@@ -1435,7 +1519,7 @@ impl MockTransactionFactory {
 }
 
 /// `MockOrdering` is just a `CoinbaseTipOrdering` with `MockTransaction`
-pub type MockOrdering = CoinbaseTipOrdering<MockTransaction>;
+pub type MockOrdering = CoinbaseTipOrdering;
 
 /// A ratio of each of the configured transaction types. The percentages sum up to 100, this is
 /// enforced in [`MockTransactionRatio::new`] by an assert.
@@ -1827,7 +1911,10 @@ fn test_mock_priority() {
     let o = MockOrdering::default();
     let lo = MockTransaction::eip1559().with_gas_limit(100_000);
     let hi = lo.next().inc_price();
-    assert!(o.priority(&hi, 0) > o.priority(&lo, 0));
+    assert!(
+        o.priority(&hi.clone().try_into().expect("Base transaction fixture"), 0)
+            > o.priority(&lo.try_into().expect("Base transaction fixture"), 0)
+    );
 }
 
 #[cfg(test)]
@@ -1843,15 +1930,13 @@ mod tests {
 
         // Test legacy transaction creation
         let legacy = factory.create_legacy();
-        assert_eq!(legacy.transaction.tx_type(), TxType::Legacy);
+        assert_eq!(legacy.transaction.ty(), LEGACY_TX_TYPE_ID);
 
         // Test EIP1559 transaction creation
         let eip1559 = factory.create_eip1559();
-        assert_eq!(eip1559.transaction.tx_type(), TxType::Eip1559);
+        assert_eq!(eip1559.transaction.ty(), EIP1559_TX_TYPE_ID);
 
-        // Test EIP4844 transaction creation
-        let eip4844 = factory.create_eip4844();
-        assert_eq!(eip4844.transaction.tx_type(), TxType::Eip4844);
+        assert!(crate::BasePooledTransaction::try_from(MockTransaction::eip4844()).is_err());
     }
 
     #[test]

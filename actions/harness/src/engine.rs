@@ -59,7 +59,7 @@ pub type TestProviderFactory = ProviderFactory;
 pub type TestBlockchainProvider = BlockchainProvider;
 
 /// Type alias for the noop pool used by the engine client.
-pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
+pub type TestPool = NoopTransactionPool;
 
 /// Minimal `L2ToL1MessagePasser` stand-in for Isthmus withdrawals-root tests.
 ///

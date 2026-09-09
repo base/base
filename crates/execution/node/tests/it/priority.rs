@@ -10,7 +10,7 @@ use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::{
     NonParkablePayloadTransactions, ParkablePayloadTransactions, builder::BasePayloadTransactions,
 };
-use base_execution_txpool::{BasePooledTransaction, PoolTransaction};
+use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
     BaseComponentsBuilder, BaseNetworkBuilder, BaseNode, BasePayloadBuilder,
     BasePayloadServiceBuilder, BasePoolBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig,
@@ -34,7 +34,7 @@ struct CustomTxPriority {
 
 impl<Pool> BasePayloadTransactions<Pool> for CustomTxPriority
 where
-    Pool: base_execution_txpool::ParkableTransactionPool<Transaction = BasePooledTransaction>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     fn best_transactions(
         &self,

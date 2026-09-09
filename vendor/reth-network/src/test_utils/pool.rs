@@ -1,17 +1,12 @@
 //! Pools using real Base transaction representations and the shared mock validator.
 
-use base_common_consensus::{BaseTxEnvelope, EthereumTxEnvelope, TxEip4844};
 use base_execution_txpool::{
-    CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool, PoolTransaction,
+    CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
     test_utils::BaseTestTransaction,
 };
 
 /// Pool accepting Base transactions for network tests.
-pub type TestPool = Pool<
-    MockTransactionValidator<BaseTestTransaction>,
-    CoinbaseTipOrdering<BaseTestTransaction>,
-    InMemoryBlobStore,
->;
+pub type TestPool = Pool<MockTransactionValidator, CoinbaseTipOrdering, InMemoryBlobStore>;
 
 /// Constructs Base fixtures for networking tests.
 #[derive(Debug)]
@@ -29,14 +24,10 @@ impl NetworkTestData {
     }
 
     /// Converts a supported mock transaction into its Base pool representation.
-    pub fn transaction<P: PoolTransaction<Consensus = EthereumTxEnvelope<TxEip4844>>>(
-        transaction: P,
-    ) -> BaseTestTransaction {
-        let transaction = transaction.into_consensus().map(|tx| {
-            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx))
-                .expect("network fixture must use a Base transaction")
-        });
-        BaseTestTransaction::try_from_consensus(transaction)
-            .expect("network fixture must be poolable")
+    pub fn transaction<T>(transaction: T) -> BaseTestTransaction
+    where
+        T: TryInto<BaseTestTransaction, Error: std::fmt::Debug>,
+    {
+        transaction.try_into().expect("network fixture must use a Base transaction")
     }
 }

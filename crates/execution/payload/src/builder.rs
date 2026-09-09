@@ -11,7 +11,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BaseReceipt, BaseTxEnvelope, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
+    BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
 use base_common_evm::L1BlockInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -28,7 +28,7 @@ use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, Payl
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
-    ParkableTransactionPool, PoolTransaction, PredicateContext, TransactionPool,
+    ParkableTransactionPool, PredicateContext, TransactionPool,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
@@ -152,7 +152,7 @@ impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs> {
 
 impl<Pool, Client, T> BasePayloadBuilder<Pool, Client, T>
 where
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + Clone,
+    Pool: TransactionPool + Clone,
     Client: StateProviderFactory + ChainSpecProvider + BlockReader,
 {
     /// Constructs a Base payload from the transactions sent via the
@@ -246,7 +246,9 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder = Builder::new(|_| {
+            NoopPayloadTransactions::<base_execution_txpool::BasePooledTransaction>::default()
+        });
         builder.witness(state_provider, &self.client, &ctx)
     }
 }
@@ -255,7 +257,7 @@ where
 impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs>
 where
     Client: StateProviderFactory + ChainSpecProvider + BlockReader + Clone,
-    Pool: TransactionPool<Transaction = BasePooledTransaction>,
+    Pool: TransactionPool,
     Txs: BasePayloadTransactions<Pool>,
 {
     pub fn try_build(&self, args: BuildArguments) -> Result<BuildOutcome, PayloadBuilderError> {
@@ -276,9 +278,11 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_| NoopPayloadTransactions::<Pool::Transaction>::default())?
-            .into_payload()
-            .ok_or_else(|| PayloadBuilderError::MissingPayload)
+        self.build_payload(args, |_| {
+            NoopPayloadTransactions::<base_execution_txpool::BasePooledTransaction>::default()
+        })?
+        .into_payload()
+        .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 }
 
@@ -470,7 +474,7 @@ impl<Txs> Builder<'_, Txs> {
         ctx: &BasePayloadBuilderCtx,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>,
+        Txs: PayloadTransactions<Transaction = BasePooledTransaction>,
     {
         let mut db =
             State::builder().with_database_ref(&state_provider).with_bundle_update().build();
@@ -503,7 +507,7 @@ impl<Txs> Builder<'_, Txs> {
 pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
 where
     Pool: TransactionPool,
-    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
+    Pool: base_execution_txpool::TransactionPool,
 {
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
@@ -513,19 +517,20 @@ where
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction>;
+    ) -> impl ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>;
 }
 
 impl<Pool> BasePayloadTransactions<Pool> for ()
 where
     Pool: ParkableTransactionPool,
-    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
+    Pool: base_execution_txpool::TransactionPool,
 {
     fn best_transactions(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
+    ) -> impl ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>
+    {
         ParkableBestPayloadTransactions::new(
             pool.best_transactions_with_attributes_and_parking(attr),
         )
@@ -535,15 +540,17 @@ where
 impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
 where
     Pool: TransactionPool,
-    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
+    Pool: base_execution_txpool::TransactionPool,
     F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
-    Transactions: ParkablePayloadTransactions<Transaction = Pool::Transaction>,
+    Transactions:
+        ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>,
 {
     fn best_transactions(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
+    ) -> impl ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>
+    {
         self(pool, attr)
     }
 }
@@ -714,7 +721,6 @@ impl BasePayloadBuilderCtx {
     fn skip_current<B>(best_txs: &mut B, sender: Address, nonce: u64, replay_independent: bool)
     where
         B: ParkablePayloadTransactions,
-        B::Transaction: PoolTransaction,
     {
         if replay_independent {
             best_txs.mark_current_committed();
@@ -1440,9 +1446,7 @@ mod tests {
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,
     };
-    use base_execution_txpool::{
-        BasePooledTransaction, PoolTransaction, ValidityOperator, ValidityPredicate,
-    };
+    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};

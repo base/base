@@ -1,13 +1,12 @@
-use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip2930::AccessList};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2930::AccessList};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use base_common_consensus::{
-    EthereumTxEnvelope, EthereumTypedTransaction, SignableTransaction, TxEip1559, TxEip4844,
-    TxLegacy,
+    BaseTxEnvelope, EthereumTxEnvelope, SignableTransaction, Signed, TxEip1559, TxEip4844, TxLegacy,
 };
 use rand::{Rng, RngCore};
 use reth_primitives_traits::{SignedTransaction, crypto::secp256k1::sign_message};
 
-use crate::{EthPooledTransaction, PoolTransaction};
+use crate::BasePooledTransaction;
 
 /// A generator for transactions for testing purposes.
 #[derive(Debug)]
@@ -90,7 +89,7 @@ impl<R: RngCore> TransactionGenerator<R> {
     }
 
     /// Creates a new transaction with a random signer
-    pub fn gen_eip1559(&mut self) -> EthereumTxEnvelope<TxEip4844> {
+    pub fn gen_eip1559(&mut self) -> BaseTxEnvelope {
         self.transaction().into_eip1559()
     }
 
@@ -100,18 +99,9 @@ impl<R: RngCore> TransactionGenerator<R> {
     }
 
     /// Generates and returns a pooled EIP-1559 transaction with a random signer.
-    pub fn gen_eip1559_pooled(&mut self) -> EthPooledTransaction {
-        EthPooledTransaction::try_from_consensus(
-            SignedTransaction::try_into_recovered(self.gen_eip1559()).unwrap(),
-        )
-        .unwrap()
-    }
-
-    /// Generates and returns a pooled EIP-4844 transaction with a random signer.
-    pub fn gen_eip4844_pooled(&mut self) -> EthPooledTransaction {
-        let tx = self.gen_eip4844().try_into_recovered().unwrap();
-        let encoded_length = tx.encode_2718_len();
-        EthPooledTransaction::new(tx, encoded_length)
+    pub fn gen_eip1559_pooled(&mut self) -> BasePooledTransaction {
+        BasePooledTransaction::try_from_consensus(self.gen_eip1559().try_into_recovered().unwrap())
+            .unwrap()
     }
 }
 
@@ -144,7 +134,7 @@ pub struct TransactionBuilder {
 
 impl TransactionBuilder {
     /// Converts the transaction builder into a legacy transaction format.
-    pub fn into_legacy(self) -> EthereumTxEnvelope<TxEip4844> {
+    pub fn into_legacy(self) -> BaseTxEnvelope {
         Self::signed(
             TxLegacy {
                 chain_id: Some(self.chain_id),
@@ -154,14 +144,14 @@ impl TransactionBuilder {
                 to: self.to,
                 value: self.value,
                 input: self.input,
-            }
-            .into(),
+            },
             self.signer,
         )
+        .into()
     }
 
     /// Converts the transaction builder into a transaction format using EIP-1559.
-    pub fn into_eip1559(self) -> EthereumTxEnvelope<TxEip4844> {
+    pub fn into_eip1559(self) -> BaseTxEnvelope {
         Self::signed(
             TxEip1559 {
                 chain_id: self.chain_id,
@@ -173,10 +163,10 @@ impl TransactionBuilder {
                 value: self.value,
                 access_list: self.access_list,
                 input: self.input,
-            }
-            .into(),
+            },
             self.signer,
         )
+        .into()
     }
     /// Converts the transaction builder into a transaction format using EIP-4844.
     pub fn into_eip4844(self) -> EthereumTxEnvelope<TxEip4844> {
@@ -196,19 +186,16 @@ impl TransactionBuilder {
                 input: self.input,
                 blob_versioned_hashes: Default::default(),
                 max_fee_per_blob_gas: Default::default(),
-            }
-            .into(),
+            },
             self.signer,
         )
+        .into()
     }
 
     /// Signs the provided transaction using the specified signer and returns a signed transaction.
-    fn signed(
-        transaction: EthereumTypedTransaction<TxEip4844>,
-        signer: B256,
-    ) -> EthereumTxEnvelope<TxEip4844> {
+    pub fn signed<T: SignableTransaction<Signature>>(transaction: T, signer: B256) -> Signed<T> {
         let signature = sign_message(signer, transaction.signature_hash()).unwrap();
-        EthereumTxEnvelope::<TxEip4844>::new_unhashed(transaction, signature)
+        transaction.into_signed(signature)
     }
 
     /// Sets the signer for the transaction builder.

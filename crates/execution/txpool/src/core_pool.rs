@@ -32,9 +32,9 @@ use crate::{
     },
 };
 
-pub type EthTransactionPool<Client, S, T = EthPooledTransaction> = Pool<
-    TransactionValidationTaskExecutor<EthTransactionValidator<Client, T>>,
-    CoinbaseTipOrdering<T>,
+pub type EthTransactionPool<Client, S> = Pool<
+    TransactionValidationTaskExecutor<EthTransactionValidator<Client>>,
+    CoinbaseTipOrdering,
     S,
 >;
 
@@ -50,7 +50,7 @@ pub struct Pool<V, T: TransactionOrdering, S> {
 impl<V, T, S> Pool<V, T, S>
 where
     V: TransactionValidator,
-    T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
+    T: TransactionOrdering,
     S: BlobStore,
 {
     /// Create a new transaction pool instance.
@@ -77,8 +77,8 @@ where
     async fn validate(
         &self,
         origin: TransactionOrigin,
-        transaction: V::Transaction,
-    ) -> TransactionValidationOutcome<V::Transaction> {
+        transaction: crate::BasePooledTransaction,
+    ) -> TransactionValidationOutcome {
         self.pool.validator().validate_transaction(origin, transaction).await
     }
 
@@ -109,7 +109,7 @@ where
     S: BlobStore,
 {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when
-    /// validating [`EthPooledTransaction`]s and ords via [`CoinbaseTipOrdering`]
+    /// validating [`BasePooledTransaction`]s and ords via [`CoinbaseTipOrdering`]
     ///
     /// # Example
     ///
@@ -142,9 +142,7 @@ where
     /// # }
     /// ```
     pub fn eth_pool(
-        validator: TransactionValidationTaskExecutor<
-            EthTransactionValidator<Client, EthPooledTransaction>,
-        >,
+        validator: TransactionValidationTaskExecutor<EthTransactionValidator<Client>>,
         blob_store: S,
         config: PoolConfig,
     ) -> Self {
@@ -156,12 +154,9 @@ where
 impl<V, T, S> TransactionPool for Pool<V, T, S>
 where
     V: TransactionValidator,
-    <V as TransactionValidator>::Transaction: EthPoolTransaction,
-    T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
+    T: TransactionOrdering,
     S: BlobStore + Clone,
 {
-    type Transaction = T::Transaction;
-
     fn pool_size(&self) -> PoolSize {
         self.pool.size()
     }
@@ -173,7 +168,7 @@ where
     async fn add_transaction_and_subscribe(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
+        transaction: crate::BasePooledTransaction,
     ) -> PoolResult<TransactionEvents> {
         let tx = self.validate(origin, transaction).await;
         self.pool.add_transaction_and_subscribe(origin, tx)
@@ -182,7 +177,7 @@ where
     async fn add_transaction(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
+        transaction: crate::BasePooledTransaction,
     ) -> PoolResult<AddedTransactionOutcome> {
         let tx = self.validate(origin, transaction).await;
         let mut results = self.pool.add_transactions(origin, std::iter::once(tx));
@@ -192,7 +187,7 @@ where
     async fn add_transactions(
         &self,
         origin: TransactionOrigin,
-        transactions: Vec<Self::Transaction>,
+        transactions: Vec<crate::BasePooledTransaction>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
         if transactions.is_empty() {
             return Vec::new();
@@ -204,7 +199,7 @@ where
 
     async fn add_transactions_with_origins(
         &self,
-        transactions: Vec<(TransactionOrigin, Self::Transaction)>,
+        transactions: Vec<(TransactionOrigin, crate::BasePooledTransaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
         if transactions.is_empty() {
             return Vec::new();
@@ -218,7 +213,7 @@ where
         self.pool.add_transaction_event_listener(tx_hash)
     }
 
-    fn all_transactions_event_listener(&self) -> AllTransactionsEvents<Self::Transaction> {
+    fn all_transactions_event_listener(&self) -> AllTransactionsEvents {
         self.pool.add_all_transactions_event_listener()
     }
 
@@ -233,7 +228,7 @@ where
     fn new_transactions_listener_for(
         &self,
         kind: TransactionListenerKind,
-    ) -> Receiver<NewTransactionEvent<Self::Transaction>> {
+    ) -> Receiver<NewTransactionEvent> {
         self.pool.add_new_transaction_listener(kind)
     }
 
@@ -245,14 +240,11 @@ where
         self.pool.pooled_transactions_hashes_max(max)
     }
 
-    fn pooled_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pooled_transactions(&self) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.pooled_transactions()
     }
 
-    fn pooled_transactions_max(
-        &self,
-        max: usize,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pooled_transactions_max(&self, max: usize) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.pooled_transactions_max(max)
     }
 
@@ -260,7 +252,7 @@ where
         &self,
         tx_hashes: Vec<TxHash>,
         limit: GetPooledTransactionLimit,
-    ) -> Vec<<<V as TransactionValidator>::Transaction as PoolTransaction>::Pooled> {
+    ) -> Vec<base_common_consensus::BasePooledTransaction> {
         self.pool.get_pooled_transaction_elements(tx_hashes, limit)
     }
 
@@ -268,7 +260,7 @@ where
         &self,
         tx_hashes: &[TxHash],
         limit: GetPooledTransactionLimit,
-        out: &mut Vec<<<V as TransactionValidator>::Transaction as PoolTransaction>::Pooled>,
+        out: &mut Vec<base_common_consensus::BasePooledTransaction>,
     ) {
         self.pool.append_pooled_transaction_elements(tx_hashes, limit, out)
     }
@@ -276,25 +268,22 @@ where
     fn get_pooled_transaction_element(
         &self,
         tx_hash: TxHash,
-    ) -> Option<Recovered<<<V as TransactionValidator>::Transaction as PoolTransaction>::Pooled>>
-    {
+    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
         self.pool.get_pooled_transaction_element(tx_hash)
     }
 
-    fn best_transactions(
-        &self,
-    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+    fn best_transactions(&self) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>> {
         Box::new(self.pool.best_transactions())
     }
 
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
-    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>> {
         self.pool.best_transactions_with_attributes(best_transactions_attributes)
     }
 
-    fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.pending_transactions()
     }
 
@@ -302,18 +291,15 @@ where
         &self,
         sender: Address,
         nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         self.pool.get_pending_transaction_by_sender_and_nonce(sender, nonce)
     }
 
-    fn pending_transactions_max(
-        &self,
-        max: usize,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pending_transactions_max(&self, max: usize) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.pending_transactions_max(max)
     }
 
-    fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.queued_transactions()
     }
 
@@ -324,7 +310,7 @@ where
         (pending, queued)
     }
 
-    fn all_transactions(&self) -> AllPoolTransactions<Self::Transaction> {
+    fn all_transactions(&self) -> AllPoolTransactions {
         self.pool.all_transactions()
     }
 
@@ -332,31 +318,22 @@ where
         self.pool.all_transaction_hashes()
     }
 
-    fn remove_transactions(
-        &self,
-        hashes: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn remove_transactions(&self, hashes: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.remove_transactions(hashes)
     }
 
     fn remove_transactions_and_descendants(
         &self,
         hashes: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.remove_transactions_and_descendants(hashes)
     }
 
-    fn remove_transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn remove_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.remove_transactions_by_sender(sender)
     }
 
-    fn prune_transactions(
-        &self,
-        hashes: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn prune_transactions(&self, hashes: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.prune_transactions(hashes)
     }
 
@@ -374,11 +351,11 @@ where
         self.pool.retain_contains(announcement)
     }
 
-    fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction>> {
         self.inner().get(tx_hash)
     }
 
-    fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         self.inner().get_all(txs)
     }
 
@@ -386,38 +363,32 @@ where
         self.inner().on_propagated(txs)
     }
 
-    fn get_transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.get_transactions_by_sender(sender)
     }
 
     fn get_pending_transactions_with_predicate(
         &self,
-        predicate: impl FnMut(&ValidPoolTransaction<Self::Transaction>) -> bool,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        predicate: impl FnMut(&ValidPoolTransaction) -> bool,
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.pending_transactions_with_predicate(predicate)
     }
 
     fn get_pending_transactions_by_sender(
         &self,
         sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.get_pending_transactions_by_sender(sender)
     }
 
-    fn get_queued_transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get_queued_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.get_queued_transactions_by_sender(sender)
     }
 
     fn get_highest_transaction_by_sender(
         &self,
         sender: Address,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         self.pool.get_highest_transaction_by_sender(sender)
     }
 
@@ -425,7 +396,7 @@ where
         &self,
         sender: Address,
         on_chain_nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         self.pool.get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
     }
 
@@ -433,7 +404,7 @@ where
         &self,
         sender: Address,
         nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         let sender_id = self.pool.sender_id(&sender)?;
         let transaction_id = TransactionId::new(sender_id, nonce);
 
@@ -443,7 +414,7 @@ where
     fn get_transactions_by_origin(
         &self,
         origin: TransactionOrigin,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.get_transactions_by_origin(origin)
     }
 
@@ -451,7 +422,7 @@ where
     fn get_pending_transactions_by_origin(
         &self,
         origin: TransactionOrigin,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         self.pool.get_pending_transactions_by_origin(origin)
     }
 
@@ -524,8 +495,7 @@ where
 impl<V, T, S> TransactionPoolExt for Pool<V, T, S>
 where
     V: TransactionValidator,
-    <V as TransactionValidator>::Transaction: EthPoolTransaction,
-    T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
+    T: TransactionOrdering,
     S: BlobStore + Clone,
 {
     type Block = V::Block;
@@ -560,8 +530,7 @@ where
 impl<V, T, S> ValidatingPool for Pool<V, T, S>
 where
     V: TransactionValidator,
-    <V as TransactionValidator>::Transaction: EthPoolTransaction,
-    T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
+    T: TransactionOrdering,
     S: BlobStore + Clone,
 {
     type Validator = V;

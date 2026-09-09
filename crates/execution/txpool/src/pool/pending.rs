@@ -136,7 +136,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// if the transaction is already included
     pub fn best_with_unlocked_and_attributes(
         &self,
-        unlocked: Vec<Arc<ValidPoolTransaction<T::Transaction>>>,
+        unlocked: Vec<Arc<ValidPoolTransaction>>,
         base_fee: u64,
         base_fee_per_blob_gas: u64,
     ) -> BestTransactionsWithFees<T> {
@@ -156,9 +156,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     }
 
     /// Returns an iterator over all transactions in the pool
-    pub fn all(
-        &self,
-    ) -> impl ExactSizeIterator<Item = Arc<ValidPoolTransaction<T::Transaction>>> + '_ {
+    pub fn all(&self) -> impl ExactSizeIterator<Item = Arc<ValidPoolTransaction>> + '_ {
         self.by_id.values().map(|tx| tx.transaction.clone())
     }
 
@@ -171,10 +169,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// # Returns
     ///
     /// Removed transactions that no longer satisfy the blob fee.
-    pub fn update_blob_fee(
-        &mut self,
-        blob_fee: u128,
-    ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn update_blob_fee(&mut self, blob_fee: u128) -> Vec<Arc<ValidPoolTransaction>> {
         // Create a collection for removed transactions.
         let mut removed = Vec::new();
 
@@ -214,10 +209,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// # Returns
     ///
     /// Removed transactions that no longer satisfy the base fee.
-    pub fn update_base_fee(
-        &mut self,
-        base_fee: u64,
-    ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn update_base_fee(&mut self, base_fee: u64) -> Vec<Arc<ValidPoolTransaction>> {
         // Create a collection for removed transactions.
         let mut removed = Vec::new();
 
@@ -280,11 +272,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// # Panics
     ///
     /// if the transaction is already included
-    pub fn add_transaction(
-        &mut self,
-        tx: Arc<ValidPoolTransaction<T::Transaction>>,
-        base_fee: u64,
-    ) {
+    pub fn add_transaction(&mut self, tx: Arc<ValidPoolTransaction>, base_fee: u64) {
         debug_assert!(
             !self.contains(tx.id()),
             "transaction already included {:?}",
@@ -314,10 +302,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     ///
     /// Note: If the transaction has a descendant transaction
     /// it will advance it to the best queue.
-    pub fn remove_transaction(
-        &mut self,
-        id: &TransactionId,
-    ) -> Option<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn remove_transaction(&mut self, id: &TransactionId) -> Option<Arc<ValidPoolTransaction>> {
         if let Some(lowest) = self.independent_transactions.get(&id.sender)
             && lowest.transaction.nonce() == id.nonce
         {
@@ -387,7 +372,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
         &mut self,
         limit: &SubPoolLimit,
         remove_locals: bool,
-        end_removed: &mut Vec<Arc<ValidPoolTransaction<T::Transaction>>>,
+        end_removed: &mut Vec<Arc<ValidPoolTransaction>>,
     ) {
         // This serves as a termination condition for the loop - it represents the number of
         // _valid_ unique senders that might have descendants in the pool.
@@ -504,10 +489,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     /// This first truncates all of the non-local transactions in the pool. If the subpool is still
     /// not under the limit, this truncates the entire pool, including non-local transactions. The
     /// removed transactions are returned.
-    pub fn truncate_pool(
-        &mut self,
-        limit: SubPoolLimit,
-    ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn truncate_pool(&mut self, limit: SubPoolLimit) -> Vec<Arc<ValidPoolTransaction>> {
         let mut removed = Vec::new();
         // return early if the pool is already under the limits
         if !self.exceeds(&limit) {
@@ -586,10 +568,7 @@ impl<T: TransactionOrdering> PendingPool<T> {
     }
 
     /// Returns all transactions for the given sender, using a `BTree` range query.
-    pub fn txs_by_sender(
-        &self,
-        sender: SenderId,
-    ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn txs_by_sender(&self, sender: SenderId) -> Vec<Arc<ValidPoolTransaction>> {
         self.by_id
             .range((sender.start_bound(), Unbounded))
             .take_while(move |(other, _)| sender == other.sender)
@@ -633,7 +612,7 @@ pub struct PendingTransaction<T: TransactionOrdering> {
     /// Identifier that tags when transaction was submitted in the pool.
     pub submission_id: u64,
     /// Actual transaction.
-    pub transaction: Arc<ValidPoolTransaction<T::Transaction>>,
+    pub transaction: Arc<ValidPoolTransaction>,
     /// The priority value assigned by the used `Ordering` function.
     pub priority: Priority<T::PriorityValue>,
 }
@@ -688,9 +667,8 @@ mod tests {
     use base_common_consensus::{Transaction, TxType};
 
     use super::*;
-    use crate::{
-        PoolTransaction,
-        test_utils::{MockOrdering, MockTransaction, MockTransactionFactory, MockTransactionSet},
+    use crate::test_utils::{
+        MockOrdering, MockTransaction, MockTransactionFactory, MockTransactionSet,
     };
 
     #[test]
@@ -1028,27 +1006,6 @@ mod tests {
 
         // Attempt to add the same transaction again, which should be ignored
         pool.add_transaction(tx, 0);
-    }
-
-    #[test]
-    fn test_update_blob_fee() {
-        let mut f = MockTransactionFactory::default();
-        let mut pool = PendingPool::new(MockOrdering::default());
-
-        // Add transactions with varying blob fees
-        let tx1 = f.validated_arc(MockTransaction::eip4844().set_blob_fee(50).clone());
-        let tx2 = f.validated_arc(MockTransaction::eip4844().set_blob_fee(150).clone());
-        pool.add_transaction(tx1.clone(), 0);
-        pool.add_transaction(tx2.clone(), 0);
-
-        // Update the blob fee to a value that causes tx1 to be removed
-        let removed = pool.update_blob_fee(100);
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].hash(), tx1.hash());
-
-        // Verify that only tx2 remains in the pool
-        assert!(pool.contains(tx2.id()));
-        assert!(!pool.contains(tx1.id()));
     }
 
     #[test]

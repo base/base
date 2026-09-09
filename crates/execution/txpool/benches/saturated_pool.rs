@@ -13,8 +13,7 @@ use codspeed_criterion_compat::{BatchSize, Criterion, criterion_group, criterion
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::SealedBlock;
 
-type BenchPool =
-    PoolInner<MockTransactionValidator<MockTransaction>, MockOrdering, InMemoryBlobStore>;
+type BenchPool = PoolInner<MockTransactionValidator, MockOrdering, InMemoryBlobStore>;
 
 /// Base fee the pool is initialized with.
 const BASE_FEE: u64 = 100;
@@ -44,15 +43,12 @@ fn make_tx(sender: Address, nonce: u64, max_fee: u128, tip: u128) -> MockTransac
 
 /// Wraps a mock transaction into a validation outcome accepted by
 /// [`PoolInner::add_transactions`].
-const fn outcome(
-    tx: MockTransaction,
-    state_nonce: u64,
-) -> TransactionValidationOutcome<MockTransaction> {
+fn outcome(tx: MockTransaction, state_nonce: u64) -> TransactionValidationOutcome {
     TransactionValidationOutcome::Valid {
         balance: U256::MAX,
         state_nonce,
         bytecode_hash: None,
-        transaction: ValidTransaction::Valid(tx),
+        transaction: ValidTransaction::Valid(tx.try_into().expect("Base transaction fixture")),
         propagate: false,
         authorities: None,
     }
@@ -64,7 +60,7 @@ fn pending_batch(
     counter: &mut u64,
     senders: usize,
     txs_per_sender: u64,
-) -> Vec<(TransactionOrigin, TransactionValidationOutcome<MockTransaction>)> {
+) -> Vec<(TransactionOrigin, TransactionValidationOutcome)> {
     let mut batch = Vec::with_capacity(senders * txs_per_sender as usize);
     for s in 0..senders {
         let sender = sender_address(counter);

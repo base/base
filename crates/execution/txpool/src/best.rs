@@ -6,31 +6,29 @@ use base_execution_txpool::{
     BestTransactions, InvalidPoolTransactionError, TransactionOrdering, ValidPoolTransaction,
 };
 
-use crate::{BasePooledTransaction, BestTransactionPriority};
+use crate::BestTransactionPriority;
 
 /// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
 pub struct MergeBestTransactions<O>
 where
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    O: TransactionOrdering,
 {
-    protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
-    sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
+    protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
+    sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
     ordering: O,
     base_fee: u64,
-    next_protocol: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    next_sidecar: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    next_protocol: Option<Arc<ValidPoolTransaction>>,
+    next_sidecar: Option<Arc<ValidPoolTransaction>>,
 }
 
 impl<O> MergeBestTransactions<O>
 where
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    O: TransactionOrdering,
 {
     /// Creates a merged iterator from the protocol pool and 2D nonce sidecar.
     pub fn new(
-        protocol: Box<
-            dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-        >,
-        sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
+        protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
+        sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>>,
         ordering: O,
         base_fee: u64,
     ) -> Self {
@@ -39,8 +37,8 @@ where
 
     fn protocol_is_better(
         &self,
-        protocol: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
-        sidecar: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+        protocol: &Arc<ValidPoolTransaction>,
+        sidecar: &Arc<ValidPoolTransaction>,
     ) -> bool {
         let protocol_priority =
             BestTransactionPriority::new(&self.ordering, protocol, self.base_fee);
@@ -48,7 +46,7 @@ where
         protocol_priority >= sidecar_priority
     }
 
-    fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+    fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction>> {
         match (&self.next_protocol, &self.next_sidecar) {
             (Some(protocol), Some(sidecar)) => {
                 if self.protocol_is_better(protocol, sidecar) {
@@ -66,7 +64,7 @@ where
 
 impl<O> std::fmt::Debug for MergeBestTransactions<O>
 where
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    O: TransactionOrdering,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MergeBestTransactions").finish_non_exhaustive()
@@ -75,9 +73,9 @@ where
 
 impl<O> Iterator for MergeBestTransactions<O>
 where
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    O: TransactionOrdering,
 {
-    type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+    type Item = Arc<ValidPoolTransaction>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -100,7 +98,7 @@ where
 
 impl<O> BestTransactions for MergeBestTransactions<O>
 where
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    O: TransactionOrdering,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
         if transaction.transaction.is_eip8130_sidecar_transaction() {
@@ -143,17 +141,17 @@ mod tests {
 
     #[derive(Debug)]
     struct StaticBestTransactions {
-        transactions: VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        transactions: VecDeque<Arc<ValidPoolTransaction>>,
     }
 
     impl StaticBestTransactions {
-        fn new(transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>) -> Self {
+        fn new(transactions: Vec<Arc<ValidPoolTransaction>>) -> Self {
             Self { transactions: transactions.into() }
         }
     }
 
     impl Iterator for StaticBestTransactions {
-        type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+        type Item = Arc<ValidPoolTransaction>;
 
         fn next(&mut self) -> Option<Self::Item> {
             self.transactions.pop_front()
@@ -238,16 +236,14 @@ mod tests {
         )
     }
 
-    fn valid_pool_transaction(
-        transaction: BasePooledTransaction,
-    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+    fn valid_pool_transaction(transaction: BasePooledTransaction) -> Arc<ValidPoolTransaction> {
         valid_pool_transaction_at(transaction, Instant::now())
     }
 
     fn valid_pool_transaction_at(
         transaction: BasePooledTransaction,
         timestamp: Instant,
-    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+    ) -> Arc<ValidPoolTransaction> {
         Arc::new(ValidPoolTransaction {
             transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
             transaction,

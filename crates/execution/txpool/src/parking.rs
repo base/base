@@ -10,11 +10,11 @@ use alloy_primitives::{
     map::{HashMap, hash_map::Entry},
 };
 use base_execution_txpool::{
-    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, PoolTransaction,
-    TransactionOrdering, TransactionPool, ValidPoolTransaction,
+    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionOrdering,
+    TransactionPool, ValidPoolTransaction,
 };
 
-use crate::{BasePooledTransaction, BestTransactionPriority};
+use crate::BestTransactionPriority;
 
 /// A sequential transaction lane whose members must execute in nonce order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,12 +27,9 @@ pub struct BestTransactionLane {
 
 /// Iteration-local state for a sequential transaction lane.
 #[derive(Debug)]
-pub enum BestTransactionLaneState<T>
-where
-    T: PoolTransaction,
-{
+pub enum BestTransactionLaneState {
     /// The lane has an unresolved head and buffers any descendants yielded by the source.
-    Occupied(VecDeque<Arc<ValidPoolTransaction<T>>>),
+    Occupied(VecDeque<Arc<ValidPoolTransaction>>),
     /// The lane was terminally invalidated and is excluded for the remainder of the iterator.
     Invalid,
 }
@@ -40,9 +37,7 @@ where
 impl BestTransactionLane {
     /// Returns the sequential lane for a transaction, or `None` for an independent nonce-free
     /// EIP-8130 transaction.
-    pub fn for_transaction(
-        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
-    ) -> Option<Self> {
+    pub fn for_transaction(transaction: &Arc<ValidPoolTransaction>) -> Option<Self> {
         let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
         if nonce_key.is_none() && transaction.transaction.eip8130_replay_id().is_some() {
             return None;
@@ -52,13 +47,9 @@ impl BestTransactionLane {
 }
 
 /// Extra lifecycle operations required to temporarily park best transactions.
-pub trait ParkableBestTransactions<T>:
-    BestTransactions<Item = Arc<ValidPoolTransaction<T>>>
-where
-    T: PoolTransaction,
-{
+pub trait ParkableBestTransactions: BestTransactions<Item = Arc<ValidPoolTransaction>> {
     /// Temporarily parks a transaction that was yielded by this iterator.
-    fn park(&mut self, transaction: &Arc<ValidPoolTransaction<T>>);
+    fn park(&mut self, transaction: &Arc<ValidPoolTransaction>);
 
     /// Makes a parked transaction eligible to compete by priority again.
     fn promote(&mut self, transaction_hash: TxHash) -> bool;
@@ -71,19 +62,19 @@ where
     ) -> bool;
 
     /// Records that a yielded transaction committed and releases its lane successor.
-    fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<T>>);
+    fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction>);
 }
 
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
 where
-    Self: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>,
+    Self: base_execution_txpool::TransactionPool,
 {
     /// Returns a parkable best iterator using the supplied fee attributes.
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
-    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>>;
+    ) -> Box<dyn ParkableBestTransactions>;
 }
 
 /// Lane-aware parking over an existing best-transactions iterator.
@@ -93,23 +84,23 @@ where
 /// is parked or waiting for an execution outcome.
 pub struct ParkedBestTransactions<I, O>
 where
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
+    O: TransactionOrdering,
 {
     inner: I,
     ordering: O,
     base_fee: u64,
-    source_head: Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    lanes: HashMap<BestTransactionLane, BestTransactionLaneState<BasePooledTransaction>>,
-    parked: HashMap<TxHash, Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    ready: HashMap<TxHash, Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+    source_head: Option<Arc<ValidPoolTransaction>>,
+    lanes: HashMap<BestTransactionLane, BestTransactionLaneState>,
+    parked: HashMap<TxHash, Arc<ValidPoolTransaction>>,
+    ready: HashMap<TxHash, Arc<ValidPoolTransaction>>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
 }
 
 impl<I, O> std::fmt::Debug for ParkedBestTransactions<I, O>
 where
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
+    O: TransactionOrdering,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParkedBestTransactions")
@@ -122,8 +113,8 @@ where
 
 impl<I, O> ParkedBestTransactions<I, O>
 where
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
+    O: TransactionOrdering,
 {
     /// Creates a lane-aware parking adapter.
     pub fn new(inner: I, ordering: O, base_fee: u64) -> Self {
@@ -142,13 +133,13 @@ where
     /// Returns a complete priority key for a transaction.
     pub fn priority(
         &self,
-        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
+        transaction: &Arc<ValidPoolTransaction>,
     ) -> BestTransactionPriority<O::PriorityValue> {
         BestTransactionPriority::new(&self.ordering, transaction, self.base_fee)
     }
 
     /// Adds a transaction to the priority-ordered ready set.
-    pub fn push_ready(&mut self, transaction: Arc<ValidPoolTransaction<BasePooledTransaction>>) {
+    pub fn push_ready(&mut self, transaction: Arc<ValidPoolTransaction>) {
         let hash = *transaction.hash();
         if self.ready.contains_key(&hash) {
             return;
@@ -237,7 +228,7 @@ where
     }
 
     /// Pops the highest-priority non-stale ready transaction.
-    pub fn pop_ready(&mut self) -> Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+    pub fn pop_ready(&mut self) -> Option<Arc<ValidPoolTransaction>> {
         loop {
             let (_, hash) = self.ready_heap.pop()?;
             if let Some(transaction) = self.ready.remove(&hash) {
@@ -249,8 +240,8 @@ where
     /// Records a transaction as yielded and occupies its sequential lane.
     pub fn record_yielded(
         &mut self,
-        transaction: Arc<ValidPoolTransaction<BasePooledTransaction>>,
-    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        transaction: Arc<ValidPoolTransaction>,
+    ) -> Arc<ValidPoolTransaction> {
         if let Some(lane) = BestTransactionLane::for_transaction(&transaction) {
             self.lanes
                 .entry(lane)
@@ -262,10 +253,10 @@ where
 
 impl<I, O> Iterator for ParkedBestTransactions<I, O>
 where
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
+    O: TransactionOrdering,
 {
-    type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+    type Item = Arc<ValidPoolTransaction>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.fill_source_head();
@@ -290,8 +281,8 @@ where
 
 impl<I, O> BestTransactions for ParkedBestTransactions<I, O>
 where
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
+    O: TransactionOrdering,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
         if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
@@ -309,12 +300,12 @@ where
     }
 }
 
-impl<I, O> ParkableBestTransactions<BasePooledTransaction> for ParkedBestTransactions<I, O>
+impl<I, O> ParkableBestTransactions for ParkedBestTransactions<I, O>
 where
-    I: BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
-    O: TransactionOrdering<Transaction = BasePooledTransaction>,
+    I: BestTransactions<Item = Arc<ValidPoolTransaction>>,
+    O: TransactionOrdering,
 {
-    fn park(&mut self, transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>) {
+    fn park(&mut self, transaction: &Arc<ValidPoolTransaction>) {
         let hash = *transaction.hash();
         self.parked.insert(hash, Arc::clone(transaction));
     }
@@ -342,7 +333,7 @@ where
         true
     }
 
-    fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>) {
+    fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction>) {
         if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
             self.release_lane(lane);
         }
@@ -370,17 +361,17 @@ mod tests {
 
     #[derive(Debug)]
     struct StaticBestTransactions {
-        transactions: VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        transactions: VecDeque<Arc<ValidPoolTransaction>>,
     }
 
     impl StaticBestTransactions {
-        fn new(transactions: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>) -> Self {
+        fn new(transactions: Vec<Arc<ValidPoolTransaction>>) -> Self {
             Self { transactions: transactions.into() }
         }
     }
 
     impl Iterator for StaticBestTransactions {
-        type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+        type Item = Arc<ValidPoolTransaction>;
 
         fn next(&mut self) -> Option<Self::Item> {
             self.transactions.pop_front()
@@ -405,7 +396,7 @@ mod tests {
         nonce_key: U256,
         nonce: u64,
         priority_fee: u128,
-    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+    ) -> Arc<ValidPoolTransaction> {
         let tx = TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,

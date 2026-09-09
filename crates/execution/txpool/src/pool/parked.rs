@@ -5,11 +5,12 @@ use std::{
     sync::Arc,
 };
 
+use base_common_consensus::Transaction;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
-    PoolTransaction, SubPoolLimit, TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER, ValidPoolTransaction,
+    SubPoolLimit, TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER, ValidPoolTransaction,
     identifier::{SenderId, TransactionId},
     pool::size::SizeTracker,
 };
@@ -46,7 +47,7 @@ pub struct ParkedPool<T: ParkedOrd> {
 
 impl<T: ParkedOrd> ParkedPool<T> {
     /// Adds a new transactions to the pending queue.
-    pub fn add_transaction(&mut self, tx: Arc<ValidPoolTransaction<T::Transaction>>) {
+    pub fn add_transaction(&mut self, tx: Arc<ValidPoolTransaction>) {
         let id = *tx.id();
         debug_assert!(
             !self.contains(&id),
@@ -115,17 +116,12 @@ impl<T: ParkedOrd> ParkedPool<T> {
     }
 
     /// Returns an iterator over all transactions in the pool
-    pub fn all(
-        &self,
-    ) -> impl ExactSizeIterator<Item = Arc<ValidPoolTransaction<T::Transaction>>> + '_ {
+    pub fn all(&self) -> impl ExactSizeIterator<Item = Arc<ValidPoolTransaction>> + '_ {
         self.by_id.values().map(|tx| tx.transaction.clone().into())
     }
 
     /// Removes the transaction from the pool
-    pub fn remove_transaction(
-        &mut self,
-        id: &TransactionId,
-    ) -> Option<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn remove_transaction(&mut self, id: &TransactionId) -> Option<Arc<ValidPoolTransaction>> {
         // remove from queues
         let tx = self.by_id.remove(id)?;
         self.remove_sender_count(tx.transaction.sender_id());
@@ -150,10 +146,7 @@ impl<T: ParkedOrd> ParkedPool<T> {
     }
 
     /// Returns all transactions for the given sender, using a `BTree` range query.
-    pub fn txs_by_sender(
-        &self,
-        sender: SenderId,
-    ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn txs_by_sender(&self, sender: SenderId) -> Vec<Arc<ValidPoolTransaction>> {
         self.by_id
             .range((sender.start_bound(), Unbounded))
             .take_while(move |(other, _)| sender == other.sender)
@@ -179,10 +172,7 @@ impl<T: ParkedOrd> ParkedPool<T> {
     /// have been met.
     ///
     /// Any removed transactions are returned.
-    pub fn truncate_pool(
-        &mut self,
-        limit: SubPoolLimit,
-    ) -> Vec<Arc<ValidPoolTransaction<T::Transaction>>> {
+    pub fn truncate_pool(&mut self, limit: SubPoolLimit) -> Vec<Arc<ValidPoolTransaction>> {
         if !self.exceeds(&limit) {
             // if we are below the limits, we don't need to drop anything
             return Vec::new();
@@ -260,11 +250,11 @@ impl<T: ParkedOrd> ParkedPool<T> {
     }
 }
 
-impl<T: PoolTransaction> ParkedPool<BasefeeOrd<T>> {
+impl ParkedPool<BasefeeOrd> {
     /// Returns all transactions that satisfy the given basefee.
     ///
     /// Note: this does _not_ remove the transactions
-    pub fn satisfy_base_fee_transactions(&self, basefee: u64) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn satisfy_base_fee_transactions(&self, basefee: u64) -> Vec<Arc<ValidPoolTransaction>> {
         let mut txs = Vec::new();
         self.satisfy_base_fee_ids(basefee as u128, |tx| {
             txs.push(tx.clone());
@@ -275,7 +265,7 @@ impl<T: PoolTransaction> ParkedPool<BasefeeOrd<T>> {
     /// Returns all transactions that satisfy the given basefee.
     fn satisfy_base_fee_ids<F>(&self, basefee: u128, mut tx_handler: F)
     where
-        F: FnMut(&Arc<ValidPoolTransaction<T>>),
+        F: FnMut(&Arc<ValidPoolTransaction>),
     {
         let mut iter = self.by_id.iter().peekable();
 
@@ -307,7 +297,7 @@ impl<T: PoolTransaction> ParkedPool<BasefeeOrd<T>> {
     /// Note: the transactions are not returned in a particular order.
     pub fn enforce_basefee_with<F>(&mut self, basefee: u64, mut tx_handler: F)
     where
-        F: FnMut(Arc<ValidPoolTransaction<T>>),
+        F: FnMut(Arc<ValidPoolTransaction>),
     {
         let mut to_remove = Vec::new();
         self.satisfy_base_fee_ids(basefee as u128, |tx| {
@@ -329,7 +319,7 @@ impl<T: PoolTransaction> ParkedPool<BasefeeOrd<T>> {
     ///
     /// Note: the transactions are not returned in a particular order.
     #[cfg(test)]
-    pub fn enforce_basefee(&mut self, basefee: u64) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn enforce_basefee(&mut self, basefee: u64) -> Vec<Arc<ValidPoolTransaction>> {
         let mut removed = Vec::new();
         self.enforce_basefee_with(basefee, |tx| {
             removed.push(tx);
@@ -433,56 +423,52 @@ impl PartialOrd for SubmissionSenderId {
 pub trait ParkedOrd:
     Ord
     + Clone
-    + From<Arc<ValidPoolTransaction<Self::Transaction>>>
-    + Into<Arc<ValidPoolTransaction<Self::Transaction>>>
-    + Deref<Target = Arc<ValidPoolTransaction<Self::Transaction>>>
+    + From<Arc<ValidPoolTransaction>>
+    + Into<Arc<ValidPoolTransaction>>
+    + Deref<Target = Arc<ValidPoolTransaction>>
 {
-    /// The wrapper transaction type.
-    type Transaction: PoolTransaction;
 }
 
 /// Helper macro to implement necessary conversions for `ParkedOrd` trait
 macro_rules! impl_ord_wrapper {
     ($name:ident) => {
-        impl<T: PoolTransaction> Clone for $name<T> {
+        impl Clone for $name {
             fn clone(&self) -> Self {
                 Self(self.0.clone())
             }
         }
 
-        impl<T: PoolTransaction> Eq for $name<T> {}
+        impl Eq for $name {}
 
-        impl<T: PoolTransaction> PartialEq<Self> for $name<T> {
+        impl PartialEq<Self> for $name {
             fn eq(&self, other: &Self) -> bool {
                 self.cmp(other) == Ordering::Equal
             }
         }
 
-        impl<T: PoolTransaction> PartialOrd<Self> for $name<T> {
+        impl PartialOrd<Self> for $name {
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
                 Some(self.cmp(other))
             }
         }
-        impl<T: PoolTransaction> Deref for $name<T> {
-            type Target = Arc<ValidPoolTransaction<T>>;
+        impl Deref for $name {
+            type Target = Arc<ValidPoolTransaction>;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
         }
 
-        impl<T: PoolTransaction> ParkedOrd for $name<T> {
-            type Transaction = T;
-        }
+        impl ParkedOrd for $name {}
 
-        impl<T: PoolTransaction> From<Arc<ValidPoolTransaction<T>>> for $name<T> {
-            fn from(value: Arc<ValidPoolTransaction<T>>) -> Self {
+        impl From<Arc<ValidPoolTransaction>> for $name {
+            fn from(value: Arc<ValidPoolTransaction>) -> Self {
                 Self(value)
             }
         }
 
-        impl<T: PoolTransaction> From<$name<T>> for Arc<ValidPoolTransaction<T>> {
-            fn from(value: $name<T>) -> Arc<ValidPoolTransaction<T>> {
+        impl From<$name> for Arc<ValidPoolTransaction> {
+            fn from(value: $name) -> Arc<ValidPoolTransaction> {
                 value.0
             }
         }
@@ -495,11 +481,11 @@ macro_rules! impl_ord_wrapper {
 ///
 /// Caution: This assumes all transaction in the `BaseFee` sub-pool have a fee value.
 #[derive(Debug)]
-pub struct BasefeeOrd<T: PoolTransaction>(Arc<ValidPoolTransaction<T>>);
+pub struct BasefeeOrd(Arc<ValidPoolTransaction>);
 
 impl_ord_wrapper!(BasefeeOrd);
 
-impl<T: PoolTransaction> Ord for BasefeeOrd<T> {
+impl Ord for BasefeeOrd {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.transaction.max_fee_per_gas().cmp(&other.0.transaction.max_fee_per_gas())
     }
@@ -515,11 +501,11 @@ impl<T: PoolTransaction> Ord for BasefeeOrd<T> {
 /// The primary order function always compares the transaction costs first. In case these
 /// are equal, it compares the timestamps when the transactions were created.
 #[derive(Debug)]
-pub struct QueuedOrd<T: PoolTransaction>(Arc<ValidPoolTransaction<T>>);
+pub struct QueuedOrd(Arc<ValidPoolTransaction>);
 
 impl_ord_wrapper!(QueuedOrd);
 
-impl<T: PoolTransaction> Ord for QueuedOrd<T> {
+impl Ord for QueuedOrd {
     fn cmp(&self, other: &Self) -> Ordering {
         // Higher fee is better
         self.max_fee_per_gas().cmp(&other.max_fee_per_gas()).then_with(||
@@ -541,7 +527,7 @@ mod tests {
     #[test]
     fn test_enforce_parked_basefee() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         let tx = f.validated_arc(MockTransaction::eip1559().inc_price());
         pool.add_transaction(tx.clone());
 
@@ -559,7 +545,7 @@ mod tests {
     #[test]
     fn test_enforce_parked_basefee_descendant() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         let t = MockTransaction::eip1559().inc_price_by(10);
         let root_tx = f.validated_arc(t.clone());
         pool.add_transaction(root_tx.clone());
@@ -585,7 +571,7 @@ mod tests {
     #[test]
     fn test_enforce_parked_basefee_removes_only_eligible_ancestor() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         let t = MockTransaction::eip1559().inc_price_by(10);
 
         let root_tx = f.validated_arc(t.clone());
@@ -607,7 +593,7 @@ mod tests {
     fn truncate_parked_by_submission_id() {
         // this test ensures that we evict from the pending pool by sender
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         let a_sender = address!("0x000000000000000000000000000000000000000a");
         let b_sender = address!("0x000000000000000000000000000000000000000b");
@@ -681,7 +667,7 @@ mod tests {
     #[test]
     fn test_truncate_parked_with_large_tx() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         let default_limits = SubPoolLimit::default();
 
         // create a chain of transactions by sender A
@@ -692,7 +678,7 @@ mod tests {
         let a_txs = MockTransactionSet::dependent(a_sender, 0, 2, TxType::Eip1559)
             .into_iter()
             .map(|mut tx| {
-                tx.set_size(default_limits.max_size / 2 + 1);
+                tx.set_input(vec![0; default_limits.max_size / 2 + 1].into());
                 tx
             })
             .collect::<Vec<_>>();
@@ -711,7 +697,7 @@ mod tests {
     fn test_senders_by_submission_id() {
         // this test ensures that we evict from the pending pool by sender
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         let a_sender = address!("0x000000000000000000000000000000000000000a");
         let b_sender = address!("0x000000000000000000000000000000000000000b");
@@ -749,7 +735,7 @@ mod tests {
         assert_eq!(senders, expected_senders);
 
         // manually order the txs
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         let all_txs = vec![d[0].clone(), b[0].clone(), c[0].clone(), a[0].clone()];
 
         // add all the transactions to the pool
@@ -771,7 +757,7 @@ mod tests {
         // Initialize a mock transaction factory
         let mut f = MockTransactionFactory::default();
         // Create an empty transaction pool
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         // Generate a validated transaction and add it to the pool
         let tx = f.validated_arc(MockTransaction::eip1559().inc_price());
         pool.add_transaction(tx);
@@ -801,7 +787,7 @@ mod tests {
         // Initialize a mock transaction factory
         let mut f = MockTransactionFactory::default();
         // Create an empty transaction pool
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         // Generate a validated transaction and add it to the pool
         let tx = f.validated_arc(MockTransaction::eip1559().inc_price());
         pool.add_transaction(tx);
@@ -836,7 +822,7 @@ mod tests {
         // Initialize a mock transaction factory
         let mut f = MockTransactionFactory::default();
         // Create an empty transaction pool
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         // Generate two validated transactions and add them to the pool
         let tx1 = f.validated_arc(MockTransaction::eip1559().inc_price());
         let tx2 = f.validated_arc(MockTransaction::eip1559().inc_price());
@@ -882,7 +868,7 @@ mod tests {
         // Initialize a mock transaction factory
         let mut f = MockTransactionFactory::default();
         // Create an empty transaction pool
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
         // Generate two validated transactions and add them to the pool
         let tx1 = f.validated_arc(MockTransaction::eip1559().inc_price());
         let tx2 = f.validated_arc(MockTransaction::eip1559().inc_price());
@@ -940,20 +926,22 @@ mod tests {
     #[test]
     fn test_pool_size() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Create a transaction with a specific size and add it to the pool
-        let tx = f.validated_arc(MockTransaction::eip1559().set_size(1024).clone());
+        let tx =
+            f.validated_arc(MockTransaction::eip1559().set_input(vec![0; 1024].into()).clone());
+        let expected_size = tx.size();
         pool.add_transaction(tx);
 
         // Assert that the reported size of the pool is correct
-        assert_eq!(pool.size(), 1024);
+        assert_eq!(pool.size(), expected_size);
     }
 
     #[test]
     fn test_pool_len() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Initially, the pool should have zero transactions
         assert_eq!(pool.len(), 0);
@@ -967,7 +955,7 @@ mod tests {
     #[test]
     fn test_pool_contains() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Create a transaction and get its ID
         let tx = f.validated_arc(MockTransaction::eip1559());
@@ -984,7 +972,7 @@ mod tests {
     #[test]
     fn test_get_transaction() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Add a transaction to the pool and get its ID
         let tx = f.validated_arc(MockTransaction::eip1559());
@@ -999,7 +987,7 @@ mod tests {
     #[test]
     fn test_all_transactions() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Add two transactions to the pool
         let tx1 = f.validated_arc(MockTransaction::eip1559());
@@ -1019,7 +1007,7 @@ mod tests {
     #[test]
     fn test_truncate_pool_edge_case() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Add two transactions to the pool
         let tx1 = f.validated_arc(MockTransaction::eip1559());
@@ -1046,7 +1034,7 @@ mod tests {
     #[test]
     fn test_satisfy_base_fee_transactions() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Add two transactions with different max fees
         let tx1 = f.validated_arc(MockTransaction::eip1559().set_max_fee(100).clone());
@@ -1063,7 +1051,7 @@ mod tests {
     #[test]
     fn test_remove_transaction() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Add a transaction to the pool and get its ID
         let tx = f.validated_arc(MockTransaction::eip1559());
@@ -1082,7 +1070,7 @@ mod tests {
     #[test]
     fn test_enforce_basefee_with_handler_zero_allocation() {
         let mut f = MockTransactionFactory::default();
-        let mut pool = ParkedPool::<BasefeeOrd<_>>::default();
+        let mut pool = ParkedPool::<BasefeeOrd>::default();
 
         // Add multiple transactions across different fee ranges
         let sender_a = address!("0x000000000000000000000000000000000000000a");

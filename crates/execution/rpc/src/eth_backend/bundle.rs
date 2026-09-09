@@ -5,14 +5,12 @@ use std::sync::Arc;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Keccak256, U256, uint};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
-use base_common_consensus::{EnvKzgSettings, Transaction as _, transaction::TxHashRef};
+use base_common_consensus::{Transaction as _, transaction::TxHashRef};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::Evm;
-use base_execution_txpool::{
-    EthBlobTransactionSidecar, EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
-};
+use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
@@ -86,7 +84,7 @@ impl<ApiNode: RpcNodeCore> EthBundle<BaseEthApi<ApiNode>> {
 
         let transactions = txs
             .into_iter()
-            .map(|tx| recover_raw_transaction::<PoolPooledTx<ApiNode::Pool>>(&tx))
+            .map(|tx| recover_raw_transaction::<PoolPooledTx>(&tx))
             .collect::<Result<Vec<_>, _>>()?;
 
         let block_id: alloy_rpc_types_eth::BlockId = state_block_number.into();
@@ -161,22 +159,7 @@ impl<ApiNode: RpcNodeCore> EthBundle<BaseEthApi<ApiNode>> {
 
                 while let Some(tx) = transactions.next() {
                     let signer = tx.signer();
-                    let tx = {
-                        let mut tx =
-                            <ApiNode::Pool as TransactionPool>::Transaction::from_pooled(tx);
-
-                        if let EthBlobTransactionSidecar::Present(sidecar) = tx.take_blob() {
-                            tx.validate_blob(&sidecar, EnvKzgSettings::Default.get()).map_err(
-                                |e| {
-                                    BaseEthApiError::from_eth_err(EthApiError::InvalidParams(
-                                        e.to_string(),
-                                    ))
-                                },
-                            )?;
-                        }
-
-                        tx.into_consensus()
-                    };
+                    let tx = tx.map(base_common_consensus::BaseTxEnvelope::from);
 
                     hasher.update(*tx.tx_hash());
                     let ResultAndState { result, state } = evm

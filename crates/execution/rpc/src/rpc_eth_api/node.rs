@@ -3,7 +3,7 @@
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
-use base_execution_txpool::{PoolTransaction, TransactionPool};
+use base_execution_txpool::TransactionPool;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
 use reth_provider::providers::BlockchainProvider;
@@ -29,7 +29,7 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
         + Unpin
         + 'static;
     /// The transaction pool of the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>;
+    type Pool: TransactionPool;
 
     /// Network API.
     type Network: NetworkInfo + Clone;
@@ -116,8 +116,7 @@ where
         + Unpin
         + Clone
         + 'static,
-    Pool:
-        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    Pool: TransactionPool + Unpin + 'static,
     Network: NetworkInfo + Clone + Unpin + 'static,
 {
     type Provider = Provider;

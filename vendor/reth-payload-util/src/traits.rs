@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, map::AddressSet};
-use base_execution_txpool::{PoolTransaction, ValidPoolTransaction};
+use base_execution_txpool::ValidPoolTransaction;
 
 /// Iterator that returns transactions for the block building process in the order they should be
 /// included in the block.
@@ -53,19 +53,17 @@ impl<T> PayloadTransactions for NoopPayloadTransactions<T> {
 /// Note: `mark_invalid` for this type filters out all further transactions from the given sender
 /// in the current iteration, mirroring the semantics of `BestTransactions::mark_invalid`.
 #[derive(Debug)]
-pub struct BestPayloadTransactions<T, I>
+pub struct BestPayloadTransactions<I>
 where
-    T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: Iterator<Item = Arc<ValidPoolTransaction>>,
 {
     invalid: AddressSet,
     best: I,
 }
 
-impl<T, I> BestPayloadTransactions<T, I>
+impl<I> BestPayloadTransactions<I>
 where
-    T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: Iterator<Item = Arc<ValidPoolTransaction>>,
 {
     /// Create a new `BestPayloadTransactions` with the given iterator.
     pub fn new(best: I) -> Self {
@@ -73,12 +71,11 @@ where
     }
 }
 
-impl<T, I> PayloadTransactions for BestPayloadTransactions<T, I>
+impl<I> PayloadTransactions for BestPayloadTransactions<I>
 where
-    T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: Iterator<Item = Arc<ValidPoolTransaction>>,
 {
-    type Transaction = T;
+    type Transaction = base_execution_txpool::BasePooledTransaction;
 
     fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
         loop {
@@ -101,7 +98,7 @@ mod tests {
 
     use alloy_primitives::{Address, map::AddressSet};
     use base_execution_txpool::{
-        BestTransactionsWithPrioritizedSenders, PendingPool, PoolTransaction,
+        BestTransactionsWithPrioritizedSenders, PendingPool,
         test_utils::{MockOrdering, MockTransaction, MockTransactionFactory},
     };
 
@@ -162,7 +159,10 @@ mod tests {
 
         let mut block = PayloadTransactionsChain::new(
             PayloadTransactionsFixed::single(
-                MockTransaction::eip1559().with_sender(address_top_of_block),
+                base_execution_txpool::BasePooledTransaction::try_from(
+                    MockTransaction::eip1559().with_sender(address_top_of_block),
+                )
+                .unwrap(),
             ),
             Some(100),
             PayloadTransactionsChain::new(

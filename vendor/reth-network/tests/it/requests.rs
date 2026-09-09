@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
-use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope, Header};
+use base_common_consensus::{BaseBlock as Block, Header};
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDirection};
@@ -59,10 +59,7 @@ async fn test_get_body() {
         // Set a new random block to the mock storage and request it via the network
         let block_hash = rng.random();
         let mut block: Block = Block::default();
-        block.body.transactions.push(
-            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
-                .unwrap(),
-        );
+        block.body.transactions.push(tx_gen.gen_eip1559());
 
         mock_provider.add_block(block_hash, block.clone());
 
@@ -106,10 +103,7 @@ async fn test_get_body_range() {
     for _ in 0..100 {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
-        block.body.transactions.push(
-            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
-                .unwrap(),
-        );
+        block.body.transactions.push(tx_gen.gen_eip1559());
 
         mock_provider.add_block(block_hash, block.clone());
         all_blocks.push(block);
@@ -455,10 +449,7 @@ async fn test_eth69_get_bodies() {
     for _ in 0..50 {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
-        block.body.transactions.push(
-            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
-                .unwrap(),
-        );
+        block.body.transactions.push(tx_gen.gen_eip1559());
 
         mock_provider.add_block(block_hash, block.clone());
 

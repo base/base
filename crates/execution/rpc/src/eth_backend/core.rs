@@ -10,7 +10,6 @@ use base_common_consensus::BlockHeader;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
-    TransactionPool,
 };
 use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
@@ -81,8 +80,7 @@ pub struct BaseEthApiInner<N: RpcNodeCore> {
     /// Builder for pending block environment.
 
     /// Transaction batch sender for batching tx insertions
-    tx_batch_sender:
-        mpsc::UnboundedSender<BatchTxRequest<<N::Pool as TransactionPool>::Transaction>>,
+    tx_batch_sender: mpsc::UnboundedSender<BatchTxRequest>,
 
     /// Configuration for pending block construction.
     pending_block_kind: PendingBlockKind,
@@ -308,9 +306,7 @@ where
 
     /// Returns the transaction batch sender
     #[inline]
-    pub const fn tx_batch_sender(
-        &self,
-    ) -> &mpsc::UnboundedSender<BatchTxRequest<<N::Pool as TransactionPool>::Transaction>> {
+    pub const fn tx_batch_sender(&self) -> &mpsc::UnboundedSender<BatchTxRequest> {
         &self.tx_batch_sender
     }
 
@@ -319,7 +315,7 @@ where
     pub async fn add_pool_transaction(
         &self,
         origin: base_execution_txpool::TransactionOrigin,
-        transaction: <N::Pool as TransactionPool>::Transaction,
+        transaction: base_execution_txpool::BasePooledTransaction,
     ) -> Result<AddedTransactionOutcome, EthApiError> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let request = base_execution_txpool::BatchTxRequest::new(origin, transaction, response_tx);

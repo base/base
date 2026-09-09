@@ -15,9 +15,7 @@ use tokio::{
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    EthTransactionValidator, PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
-    TransactionValidator,
-    blobstore::BlobStore,
+    EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     metrics::TxPoolValidatorMetrics,
     validate::{EthTransactionValidatorBuilder, TransactionValidatorError},
 };
@@ -150,21 +148,16 @@ impl<V> TransactionValidationTaskExecutor<V> {
     }
 }
 
-impl<Client, Tx> TransactionValidationTaskExecutor<EthTransactionValidator<Client, Tx>> {
+impl<Client> TransactionValidationTaskExecutor<EthTransactionValidator<Client>> {
     /// Creates a new instance for the given client
     ///
     /// This will spawn a single validation tasks that performs the actual validation.
     /// See [`TransactionValidationTaskExecutor::eth_with_additional_tasks`]
-    pub fn eth<S: BlobStore>(
-        client: Client,
-        evm_config: BaseEvmConfig,
-        blob_store: S,
-        tasks: Runtime,
-    ) -> Self
+    pub fn eth(client: Client, evm_config: BaseEvmConfig, tasks: Runtime) -> Self
     where
         Client: ChainSpecProvider + BlockReaderIdExt,
     {
-        Self::eth_with_additional_tasks(client, evm_config, blob_store, tasks, 0)
+        Self::eth_with_additional_tasks(client, evm_config, tasks, 0)
     }
 
     /// Creates a new instance for the given client
@@ -176,10 +169,9 @@ impl<Client, Tx> TransactionValidationTaskExecutor<EthTransactionValidator<Clien
     ///
     /// This will always spawn a validation task that performs the actual validation. It will spawn
     /// `num_additional_tasks` additional tasks.
-    pub fn eth_with_additional_tasks<S: BlobStore>(
+    pub fn eth_with_additional_tasks(
         client: Client,
         evm_config: BaseEvmConfig,
-        blob_store: S,
         tasks: Runtime,
         num_additional_tasks: usize,
     ) -> Self
@@ -188,7 +180,7 @@ impl<Client, Tx> TransactionValidationTaskExecutor<EthTransactionValidator<Clien
     {
         EthTransactionValidatorBuilder::new(client, evm_config)
             .with_additional_tasks(num_additional_tasks)
-            .build_with_tasks(tasks, blob_store)
+            .build_with_tasks(tasks)
     }
 }
 
@@ -234,14 +226,13 @@ impl<V> TransactionValidator for TransactionValidationTaskExecutor<V>
 where
     V: TransactionValidator + 'static,
 {
-    type Transaction = <V as TransactionValidator>::Transaction;
     type Block = V::Block;
 
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
-    ) -> TransactionValidationOutcome<Self::Transaction> {
+        transaction: crate::BasePooledTransaction,
+    ) -> TransactionValidationOutcome {
         let hash = *transaction.hash();
         let (tx, rx) = oneshot::channel();
         {
@@ -272,9 +263,11 @@ where
 
     async fn validate_transactions(
         &self,
-        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
-        + Send,
-    ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        transactions: impl IntoIterator<
+            Item = (TransactionOrigin, crate::BasePooledTransaction),
+            IntoIter: Send,
+        > + Send,
+    ) -> Vec<TransactionValidationOutcome> {
         let transactions: Vec<_> = transactions.into_iter().collect();
         let hashes: Vec<_> = transactions.iter().map(|(_, tx)| *tx.hash()).collect();
         let (tx, rx) = oneshot::channel();
@@ -300,8 +293,8 @@ where
     async fn validate_transactions_with_origin(
         &self,
         origin: TransactionOrigin,
-        transactions: impl IntoIterator<Item = Self::Transaction, IntoIter: Send> + Send,
-    ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        transactions: impl IntoIterator<Item = crate::BasePooledTransaction, IntoIter: Send> + Send,
+    ) -> Vec<TransactionValidationOutcome> {
         let transactions: Vec<_> = transactions.into_iter().collect();
         let hashes: Vec<_> = transactions.iter().map(|tx| *tx.hash()).collect();
         let (tx, rx) = oneshot::channel();
@@ -327,9 +320,9 @@ where
 }
 
 #[inline]
-fn validation_service_error_outcomes<T: PoolTransaction>(
+fn validation_service_error_outcomes(
     hashes: Vec<alloy_primitives::TxHash>,
-) -> Vec<TransactionValidationOutcome<T>> {
+) -> Vec<TransactionValidationOutcome> {
     hashes
         .into_iter()
         .map(|hash| {
@@ -356,14 +349,13 @@ mod tests {
     struct NoopValidator;
 
     impl TransactionValidator for NoopValidator {
-        type Transaction = MockTransaction;
         type Block = base_common_consensus::BaseBlock;
 
         async fn validate_transaction(
             &self,
             _origin: TransactionOrigin,
-            transaction: Self::Transaction,
-        ) -> TransactionValidationOutcome<Self::Transaction> {
+            transaction: crate::BasePooledTransaction,
+        ) -> TransactionValidationOutcome {
             TransactionValidationOutcome::Valid {
                 balance: U256::ZERO,
                 state_nonce: 0,
@@ -381,7 +373,12 @@ mod tests {
         let (executor, task) = TransactionValidationTaskExecutor::new(validator);
         tokio::spawn(task.run());
         let tx = MockTransaction::legacy();
-        let out = executor.validate_transaction(TransactionOrigin::External, tx).await;
+        let out = executor
+            .validate_transaction(
+                TransactionOrigin::External,
+                tx.try_into().expect("Base transaction fixture"),
+            )
+            .await;
         assert!(matches!(out, TransactionValidationOutcome::Valid { .. }));
     }
 
@@ -394,7 +391,12 @@ mod tests {
             (TransactionOrigin::External, MockTransaction::legacy()),
             (TransactionOrigin::Local, MockTransaction::legacy()),
         ];
-        let out = executor.validate_transactions(txs).await;
+        let out = executor
+            .validate_transactions(
+                txs.into_iter()
+                    .map(|(origin, tx)| (origin, tx.try_into().expect("Base transaction fixture"))),
+            )
+            .await;
         assert_eq!(out.len(), 2);
         assert!(out.iter().all(|o| matches!(o, TransactionValidationOutcome::Valid { .. })));
     }
@@ -403,22 +405,21 @@ mod tests {
     struct SameOriginBatchValidator;
 
     impl TransactionValidator for SameOriginBatchValidator {
-        type Transaction = MockTransaction;
         type Block = base_common_consensus::BaseBlock;
 
         async fn validate_transaction(
             &self,
             _origin: TransactionOrigin,
-            _transaction: Self::Transaction,
-        ) -> TransactionValidationOutcome<Self::Transaction> {
+            _transaction: crate::BasePooledTransaction,
+        ) -> TransactionValidationOutcome {
             panic!("same-origin batches must use the batch validator")
         }
 
         async fn validate_transactions_with_origin(
             &self,
             origin: TransactionOrigin,
-            transactions: impl IntoIterator<Item = Self::Transaction, IntoIter: Send> + Send,
-        ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+            transactions: impl IntoIterator<Item = crate::BasePooledTransaction, IntoIter: Send> + Send,
+        ) -> Vec<TransactionValidationOutcome> {
             transactions
                 .into_iter()
                 .map(|transaction| TransactionValidationOutcome::Valid {
@@ -441,7 +442,10 @@ mod tests {
         let transactions = vec![MockTransaction::legacy(), MockTransaction::eip1559()];
         let expected_hashes = transactions.iter().map(|tx| *tx.hash()).collect::<Vec<_>>();
         let outcomes = executor
-            .validate_transactions_with_origin(TransactionOrigin::Local, transactions)
+            .validate_transactions_with_origin(
+                TransactionOrigin::Local,
+                transactions.into_iter().map(|tx| tx.try_into().expect("Base transaction fixture")),
+            )
             .await;
 
         assert_eq!(outcomes.len(), expected_hashes.len());

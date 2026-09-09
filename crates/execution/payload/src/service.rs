@@ -18,7 +18,6 @@ use base_execution_payload_types::{
     PayloadKind,
 };
 use base_execution_trie::PayloadStateRootHandle;
-use base_execution_txpool::BasePooledTransaction;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
@@ -216,9 +215,7 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>
-        + Unpin
-        + 'static,
+    Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
     /// The type that knows how to create new payloads.
@@ -256,9 +253,7 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>
-        + Unpin
-        + 'static,
+    Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
@@ -412,9 +407,7 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool<Transaction = BasePooledTransaction>
-        + Unpin
-        + 'static,
+    Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
@@ -718,8 +711,8 @@ mod tests {
                     BaseBlock { header: parent, body: Default::default() },
                 );
                 let pool = Pool::new(
-                    MockTransactionValidator::<BasePooledTransaction>::default(),
-                    CoinbaseTipOrdering::<BasePooledTransaction>::default(),
+                    MockTransactionValidator::default(),
+                    CoinbaseTipOrdering::default(),
                     InMemoryBlobStore::default(),
                     Default::default(),
                 );

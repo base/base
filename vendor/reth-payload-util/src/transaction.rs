@@ -1,6 +1,5 @@
 use alloy_primitives::Address;
 use base_common_consensus::Transaction;
-use base_execution_txpool::PoolTransaction;
 
 use crate::PayloadTransactions;
 
@@ -92,7 +91,7 @@ impl<B: PayloadTransactions, A: PayloadTransactions> PayloadTransactionsChain<B,
 
 impl<A, B> PayloadTransactions for PayloadTransactionsChain<A, B>
 where
-    A: PayloadTransactions<Transaction: PoolTransaction>,
+    A: PayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>,
     B: PayloadTransactions<Transaction = A::Transaction>,
 {
     type Transaction = A::Transaction;

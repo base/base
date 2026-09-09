@@ -4074,7 +4074,6 @@ dependencies = [
  "base-precompile-storage",
  "base-test-utils",
  "bitflags 2.13.1",
- "c-kzg",
  "codspeed-criterion-compat 4.7.0",
  "futures",
  "futures-util",

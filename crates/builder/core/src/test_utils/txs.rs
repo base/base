@@ -6,9 +6,7 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxEip1559};
 use base_common_rpc_types::Base;
-use base_execution_txpool::{
-    AllTransactionsEvents, BasePooledTransaction, FullTransactionEvent, TransactionEvent,
-};
+use base_execution_txpool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use dashmap::DashMap;
 use futures::StreamExt;
 use reth_primitives_traits::Recovered;
@@ -182,7 +180,7 @@ impl Drop for TransactionPoolObserver {
 
 impl TransactionPoolObserver {
     /// Spawns a background listener that records all pool events from the given stream.
-    pub fn new(stream: AllTransactionsEvents<BasePooledTransaction>) -> Self {
+    pub fn new(stream: AllTransactionsEvents) -> Self {
         let mut stream = stream;
         let observations = Arc::new(ObservationsMap::new());
         let observations_clone = Arc::clone(&observations);

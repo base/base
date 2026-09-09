@@ -7,9 +7,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_txpool::{
-    AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
-};
+use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -42,7 +40,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     pub async fn send_pool_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<<N::Pool as TransactionPool>::Transaction>,
+        tx: WithEncoded<base_execution_txpool::BasePooledTransaction>,
     ) -> Result<B256, BaseEthApiError> {
         let (tx, pool_transaction) = tx.split();
 

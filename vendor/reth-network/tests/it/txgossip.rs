@@ -4,7 +4,7 @@ use std::sync::Arc;
 use alloy_primitives::{Signature, U256};
 use base_common_consensus::TxLegacy;
 use base_execution_txpool::{
-    AddedTransactionOutcome, PoolTransaction, TransactionPool, test_utils::TransactionGenerator,
+    AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
 };
 use futures::StreamExt;
 use reth_network::{
@@ -204,7 +204,7 @@ async fn rejects_blob_transaction_gossip() {
 
     // Bypass the Base send API to simulate an incompatible peer's raw wire message.
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let blob = tx_gen.gen_eip4844_pooled().into_consensus().into_inner();
+    let blob = tx_gen.gen_eip4844();
     let encoded = alloy_rlp::encode(reth_eth_wire::Transactions(vec![blob]));
     peer0.network().send_eth_message(
         *peer1.peer_id(),

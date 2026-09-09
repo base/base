@@ -8,7 +8,7 @@ use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
-    TransactionPool<Transaction = BasePooledTransaction>
+    TransactionPool
     + TransactionPoolExt
     + base_execution_txpool::ParkableTransactionPool
     + StateDiffInvalidation
@@ -18,7 +18,7 @@ pub trait PoolBounds:
 }
 
 impl<T> PoolBounds for T where
-    T: TransactionPool<Transaction = BasePooledTransaction>
+    T: TransactionPool
         + TransactionPoolExt
         + base_execution_txpool::ParkableTransactionPool
         + StateDiffInvalidation

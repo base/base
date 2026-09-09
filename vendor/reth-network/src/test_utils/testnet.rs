@@ -8,15 +8,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_common_consensus::{
-    BaseBlock, BasePooledTransaction as PooledTransactionVariant, BaseReceipt,
-    BaseTxEnvelope as TransactionSigned,
-};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
-    EthTransactionPool, InMemoryBlobStore, PoolTransaction, TransactionPool,
-    TransactionValidationTaskExecutor, test_utils::BaseTestTransaction,
+    EthTransactionPool, InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
 };
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
@@ -192,15 +188,12 @@ where
     Pool: TransactionPool,
 {
     /// Installs an eth pool on each peer
-    pub fn with_eth_pool(
-        self,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, BaseTestTransaction>> {
+    pub fn with_eth_pool(self) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore>> {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
                 peer.client.clone(),
                 BaseEvmConfig::default(),
-                blob_store.clone(),
                 Runtime::test(),
             );
             peer.map_transactions_manager(base_execution_txpool::Pool::new(
@@ -216,7 +209,7 @@ where
     pub fn with_eth_pool_config(
         self,
         tx_manager_config: TransactionsManagerConfig,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, BaseTestTransaction>> {
+    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore>> {
         self.with_eth_pool_config_and_policy(tx_manager_config, Default::default())
     }
 
@@ -225,13 +218,12 @@ where
         self,
         tx_manager_config: TransactionsManagerConfig,
         policy: TransactionPropagationKind,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, BaseTestTransaction>> {
+    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore>> {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
                 peer.client.clone(),
                 BaseEvmConfig::default(),
-                blob_store.clone(),
                 Runtime::test(),
             );
 
@@ -259,13 +251,7 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: TransactionPool<
-            Transaction: PoolTransaction<
-                Consensus = TransactionSigned,
-                Pooled = PooledTransactionVariant,
-            >,
-        > + Unpin
-        + 'static,
+    Pool: TransactionPool + Unpin + 'static,
 {
     /// Spawns the testnet to a separate task
     pub fn spawn(self) -> TestnetHandle<C, Pool> {
@@ -330,13 +316,7 @@ where
         + StateRangeProviderFactory
         + Unpin
         + 'static,
-    Pool: TransactionPool<
-            Transaction: PoolTransaction<
-                Consensus = TransactionSigned,
-                Pooled = PooledTransactionVariant,
-            >,
-        > + Unpin
-        + 'static,
+    Pool: TransactionPool + Unpin + 'static,
 {
     type Output = ();
 
@@ -596,13 +576,7 @@ where
         + StateRangeProviderFactory
         + Unpin
         + 'static,
-    Pool: TransactionPool<
-            Transaction: PoolTransaction<
-                Consensus = TransactionSigned,
-                Pooled = PooledTransactionVariant,
-            >,
-        > + Unpin
-        + 'static,
+    Pool: TransactionPool + Unpin + 'static,
 {
     type Output = ();
 

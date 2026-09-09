@@ -3,17 +3,13 @@
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
-    BasePooledTransaction, CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
+    CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
 };
 
 use crate::{EthApiBuilder, RpcNodeCore, RpcNodeCoreAdapter};
 
 /// Pool accepting Base transactions in RPC tests.
-pub type TestPool = Pool<
-    MockTransactionValidator<BasePooledTransaction>,
-    CoinbaseTipOrdering<BasePooledTransaction>,
-    InMemoryBlobStore,
->;
+pub type TestPool = Pool<MockTransactionValidator, CoinbaseTipOrdering, InMemoryBlobStore>;
 
 /// Constructs the Base fixtures for shared RPC tests.
 #[derive(Debug)]

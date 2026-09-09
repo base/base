@@ -19,8 +19,7 @@ use base_execution_evm::{
     EvmEnvFor, TxResult,
 };
 use base_execution_txpool::{
-    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, PoolTransaction,
-    TransactionPool,
+    BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
 };
 use futures::Future;
 use reth_chain_state::ExecutedBlock;
@@ -28,9 +27,7 @@ use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactio
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
 };
-use reth_storage_api::{
-    BlockReader, BlockReaderIdExt, ProviderTx, StateProviderFactory, noop::NoopProvider,
-};
+use reth_storage_api::{BlockReader, BlockReaderIdExt, StateProviderFactory, noop::NoopProvider};
 use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::ComputedTrieData;
 use revm::database::State;
@@ -159,7 +156,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     /// determined by the EVM environment and chain specification used during construction.
     pub fn build_block(&self, parent: &SealedHeader) -> Result<ExecutedBlock, BaseEthApiError>
     where
-        N::Pool: TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<N::Provider>>>,
+        N::Pool: TransactionPool,
         EthApiError: From<ProviderError>,
     {
         let state_provider = self

@@ -4,13 +4,11 @@ use alloy_primitives::{B256, TxHash};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    PoolTransaction, SubPool, ValidPoolTransaction, pool::QueuedReason, traits::PropagateKind,
-};
+use crate::{SubPool, ValidPoolTransaction, pool::QueuedReason, traits::PropagateKind};
 
 /// An event that happened to a transaction and contains its full body where possible.
 #[derive(Debug)]
-pub enum FullTransactionEvent<T: PoolTransaction> {
+pub enum FullTransactionEvent {
     /// Transaction has been added to the pending pool.
     Pending(TxHash),
     /// Transaction has been added to the queued pool.
@@ -29,7 +27,7 @@ pub enum FullTransactionEvent<T: PoolTransaction> {
     /// E.g. same (sender + nonce) pair
     Replaced {
         /// The transaction that was replaced.
-        transaction: Arc<ValidPoolTransaction<T>>,
+        transaction: Arc<ValidPoolTransaction>,
         /// The transaction that replaced the event subject.
         replaced_by: TxHash,
     },
@@ -41,7 +39,7 @@ pub enum FullTransactionEvent<T: PoolTransaction> {
     Propagated(Arc<Vec<PropagateKind>>),
 }
 
-impl<T: PoolTransaction> Clone for FullTransactionEvent<T> {
+impl Clone for FullTransactionEvent {
     fn clone(&self) -> Self {
         match self {
             Self::Pending(hash) => Self::Pending(*hash),
@@ -91,21 +89,21 @@ impl TransactionEvent {
 
 /// Represents a new transaction
 #[derive(Debug)]
-pub struct NewTransactionEvent<T: PoolTransaction> {
+pub struct NewTransactionEvent {
     /// The pool which the transaction was moved to.
     pub subpool: SubPool,
     /// Actual transaction
-    pub transaction: Arc<ValidPoolTransaction<T>>,
+    pub transaction: Arc<ValidPoolTransaction>,
 }
 
-impl<T: PoolTransaction> NewTransactionEvent<T> {
+impl NewTransactionEvent {
     /// Creates a new event for a pending transaction.
-    pub const fn pending(transaction: Arc<ValidPoolTransaction<T>>) -> Self {
+    pub const fn pending(transaction: Arc<ValidPoolTransaction>) -> Self {
         Self { subpool: SubPool::Pending, transaction }
     }
 }
 
-impl<T: PoolTransaction> Clone for NewTransactionEvent<T> {
+impl Clone for NewTransactionEvent {
     fn clone(&self) -> Self {
         Self { subpool: self.subpool, transaction: self.transaction.clone() }
     }

@@ -13,7 +13,7 @@ use base_common_consensus::{BlockHeader, transaction::TxHashRef};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockEnvironment, apply_block_overrides};
 use base_execution_evm::Evm;
-use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
+use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use reth_rpc_api::MevSimApiServer;
@@ -223,10 +223,9 @@ impl<ApiNode: RpcNodeCore> EthSimBundle<BaseEthApi<ApiNode>> {
             while idx < body.len() {
                 match &body[idx] {
                     BundleItem::Tx { tx, can_revert } => {
-                        let recovered_tx =
-                            recover_raw_transaction::<PoolPooledTx<ApiNode::Pool>>(tx)?;
+                        let recovered_tx = recover_raw_transaction::<PoolPooledTx>(tx)?;
                         let tx = recovered_tx.map(
-                            <ApiNode::Pool as TransactionPool>::Transaction::pooled_into_consensus,
+                            base_execution_txpool::BasePooledTransaction::pooled_into_consensus,
                         );
 
                         let refund_percent =

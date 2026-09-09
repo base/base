@@ -46,7 +46,7 @@ use revm::state::{AccountInfo, Bytecode};
 
 use crate::{
     BasePooledTransaction, ConfigSlot, DataAvailabilitySized, InvalidationKey, LimitClass,
-    PoolTransaction, ValidatorMetrics, WatchManifest, WatchSet,
+    ValidatorMetrics, WatchManifest, WatchSet,
 };
 
 /// Base-specific transaction pool validation errors.
@@ -661,7 +661,7 @@ impl BaseL1BlockInfo {
 #[derive(Debug, Clone)]
 pub struct BaseTransactionValidator<Client> {
     /// The type that performs the actual validation.
-    inner: Arc<EthTransactionValidator<Client, BasePooledTransaction>>,
+    inner: Arc<EthTransactionValidator<Client>>,
     /// Additional block info required for validation.
     block_info: Arc<BaseL1BlockInfo>,
     /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
@@ -802,7 +802,7 @@ where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
 {
     /// Create a new [`BaseTransactionValidator`].
-    pub fn new(inner: EthTransactionValidator<Client, BasePooledTransaction>) -> Self {
+    pub fn new(inner: EthTransactionValidator<Client>) -> Self {
         let this = Self::with_block_info(inner, BaseL1BlockInfo::default());
         if let Ok(Some(block)) =
             this.inner.client().block_by_number_or_tag(alloy_eips::BlockNumberOrTag::Latest)
@@ -821,7 +821,7 @@ where
 
     /// Create a new [`BaseTransactionValidator`] with the given [`BaseL1BlockInfo`].
     pub fn with_block_info(
-        inner: EthTransactionValidator<Client, BasePooledTransaction>,
+        inner: EthTransactionValidator<Client>,
         block_info: BaseL1BlockInfo,
     ) -> Self {
         let trusted_delegation_targets = Self::default_trusted_delegation_targets();
@@ -863,7 +863,7 @@ where
         &self,
         origin: TransactionOrigin,
         transaction: BasePooledTransaction,
-    ) -> TransactionValidationOutcome<BasePooledTransaction> {
+    ) -> TransactionValidationOutcome {
         self.validate_one_with_state(origin, transaction, &mut None).await
     }
 
@@ -886,7 +886,7 @@ where
         origin: TransactionOrigin,
         transaction: BasePooledTransaction,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
-    ) -> TransactionValidationOutcome<BasePooledTransaction> {
+    ) -> TransactionValidationOutcome {
         let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
         let start = Instant::now();
         let outcome = self.validate_one_with_state_inner(origin, transaction, state);
@@ -899,7 +899,7 @@ where
         origin: TransactionOrigin,
         transaction: BasePooledTransaction,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
-    ) -> TransactionValidationOutcome<BasePooledTransaction> {
+    ) -> TransactionValidationOutcome {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
                 transaction,
@@ -2054,9 +2054,9 @@ where
     /// would never execute.
     fn apply_base_checks(
         &self,
-        outcome: TransactionValidationOutcome<BasePooledTransaction>,
+        outcome: TransactionValidationOutcome,
         operator_fee_gas_addition: u64,
-    ) -> TransactionValidationOutcome<BasePooledTransaction> {
+    ) -> TransactionValidationOutcome {
         if !self.requires_l1_data_gas_fee() {
             // no need to check L1 gas fee
             return outcome;
@@ -2137,14 +2137,13 @@ impl<Client> TransactionValidator for BaseTransactionValidator<Client>
 where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
 {
-    type Transaction = BasePooledTransaction;
     type Block = BaseBlock;
 
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
-    ) -> TransactionValidationOutcome<Self::Transaction> {
+        transaction: crate::BasePooledTransaction,
+    ) -> TransactionValidationOutcome {
         self.validate_one(origin, transaction).await
     }
 
@@ -2175,8 +2174,7 @@ mod tests {
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        EthTransactionValidatorBuilder, InMemoryBlobStore, TransactionOrigin,
-        TransactionValidationOutcome,
+        EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use base_test_utils::{Account, build_test_genesis_zenith};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -2201,7 +2199,7 @@ mod tests {
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
-            .build(InMemoryBlobStore::default());
+            .build();
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
@@ -2223,7 +2221,7 @@ mod tests {
             .no_shanghai()
             .no_cancun()
             .with_max_tx_input_bytes(max_tx_input_bytes)
-            .build(InMemoryBlobStore::default());
+            .build();
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
@@ -2241,7 +2239,7 @@ mod tests {
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
-            .build(InMemoryBlobStore::default());
+            .build();
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
@@ -3481,7 +3479,7 @@ mod tests {
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
-            .build(InMemoryBlobStore::default());
+            .build();
         let validator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
@@ -3548,7 +3546,7 @@ mod tests {
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
-            .build(InMemoryBlobStore::default());
+            .build();
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
@@ -3625,7 +3623,7 @@ mod tests {
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
-            .build(InMemoryBlobStore::default());
+            .build();
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
         let header = base_common_consensus::Header { timestamp: now, ..Default::default() };

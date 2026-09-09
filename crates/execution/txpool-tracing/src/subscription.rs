@@ -47,7 +47,7 @@ pub async fn tracex_subscription<Pool>(
 }
 
 fn resolve_nonce_slot<Pool: TransactionPool>(
-    event: &FullTransactionEvent<Pool::Transaction>,
+    event: &FullTransactionEvent,
     pool: &Pool,
 ) -> Option<NonceSlot> {
     let tx_hash = match event {

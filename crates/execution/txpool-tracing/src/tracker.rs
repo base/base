@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use base_execution_txpool::{FullTransactionEvent, PoolTransaction};
+use base_execution_txpool::FullTransactionEvent;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -67,11 +67,7 @@ impl Tracker {
     ///
     /// `nonce_slot` is populated by the subscription layer for events that only
     /// carry a [`TxHash`] (Pending, Queued) by looking up the pool.
-    pub fn handle_event<T: PoolTransaction>(
-        &mut self,
-        event: FullTransactionEvent<T>,
-        nonce_slot: Option<NonceSlot>,
-    ) {
+    pub fn handle_event(&mut self, event: FullTransactionEvent, nonce_slot: Option<NonceSlot>) {
         match event {
             FullTransactionEvent::Pending(tx_hash) => {
                 self.transaction_inserted(tx_hash, TxEvent::Pending);

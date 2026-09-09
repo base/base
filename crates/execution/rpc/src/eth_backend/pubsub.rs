@@ -60,10 +60,7 @@ impl<ApiNode: RpcNodeCore> EthPubSub<BaseEthApi<ApiNode>> {
     }
 
     /// Returns a stream that yields all transactions emitted by the txpool.
-    pub fn full_pending_transaction_stream(
-        &self,
-    ) -> impl Stream<Item = NewTransactionEvent<<ApiNode::Pool as TransactionPool>::Transaction>>
-    {
+    pub fn full_pending_transaction_stream(&self) -> impl Stream<Item = NewTransactionEvent> {
         self.inner.full_pending_transaction_stream()
     }
 
@@ -326,10 +323,7 @@ impl<ApiNode: RpcNodeCore> EthPubSubInner<BaseEthApi<ApiNode>> {
     }
 
     /// Returns a stream that yields all transactions emitted by the txpool.
-    fn full_pending_transaction_stream(
-        &self,
-    ) -> impl Stream<Item = NewTransactionEvent<<ApiNode::Pool as TransactionPool>::Transaction>>
-    {
+    fn full_pending_transaction_stream(&self) -> impl Stream<Item = NewTransactionEvent> {
         self.eth_api.pool().new_pending_pool_transactions_listener()
     }
 }

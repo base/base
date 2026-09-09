@@ -1,23 +1,21 @@
 use core::fmt::Debug;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use alloy_eips::{
-    eip2718::{Encodable2718, WithEncoded},
+    eip2718::{Decodable2718, Encodable2718, WithEncoded},
     eip2930::AccessList,
-    eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use base_common_consensus::{
-    BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned,
-    BlobTransactionValidationError, Eip8130Constants, Eip8130Signed, Transaction, Typed2718,
-    transaction::Recovered,
+    BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned, Eip8130Constants,
+    Eip8130Signed, Transaction, Typed2718, transaction::Recovered,
 };
-use base_execution_txpool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
-use c_kzg::KzgSettings;
-use reth_primitives_traits::InMemorySize;
+use reth_primitives_traits::{InMemorySize, SignedTransaction};
 
-use crate::estimated_da_size::DataAvailabilitySized;
+use crate::{
+    InvalidPoolTransactionError, RawPoolTransactionError, estimated_da_size::DataAvailabilitySized,
+};
 
 /// Returns current time as milliseconds since Unix epoch.
 pub fn unix_time_millis() -> u128 {
@@ -136,55 +134,164 @@ impl DataAvailabilitySized for BasePooledTransaction {
     }
 }
 
-impl PoolTransaction for BasePooledTransaction {
-    type TryFromConsensusError = <BasePooledEnvelope as TryFrom<BaseTransactionSigned>>::Error;
-    type Consensus = BaseTransactionSigned;
-    type Pooled = BasePooledEnvelope;
-
-    fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
+impl BasePooledTransaction {
+    /// Clone the transaction into a consensus variant.
+    ///
+    pub fn clone_into_consensus(&self) -> Recovered<BaseTransactionSigned> {
         self.transaction.clone()
     }
 
-    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
+    /// Returns a reference to the consensus transaction with the recovered sender.
+    pub fn consensus_ref(&self) -> Recovered<&BaseTransactionSigned> {
         self.transaction.as_recovered_ref()
     }
 
-    fn into_consensus(self) -> Recovered<Self::Consensus> {
+    /// Define a method to convert from the `Self` type to `Consensus`
+    pub fn into_consensus(self) -> Recovered<BaseTransactionSigned> {
         self.transaction
     }
 
-    fn into_consensus_with2718(self) -> WithEncoded<Recovered<Self::Consensus>> {
+    /// Converts the transaction into consensus format while preserving the EIP-2718 encoded bytes.
+    /// This is used to optimize transaction execution by reusing cached encoded bytes instead of
+    /// re-encoding the transaction. The cached bytes are particularly useful in payload building
+    /// where the same transaction may be executed multiple times.
+    pub fn into_consensus_with2718(self) -> WithEncoded<Recovered<BaseTransactionSigned>> {
         let encoding = self.encoded_2718().clone();
         self.transaction.into_encoded_with(encoding)
     }
 
-    fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
+    /// Define a method to convert from the `Pooled` type to `Self`
+    pub fn from_pooled(tx: Recovered<BasePooledEnvelope>) -> Self {
         let encoded_len = tx.encode_2718_len();
         Self::new(tx.convert(), encoded_len)
     }
 
-    fn hash(&self) -> &TxHash {
+    /// Hash of the transaction.
+    pub fn hash(&self) -> &TxHash {
         base_common_consensus::transaction::TxHashRef::tx_hash(self.transaction.inner())
     }
 
-    fn sender(&self) -> Address {
+    /// The Sender of the transaction.
+    pub fn sender(&self) -> Address {
         self.transaction.signer()
     }
 
-    fn sender_ref(&self) -> &Address {
+    /// Reference to the Sender of the transaction.
+    pub fn sender_ref(&self) -> &Address {
         self.transaction.signer_ref()
     }
 
-    fn cost(&self) -> &U256 {
+    /// Returns the cost that this transaction is allowed to consume:
+    ///
+    /// For EIP-1559 transactions: `max_fee_per_gas * gas_limit + tx_value`.
+    /// For legacy transactions: `gas_price * gas_limit + tx_value`.
+    pub fn cost(&self) -> &U256 {
         &self.cost
     }
 
-    fn encoded_length(&self) -> usize {
+    /// Returns the length of the rlp encoded transaction object
+    ///
+    /// Note: Implementations should cache this value.
+    pub fn encoded_length(&self) -> usize {
         self.encoded_length
     }
 
-    fn requires_nonce_check(&self) -> bool {
+    /// Allows to communicate to the pool that the transaction doesn't require a nonce check.
+    pub fn requires_nonce_check(&self) -> bool {
         self.as_eip8130().is_none_or(|signed| signed.tx().nonce_key.is_zero())
+    }
+
+    /// Define a method to convert from the `Consensus` type to `Self`
+    ///
+    /// This conversion may fail for transactions that are valid for inclusion in blocks
+    /// but cannot exist in the transaction pool. Examples include:
+    ///
+    /// - **OP Deposit transactions**: These are special system transactions that are directly
+    ///   included in blocks by the sequencer/validator and never enter the mempool
+    pub fn try_from_consensus(
+        tx: Recovered<BaseTransactionSigned>,
+    ) -> Result<Self, <BasePooledEnvelope as TryFrom<BaseTransactionSigned>>::Error> {
+        let (tx, signer) = tx.into_parts();
+        Ok(Self::from_pooled(Recovered::new_unchecked(tx.try_into()?, signer)))
+    }
+
+    /// Recovers and converts a pooled transaction into this pool transaction type.
+    ///
+    pub fn try_recover(pooled: BasePooledEnvelope) -> Result<Self, BasePooledEnvelope> {
+        pooled.try_into_recovered().map(Self::from_pooled)
+    }
+
+    /// Recovers and converts a pooled transaction using the provided sender recovery cache.
+    pub fn try_recover_with_cache(
+        pooled: BasePooledEnvelope,
+        cache: &base_execution_evm::SenderRecoveryCache,
+    ) -> Result<Self, BasePooledEnvelope> {
+        match cache.recover(&pooled) {
+            Ok(signer) => Ok(Self::from_pooled(Recovered::new_unchecked(pooled, signer))),
+            Err(_) => Err(pooled),
+        }
+    }
+
+    /// Decodes and recovers a raw transaction into this pool transaction type.
+    ///
+    pub fn recover_raw_transaction(data: &[u8]) -> Result<Self, RawPoolTransactionError> {
+        if data.is_empty() {
+            return Err(RawPoolTransactionError::EmptyRawTransactionData);
+        }
+
+        let transaction = BasePooledEnvelope::decode_2718_exact(data)
+            .map_err(|_| RawPoolTransactionError::FailedToDecodeSignedTransaction)?;
+
+        Self::try_recover(transaction)
+            .map_err(|_| RawPoolTransactionError::InvalidTransactionSignature)
+    }
+
+    /// Tries to convert the `Consensus` type into the `Pooled` type.
+    pub fn try_into_pooled(
+        self,
+    ) -> Result<
+        Recovered<BasePooledEnvelope>,
+        <BasePooledEnvelope as TryFrom<BaseTransactionSigned>>::Error,
+    > {
+        let consensus = self.into_consensus();
+        let (tx, signer) = consensus.into_parts();
+        Ok(Recovered::new_unchecked(tx.try_into()?, signer))
+    }
+
+    /// Clones the consensus transactions and tries to convert the `Consensus` type into the
+    /// `Pooled` type.
+    pub fn clone_into_pooled(
+        &self,
+    ) -> Result<
+        Recovered<BasePooledEnvelope>,
+        <BasePooledEnvelope as TryFrom<BaseTransactionSigned>>::Error,
+    > {
+        let consensus = self.clone_into_consensus();
+        let (tx, signer) = consensus.into_parts();
+        Ok(Recovered::new_unchecked(tx.try_into()?, signer))
+    }
+
+    /// Converts the `Pooled` type into the `Consensus` type.
+    pub fn pooled_into_consensus(tx: BasePooledEnvelope) -> BaseTransactionSigned {
+        tx.into()
+    }
+
+    /// Ensures that the transaction's code size does not exceed the provided `max_init_code_size`.
+    ///
+    /// This is specifically relevant for contract creation transactions ([`TxKind::Create`]),
+    /// where the input data contains the initialization code. If the input code size exceeds
+    /// the configured limit, an [`InvalidPoolTransactionError::ExceedsMaxInitCodeSize`] error is
+    /// returned.
+    pub fn ensure_max_init_code_size(
+        &self,
+        max_init_code_size: usize,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        let input_len = self.input().len();
+        if self.is_create() && input_len > max_init_code_size {
+            Err(InvalidPoolTransactionError::ExceedsMaxInitCodeSize(input_len, max_init_code_size))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -285,34 +392,6 @@ impl base_common_consensus::Transaction for BasePooledTransaction {
     }
 }
 
-impl EthPoolTransaction for BasePooledTransaction {
-    fn take_blob(&mut self) -> EthBlobTransactionSidecar {
-        EthBlobTransactionSidecar::None
-    }
-
-    fn try_into_pooled_eip4844(
-        self,
-        _sidecar: Arc<BlobTransactionSidecarVariant>,
-    ) -> Option<Recovered<Self::Pooled>> {
-        None
-    }
-
-    fn try_from_eip4844(
-        _tx: Recovered<Self::Consensus>,
-        _sidecar: BlobTransactionSidecarVariant,
-    ) -> Option<Self> {
-        None
-    }
-
-    fn validate_blob(
-        &self,
-        _sidecar: &BlobTransactionSidecarVariant,
-        _settings: &KzgSettings,
-    ) -> Result<(), BlobTransactionValidationError> {
-        Err(BlobTransactionValidationError::NotBlobTransaction(self.ty()))
-    }
-}
-
 impl BasePooledTransaction {
     /// Whether this transaction uses a nonstandard nonce channel or replay identifier.
     pub fn is_eip8130_sidecar_transaction(&self) -> bool {
@@ -389,19 +468,19 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned,
-        Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130, transaction::Recovered,
+        BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, BaseTxEnvelope,
+        Eip8130Constants, Eip8130Signed, EthereumTxEnvelope, SignableTransaction, TxDeposit,
+        TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxEip8130, TxLegacy, transaction::Recovered,
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        EthTransactionValidatorBuilder, InMemoryBlobStore, PoolTransaction, TransactionOrigin,
-        TransactionValidationOutcome,
+        EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
@@ -449,7 +528,7 @@ mod tests {
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
-            .build(InMemoryBlobStore::default());
+            .build();
         let validator = BaseTransactionValidator::new(validator);
 
         let origin = TransactionOrigin::External;
@@ -534,5 +613,101 @@ mod tests {
 
         assert_eq!(transaction.validity_predicates(), core::slice::from_ref(&predicate));
         assert_eq!(transaction.validity_predicates(), core::slice::from_ref(&predicate));
+    }
+
+    #[test]
+    fn test_base_pooled_transaction_new_legacy() {
+        // Create a legacy transaction with specific parameters
+        let tx = BaseTxEnvelope::Legacy(
+            TxLegacy {
+                gas_price: 10,
+                gas_limit: 1000,
+                value: U256::from(100),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let transaction = Recovered::new_unchecked(tx, Default::default());
+        let pooled_tx = BasePooledTransaction::new(transaction.clone(), 200);
+
+        // Check that the pooled transaction is created correctly
+        assert_eq!(pooled_tx.transaction, transaction);
+        assert_eq!(pooled_tx.encoded_length, 200);
+        assert_eq!(pooled_tx.cost, U256::from(100) + U256::from(10 * 1000));
+    }
+
+    #[test]
+    fn test_base_pooled_transaction_new_eip2930() {
+        // Create an EIP-2930 transaction with specific parameters
+        let tx = BaseTxEnvelope::Eip2930(
+            TxEip2930 {
+                gas_price: 10,
+                gas_limit: 1000,
+                value: U256::from(100),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let transaction = Recovered::new_unchecked(tx, Default::default());
+        let pooled_tx = BasePooledTransaction::new(transaction.clone(), 200);
+        let expected_cost = U256::from(100) + (U256::from(10 * 1000));
+
+        assert_eq!(pooled_tx.transaction, transaction);
+        assert_eq!(pooled_tx.encoded_length, 200);
+        assert_eq!(pooled_tx.cost, expected_cost);
+    }
+
+    #[test]
+    fn test_base_pooled_transaction_new_eip1559() {
+        // Create an EIP-1559 transaction with specific parameters
+        let tx = BaseTxEnvelope::Eip1559(
+            TxEip1559 {
+                max_fee_per_gas: 10,
+                gas_limit: 1000,
+                value: U256::from(100),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let transaction = Recovered::new_unchecked(tx, Default::default());
+        let pooled_tx = BasePooledTransaction::new(transaction.clone(), 200);
+
+        // Check that the pooled transaction is created correctly
+        assert_eq!(pooled_tx.transaction, transaction);
+        assert_eq!(pooled_tx.encoded_length, 200);
+        assert_eq!(pooled_tx.cost, U256::from(100) + U256::from(10 * 1000));
+    }
+
+    #[test]
+    fn rejects_raw_blob_transaction() {
+        let tx = EthereumTxEnvelope::Eip4844(
+            TxEip4844 { blob_versioned_hashes: vec![B256::ZERO], ..Default::default() }
+                .into_signed(Signature::test_signature()),
+        );
+        assert!(matches!(
+            BasePooledTransaction::recover_raw_transaction(&tx.encoded_2718()),
+            Err(crate::RawPoolTransactionError::FailedToDecodeSignedTransaction)
+        ));
+    }
+
+    #[test]
+    fn test_base_pooled_transaction_new_eip7702() {
+        // Init an EIP-7702 transaction with specific parameters
+        let tx = BaseTxEnvelope::Eip7702(
+            TxEip7702 {
+                max_fee_per_gas: 10,
+                gas_limit: 1000,
+                value: U256::from(100),
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+        let transaction = Recovered::new_unchecked(tx, Default::default());
+        let pooled_tx = BasePooledTransaction::new(transaction.clone(), 200);
+
+        // Check that the pooled transaction is created correctly
+        assert_eq!(pooled_tx.transaction, transaction);
+        assert_eq!(pooled_tx.encoded_length, 200);
+        assert_eq!(pooled_tx.cost, U256::from(100) + U256::from(10 * 1000));
     }
 }

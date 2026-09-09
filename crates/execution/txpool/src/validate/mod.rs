@@ -4,15 +4,16 @@ use std::{fmt, fmt::Debug, future::Future, time::Instant};
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, B256, TxHash, U256};
+use base_common_consensus::{Transaction, Typed2718};
 use futures_util::future::Either;
-use reth_primitives_traits::{Block, Recovered, SealedBlock};
+use reth_primitives_traits::{Block, InMemorySize, Recovered, SealedBlock};
 
 use crate::{
     PriceBumpConfig,
     blobstore::PooledBlobSidecar,
     error::InvalidPoolTransactionError,
     identifier::{SenderId, TransactionId},
-    traits::{PoolTransaction, TransactionOrigin},
+    traits::TransactionOrigin,
 };
 
 mod constants;
@@ -25,7 +26,7 @@ pub use task::{TransactionValidationTaskExecutor, ValidationJobSender, Validatio
 
 /// A Result type returned after checking a transaction's validity.
 #[derive(Debug)]
-pub enum TransactionValidationOutcome<T: PoolTransaction> {
+pub enum TransactionValidationOutcome {
     /// The transaction is considered _currently_ valid and can be inserted into the pool.
     Valid {
         /// Balance of the sender at the current point.
@@ -40,7 +41,7 @@ pub enum TransactionValidationOutcome<T: PoolTransaction> {
         ///
         /// If this is a _new_ EIP-4844 blob transaction, then this must contain the extracted
         /// sidecar.
-        transaction: ValidTransaction<T>,
+        transaction: ValidTransaction,
         /// Whether to propagate the transaction to the network.
         propagate: bool,
         /// The authorities of EIP-7702 transaction.
@@ -48,12 +49,12 @@ pub enum TransactionValidationOutcome<T: PoolTransaction> {
     },
     /// The transaction is considered invalid indefinitely: It violates constraints that prevent
     /// this transaction from ever becoming valid.
-    Invalid(T, InvalidPoolTransactionError),
+    Invalid(crate::BasePooledTransaction, InvalidPoolTransactionError),
     /// An error occurred while trying to validate the transaction
     Error(TxHash, Box<dyn core::error::Error + Send + Sync>),
 }
 
-impl<T: PoolTransaction> TransactionValidationOutcome<T> {
+impl TransactionValidationOutcome {
     /// Returns the hash of the transactions
     pub fn tx_hash(&self) -> TxHash {
         match self {
@@ -72,7 +73,7 @@ impl<T: PoolTransaction> TransactionValidationOutcome<T> {
     }
 
     /// Returns the [`ValidTransaction`] if this is a [`TransactionValidationOutcome::Valid`].
-    pub const fn as_valid_transaction(&self) -> Option<&ValidTransaction<T>> {
+    pub const fn as_valid_transaction(&self) -> Option<&ValidTransaction> {
         match self {
             Self::Valid { transaction, .. } => Some(transaction),
             _ => None,
@@ -105,24 +106,27 @@ impl<T: PoolTransaction> TransactionValidationOutcome<T> {
 /// validator can omit the sidecar if it is still in the blob store and return a
 /// [`ValidTransaction::Valid`] instead.
 #[derive(Debug)]
-pub enum ValidTransaction<T> {
+pub enum ValidTransaction {
     /// A valid transaction without a sidecar.
-    Valid(T),
+    Valid(crate::BasePooledTransaction),
     /// A valid transaction for which a sidecar should be stored.
     ///
     /// Caution: The [`TransactionValidator`] must ensure that this is only returned for EIP-4844
     /// transactions.
     ValidWithSidecar {
         /// The valid EIP-4844 transaction.
-        transaction: T,
+        transaction: crate::BasePooledTransaction,
         /// The extracted sidecar of that transaction
         sidecar: PooledBlobSidecar,
     },
 }
 
-impl<T> ValidTransaction<T> {
+impl ValidTransaction {
     /// Creates a new valid transaction with an optional sidecar.
-    pub fn new(transaction: T, sidecar: Option<PooledBlobSidecar>) -> Self {
+    pub fn new(
+        transaction: crate::BasePooledTransaction,
+        sidecar: Option<PooledBlobSidecar>,
+    ) -> Self {
         if let Some(sidecar) = sidecar {
             Self::ValidWithSidecar { transaction, sidecar }
         } else {
@@ -131,17 +135,17 @@ impl<T> ValidTransaction<T> {
     }
 }
 
-impl<T: PoolTransaction> ValidTransaction<T> {
+impl ValidTransaction {
     /// Returns the transaction.
     #[inline]
-    pub const fn transaction(&self) -> &T {
+    pub const fn transaction(&self) -> &crate::BasePooledTransaction {
         match self {
             Self::Valid(transaction) | Self::ValidWithSidecar { transaction, .. } => transaction,
         }
     }
 
     /// Consumes the wrapper and returns the transaction.
-    pub fn into_transaction(self) -> T {
+    pub fn into_transaction(self) -> crate::BasePooledTransaction {
         match self {
             Self::Valid(transaction) | Self::ValidWithSidecar { transaction, .. } => transaction,
         }
@@ -169,7 +173,6 @@ impl<T: PoolTransaction> ValidTransaction<T> {
 /// Provides support for validating transaction at any given state of the chain
 pub trait TransactionValidator: Debug + Send + Sync {
     /// The transaction type to validate.
-    type Transaction: PoolTransaction;
 
     /// The block type used for new head block notifications.
     type Block: Block;
@@ -202,8 +205,8 @@ pub trait TransactionValidator: Debug + Send + Sync {
     fn validate_transaction(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
-    ) -> impl Future<Output = TransactionValidationOutcome<Self::Transaction>> + Send;
+        transaction: crate::BasePooledTransaction,
+    ) -> impl Future<Output = TransactionValidationOutcome> + Send;
 
     /// Validates a batch of transactions.
     ///
@@ -212,9 +215,11 @@ pub trait TransactionValidator: Debug + Send + Sync {
     /// See also [`Self::validate_transaction`].
     fn validate_transactions(
         &self,
-        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
-        + Send,
-    ) -> impl Future<Output = Vec<TransactionValidationOutcome<Self::Transaction>>> + Send {
+        transactions: impl IntoIterator<
+            Item = (TransactionOrigin, crate::BasePooledTransaction),
+            IntoIter: Send,
+        > + Send,
+    ) -> impl Future<Output = Vec<TransactionValidationOutcome>> + Send {
         futures_util::future::join_all(
             transactions.into_iter().map(|(origin, tx)| self.validate_transaction(origin, tx)),
         )
@@ -228,8 +233,8 @@ pub trait TransactionValidator: Debug + Send + Sync {
     fn validate_transactions_with_origin(
         &self,
         origin: TransactionOrigin,
-        transactions: impl IntoIterator<Item = Self::Transaction, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Vec<TransactionValidationOutcome<Self::Transaction>>> + Send {
+        transactions: impl IntoIterator<Item = crate::BasePooledTransaction, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Vec<TransactionValidationOutcome>> + Send {
         self.validate_transactions(transactions.into_iter().map(move |tx| (origin, tx)))
     }
 
@@ -242,16 +247,15 @@ pub trait TransactionValidator: Debug + Send + Sync {
 impl<A, B> TransactionValidator for Either<A, B>
 where
     A: TransactionValidator,
-    B: TransactionValidator<Transaction = A::Transaction, Block = A::Block>,
+    B: TransactionValidator<Block = A::Block>,
 {
-    type Transaction = A::Transaction;
     type Block = A::Block;
 
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
-    ) -> TransactionValidationOutcome<Self::Transaction> {
+        transaction: crate::BasePooledTransaction,
+    ) -> TransactionValidationOutcome {
         match self {
             Self::Left(v) => v.validate_transaction(origin, transaction).await,
             Self::Right(v) => v.validate_transaction(origin, transaction).await,
@@ -260,9 +264,11 @@ where
 
     async fn validate_transactions(
         &self,
-        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
-        + Send,
-    ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        transactions: impl IntoIterator<
+            Item = (TransactionOrigin, crate::BasePooledTransaction),
+            IntoIter: Send,
+        > + Send,
+    ) -> Vec<TransactionValidationOutcome> {
         match self {
             Self::Left(v) => v.validate_transactions(transactions).await,
             Self::Right(v) => v.validate_transactions(transactions).await,
@@ -272,8 +278,8 @@ where
     async fn validate_transactions_with_origin(
         &self,
         origin: TransactionOrigin,
-        transactions: impl IntoIterator<Item = Self::Transaction, IntoIter: Send> + Send,
-    ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        transactions: impl IntoIterator<Item = crate::BasePooledTransaction, IntoIter: Send> + Send,
+    ) -> Vec<TransactionValidationOutcome> {
         match self {
             Self::Left(v) => v.validate_transactions_with_origin(origin, transactions).await,
             Self::Right(v) => v.validate_transactions_with_origin(origin, transactions).await,
@@ -294,9 +300,9 @@ where
 ///
 /// For EIP-4844 blob transactions this will _not_ contain the blob sidecar which is stored
 /// separately in the [`BlobStore`](crate::blobstore::BlobStore).
-pub struct ValidPoolTransaction<T: PoolTransaction> {
+pub struct ValidPoolTransaction {
     /// The transaction
-    pub transaction: T,
+    pub transaction: crate::BasePooledTransaction,
     /// The identifier for this transaction.
     pub transaction_id: TransactionId,
     /// Whether it is allowed to propagate the transaction.
@@ -311,7 +317,7 @@ pub struct ValidPoolTransaction<T: PoolTransaction> {
 
 // === impl ValidPoolTransaction ===
 
-impl<T: PoolTransaction> ValidPoolTransaction<T> {
+impl ValidPoolTransaction {
     /// Returns the hash of the transaction.
     pub fn hash(&self) -> &TxHash {
         self.transaction.hash()
@@ -450,7 +456,7 @@ impl<T: PoolTransaction> ValidPoolTransaction<T> {
     /// Converts to this type into the consensus transaction of the pooled transaction.
     ///
     /// Note: this takes `&self` since indented usage is via `Arc<Self>`.
-    pub fn to_consensus(&self) -> Recovered<T::Consensus> {
+    pub fn to_consensus(&self) -> Recovered<base_common_consensus::BaseTxEnvelope> {
         self.transaction.clone_into_consensus()
     }
 
@@ -504,7 +510,7 @@ impl<T: PoolTransaction> ValidPoolTransaction<T> {
 }
 
 #[cfg(test)]
-impl<T: PoolTransaction> Clone for ValidPoolTransaction<T> {
+impl Clone for ValidPoolTransaction {
     fn clone(&self) -> Self {
         Self {
             transaction: self.transaction.clone(),
@@ -517,7 +523,7 @@ impl<T: PoolTransaction> Clone for ValidPoolTransaction<T> {
     }
 }
 
-impl<T: PoolTransaction> fmt::Debug for ValidPoolTransaction<T> {
+impl fmt::Debug for ValidPoolTransaction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ValidPoolTransaction")
             .field("id", &self.transaction_id)

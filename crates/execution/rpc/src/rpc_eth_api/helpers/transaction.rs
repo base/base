@@ -14,8 +14,7 @@ use base_common_consensus::{
 use base_common_network::{TransactionBuilder, TransactionBuilder4844};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
-    AddedTransactionOutcome, PoolPooledTx, PoolTransaction, PoolTx, TransactionOrigin,
-    TransactionPool,
+    AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
 };
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
@@ -71,8 +70,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let pool_transaction =
-                <PoolTx<N::Pool> as PoolTransaction>::recover_raw_transaction(&tx)
-                    .map_err(BaseEthApiError::from_eth_err)?;
+                PoolTx::recover_raw_transaction(&tx).map_err(BaseEthApiError::from_eth_err)?;
             self.send_pool_transaction(
                 TransactionOrigin::Local,
                 WithEncoded::new(tx, pool_transaction),
@@ -85,12 +83,12 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     pub fn send_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<Recovered<PoolPooledTx<N::Pool>>>,
+        tx: WithEncoded<Recovered<PoolPooledTx>>,
     ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let (encoded, recovered) = tx.split();
             let pool_transaction =
-                <N::Pool as TransactionPool>::Transaction::from_pooled(recovered);
+                base_execution_txpool::BasePooledTransaction::from_pooled(recovered);
 
             self.send_pool_transaction(origin, WithEncoded::new(encoded, pool_transaction)).await
         }
@@ -406,12 +404,12 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
             let transaction = self.sign_request(&from, request).await?.with_signer(from);
 
             let pool_transaction =
-                <<Self as RpcNodeCore>::Pool as TransactionPool>::Transaction::try_from_consensus(
-                    transaction,
-                )
-                .map_err(|e| {
-                    BaseEthApiError::from_eth_err(TransactionConversionError::Other(e.to_string()))
-                })?;
+                base_execution_txpool::BasePooledTransaction::try_from_consensus(transaction)
+                    .map_err(|e| {
+                        BaseEthApiError::from_eth_err(TransactionConversionError::Other(
+                            e.to_string(),
+                        ))
+                    })?;
 
             // submit the transaction to the pool with a `Local` origin
             let AddedTransactionOutcome { hash, .. } = self

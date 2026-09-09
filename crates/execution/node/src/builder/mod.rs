@@ -6,9 +6,8 @@
 use std::sync::Arc;
 
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{PoolConfig, PoolTransaction, TransactionPool};
+use base_execution_txpool::{PoolConfig, TransactionPool};
 use base_node_context::BaseNodeContext;
 use futures::Future;
 use reth_exex::ExExContext;
@@ -669,13 +668,7 @@ impl BuilderContext {
     /// connected to that network.
     pub fn start_network<Pool>(&self, builder: NetworkBuilder<(), ()>, pool: Pool) -> NetworkHandle
     where
-        Pool: TransactionPool<
-                Transaction: PoolTransaction<
-                    Consensus = BaseTxEnvelope,
-                    Pooled = base_common_consensus::BasePooledTransaction,
-                >,
-            > + Unpin
-            + 'static,
+        Pool: TransactionPool + Unpin + 'static,
         BlockchainProvider: BlockReaderFor,
     {
         self.start_network_with(
@@ -701,13 +694,7 @@ impl BuilderContext {
         propagation_policy: Policy,
     ) -> NetworkHandle
     where
-        Pool: TransactionPool<
-                Transaction: PoolTransaction<
-                    Consensus = BaseTxEnvelope,
-                    Pooled = base_common_consensus::BasePooledTransaction,
-                >,
-            > + Unpin
-            + 'static,
+        Pool: TransactionPool + Unpin + 'static,
         BlockchainProvider: BlockReaderFor,
         Policy: TransactionPropagationPolicy,
     {
@@ -737,13 +724,7 @@ impl BuilderContext {
         announcement_policy: AnnPolicy,
     ) -> NetworkHandle
     where
-        Pool: TransactionPool<
-                Transaction: PoolTransaction<
-                    Consensus = BaseTxEnvelope,
-                    Pooled = base_common_consensus::BasePooledTransaction,
-                >,
-            > + Unpin
-            + 'static,
+        Pool: TransactionPool + Unpin + 'static,
         BlockchainProvider: BlockReaderFor,
         PropPolicy: TransactionPropagationPolicy,
         AnnPolicy: AnnouncementFilteringPolicy,

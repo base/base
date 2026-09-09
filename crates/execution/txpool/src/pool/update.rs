@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{PoolTransaction, SubPool, ValidPoolTransaction, identifier::TransactionId};
+use crate::{SubPool, ValidPoolTransaction, identifier::TransactionId};
 
 /// A change of the transaction's location
 ///
@@ -34,14 +34,14 @@ impl From<SubPool> for Destination {
 
 /// Tracks the result after updating the pool
 #[derive(Debug)]
-pub struct UpdateOutcome<T: PoolTransaction> {
+pub struct UpdateOutcome {
     /// transactions promoted to the pending pool
-    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    pub promoted: Vec<Arc<ValidPoolTransaction>>,
     /// transaction that failed and were discarded
-    pub discarded: Vec<Arc<ValidPoolTransaction<T>>>,
+    pub discarded: Vec<Arc<ValidPoolTransaction>>,
 }
 
-impl<T: PoolTransaction> Default for UpdateOutcome<T> {
+impl Default for UpdateOutcome {
     fn default() -> Self {
         Self { promoted: vec![], discarded: vec![] }
     }

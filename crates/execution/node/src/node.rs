@@ -358,7 +358,6 @@ impl BasePoolBuilder {
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .no_eip4844()
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
-                .kzg_settings(ctx.kzg_settings()?)
                 .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
                 .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
                 .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
@@ -367,7 +366,7 @@ impl BasePoolBuilder {
                         .additional_validation_tasks
                         .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
                 )
-                .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
+                .build_with_tasks(ctx.task_executor().clone())
                 .map(|validator| {
                     BaseTransactionValidator::new(validator)
                         // In --dev mode we can't require gas fees because we're unable to decode

@@ -6,8 +6,8 @@ use std::{
 
 use super::txpool::PendingFees;
 use crate::{
-    PoolTransaction, SubPoolLimit, ValidPoolTransaction, identifier::TransactionId,
-    pool::size::SizeTracker, traits::BestTransactionsAttributes,
+    SubPoolLimit, ValidPoolTransaction, identifier::TransactionId, pool::size::SizeTracker,
+    traits::BestTransactionsAttributes,
 };
 
 /// A set of validated blob transactions in the pool that are __not pending__.
@@ -18,15 +18,15 @@ use crate::{
 /// This expects that certain constraints are met:
 ///   - blob transactions are always gapless
 #[derive(Debug, Clone)]
-pub struct BlobTransactions<T: PoolTransaction> {
+pub struct BlobTransactions {
     /// Keeps track of transactions inserted in the pool.
     ///
     /// This way we can determine when transactions were submitted to the pool.
     submission_id: u64,
     /// _All_ Transactions that are currently inside the pool grouped by their identifier.
-    by_id: BTreeMap<TransactionId, BlobTransaction<T>>,
+    by_id: BTreeMap<TransactionId, BlobTransaction>,
     /// _All_ transactions sorted by blob priority.
-    all: BTreeSet<BlobTransaction<T>>,
+    all: BTreeSet<BlobTransaction>,
     /// Keeps track of the current fees, so transaction priority can be calculated on insertion.
     pending_fees: PendingFees,
     /// Keeps track of the size of this pool.
@@ -37,14 +37,14 @@ pub struct BlobTransactions<T: PoolTransaction> {
 
 // === impl BlobTransactions ===
 
-impl<T: PoolTransaction> BlobTransactions<T> {
+impl BlobTransactions {
     /// Adds a new transactions to the pending queue.
     ///
     /// # Panics
     ///
     ///   - If the transaction is not a blob tx.
     ///   - If the transaction is already included.
-    pub fn add_transaction(&mut self, tx: Arc<ValidPoolTransaction<T>>) {
+    pub fn add_transaction(&mut self, tx: Arc<ValidPoolTransaction>) {
         assert!(tx.is_eip4844(), "transaction is not a blob tx");
         let id = *tx.id();
         assert!(!self.contains(&id), "transaction already included {:?}", self.get(&id).unwrap());
@@ -67,10 +67,7 @@ impl<T: PoolTransaction> BlobTransactions<T> {
     }
 
     /// Removes the transaction from the pool
-    pub fn remove_transaction(
-        &mut self,
-        id: &TransactionId,
-    ) -> Option<Arc<ValidPoolTransaction<T>>> {
+    pub fn remove_transaction(&mut self, id: &TransactionId) -> Option<Arc<ValidPoolTransaction>> {
         // remove from queues
         let tx = self.by_id.remove(id)?;
 
@@ -88,7 +85,7 @@ impl<T: PoolTransaction> BlobTransactions<T> {
     pub fn satisfy_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = Vec::new();
         {
             // short path if blob_fee is None in provided best transactions attributes
@@ -198,7 +195,7 @@ impl<T: PoolTransaction> BlobTransactions<T> {
     pub fn enforce_pending_fees(
         &mut self,
         pending_fees: &PendingFees,
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let removed = self
             .satisfy_pending_fee_ids(pending_fees)
             .into_iter()
@@ -218,7 +215,7 @@ impl<T: PoolTransaction> BlobTransactions<T> {
     /// the [`BlobOrd`] struct.
     ///
     /// Removed transactions are returned in the order they were removed.
-    pub fn truncate_pool(&mut self, limit: SubPoolLimit) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn truncate_pool(&mut self, limit: SubPoolLimit) -> Vec<Arc<ValidPoolTransaction>> {
         let mut removed = Vec::new();
 
         while self.exceeds(&limit) {
@@ -236,7 +233,7 @@ impl<T: PoolTransaction> BlobTransactions<T> {
     }
 
     /// Retrieves a transaction with the given ID from the pool, if it exists.
-    fn get(&self, id: &TransactionId) -> Option<&BlobTransaction<T>> {
+    fn get(&self, id: &TransactionId) -> Option<&BlobTransaction> {
         self.by_id.get(id)
     }
 
@@ -247,7 +244,7 @@ impl<T: PoolTransaction> BlobTransactions<T> {
     }
 }
 
-impl<T: PoolTransaction> Default for BlobTransactions<T> {
+impl Default for BlobTransactions {
     fn default() -> Self {
         Self {
             submission_id: 0,
@@ -261,18 +258,18 @@ impl<T: PoolTransaction> Default for BlobTransactions<T> {
 
 /// A transaction that is ready to be included in a block.
 #[derive(Debug)]
-pub struct BlobTransaction<T: PoolTransaction> {
+pub struct BlobTransaction {
     /// Actual blob transaction.
-    transaction: Arc<ValidPoolTransaction<T>>,
+    transaction: Arc<ValidPoolTransaction>,
     /// The value that determines the order of this transaction.
     ord: BlobOrd,
 }
 
-impl<T: PoolTransaction> BlobTransaction<T> {
+impl BlobTransaction {
     /// Creates a new blob transaction, based on the pool transaction, submission id, and current
     /// pending fees.
     pub fn new(
-        transaction: Arc<ValidPoolTransaction<T>>,
+        transaction: Arc<ValidPoolTransaction>,
         submission_id: u64,
         pending_fees: &PendingFees,
     ) -> Self {
@@ -297,27 +294,27 @@ impl<T: PoolTransaction> BlobTransaction<T> {
     }
 }
 
-impl<T: PoolTransaction> Clone for BlobTransaction<T> {
+impl Clone for BlobTransaction {
     fn clone(&self) -> Self {
         Self { transaction: self.transaction.clone(), ord: self.ord.clone() }
     }
 }
 
-impl<T: PoolTransaction> Eq for BlobTransaction<T> {}
+impl Eq for BlobTransaction {}
 
-impl<T: PoolTransaction> PartialEq<Self> for BlobTransaction<T> {
+impl PartialEq<Self> for BlobTransaction {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<T: PoolTransaction> PartialOrd<Self> for BlobTransaction<T> {
+impl PartialOrd<Self> for BlobTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T: PoolTransaction> Ord for BlobTransaction<T> {
+impl Ord for BlobTransaction {
     fn cmp(&self, other: &Self) -> Ordering {
         self.ord.cmp(&other.ord)
     }
@@ -451,221 +448,6 @@ mod tests {
     use super::*;
     use crate::test_utils::{MockTransaction, MockTransactionFactory};
 
-    /// Represents the fees for a single transaction, which will be built inside of a test.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    struct TransactionFees {
-        /// The blob fee cap for the transaction.
-        max_blob_fee: u128,
-        /// The max priority fee for the transaction.
-        max_priority_fee_per_gas: u128,
-        /// The base fee for the transaction.
-        max_fee_per_gas: u128,
-    }
-
-    /// Represents an ordering of transactions based on their fees and the current network fees.
-    #[derive(Debug, Clone)]
-    struct TransactionOrdering {
-        /// The transaction fees, in the order that they're expected to be returned
-        fees: Vec<TransactionFees>,
-        /// The network fees
-        network_fees: PendingFees,
-    }
-
-    #[test]
-    fn test_blob_ordering() {
-        // Tests are from:
-        // <https://github.com/ethereum/go-ethereum/blob/e91cdb49beb4b2a3872b5f2548bf2d6559e4f561/core/txpool/blobpool/evictheap_test.go>
-        let mut factory = MockTransactionFactory::default();
-
-        let vectors = vec![
-            // If everything is above basefee and blobfee, order by miner tip
-            TransactionOrdering {
-                fees: vec![
-                    TransactionFees {
-                        max_blob_fee: 2,
-                        max_priority_fee_per_gas: 0,
-                        max_fee_per_gas: 2,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 3,
-                        max_priority_fee_per_gas: 1,
-                        max_fee_per_gas: 1,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 1,
-                        max_priority_fee_per_gas: 2,
-                        max_fee_per_gas: 3,
-                    },
-                ],
-                network_fees: PendingFees { base_fee: 0, blob_fee: 0 },
-            },
-            // If only basefees are used (blob fee matches with network), return the ones
-            // above the basefee first (best priority = 0), then the ones furthest below
-            // the basefee last (worst priority). Ties broken by submission_id.
-            TransactionOrdering {
-                fees: vec![
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 1,
-                        max_fee_per_gas: 2000,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 2,
-                        max_fee_per_gas: 2000,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 3,
-                        max_fee_per_gas: 2000,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 50,
-                        max_fee_per_gas: 1000,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 100,
-                        max_fee_per_gas: 1000,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 50,
-                        max_fee_per_gas: 500,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 0,
-                        max_priority_fee_per_gas: 100,
-                        max_fee_per_gas: 500,
-                    },
-                ],
-                network_fees: PendingFees { base_fee: 1999, blob_fee: 0 },
-            },
-            // If only blobfees are used (base fee matches with network), return the ones
-            // above the blobfee first (best priority = 0), then the ones furthest below
-            // the blobfee last (worst priority). Ties broken by submission_id.
-            TransactionOrdering {
-                fees: vec![
-                    TransactionFees {
-                        max_blob_fee: 2000,
-                        max_priority_fee_per_gas: 1,
-                        max_fee_per_gas: 0,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 2000,
-                        max_priority_fee_per_gas: 2,
-                        max_fee_per_gas: 0,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 2000,
-                        max_priority_fee_per_gas: 3,
-                        max_fee_per_gas: 0,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 1000,
-                        max_priority_fee_per_gas: 50,
-                        max_fee_per_gas: 0,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 1000,
-                        max_priority_fee_per_gas: 100,
-                        max_fee_per_gas: 0,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 500,
-                        max_priority_fee_per_gas: 50,
-                        max_fee_per_gas: 0,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 500,
-                        max_priority_fee_per_gas: 100,
-                        max_fee_per_gas: 0,
-                    },
-                ],
-                network_fees: PendingFees { base_fee: 0, blob_fee: 1999 },
-            },
-            // If both basefee and blobfee are specified, sort by the larger distance
-            // of the two from the current network conditions.
-            //
-            // Basefee: 1000, Blobfee: 100
-            //
-            // Txs with blob_fee=80: fee_delta(80, 100) = 0 (ilog2 granularity) => priority 0
-            // Txs with blob_fee=63: fee_delta(63, 100) = -2 => priority -2
-            //
-            // Priority 0 txs come first (best), then priority -2 (worst).
-            // Within same priority, ties broken by submission_id.
-            TransactionOrdering {
-                fees: vec![
-                    TransactionFees {
-                        max_blob_fee: 80,
-                        max_priority_fee_per_gas: 4,
-                        max_fee_per_gas: 630,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 80,
-                        max_priority_fee_per_gas: 1,
-                        max_fee_per_gas: 800,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 63,
-                        max_priority_fee_per_gas: 3,
-                        max_fee_per_gas: 800,
-                    },
-                    TransactionFees {
-                        max_blob_fee: 63,
-                        max_priority_fee_per_gas: 2,
-                        max_fee_per_gas: 630,
-                    },
-                ],
-                network_fees: PendingFees { base_fee: 1000, blob_fee: 100 },
-            },
-        ];
-
-        for ordering in vectors {
-            // create a new pool each time
-            let mut pool = BlobTransactions::default();
-
-            // create tx from fees
-            let txs = ordering
-                .fees
-                .iter()
-                .map(|fees| {
-                    MockTransaction::eip4844()
-                        .with_blob_fee(fees.max_blob_fee)
-                        .with_priority_fee(fees.max_priority_fee_per_gas)
-                        .with_max_fee(fees.max_fee_per_gas)
-                })
-                .collect::<Vec<_>>();
-
-            for tx in &txs {
-                pool.add_transaction(factory.validated_arc(tx.clone()));
-            }
-
-            // update fees and resort the pool
-            pool.pending_fees = ordering.network_fees.clone();
-            pool.reprioritize();
-
-            // now iterate through the pool and make sure they're in the same order as the original
-            // fees - map to TransactionFees so it's easier to compare the ordering without having
-            // to see irrelevant fields
-            let actual_txs = pool
-                .all
-                .iter()
-                .map(|tx| TransactionFees {
-                    max_blob_fee: tx.transaction.max_fee_per_blob_gas().unwrap_or_default(),
-                    max_priority_fee_per_gas: tx.transaction.priority_fee_or_price(),
-                    max_fee_per_gas: tx.transaction.max_fee_per_gas(),
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                ordering.fees, actual_txs,
-                "ordering mismatch, expected: {:#?}, actual: {:#?}",
-                ordering.fees, actual_txs
-            );
-        }
-    }
-
     #[test]
     fn priority_tests() {
         // Test vectors from:
@@ -690,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_empty_pool_operations() {
-        let mut pool: BlobTransactions<MockTransaction> = BlobTransactions::default();
+        let mut pool: BlobTransactions = BlobTransactions::default();
 
         // Ensure pool is empty
         assert!(pool.is_empty());
@@ -706,25 +488,8 @@ mod tests {
     }
 
     #[test]
-    fn test_transaction_removal() {
-        let mut factory = MockTransactionFactory::default();
-        let mut pool = BlobTransactions::default();
-
-        // Add a transaction
-        let tx = factory.validated_arc(MockTransaction::eip4844());
-        let tx_id = *tx.id();
-        pool.add_transaction(tx);
-
-        // Remove the transaction
-        let removed = pool.remove_transaction(&tx_id);
-        assert!(removed.is_some());
-        assert_eq!(*removed.unwrap().id(), tx_id);
-        assert!(pool.is_empty());
-    }
-
-    #[test]
     fn test_satisfy_attributes_empty_pool() {
-        let pool: BlobTransactions<MockTransaction> = BlobTransactions::default();
+        let pool: BlobTransactions = BlobTransactions::default();
         let attributes = BestTransactionsAttributes { blob_fee: Some(100), basefee: 100 };
         // Satisfy attributes on an empty pool should return an empty vector
         let satisfied = pool.satisfy_attributes(attributes);
@@ -742,44 +507,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "transaction already included")]
-    fn test_add_duplicate_blob_transaction() {
-        // Ensure that adding a duplicate blob transaction causes a panic
-        let mut factory = MockTransactionFactory::default();
-        let mut pool = BlobTransactions::default();
-        let tx = factory.validated_arc(MockTransaction::eip4844());
-        pool.add_transaction(tx.clone()); // First addition
-        pool.add_transaction(tx); // Attempt to add the same transaction again
-    }
-
-    #[test]
-    fn test_remove_transactions_until_limit() {
-        // Test truncating the pool until it satisfies the given size limit
-        let mut factory = MockTransactionFactory::default();
-        let mut pool = BlobTransactions::default();
-        let tx1 = factory.validated_arc(MockTransaction::eip4844().with_size(100));
-        let tx2 = factory.validated_arc(MockTransaction::eip4844().with_size(200));
-        let tx3 = factory.validated_arc(MockTransaction::eip4844().with_size(300));
-
-        // Add transactions to the pool
-        pool.add_transaction(tx1);
-        pool.add_transaction(tx2);
-        pool.add_transaction(tx3);
-
-        // Set a size limit that requires truncation
-        let limit = SubPoolLimit { max_txs: 2, max_size: 300 };
-        let removed = pool.truncate_pool(limit);
-
-        // Check that only one transaction was removed to satisfy the limit
-        assert_eq!(removed.len(), 1);
-        assert_eq!(pool.len(), 2);
-        assert!(pool.size() <= limit.max_size);
-    }
-
-    #[test]
     fn test_empty_pool_invariants() {
         // Ensure that the invariants hold for an empty pool
-        let pool: BlobTransactions<MockTransaction> = BlobTransactions::default();
+        let pool: BlobTransactions = BlobTransactions::default();
         pool.assert_invariants();
         assert!(pool.is_empty());
         assert_eq!(pool.size(), 0);

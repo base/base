@@ -3,7 +3,7 @@ use std::{fmt, sync::Arc};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
 use base_execution_txpool::{
-    NoExtensions, PoolTransaction, TransactionPool, ValidPoolTransaction, ValidatedTransaction,
+    NoExtensions, TransactionPool, ValidPoolTransaction, ValidatedTransaction,
     ValidatedTransactionExtensions,
 };
 use base_observability_events::{
@@ -39,9 +39,7 @@ pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
 impl<P, E> DestinationReader<P, E>
 where
     P: TransactionPool + 'static,
-    P::Transaction: PoolTransaction,
-    <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
-    E: ValidatedTransactionExtensions<P::Transaction>,
+    E: ValidatedTransactionExtensions,
 {
     /// Creates a reader for one destination.
     pub(crate) fn new(
@@ -133,7 +131,7 @@ where
     /// Attempts to queue the transaction without waiting on a stale pool snapshot.
     fn try_enqueue(
         &self,
-        transaction: &Arc<ValidPoolTransaction<P::Transaction>>,
+        transaction: &Arc<ValidPoolTransaction>,
     ) -> Result<(), mpsc::error::TrySendError<()>> {
         let permit = self.sender.try_reserve()?;
         permit.send(Self::to_wire(transaction));
@@ -144,9 +142,7 @@ where
     ///
     /// Done once per transaction rather than once per queue-full retry: the encoding is the
     /// expensive part and the result is what the queue carries.
-    fn to_wire(
-        transaction: &Arc<ValidPoolTransaction<P::Transaction>>,
-    ) -> InsertValidatedTransaction<E> {
+    fn to_wire(transaction: &Arc<ValidPoolTransaction>) -> InsertValidatedTransaction<E> {
         let consensus = transaction.transaction.clone_into_consensus();
         InsertValidatedTransaction {
             transaction: ValidatedTransaction {
@@ -200,7 +196,7 @@ mod tests {
 
     use super::*;
 
-    fn transaction(nonce: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+    fn transaction(nonce: u64) -> Arc<ValidPoolTransaction> {
         let sender = Address::repeat_byte((nonce + 1) as u8);
         let signed: BaseTransactionSigned = TxDeposit {
             source_hash: B256::with_last_byte(nonce as u8),
@@ -224,7 +220,7 @@ mod tests {
         })
     }
 
-    type TestReader = DestinationReader<NoopTransactionPool<BasePooledTransaction>>;
+    type TestReader = DestinationReader<NoopTransactionPool>;
 
     /// The queued form of `transaction(nonce)`, for seeding a queue directly.
     fn wire(nonce: u64) -> InsertValidatedTransaction {

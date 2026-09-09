@@ -284,7 +284,7 @@ pub struct TransactionValidity {
     pub validity: Vec<ValidityPredicate>,
 }
 
-impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidity {
+impl ValidatedTransactionExtensions for TransactionValidity {
     fn is_empty(&self) -> bool {
         self.validity.is_empty()
     }
@@ -299,7 +299,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
         Ok(())
     }
 
-    fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
+    fn extract(tx: &ValidPoolTransaction) -> Self {
         Self { validity: tx.transaction.validity_predicates().to_vec() }
     }
 

@@ -18,7 +18,7 @@ use alloy_rpc_types_trace::{
 use async_trait::async_trait;
 use base_common_consensus::BlockHeader as _;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
+use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TraceApiServer;
@@ -116,8 +116,8 @@ impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
         trace_types: HashSet<TraceType>,
         block_id: Option<BlockId>,
     ) -> Result<TraceResults, BaseEthApiError> {
-        let tx = recover_raw_transaction::<PoolPooledTx<ApiNode::Pool>>(&tx)?
-            .map(<ApiNode::Pool as TransactionPool>::Transaction::pooled_into_consensus);
+        let tx = recover_raw_transaction::<PoolPooledTx>(&tx)?
+            .map(base_execution_txpool::BasePooledTransaction::pooled_into_consensus);
 
         let (evm_env, at) = self.eth_api().evm_env_at(block_id.unwrap_or_default()).await?;
 

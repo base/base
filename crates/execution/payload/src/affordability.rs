@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{CoinbaseTip, Transaction};
 use base_execution_eip8130::FeeCheck;
-use base_execution_txpool::{BasePooledTransaction, PoolTransaction};
+use base_execution_txpool::BasePooledTransaction;
 use revm::Database;
 
 /// Whether a statically decoded coinbase tip can be paid with worst-case gas.

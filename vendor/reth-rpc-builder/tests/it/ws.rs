@@ -151,7 +151,7 @@ async fn test_eth_subscribe_not_available_over_http() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use base_execution_consensus::BaseBeaconConsensus;
-    use base_execution_txpool::{PoolTransaction, TransactionOrigin, TransactionPool};
+    use base_execution_txpool::{TransactionOrigin, TransactionPool};
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::NoopProvider;
     use reth_rpc_builder::RpcModuleBuilder;
@@ -205,13 +205,12 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         },
         alloy_primitives::Signature::test_signature(),
     );
-    let tx =
-        <base_execution_rpc::test_utils::TestPool as TransactionPool>::Transaction::from_pooled(
-            base_common_consensus::transaction::Recovered::new_unchecked(
-                base_common_consensus::BasePooledTransaction::from(signed),
-                alloy_primitives::Address::ZERO,
-            ),
-        );
+    let tx = base_execution_txpool::BasePooledTransaction::from_pooled(
+        base_common_consensus::transaction::Recovered::new_unchecked(
+            base_common_consensus::BasePooledTransaction::from(signed),
+            alloy_primitives::Address::ZERO,
+        ),
+    );
     let expected_hash = *tx.hash();
     pool_clone.add_transaction(TransactionOrigin::External, tx).await.unwrap();
 

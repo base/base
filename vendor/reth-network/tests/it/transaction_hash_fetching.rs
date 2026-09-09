@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use base_execution_txpool::{PoolTransaction, TransactionPool, test_utils::TransactionGenerator};
+use base_execution_txpool::{TransactionPool, test_utils::TransactionGenerator};
 use reth_network::{
     test_utils::Testnet,
     transactions::{TransactionPropagationMode::Max, TransactionsManagerConfig},

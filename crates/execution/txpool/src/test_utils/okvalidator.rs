@@ -1,22 +1,19 @@
-use std::marker::PhantomData;
-
-use base_common_consensus::BaseBlock as Block;
+use base_common_consensus::{BaseBlock as Block, Transaction};
 
 use crate::{
-    EthPooledTransaction, PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
-    TransactionValidator, validate::ValidTransaction,
+    TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
+    validate::ValidTransaction,
 };
 
 /// A transaction validator that determines all transactions to be valid.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct OkValidator<T = EthPooledTransaction> {
-    _phantom: PhantomData<T>,
+pub struct OkValidator {
     /// Whether to mark transactions as propagatable.
     propagate: bool,
 }
 
-impl<T> OkValidator<T> {
+impl OkValidator {
     /// Determines whether transactions should be allowed to be propagated
     pub const fn set_propagate_transactions(mut self, propagate: bool) -> Self {
         self.propagate = propagate;
@@ -24,24 +21,20 @@ impl<T> OkValidator<T> {
     }
 }
 
-impl<T> Default for OkValidator<T> {
+impl Default for OkValidator {
     fn default() -> Self {
-        Self { _phantom: Default::default(), propagate: false }
+        Self { propagate: false }
     }
 }
 
-impl<T> TransactionValidator for OkValidator<T>
-where
-    T: PoolTransaction,
-{
-    type Transaction = T;
+impl TransactionValidator for OkValidator {
     type Block = Block;
 
     async fn validate_transaction(
         &self,
         _origin: TransactionOrigin,
-        transaction: Self::Transaction,
-    ) -> TransactionValidationOutcome<Self::Transaction> {
+        transaction: crate::BasePooledTransaction,
+    ) -> TransactionValidationOutcome {
         // Always return valid
         let authorities = transaction.authorization_list().map(|auths| {
             auths.iter().flat_map(|auth| auth.recover_authority()).collect::<Vec<_>>()

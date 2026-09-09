@@ -2,8 +2,8 @@ use std::{future::poll_fn, task::Poll};
 
 use assert_matches::assert_matches;
 use base_execution_txpool::{
-    FullTransactionEvent, MockTransactionValidator, PoolTransaction, TransactionEvent,
-    TransactionListenerKind, TransactionOrigin, TransactionPool,
+    FullTransactionEvent, MockTransactionValidator, TransactionEvent, TransactionListenerKind,
+    TransactionOrigin, TransactionPool,
     test_utils::{MockTransactionFactory, TestPoolBuilder},
 };
 use tokio_stream::StreamExt;
@@ -39,7 +39,7 @@ async fn txpool_listener_pending_promotions_propagate_only() {
     let mut tx_external = mock_tx_factory.create_eip1559();
 
     // Ensure same sender
-    let sender = *tx_local.transaction.get_sender();
+    let sender = *tx_local.transaction.sender_ref();
     tx_external.transaction.set_sender(sender);
 
     // Set explicit nonces to create a nonce gap scenario
@@ -90,7 +90,7 @@ async fn txpool_listener_replace_event() {
 
     let mut events = result.unwrap();
     assert_matches!(events.next().await, Some(TransactionEvent::Pending));
-    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Pending(hash)) if hash == *old_transaction.get_hash());
+    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Pending(hash)) if hash == *old_transaction.hash());
 
     // add replace tx.
     let replace_transaction = transaction.transaction.clone().rng_hash().inc_price();
@@ -103,12 +103,12 @@ async fn txpool_listener_replace_event() {
     assert_matches!(new_events.next().await, Some(TransactionEvent::Pending));
 
     // The listener of old transaction should receive replaced event.
-    assert_matches!(events.next().await, Some(TransactionEvent::Replaced(hash)) if hash == *replace_transaction.get_hash());
+    assert_matches!(events.next().await, Some(TransactionEvent::Replaced(hash)) if hash == *replace_transaction.hash());
 
     // The listener of all should receive one pending event of new transaction and one replaced
     // event of old transaction.
-    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Pending(hash)) if hash == *replace_transaction.get_hash());
-    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Replaced { transaction, replaced_by }) if *transaction.transaction.get_hash() == *old_transaction.get_hash() && replaced_by == *replace_transaction.get_hash());
+    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Pending(hash)) if hash == *replace_transaction.hash());
+    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Replaced { transaction, replaced_by }) if *transaction.transaction.hash() == *old_transaction.hash() && replaced_by == *replace_transaction.hash());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -128,7 +128,7 @@ async fn txpool_listener_queued_event() {
     assert_matches!(events.next().await, Some(TransactionEvent::Queued));
 
     // The listener of all should receive queued event as well.
-    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Queued(hash,_ )) if hash == *transaction.get_hash());
+    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Queued(hash,_ )) if hash == *transaction.hash());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -146,7 +146,7 @@ async fn txpool_listener_invalid_event() {
     assert_matches!(result, Err(_));
 
     // The listener of all should receive invalid event.
-    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Invalid(hash)) if hash == *transaction.get_hash());
+    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Invalid(hash)) if hash == *transaction.hash());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -159,18 +159,18 @@ async fn txpool_listener_all() {
 
     let added_result =
         txpool.add_transaction(TransactionOrigin::External, transaction.transaction.clone()).await;
-    assert_matches!(added_result, Ok(outcome) if outcome.hash == *transaction.transaction.get_hash());
+    assert_matches!(added_result, Ok(outcome) if outcome.hash == *transaction.transaction.hash());
 
     assert_matches!(
         all_tx_events.next().await,
-        Some(FullTransactionEvent::Pending(hash)) if hash == *transaction.transaction.get_hash()
+        Some(FullTransactionEvent::Pending(hash)) if hash == *transaction.transaction.hash()
     );
 
     let removed_txs = txpool.remove_transactions(vec![*transaction.transaction.hash()]);
 
     assert_eq!(transaction.transaction.hash(), removed_txs[0].transaction.hash());
 
-    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Discarded(hash)) if hash == *transaction.transaction.get_hash());
+    assert_matches!(all_tx_events.next().await, Some(FullTransactionEvent::Discarded(hash)) if hash == *transaction.transaction.hash());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -223,18 +223,18 @@ async fn txpool_listener_new_propagate_only() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn txpool_listener_blob_sidecar() {
-    let txpool =
-        TestPoolBuilder::default().with_validator(MockTransactionValidator::no_propagate_local());
-    let mut mock_tx_factory = MockTransactionFactory::default();
-    let blob_transaction = mock_tx_factory.create_eip4844();
-    let expected = *blob_transaction.hash();
-    let mut listener_blob = txpool.blob_transaction_sidecars_listener();
-    let result = txpool
-        .add_transaction(TransactionOrigin::Local, blob_transaction.transaction.clone())
-        .await;
-    assert!(result.is_ok());
-
-    let inserted = listener_blob.recv().await.unwrap();
-    assert_eq!(*inserted.tx_hash, expected);
+async fn txpool_listener_base_has_no_blob_sidecar() {
+    let pool = TestPoolBuilder::default();
+    let tx = MockTransactionFactory::default().create_eip1559();
+    let mut transactions = pool.new_transactions_listener();
+    let mut sidecars = pool.blob_transaction_sidecars_listener();
+    let expected = *tx.hash();
+    pool.add_transaction(TransactionOrigin::External, tx.transaction).await.unwrap();
+    let event = transactions.recv().await.unwrap();
+    assert_eq!(*event.transaction.hash(), expected);
+    poll_fn(|cx| {
+        assert!(sidecars.poll_recv(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
 }

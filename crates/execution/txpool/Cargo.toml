@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 revm = { workspace = true }
 imbl = { workspace = true }
-c-kzg = { workspace = true }
 bitflags = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }

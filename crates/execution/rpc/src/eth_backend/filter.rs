@@ -16,9 +16,9 @@ use alloy_rpc_types_eth::{
     Filter, FilterBlockOption, FilterChanges, FilterId, PendingTransactionFilterKind,
 };
 use async_trait::async_trait;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader};
+use base_common_consensus::BlockHeader;
 use base_common_rpc_types::BaseLogResponse;
-use base_execution_txpool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
+use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
 use futures::{
     Future,
     stream::{FuturesOrdered, StreamExt},
@@ -799,14 +799,13 @@ impl PendingTransactionsReceiver {
 
 /// A structure to manage and provide access to a stream of full transaction details.
 #[derive(Debug, Clone)]
-struct FullTransactionsReceiver<T: PoolTransaction, TxCompat> {
-    txs_stream: Arc<Mutex<NewSubpoolTransactionStream<T>>>,
+struct FullTransactionsReceiver<TxCompat> {
+    txs_stream: Arc<Mutex<NewSubpoolTransactionStream>>,
     converter: reth_rpc_eth_types::BaseRpcConverter<TxCompat>,
 }
 
-impl<T, TxCompat> FullTransactionsReceiver<T, TxCompat>
+impl<TxCompat> FullTransactionsReceiver<TxCompat>
 where
-    T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
     TxCompat: reth_storage_api::BlockReader<
             Block = base_common_consensus::BaseBlock,
             Transaction = base_common_consensus::BaseTxEnvelope,
@@ -820,7 +819,7 @@ where
 {
     /// Creates a new `FullTransactionsReceiver` encapsulating the provided transaction stream.
     fn new(
-        stream: NewSubpoolTransactionStream<T>,
+        stream: NewSubpoolTransactionStream,
         converter: reth_rpc_eth_types::BaseRpcConverter<TxCompat>,
     ) -> Self {
         Self { txs_stream: Arc::new(Mutex::new(stream)), converter }
@@ -853,10 +852,9 @@ trait FullTransactionsFilter<T>: fmt::Debug + Send + Sync + Unpin + 'static {
 }
 
 #[async_trait]
-impl<T, TxCompat> FullTransactionsFilter<base_common_rpc_types::Transaction>
-    for FullTransactionsReceiver<T, TxCompat>
+impl<TxCompat> FullTransactionsFilter<base_common_rpc_types::Transaction>
+    for FullTransactionsReceiver<TxCompat>
 where
-    T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
     TxCompat: reth_storage_api::BlockReader<
             Block = base_common_consensus::BaseBlock,
             Transaction = base_common_consensus::BaseTxEnvelope,

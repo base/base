@@ -6,8 +6,8 @@ use alloy_rpc_types_txpool::{
     TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
 use async_trait::async_trait;
-use base_common_consensus::{BaseTxEnvelope, Transaction};
-use base_execution_txpool::{AllPoolTransactions, PoolTransaction, TransactionPool};
+use base_common_consensus::Transaction;
+use base_execution_txpool::{AllPoolTransactions, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TxPoolApiServer;
 use tracing::trace;
@@ -31,7 +31,7 @@ impl<Pool, Eth> TxPoolApi<Pool, Eth> {
 
 impl<Pool, Eth> TxPoolApi<Pool, Eth>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + 'static,
+    Pool: TransactionPool + 'static,
     Eth: reth_storage_api::BlockReader<
             Block = base_common_consensus::BaseBlock,
             Transaction = base_common_consensus::BaseTxEnvelope,
@@ -50,13 +50,12 @@ where
         reth_rpc_eth_types::BaseEthApiError,
     > {
         #[inline]
-        fn insert<Tx, RpcTxB>(
-            tx: &Tx,
+        fn insert<RpcTxB>(
+            tx: &base_execution_txpool::BasePooledTransaction,
             content: &mut BTreeMap<Address, BTreeMap<String, base_common_rpc_types::Transaction>>,
             resp_builder: &reth_rpc_eth_types::BaseRpcConverter<RpcTxB>,
         ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
         where
-            Tx: PoolTransaction<Consensus = BaseTxEnvelope>,
             RpcTxB: reth_storage_api::BlockReader<
                     Block = base_common_consensus::BaseBlock,
                     Transaction = base_common_consensus::BaseTxEnvelope,
@@ -80,10 +79,10 @@ where
 
         let mut content = TxpoolContent::default();
         for pending in pending {
-            insert::<_, Eth>(&pending.transaction, &mut content.pending, &self.converter)?;
+            insert::<Eth>(&pending.transaction, &mut content.pending, &self.converter)?;
         }
         for queued in queued {
-            insert::<_, Eth>(&queued.transaction, &mut content.queued, &self.converter)?;
+            insert::<Eth>(&queued.transaction, &mut content.queued, &self.converter)?;
         }
 
         Ok(content)
@@ -93,7 +92,7 @@ where
 #[async_trait]
 impl<Pool, Eth> TxPoolApiServer<base_common_rpc_types::Transaction> for TxPoolApi<Pool, Eth>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + 'static,
+    Pool: TransactionPool + 'static,
     Eth: reth_storage_api::BlockReader<
             Block = base_common_consensus::BaseBlock,
             Transaction = base_common_consensus::BaseTxEnvelope,
@@ -126,8 +125,8 @@ where
         trace!(target: "rpc::eth", "Serving txpool_inspect");
 
         #[inline]
-        fn insert<T: PoolTransaction<Consensus = BaseTxEnvelope>>(
-            tx: &T,
+        fn insert(
+            tx: &base_execution_txpool::BasePooledTransaction,
             inspect: &mut BTreeMap<Address, BTreeMap<String, TxpoolInspectSummary>>,
         ) {
             let entry = inspect.entry(tx.sender()).or_default();

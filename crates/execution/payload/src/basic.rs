@@ -15,7 +15,7 @@ use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
 use base_execution_trie::PayloadStateRootHandle;
-use base_execution_txpool::{BasePooledTransaction, TransactionPool};
+use base_execution_txpool::TransactionPool;
 use base_state_api::CachedReads;
 use futures_core::ready;
 use futures_util::FutureExt;
@@ -137,7 +137,7 @@ impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs> {
 impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + Unpin + 'static,
+    Pool: TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
     /// Starts building a payload against its requested parent.
@@ -387,7 +387,7 @@ pub struct BasicPayloadJob<Pool, Client, Txs> {
 impl<Pool, Client, Txs> BasicPayloadJob<Pool, Client, Txs>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + Unpin + 'static,
+    Pool: TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
     /// Spawns a new payload build task.
@@ -432,7 +432,7 @@ where
 impl<Pool, Client, Txs> Future for BasicPayloadJob<Pool, Client, Txs>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + Unpin + 'static,
+    Pool: TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
     type Output = Result<(), PayloadBuilderError>;
@@ -502,7 +502,7 @@ where
 impl<Pool, Client, Txs> PayloadJob for BasicPayloadJob<Pool, Client, Txs>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + Unpin + 'static,
+    Pool: TransactionPool + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
     type ResolvePayloadFuture = ResolveBestPayload;

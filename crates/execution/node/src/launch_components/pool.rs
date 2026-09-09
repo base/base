@@ -1,9 +1,9 @@
 //! Pool component for the node builder.
 
 use alloy_primitives::map::AddressSet;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseBlock;
 use base_execution_txpool::{
-    BlobStore, CoinbaseTipOrdering, DiskFileBlobStore, PoolConfig, PoolTransaction, SubPoolLimit,
+    BlobStore, CoinbaseTipOrdering, DiskFileBlobStore, PoolConfig, SubPoolLimit,
     TransactionOrdering, TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -95,8 +95,6 @@ impl<'a, V> TxPoolBuilder<'a, V> {
 impl<'a, V> TxPoolBuilder<'a, TransactionValidationTaskExecutor<V>>
 where
     V: TransactionValidator<Block = BaseBlock> + 'static,
-    V::Transaction:
-        PoolTransaction<Consensus = BaseTxEnvelope> + base_execution_txpool::EthPoolTransaction,
 {
     /// Consume the type and build the [`base_execution_txpool::Pool`] with the given config and
     /// blob store.
@@ -104,11 +102,7 @@ where
         self,
         blob_store: BS,
         pool_config: PoolConfig,
-    ) -> base_execution_txpool::Pool<
-        TransactionValidationTaskExecutor<V>,
-        CoinbaseTipOrdering<V::Transaction>,
-        BS,
-    >
+    ) -> base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, CoinbaseTipOrdering, BS>
     where
         BS: BlobStore,
     {
@@ -128,11 +122,7 @@ where
         blob_store: BS,
         pool_config: PoolConfig,
     ) -> eyre::Result<
-        base_execution_txpool::Pool<
-            TransactionValidationTaskExecutor<V>,
-            CoinbaseTipOrdering<V::Transaction>,
-            BS,
-        >,
+        base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, CoinbaseTipOrdering, BS>,
     >
     where
         BS: BlobStore + Clone,
@@ -154,7 +144,7 @@ where
     ) -> eyre::Result<base_execution_txpool::Pool<TransactionValidationTaskExecutor<V>, O, BS>>
     where
         BS: BlobStore + Clone,
-        O: TransactionOrdering<Transaction = V::Transaction>,
+        O: TransactionOrdering,
     {
         let TxPoolBuilder { ctx, validator, .. } = self;
 
@@ -231,7 +221,6 @@ fn spawn_pool_maintenance_task<Pool>(
 ) -> eyre::Result<()>
 where
     Pool: base_execution_txpool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
-    Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
     let chain_events = ctx.provider().canonical_state_stream();
     let client = ctx.provider().clone();
@@ -262,7 +251,6 @@ pub fn spawn_maintenance_tasks<Pool>(
 ) -> eyre::Result<()>
 where
     Pool: base_execution_txpool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
-    Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
     spawn_local_backup_task(ctx, pool.clone())?;
     spawn_pool_maintenance_task(ctx, pool, pool_config)?;

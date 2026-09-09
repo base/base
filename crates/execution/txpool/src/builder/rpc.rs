@@ -81,8 +81,8 @@ impl<P, E> BuilderApiImpl<P, E> {
 #[async_trait::async_trait]
 impl<P, E> BuilderApiServer<E> for BuilderApiImpl<P, E>
 where
-    P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
-    E: ValidatedTransactionExtensions<BasePooledTransaction>,
+    P: TransactionPool + Send + Sync + 'static,
+    E: ValidatedTransactionExtensions,
 {
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()> {
         debug!(
@@ -248,8 +248,8 @@ mod tests {
         (sender, Bytes::from(encoded))
     }
 
-    fn handler() -> BuilderApiImpl<NoopTransactionPool<BasePooledTransaction>> {
-        BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new())
+    fn handler() -> BuilderApiImpl<NoopTransactionPool> {
+        BuilderApiImpl::new(NoopTransactionPool::new())
     }
 
     fn validated_transaction<E>(
@@ -272,14 +272,12 @@ mod tests {
         reject: Option<bool>,
     }
 
-    impl ValidatedTransactionExtensions<BasePooledTransaction> for TestExtensions {
+    impl ValidatedTransactionExtensions for TestExtensions {
         fn is_empty(&self) -> bool {
             self.reject.is_none()
         }
 
-        fn extract(
-            _tx: &base_execution_txpool::ValidPoolTransaction<BasePooledTransaction>,
-        ) -> Self {
+        fn extract(_tx: &base_execution_txpool::ValidPoolTransaction) -> Self {
             Self::default()
         }
 
@@ -296,9 +294,9 @@ mod tests {
 
     fn extension_handler(
         accept_extensions: bool,
-    ) -> BuilderApiImpl<NoopTransactionPool<BasePooledTransaction>, TestExtensions> {
+    ) -> BuilderApiImpl<NoopTransactionPool, TestExtensions> {
         BuilderApiImpl::<_, TestExtensions>::with_extensions(
-            NoopTransactionPool::<BasePooledTransaction>::new(),
+            NoopTransactionPool::new(),
             accept_extensions,
             usize::MAX,
         )

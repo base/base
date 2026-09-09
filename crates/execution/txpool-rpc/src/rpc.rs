@@ -5,8 +5,8 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{
-    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, PoolTransaction, TransactionOrigin,
-    TransactionPool, ValidityPredicate,
+    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,
+    ValidityPredicate,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -201,7 +201,7 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 impl<Pool, Provider> SendRawTransactionValidityApiServer
     for SendRawTransactionValidityApiImpl<Pool, Provider>
 where
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
+    Pool: TransactionPool + 'static,
     Provider: BlockReaderIdExt + ChainSpecProvider + 'static,
 {
     async fn send_raw_transaction_validity(
@@ -306,7 +306,7 @@ mod tests {
     use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_txpool::{
-        NoopTransactionPool, PoolTransaction, TransactionOrigin,
+        NoopTransactionPool, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},
     };
     use base_observability_events::{
@@ -334,8 +334,8 @@ mod tests {
         MockEthProvider::new().with_chain_spec(BaseChainSpec::mainnet()).with_genesis_block()
     }
 
-    fn validity_pool() -> NoopTransactionPool<BasePooledTransaction> {
-        NoopTransactionPool::<BasePooledTransaction>::new()
+    fn validity_pool() -> NoopTransactionPool {
+        NoopTransactionPool::new()
     }
 
     fn validity_request(tx: Bytes) -> (Bytes, SendRawTransactionValidityOptions) {
@@ -657,9 +657,12 @@ mod tests {
             .await
             .expect("should be able to fetch transaction status")
             .status;
-        pool.add_transaction(TransactionOrigin::Local, tx)
-            .await
-            .expect("should be able to add local transaction");
+        pool.add_transaction(
+            TransactionOrigin::Local,
+            tx.try_into().expect("Base transaction fixture"),
+        )
+        .await
+        .expect("should be able to add local transaction");
         let after = rpc
             .transaction_status(hash)
             .await
@@ -775,9 +778,24 @@ mod tests {
         let hash2 = *tx2.hash();
         let hash3 = *tx3.hash();
 
-        pool.add_transaction(TransactionOrigin::Local, tx1).await.expect("should add tx1");
-        pool.add_transaction(TransactionOrigin::Local, tx2).await.expect("should add tx2");
-        pool.add_transaction(TransactionOrigin::Local, tx3).await.expect("should add tx3");
+        pool.add_transaction(
+            TransactionOrigin::Local,
+            tx1.try_into().expect("Base transaction fixture"),
+        )
+        .await
+        .expect("should add tx1");
+        pool.add_transaction(
+            TransactionOrigin::Local,
+            tx2.try_into().expect("Base transaction fixture"),
+        )
+        .await
+        .expect("should add tx2");
+        pool.add_transaction(
+            TransactionOrigin::Local,
+            tx3.try_into().expect("Base transaction fixture"),
+        )
+        .await
+        .expect("should add tx3");
 
         let rpc = AdminTxPoolApiImpl::new(pool.clone());
 
@@ -809,7 +827,12 @@ mod tests {
         let tx = MockTransaction::eip1559();
         let hash = *tx.hash();
 
-        pool.add_transaction(TransactionOrigin::Local, tx).await.expect("should add tx");
+        pool.add_transaction(
+            TransactionOrigin::Local,
+            tx.try_into().expect("Base transaction fixture"),
+        )
+        .await
+        .expect("should add tx");
 
         let rpc = AdminTxPoolApiImpl::new(pool.clone());
 
@@ -827,7 +850,12 @@ mod tests {
         let tx = MockTransaction::eip1559();
         let hash = *tx.hash();
 
-        pool.add_transaction(TransactionOrigin::Local, tx).await.expect("should add tx");
+        pool.add_transaction(
+            TransactionOrigin::Local,
+            tx.try_into().expect("Base transaction fixture"),
+        )
+        .await
+        .expect("should add tx");
 
         let rpc = AdminTxPoolApiImpl::new(pool);
 

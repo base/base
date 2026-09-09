@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
-use crate::traits::PoolTransaction;
+use base_common_consensus::Transaction;
 
 /// Priority of the transaction that can be missing.
 ///
@@ -49,12 +49,11 @@ pub trait TransactionOrdering: Debug + Send + Sync + 'static {
     type PriorityValue: Ord + Clone + Default + Debug + Send + Sync;
 
     /// The transaction type to determine the priority of.
-    type Transaction: PoolTransaction;
 
     /// Returns the priority score for the given transaction.
     fn priority(
         &self,
-        transaction: &Self::Transaction,
+        transaction: &crate::BasePooledTransaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue>;
 }
@@ -65,34 +64,30 @@ pub trait TransactionOrdering: Debug + Send + Sync + 'static {
 /// The higher the coinbase tip is, the higher the priority of the transaction.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct CoinbaseTipOrdering<T>(PhantomData<T>);
+pub struct CoinbaseTipOrdering(PhantomData<crate::BasePooledTransaction>);
 
-impl<T> TransactionOrdering for CoinbaseTipOrdering<T>
-where
-    T: PoolTransaction + 'static,
-{
+impl TransactionOrdering for CoinbaseTipOrdering {
     type PriorityValue = u128;
-    type Transaction = T;
 
     /// Source: <https://github.com/ethereum/go-ethereum/blob/7f756dc1185d7f1eeeacb1d12341606b7135f9ea/core/txpool/legacypool/list.go#L469-L482>.
     ///
     /// NOTE: The implementation is incomplete for missing base fee.
     fn priority(
         &self,
-        transaction: &Self::Transaction,
+        transaction: &crate::BasePooledTransaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
         transaction.effective_tip_per_gas(base_fee).into()
     }
 }
 
-impl<T> Default for CoinbaseTipOrdering<T> {
+impl Default for CoinbaseTipOrdering {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<T> Clone for CoinbaseTipOrdering<T> {
+impl Clone for CoinbaseTipOrdering {
     fn clone(&self) -> Self {
         Self::default()
     }

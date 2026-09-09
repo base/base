@@ -92,7 +92,7 @@ pub trait ExternalTransactionPool: Send + Sync + core::fmt::Debug {
 #[async_trait]
 impl<P> ExternalTransactionPool for PoolHandle<P>
 where
-    P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + core::fmt::Debug,
+    P: TransactionPool + Send + Sync + core::fmt::Debug,
 {
     async fn add_external_transaction(&self, tx: BasePooledTransaction) -> eyre::Result<()> {
         TransactionPool::add_external_transaction(&self.pool, tx)
@@ -210,8 +210,7 @@ impl LocalInstance {
         let service_builder = BlockServiceBuilder::build(builder_config.clone());
         let components = base_node.components().payload(service_builder);
 
-        let (txpool_ready_tx, txpool_ready_rx) =
-            oneshot::channel::<AllTransactionsEvents<BasePooledTransaction>>();
+        let (txpool_ready_tx, txpool_ready_rx) = oneshot::channel::<AllTransactionsEvents>();
         let (pool_handle_tx, pool_handle_rx) =
             oneshot::channel::<Arc<dyn ExternalTransactionPool>>();
 

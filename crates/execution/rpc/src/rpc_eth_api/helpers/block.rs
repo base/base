@@ -7,14 +7,14 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
 use base_common_consensus::{TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionReceipt};
-use base_execution_txpool::{PoolTransaction, TransactionPool};
+use base_execution_txpool::TransactionPool;
 use futures::Future;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,
 };
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::BaseEthApiError;
-use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderTx};
+use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader};
 
 use crate::{BaseEthApi, FromEthApiError, RpcNodeCore, RpcNodeCoreExt};
 
@@ -105,7 +105,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         block_id: BlockId,
     ) -> impl Future<Output = BlockAndReceiptsResult> + Send
     where
-        N::Pool: TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<N::Provider>>>,
+        N::Pool: TransactionPool,
     {
         async move {
             if block_id.is_pending() {

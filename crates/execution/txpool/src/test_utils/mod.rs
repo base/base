@@ -2,10 +2,9 @@
 
 use std::ops::Deref;
 
-use crate::{Pool, PoolConfig, blobstore::InMemoryBlobStore, noop::MockTransactionValidator};
-
 /// Base transaction cache used by shared execution and network fixtures.
 pub use crate::BasePooledTransaction as BaseTestTransaction;
+use crate::{Pool, PoolConfig, blobstore::InMemoryBlobStore, noop::MockTransactionValidator};
 
 mod tx_gen;
 pub use tx_gen::*;
@@ -17,8 +16,7 @@ mod okvalidator;
 pub use okvalidator::*;
 
 /// A [Pool] used for testing
-pub type TestPool =
-    Pool<MockTransactionValidator<MockTransaction>, MockOrdering, InMemoryBlobStore>;
+pub type TestPool = Pool<MockTransactionValidator, MockOrdering, InMemoryBlobStore>;
 
 /// Structure encapsulating a [`TestPool`] used for testing
 #[derive(Debug, Clone)]
@@ -37,7 +35,7 @@ impl Default for TestPoolBuilder {
 
 impl TestPoolBuilder {
     /// Returns a new [`TestPoolBuilder`] with a custom validator used for testing purposes
-    pub fn with_validator(self, validator: MockTransactionValidator<MockTransaction>) -> Self {
+    pub fn with_validator(self, validator: MockTransactionValidator) -> Self {
         Self(Pool::new(
             validator,
             MockOrdering::default(),

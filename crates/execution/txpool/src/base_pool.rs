@@ -12,10 +12,10 @@ use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, AllPoolTransactions, AllTransactionsEvents,
     BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
     FullTransactionEvent, GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool,
-    PoolResult, PoolSize, PoolTransaction, PropagatedTransactions, SubPool, TransactionEvent,
-    TransactionEvents, TransactionListenerKind, TransactionOrigin, TransactionPool,
-    TransactionPoolExt, TransactionValidationOutcome, TransactionValidationTaskExecutor,
-    TransactionValidator, ValidPoolTransaction,
+    PoolResult, PoolSize, PropagatedTransactions, SubPool, TransactionEvent, TransactionEvents,
+    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
+    TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
+    ValidPoolTransaction,
 };
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -75,8 +75,8 @@ impl AccountStateDiff {
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
 pub struct BaseTransactionPool<Client, S, O = crate::BaseOrdering>
 where
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, O, S>,
@@ -98,8 +98,8 @@ where
 impl<Client, S, O> fmt::Debug for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -110,8 +110,8 @@ where
 impl<Client, S, O> Clone for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn clone(&self) -> Self {
@@ -130,8 +130,8 @@ where
 impl<Client, S, O> Unpin for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
 }
@@ -139,8 +139,8 @@ where
 impl<Client, S, O> BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     /// Creates a new wrapper around the reth protocol pool.
@@ -224,10 +224,7 @@ where
     }
 
     /// Applies canonical state changes and evicts affected EIP-8130 transactions.
-    pub fn apply_state_diff(
-        &self,
-        diffs: &[AccountStateDiff],
-    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+    pub fn apply_state_diff(&self, diffs: &[AccountStateDiff]) -> Vec<Arc<ValidPoolTransaction>> {
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
         // Advance validator classification generation before dropping guard records.
@@ -259,7 +256,7 @@ where
     pub fn invalidate_all_tracked_transactions(
         &self,
         cause: InvalidationCause,
-    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
         self.validator().validator().clear_limit_class_cache();
@@ -269,10 +266,7 @@ where
         removed
     }
 
-    fn remove_dropped_across_pools(
-        &self,
-        dropped: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+    fn remove_dropped_across_pools(&self, dropped: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         if dropped.is_empty() {
             return Vec::new();
         }
@@ -292,7 +286,7 @@ where
         removed
     }
 
-    fn release_from_guard(&self, removed: &[Arc<ValidPoolTransaction<BasePooledTransaction>>]) {
+    fn release_from_guard(&self, removed: &[Arc<ValidPoolTransaction>]) {
         if removed.is_empty() {
             return;
         }
@@ -328,9 +322,7 @@ where
 
     /// Returns the block-expiry bound for a validated transaction's validity
     /// predicates, or `None` when they impose no finite block bound.
-    fn validity_block_expiry_bound(
-        validated: &TransactionValidationOutcome<BasePooledTransaction>,
-    ) -> Option<u64> {
+    fn validity_block_expiry_bound(validated: &TransactionValidationOutcome) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
         crate::ValidityPredicate::block_expiry_bound(
             transaction.transaction().validity_predicates(),
@@ -389,9 +381,7 @@ where
     /// Returns whether a validated transaction carries validity predicates, for
     /// lane-churn accounting. Invalid outcomes carry no pooled transaction and
     /// are never counted.
-    fn has_validity_predicates(
-        validated: &TransactionValidationOutcome<BasePooledTransaction>,
-    ) -> bool {
+    fn has_validity_predicates(validated: &TransactionValidationOutcome) -> bool {
         validated
             .as_valid_transaction()
             .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
@@ -451,7 +441,7 @@ where
     fn ensure_protocol_classification_current(
         &self,
         hash: TxHash,
-        validated: &TransactionValidationOutcome<BasePooledTransaction>,
+        validated: &TransactionValidationOutcome,
     ) -> PoolResult<()> {
         let current = validated.as_valid_transaction().is_none_or(|transaction| {
             transaction.transaction().limit_class().is_none_or(|class| {
@@ -466,7 +456,7 @@ where
         &self,
         hash: TxHash,
         replaced: Option<TxHash>,
-        validated: &TransactionValidationOutcome<BasePooledTransaction>,
+        validated: &TransactionValidationOutcome,
     ) -> PoolResult<bool> {
         let mut guard = self.guard.write();
         if guard.contains(&hash) || replaced.is_some_and(|hash| guard.contains(&hash)) {
@@ -490,7 +480,7 @@ where
         hash: TxHash,
         sender: Address,
         nonce: u64,
-        validated: TransactionValidationOutcome<BasePooledTransaction>,
+        validated: TransactionValidationOutcome,
     ) -> PoolResult<AddedTransactionOutcome> {
         let _admission_guard = self.protocol_admission_lock.lock();
         // Reject stale validation before reth can replace the currently pooled transaction.
@@ -620,7 +610,7 @@ where
 
     fn add_validated_sidecar_transaction(
         &self,
-        validated: TransactionValidationOutcome<BasePooledTransaction>,
+        validated: TransactionValidationOutcome,
         origin: TransactionOrigin,
     ) -> PoolResult<AddedTransactionOutcome> {
         // Capture the block-expiry bound before `validated` is consumed by the
@@ -728,12 +718,12 @@ where
 
     fn validated_pool_transaction(
         &self,
-        transaction: base_execution_txpool::ValidTransaction<BasePooledTransaction>,
+        transaction: base_execution_txpool::ValidTransaction,
         origin: TransactionOrigin,
         propagate: bool,
         authorities: Option<Vec<Address>>,
         nonce_pool: &mut TwoDNoncePool,
-    ) -> ValidPoolTransaction<BasePooledTransaction> {
+    ) -> ValidPoolTransaction {
         let transaction = transaction.into_transaction();
         let sender_id = nonce_pool.sender_id_or_create(transaction.sender());
         let authority_ids = authorities.map(|authorities| {
@@ -765,13 +755,13 @@ where
     fn merged_new_transactions_listener(
         &self,
         kind: TransactionListenerKind,
-    ) -> mpsc::Receiver<NewTransactionEvent<BasePooledTransaction>> {
+    ) -> mpsc::Receiver<NewTransactionEvent> {
         let protocol = self.protocol_pool.new_transactions_listener_for(kind);
         let sidecar = self.listeners.write().subscribe_new_transactions(kind);
         merge_receivers(protocol, sidecar)
     }
 
-    fn merged_all_transactions_listener(&self) -> AllTransactionsEvents<BasePooledTransaction> {
+    fn merged_all_transactions_listener(&self) -> AllTransactionsEvents {
         let mut protocol = self.protocol_pool.all_transactions_event_listener();
         let mut sidecar = self.listeners.write().subscribe_all();
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
@@ -806,8 +796,8 @@ where
 impl<Client, S, O> StateDiffInvalidation for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
@@ -822,12 +812,10 @@ where
 impl<Client, S, O> TransactionPool for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
-    type Transaction = BasePooledTransaction;
-
     fn pool_size(&self) -> PoolSize {
         let mut size = self.protocol_pool.pool_size();
         let nonce_pool = self.nonce_pool.read();
@@ -851,7 +839,7 @@ where
     async fn add_transaction_and_subscribe(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
+        transaction: crate::BasePooledTransaction,
     ) -> PoolResult<TransactionEvents> {
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
@@ -896,7 +884,7 @@ where
     async fn add_transaction(
         &self,
         origin: TransactionOrigin,
-        transaction: Self::Transaction,
+        transaction: crate::BasePooledTransaction,
     ) -> PoolResult<AddedTransactionOutcome> {
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
@@ -912,7 +900,7 @@ where
     async fn add_transactions(
         &self,
         origin: TransactionOrigin,
-        transactions: Vec<Self::Transaction>,
+        transactions: Vec<crate::BasePooledTransaction>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
         let mut results = Vec::with_capacity(transactions.len());
         for transaction in transactions {
@@ -923,7 +911,7 @@ where
 
     async fn add_transactions_with_origins(
         &self,
-        transactions: Vec<(TransactionOrigin, Self::Transaction)>,
+        transactions: Vec<(TransactionOrigin, crate::BasePooledTransaction)>,
     ) -> Vec<PoolResult<AddedTransactionOutcome>> {
         let mut results = Vec::with_capacity(transactions.len());
         for (origin, transaction) in transactions {
@@ -941,7 +929,7 @@ where
         })
     }
 
-    fn all_transactions_event_listener(&self) -> AllTransactionsEvents<Self::Transaction> {
+    fn all_transactions_event_listener(&self) -> AllTransactionsEvents {
         self.merged_all_transactions_listener()
     }
 
@@ -959,7 +947,7 @@ where
     fn new_transactions_listener_for(
         &self,
         kind: TransactionListenerKind,
-    ) -> mpsc::Receiver<NewTransactionEvent<Self::Transaction>> {
+    ) -> mpsc::Receiver<NewTransactionEvent> {
         self.merged_new_transactions_listener(kind)
     }
 
@@ -994,7 +982,7 @@ where
         hashes
     }
 
-    fn pooled_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pooled_transactions(&self) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.pooled_transactions();
         transactions.extend(
             self.nonce_pool
@@ -1006,10 +994,7 @@ where
         transactions
     }
 
-    fn pooled_transactions_max(
-        &self,
-        max: usize,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pooled_transactions_max(&self, max: usize) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.pooled_transactions_max(max);
         if transactions.len() >= max {
             return transactions;
@@ -1031,7 +1016,7 @@ where
         &self,
         tx_hashes: Vec<TxHash>,
         limit: GetPooledTransactionLimit,
-    ) -> Vec<<Self::Transaction as PoolTransaction>::Pooled> {
+    ) -> Vec<base_common_consensus::BasePooledTransaction> {
         let mut pooled = Vec::new();
         self.append_pooled_transaction_elements(&tx_hashes, limit, &mut pooled);
         pooled
@@ -1041,7 +1026,7 @@ where
         &self,
         tx_hashes: &[TxHash],
         limit: GetPooledTransactionLimit,
-        out: &mut Vec<<Self::Transaction as PoolTransaction>::Pooled>,
+        out: &mut Vec<base_common_consensus::BasePooledTransaction>,
     ) {
         let mut current_size = 0;
         for hash in tx_hashes {
@@ -1062,7 +1047,7 @@ where
     fn get_pooled_transaction_element(
         &self,
         tx_hash: TxHash,
-    ) -> Option<Recovered<<Self::Transaction as PoolTransaction>::Pooled>> {
+    ) -> Option<Recovered<base_common_consensus::BasePooledTransaction>> {
         self.protocol_pool.get_pooled_transaction_element(tx_hash).or_else(|| {
             self.nonce_pool
                 .read()
@@ -1071,9 +1056,7 @@ where
         })
     }
 
-    fn best_transactions(
-        &self,
-    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+    fn best_transactions(&self) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>> {
         let block_info = self.protocol_pool.block_info();
         let best_transactions_attributes = BestTransactionsAttributes::new(
             block_info.pending_basefee,
@@ -1091,7 +1074,7 @@ where
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
-    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction>>> {
         let base_fee = best_transactions_attributes.basefee;
         Box::new(MergeBestTransactions::new(
             self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
@@ -1101,7 +1084,7 @@ where
         ))
     }
 
-    fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.pending_transactions();
         transactions.extend(self.nonce_pool.read().pending_transactions());
         transactions
@@ -1111,17 +1094,14 @@ where
         &self,
         sender: Address,
         nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         // Channelized nonce sequences and nonce-free replay ids live in separate
         // namespaces from account nonces, so this sender+nonce lookup
         // intentionally remains protocol-only.
         self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce)
     }
 
-    fn pending_transactions_max(
-        &self,
-        max: usize,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn pending_transactions_max(&self, max: usize) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.pending_transactions_max(max);
         if transactions.len() >= max {
             return transactions;
@@ -1133,7 +1113,7 @@ where
         transactions
     }
 
-    fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.queued_transactions();
         transactions.extend(self.nonce_pool.read().queued_transactions());
         transactions
@@ -1146,7 +1126,7 @@ where
         (pending + sidecar_pending, queued + sidecar_queued)
     }
 
-    fn all_transactions(&self) -> AllPoolTransactions<Self::Transaction> {
+    fn all_transactions(&self) -> AllPoolTransactions {
         let mut transactions = self.protocol_pool.all_transactions();
         let nonce_pool = self.nonce_pool.read();
         transactions.pending.extend(nonce_pool.pending_transactions());
@@ -1160,10 +1140,7 @@ where
         hashes
     }
 
-    fn remove_transactions(
-        &self,
-        hashes: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn remove_transactions(&self, hashes: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
         self.release_from_guard(&removed);
@@ -1179,7 +1156,7 @@ where
     fn remove_transactions_and_descendants(
         &self,
         hashes: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
         self.release_from_guard(&removed);
@@ -1193,10 +1170,7 @@ where
         removed
     }
 
-    fn remove_transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn remove_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         self.release_from_guard(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
@@ -1208,10 +1182,7 @@ where
         removed
     }
 
-    fn prune_transactions(
-        &self,
-        hashes: Vec<TxHash>,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn prune_transactions(&self, hashes: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         self.release_from_guard(&removed);
@@ -1244,11 +1215,11 @@ where
         });
     }
 
-    fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction>> {
         self.protocol_pool.get(tx_hash).or_else(|| self.nonce_pool.read().get(tx_hash))
     }
 
-    fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction>> {
         let nonce_pool = self.nonce_pool.read();
         txs.into_iter()
             .filter_map(|tx| self.protocol_pool.get(&tx).or_else(|| nonce_pool.get(&tx)))
@@ -1264,10 +1235,7 @@ where
         self.protocol_pool.on_propagated(protocol_txs)
     }
 
-    fn get_transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.get_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().transactions_by_sender(sender));
         transactions
@@ -1275,8 +1243,8 @@ where
 
     fn get_pending_transactions_with_predicate(
         &self,
-        mut predicate: impl FnMut(&ValidPoolTransaction<Self::Transaction>) -> bool,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        mut predicate: impl FnMut(&ValidPoolTransaction) -> bool,
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions =
             self.protocol_pool.get_pending_transactions_with_predicate(&mut predicate);
         transactions.extend(
@@ -1292,16 +1260,13 @@ where
     fn get_pending_transactions_by_sender(
         &self,
         sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.get_pending_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().pending_transactions_by_sender(sender));
         transactions
     }
 
-    fn get_queued_transactions_by_sender(
-        &self,
-        sender: Address,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    fn get_queued_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.get_queued_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().queued_transactions_by_sender(sender));
         transactions
@@ -1310,7 +1275,7 @@ where
     fn get_highest_transaction_by_sender(
         &self,
         sender: Address,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         self.protocol_pool.get_highest_transaction_by_sender(sender)
     }
 
@@ -1318,7 +1283,7 @@ where
         &self,
         sender: Address,
         on_chain_nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         self.protocol_pool.get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
     }
 
@@ -1326,14 +1291,14 @@ where
         &self,
         sender: Address,
         nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Option<Arc<ValidPoolTransaction>> {
         self.protocol_pool.get_transaction_by_sender_and_nonce(sender, nonce)
     }
 
     fn get_transactions_by_origin(
         &self,
         origin: TransactionOrigin,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.get_transactions_by_origin(origin);
         transactions.extend(
             self.nonce_pool
@@ -1348,7 +1313,7 @@ where
     fn get_pending_transactions_by_origin(
         &self,
         origin: TransactionOrigin,
-    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+    ) -> Vec<Arc<ValidPoolTransaction>> {
         let mut transactions = self.protocol_pool.get_pending_transactions_by_origin(origin);
         transactions.extend(
             self.nonce_pool
@@ -1433,14 +1398,14 @@ where
 impl<Client, S, O> ParkableTransactionPool for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
-    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+    ) -> Box<dyn ParkableBestTransactions> {
         let base_fee = attributes.basefee;
         let merged = MergeBestTransactions::new(
             self.protocol_pool.best_transactions_with_attributes(attributes),
@@ -1455,8 +1420,8 @@ where
 impl<Client, S, O> TransactionPoolExt for BaseTransactionPool<Client, S, O>
 where
     Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator<Transaction = BasePooledTransaction>,
-    O: base_execution_txpool::TransactionOrdering<Transaction = BasePooledTransaction> + Clone,
+    BaseTransactionValidator<Client>: TransactionValidator,
+    O: base_execution_txpool::TransactionOrdering + Clone,
     S: BlobStore + Clone,
 {
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client>> as TransactionValidator>::Block;
@@ -1566,11 +1531,11 @@ where
 #[derive(Debug)]
 struct SidecarListeners {
     by_hash: HashMap<TxHash, Vec<mpsc::UnboundedSender<TransactionEvent>>>,
-    all_events: Vec<mpsc::Sender<FullTransactionEvent<BasePooledTransaction>>>,
+    all_events: Vec<mpsc::Sender<FullTransactionEvent>>,
     pending_all: Vec<mpsc::Sender<TxHash>>,
     pending_propagate: Vec<mpsc::Sender<TxHash>>,
-    new_all: Vec<mpsc::Sender<NewTransactionEvent<BasePooledTransaction>>>,
-    new_propagate: Vec<mpsc::Sender<NewTransactionEvent<BasePooledTransaction>>>,
+    new_all: Vec<mpsc::Sender<NewTransactionEvent>>,
+    new_propagate: Vec<mpsc::Sender<NewTransactionEvent>>,
 }
 
 impl Default for SidecarListeners {
@@ -1610,7 +1575,7 @@ impl SidecarListeners {
         }
     }
 
-    fn subscribe_all(&mut self) -> AllTransactionsEvents<BasePooledTransaction> {
+    fn subscribe_all(&mut self) -> AllTransactionsEvents {
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         self.all_events.push(tx);
         AllTransactionsEvents::new(rx)
@@ -1629,7 +1594,7 @@ impl SidecarListeners {
     fn subscribe_new_transactions(
         &mut self,
         kind: TransactionListenerKind,
-    ) -> mpsc::Receiver<NewTransactionEvent<BasePooledTransaction>> {
+    ) -> mpsc::Receiver<NewTransactionEvent> {
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         if kind.is_propagate_only() {
             self.new_propagate.push(tx);
@@ -1669,11 +1634,7 @@ impl SidecarListeners {
         }
     }
 
-    fn on_mined(
-        &mut self,
-        transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>],
-        block_hash: B256,
-    ) {
+    fn on_mined(&mut self, transactions: &[Arc<ValidPoolTransaction>], block_hash: B256) {
         for transaction in transactions {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Mined(block_hash));
@@ -1681,7 +1642,7 @@ impl SidecarListeners {
         }
     }
 
-    fn on_discarded(&mut self, transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>]) {
+    fn on_discarded(&mut self, transactions: &[Arc<ValidPoolTransaction>]) {
         for transaction in transactions {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Discarded);
@@ -1699,14 +1660,11 @@ impl SidecarListeners {
         }
     }
 
-    fn broadcast_all(&mut self, event: FullTransactionEvent<BasePooledTransaction>) {
+    fn broadcast_all(&mut self, event: FullTransactionEvent) {
         self.all_events.retain(|listener| listener.try_send(event.clone()).is_ok());
     }
 
-    fn broadcast_pending_transaction(
-        &mut self,
-        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
-    ) {
+    fn broadcast_pending_transaction(&mut self, transaction: &Arc<ValidPoolTransaction>) {
         let hash = *transaction.hash();
         self.broadcast_hash_event(&hash, TransactionEvent::Pending);
         self.broadcast_all(FullTransactionEvent::Pending(hash));
@@ -1714,10 +1672,7 @@ impl SidecarListeners {
         self.broadcast_new(NewTransactionEvent::pending(Arc::clone(transaction)));
     }
 
-    fn broadcast_pending(
-        &mut self,
-        transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
-    ) {
+    fn broadcast_pending(&mut self, transaction: &Arc<ValidPoolTransaction>) {
         self.pending_all.retain(|listener| listener.try_send(*transaction.hash()).is_ok());
         if transaction.propagate {
             self.pending_propagate
@@ -1725,7 +1680,7 @@ impl SidecarListeners {
         }
     }
 
-    fn broadcast_new(&mut self, event: NewTransactionEvent<BasePooledTransaction>) {
+    fn broadcast_new(&mut self, event: NewTransactionEvent) {
         self.new_all.retain(|listener| listener.try_send(event.clone()).is_ok());
         if event.transaction.propagate {
             self.new_propagate.retain(|listener| listener.try_send(event.clone()).is_ok());
@@ -1766,8 +1721,8 @@ fn merge_receivers<T: Send + 'static>(
 }
 
 fn pooled_element(
-    transaction: &Arc<ValidPoolTransaction<BasePooledTransaction>>,
-) -> Option<(<BasePooledTransaction as PoolTransaction>::Pooled, usize)> {
+    transaction: &Arc<ValidPoolTransaction>,
+) -> Option<(base_common_consensus::BasePooledTransaction, usize)> {
     transaction
         .transaction
         .clone()
@@ -1906,9 +1861,7 @@ mod tests {
         signed_8130(signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas, 50_000)
     }
 
-    fn valid_pool_transaction(
-        transaction: BasePooledTransaction,
-    ) -> ValidPoolTransaction<BasePooledTransaction> {
+    fn valid_pool_transaction(transaction: BasePooledTransaction) -> ValidPoolTransaction {
         ValidPoolTransaction {
             transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
             transaction,
@@ -2022,7 +1975,7 @@ mod tests {
         let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
             .no_shanghai()
             .no_cancun()
-            .build_with_tasks(Runtime::test(), blob_store.clone())
+            .build_with_tasks(Runtime::test())
             .map(|inner| {
                 BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
                     .require_l1_data_gas_fee(false)
