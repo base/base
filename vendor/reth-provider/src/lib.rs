@@ -81,3 +81,8 @@ pub fn to_range<R: std::ops::RangeBounds<u64>>(bounds: R) -> std::ops::Range<u64
 
     start..end
 }
+
+#[cfg(unix)]
+mod changeset_offsets;
+#[cfg(unix)]
+pub use changeset_offsets::{ChangesetOffsetReader, ChangesetOffsetWriter};

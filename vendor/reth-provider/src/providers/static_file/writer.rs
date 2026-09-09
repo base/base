@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, Weak},
 };
 
+use crate::{ChangesetOffsetReader, ChangesetOffsetWriter};
 use alloy_primitives::{BlockHash, BlockNumber, TxNumber, U256};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader, Compact};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
@@ -14,8 +15,7 @@ use reth_db_api::models::CompactU256;
 use reth_nippy_jar::{NippyJar, NippyJarError, NippyJarWriter};
 use reth_primitives_traits::FastInstant as Instant;
 use reth_static_file_types::{
-    ChangesetOffset, ChangesetOffsetReader, ChangesetOffsetWriter, SegmentHeader,
-    SegmentRangeInclusive, StaticFileSegment,
+    ChangesetOffset, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
 };
 use reth_storage_errors::provider::{ProviderError, ProviderResult, StaticFileWriterError};
 use tracing::{debug, instrument};
