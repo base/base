@@ -12,7 +12,6 @@ use std::{
 
 use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types_engine::ForkchoiceState;
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
@@ -157,10 +156,7 @@ pub struct LocalMiner<B, Pool: TransactionPool + Unpin> {
 
 impl<B, Pool> LocalMiner<B, Pool>
 where
-    B: PayloadAttributesBuilder<
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            base_common_consensus::Header,
-        >,
+    B: PayloadAttributesBuilder<BasePayloadBuilderAttributes, base_common_consensus::Header>,
     Pool: TransactionPool + Unpin,
 {
     /// Spawns a new [`LocalMiner`] with the given parameters.

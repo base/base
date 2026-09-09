@@ -12,10 +12,10 @@ use std::{
 
 use alloy_primitives::{B256, BlockTimestamp};
 use alloy_rpc_types::engine::PayloadId;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader};
+use base_common_consensus::BlockHeader;
 use base_execution_payload_types::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadAttributes, PayloadBuilderError,
-    PayloadEvents, PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadBuilderError, PayloadEvents,
+    PayloadKind,
 };
 use base_execution_trie::PayloadStateRootHandle;
 use futures_util::{Stream, StreamExt, future::FutureExt};
@@ -541,7 +541,7 @@ pub enum PayloadServiceCommand {
 #[derive(Debug)]
 pub struct BuildNewPayload {
     /// The attributes for the new payload
-    pub attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    pub attributes: BasePayloadBuilderAttributes,
     /// The parent hash of the new payload
     pub parent_hash: B256,
     /// Resources loaned to the payload builder for this job.

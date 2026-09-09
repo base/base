@@ -3,7 +3,6 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
 use base_execution_payload_builder::PayloadId;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
@@ -175,8 +174,7 @@ pub struct Environment {
     /// Currently active node index for backward compatibility with single-node actions
     pub active_node_idx: usize,
     /// Converts shared payload attributes to the node's configured attributes.
-    pub payload_attributes_converter:
-        Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+    pub payload_attributes_converter: Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes>,
 }
 
 impl Default for Environment {

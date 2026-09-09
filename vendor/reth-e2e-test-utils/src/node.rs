@@ -4,7 +4,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader};
+use base_common_consensus::BlockHeader;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_rpc::BaseEthApi;
 use base_node_context::FullNodeComponents;
@@ -50,10 +50,7 @@ where
     /// Creates a new test node
     pub async fn new(
         node: FullNode<Node, AddOns>,
-        attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-        + Send
-        + Sync
-        + 'static,
+        attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + 'static,
     ) -> eyre::Result<Self> {
         Ok(Self {
             inner: node.clone(),

@@ -1,12 +1,10 @@
 //! Core traits for working with execution payloads.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use core::fmt;
 
-use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
 use alloy_rlp::Encodable;
-use alloy_rpc_types_engine::{PayloadAttributes as EthPayloadAttributes, PayloadId};
+use alloy_rpc_types_engine::PayloadId;
 use either::Either;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -28,69 +26,6 @@ pub struct BuiltPayloadExecutedBlock {
     pub hashed_state: Arc<HashedPostState>,
     /// Trie updates that result from calculating the state root for the block (unsorted).
     pub trie_updates: Arc<TrieUpdates>,
-}
-
-/// Basic attributes required to initiate payload construction.
-///
-/// Defines minimal parameters needed to build a new execution payload.
-/// Implementations must be serializable for transmission.
-pub trait PayloadAttributes:
-    serde::de::DeserializeOwned + serde::Serialize + fmt::Debug + Clone + Send + Sync + 'static
-{
-    /// Computes the unique identifier for this payload build job.
-    fn payload_id(&self, parent_hash: &B256) -> PayloadId;
-
-    /// Returns the timestamp for the new payload.
-    fn timestamp(&self) -> u64;
-
-    /// Returns the withdrawals to be included in the payload.
-    ///
-    /// `Some` for post-Shanghai blocks, `None` for earlier blocks.
-    fn withdrawals(&self) -> Option<&Vec<Withdrawal>>;
-
-    /// Returns the parent beacon block root.
-    ///
-    /// `Some` for post-merge blocks, `None` for pre-merge blocks.
-    fn parent_beacon_block_root(&self) -> Option<B256>;
-
-    /// Returns the slot number for the new payload.
-    ///
-    /// `Some` for post-Amsterdam blocks, `None` for earlier blocks.
-    fn slot_number(&self) -> Option<u64>;
-
-    /// Returns the target gas limit for the new payload.
-    ///
-    /// `Some` for payload attributes that specify the desired gas limit, `None` if the builder
-    /// should use its configured target.
-    fn target_gas_limit(&self) -> Option<u64> {
-        None
-    }
-}
-
-impl PayloadAttributes for EthPayloadAttributes {
-    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
-        payload_id(parent_hash, self)
-    }
-
-    fn timestamp(&self) -> u64 {
-        self.timestamp
-    }
-
-    fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
-        self.withdrawals.as_ref()
-    }
-
-    fn parent_beacon_block_root(&self) -> Option<B256> {
-        self.parent_beacon_block_root
-    }
-
-    fn slot_number(&self) -> Option<u64> {
-        self.slot_number
-    }
-
-    fn target_gas_limit(&self) -> Option<u64> {
-        self.target_gas_limit
-    }
 }
 
 /// Factory trait for creating payload attributes.
@@ -150,7 +85,7 @@ pub trait BuildNextEnv<Attributes, Ctx>: Sized {
     ) -> Result<Self, PayloadBuilderError>;
 }
 
-/// Generates the payload id for the configured payload from the [`PayloadAttributes`].
+/// Generates the payload id for the configured payload from the [`alloy_rpc_types_engine::PayloadAttributes`].
 ///
 /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
 pub fn payload_id(
@@ -193,6 +128,7 @@ mod tests {
 
     use alloy_eips::eip4895::Withdrawal;
     use alloy_primitives::{Address, B64};
+    use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 
     use super::*;
 

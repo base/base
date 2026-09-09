@@ -5,7 +5,6 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_core::{
@@ -35,7 +34,7 @@ type NodeConfigModifier = Box<dyn Fn(NodeConfig) -> NodeConfig + Send + Sync>;
 /// the node creation logic.
 pub struct E2ETestSetupBuilder<F>
 where
-    F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
+    F: Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 {
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
@@ -47,7 +46,7 @@ where
 
 impl<F> E2ETestSetupBuilder<F>
 where
-    F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
+    F: Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 {
     /// Creates a new builder with the required parameters.
     pub fn new(num_nodes: usize, chain_spec: Arc<BaseChainSpec>, attributes_generator: F) -> Self {
@@ -193,7 +192,7 @@ where
 
 impl<F> Debug for E2ETestSetupBuilder<F>
 where
-    F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
+    F: Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("E2ETestSetupBuilder")

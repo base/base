@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_provider::network::AnyNetwork;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, transaction::Either};
+use base_common_consensus::{BaseBlock, transaction::Either};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributesBuilder,
@@ -31,10 +31,7 @@ pub struct DebugNodeConfig<R> {
     pub local_payload_attributes_builder: fn(
         &BaseChainSpec,
     ) -> Box<
-        dyn PayloadAttributesBuilder<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                base_common_consensus::Header,
-            >,
+        dyn PayloadAttributesBuilder<BasePayloadBuilderAttributes, base_common_consensus::Header>,
     >,
 }
 
@@ -97,19 +94,13 @@ where
     local_payload_attributes_builder: Option<
         Box<
             dyn PayloadAttributesBuilder<
-                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                    BasePayloadBuilderAttributes,
                     base_common_consensus::Header,
                 >,
         >,
     >,
     map_attributes: Option<
-        Box<
-            dyn Fn(
-                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                ) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-                + Send
-                + Sync,
-        >,
+        Box<dyn Fn(BasePayloadBuilderAttributes) -> BasePayloadBuilderAttributes + Send + Sync>,
     >,
     debug_block_provider: Option<B>,
     mining_mode: Option<MiningMode<base_node_context::BaseNodePool<N::Provider>>>,
@@ -127,7 +118,7 @@ where
     pub fn with_payload_attributes_builder(
         self,
         builder: impl PayloadAttributesBuilder<
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            BasePayloadBuilderAttributes,
             base_common_consensus::Header,
         >,
     ) -> Self {
@@ -145,12 +136,7 @@ where
     /// Sets a function to map payload attributes before building.
     pub fn map_debug_payload_attributes(
         self,
-        f: impl Fn(
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        ) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-        + Send
-        + Sync
-        + 'static,
+        f: impl Fn(BasePayloadBuilderAttributes) -> BasePayloadBuilderAttributes + Send + Sync + 'static,
     ) -> Self {
         Self {
             inner: self.inner,

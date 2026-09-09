@@ -13,8 +13,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::CancelOnDrop;
 use base_execution_payload_types::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributes, PayloadBuilderError,
-    PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{BasePooledTx, TransactionPool};
@@ -525,9 +524,7 @@ where
         }
     }
 
-    fn payload_attributes(
-        &self,
-    ) -> Result<BasePayloadBuilderAttributes<BaseTxEnvelope>, PayloadBuilderError> {
+    fn payload_attributes(&self) -> Result<BasePayloadBuilderAttributes, PayloadBuilderError> {
         Ok(self.config.attributes.clone())
     }
 
@@ -677,7 +674,7 @@ pub struct PayloadConfig {
     /// Additional parent block information, if available.
     pub parent_block_info: Option<PayloadParentBlockInfo>,
     /// Requested attributes for the payload.
-    pub attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    pub attributes: BasePayloadBuilderAttributes,
     /// The payload id.
     pub payload_id: PayloadId,
 }
@@ -693,7 +690,7 @@ impl PayloadConfig {
     /// Create new payload config.
     pub const fn new(
         parent_header: Arc<SealedHeader>,
-        attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attributes: BasePayloadBuilderAttributes,
         payload_id: PayloadId,
     ) -> Self {
         Self { parent_header, parent_block_info: None, attributes, payload_id }

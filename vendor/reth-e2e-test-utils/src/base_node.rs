@@ -76,7 +76,7 @@ impl BaseNodeTestUtils {
     }
 
     /// Helper function to create a new eth payload attributes
-    pub fn payload_attributes<T>(timestamp: u64) -> BasePayloadBuilderAttributes<T> {
+    pub fn payload_attributes(timestamp: u64) -> BasePayloadBuilderAttributes {
         let attributes = PayloadAttributes {
             timestamp,
             prev_randao: B256::ZERO,

@@ -8,7 +8,6 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
@@ -175,7 +174,7 @@ impl TestHarness {
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+        let payload_attributes = BasePayloadBuilderAttributes::try_new(
             parent_hash,
             BasePayloadAttributes {
                 payload_attributes: PayloadAttributes {

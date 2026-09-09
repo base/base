@@ -6,16 +6,13 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError,
 };
-use reth_primitives_traits::{SealedHeader, SignedTransaction};
+use reth_primitives_traits::SealedHeader;
 
 use crate::BaseNextBlockEnvAttributes;
 
-impl<T> BuildNextEnv<BasePayloadBuilderAttributes<T>, BaseChainSpec> for BaseNextBlockEnvAttributes
-where
-    T: SignedTransaction,
-{
+impl BuildNextEnv<BasePayloadBuilderAttributes, BaseChainSpec> for BaseNextBlockEnvAttributes {
     fn build_next_env(
-        attributes: &BasePayloadBuilderAttributes<T>,
+        attributes: &BasePayloadBuilderAttributes,
         parent: &SealedHeader,
         chain_spec: &BaseChainSpec,
     ) -> Result<Self, PayloadBuilderError> {

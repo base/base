@@ -22,10 +22,7 @@ mod error;
 pub use error::{InvalidPayloadAttributesError, NewPayloadError, PayloadBuilderError};
 
 mod traits;
-pub use traits::{
-    BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadAttributesBuilder,
-    payload_id,
-};
+pub use traits::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributesBuilder, payload_id};
 
 mod payload;
 pub use payload::ExecutionPayload;

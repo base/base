@@ -24,9 +24,7 @@ use base_execution_evm::{
     BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,
     Database, ExecutionWitnessRecord,
 };
-use base_execution_payload_types::{
-    BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadBuilderError,
-};
+use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{
     BasePooledTx, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
@@ -234,9 +232,8 @@ where
         parent: SealedHeader,
         attributes: BasePayloadAttributes,
     ) -> Result<ExecutionWitness, PayloadBuilderError> {
-        let attributes =
-            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(parent.hash(), attributes, 3)
-                .map_err(PayloadBuilderError::other)?;
+        let attributes = BasePayloadBuilderAttributes::try_new(parent.hash(), attributes, 3)
+            .map_err(PayloadBuilderError::other)?;
 
         let payload_id = attributes.payload_id(&parent.hash());
         let config = PayloadConfig::new(Arc::new(parent), attributes, payload_id);
@@ -667,7 +664,7 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    pub const fn attributes(&self) -> &BasePayloadBuilderAttributes {
         &self.config.attributes
     }
 
@@ -1501,7 +1498,7 @@ mod tests {
             ..Default::default()
         }));
         let payload_id = PayloadId::new([0; 8]);
-        let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
+        let attributes = BasePayloadBuilderAttributes {
             payload_attributes: EthPayloadBuilderAttributes {
                 id: payload_id,
                 parent: parent.hash(),
@@ -1566,7 +1563,7 @@ mod tests {
             ..Default::default()
         }));
         let payload_id = PayloadId::new([0; 8]);
-        let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope> {
+        let attributes = BasePayloadBuilderAttributes {
             payload_attributes: EthPayloadBuilderAttributes {
                 id: payload_id,
                 parent: parent.hash(),

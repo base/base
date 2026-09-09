@@ -1629,7 +1629,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     /// See also: <https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#specification-1>
     fn validate_payload_attributes_against_header(
         &self,
-        attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attr: &BasePayloadBuilderAttributes,
         header: &base_common_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError>;
 
@@ -1705,7 +1705,7 @@ where
 {
     fn validate_payload_attributes_against_header(
         &self,
-        attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attr: &BasePayloadBuilderAttributes,
         header: &base_common_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         self.validator.validate_payload_attributes_against_header(attr, header)

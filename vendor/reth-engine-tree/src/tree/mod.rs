@@ -13,13 +13,11 @@ use alloy_primitives::{B256, map::B256Map};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, BlockHeader};
+use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
-use base_execution_payload_types::{
-    BasePayloadBuilderAttributes, NewPayloadError, PayloadAttributes,
-};
+use base_execution_payload_types::{BasePayloadBuilderAttributes, NewPayloadError};
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
 use reth_chain_state::{
@@ -1238,7 +1236,7 @@ where
     fn on_forkchoice_updated(
         &mut self,
         state: ForkchoiceState,
-        attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        attrs: Option<BasePayloadBuilderAttributes>,
     ) -> ProviderResult<TreeOutcome<OnForkChoiceUpdated>> {
         trace!(target: "engine::tree", ?attrs, "invoked forkchoice update");
 
@@ -1307,7 +1305,7 @@ where
     fn handle_canonical_head(
         &mut self,
         state: ForkchoiceState,
-        attrs: &Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>, // Changed to reference
+        attrs: &Option<BasePayloadBuilderAttributes>, // Changed to reference
     ) -> ProviderResult<Option<TreeOutcome<OnForkChoiceUpdated>>> {
         // Process the forkchoice update by trying to make the head block canonical
         //
@@ -1369,7 +1367,7 @@ where
     fn apply_chain_update(
         &mut self,
         state: ForkchoiceState,
-        attrs: &Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        attrs: &Option<BasePayloadBuilderAttributes>,
     ) -> ProviderResult<Option<TreeOutcome<OnForkChoiceUpdated>>> {
         // Check if the head is already part of the canonical chain
         if let Ok(Some(canonical_header)) = self.find_canonical_header(state.head_block_hash) {
@@ -3358,7 +3356,7 @@ where
     /// return an error if the payload attributes are invalid.
     fn process_payload_attributes(
         &mut self,
-        attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attributes: BasePayloadBuilderAttributes,
         head: &base_common_consensus::Header,
         state: ForkchoiceState,
     ) -> OnForkChoiceUpdated {

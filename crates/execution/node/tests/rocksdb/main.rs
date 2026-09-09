@@ -87,7 +87,7 @@ fn test_chain_spec() -> Arc<BaseChainSpec> {
 }
 
 /// Returns test payload attributes for the given timestamp.
-fn test_attributes_generator(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+fn test_attributes_generator(timestamp: u64) -> BasePayloadBuilderAttributes {
     let mut attributes = BaseTestPayload::attributes(PayloadAttributes {
         timestamp,
         prev_randao: B256::ZERO,

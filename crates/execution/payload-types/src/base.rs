@@ -3,18 +3,15 @@
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_eips::{
-    eip1559::BaseFeeParams,
-    eip2718::{Decodable2718, Encodable2718},
-    eip4895::Withdrawals,
-    eip7685::Requests,
-};
+use alloy_eips::{eip1559::BaseFeeParams, eip4895::Withdrawals, eip7685::Requests};
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
-use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{
+    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
+};
 /// Re-export for use in downstream arguments.
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
@@ -50,14 +47,14 @@ pub struct EthPayloadBuilderAttributes {
 
 /// Base Payload Builder Attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BasePayloadBuilderAttributes<T> {
+pub struct BasePayloadBuilderAttributes {
     /// Inner ethereum payload builder attributes
     pub payload_attributes: EthPayloadBuilderAttributes,
     /// `NoTxPool` option for the generated payload
     pub no_tx_pool: bool,
     /// Decoded transactions and the original EIP-2718 encoded bytes as received in the payload
     /// attributes.
-    pub transactions: Vec<WithEncoded<T>>,
+    pub transactions: Vec<WithEncoded<BaseTxEnvelope>>,
     /// The gas limit for the generated payload
     pub gas_limit: Option<u64>,
     /// EIP-1559 parameters for the generated payload
@@ -66,7 +63,7 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub min_base_fee: Option<u64>,
 }
 
-impl<T> Default for BasePayloadBuilderAttributes<T> {
+impl Default for BasePayloadBuilderAttributes {
     fn default() -> Self {
         Self {
             payload_attributes: Default::default(),
@@ -79,7 +76,7 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
     }
 }
 
-impl<T> BasePayloadBuilderAttributes<T> {
+impl BasePayloadBuilderAttributes {
     /// Converts these builder attributes back into the RPC payload attribute representation.
     pub fn as_rpc_payload_attributes(&self) -> BasePayloadAttributes {
         BasePayloadAttributes {
@@ -135,9 +132,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
     }
 }
 
-impl<T: Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static>
-    BasePayloadBuilderAttributes<T>
-{
+impl BasePayloadBuilderAttributes {
     /// Creates payload builder attributes for the given parent block and RPC payload attributes.
     pub fn try_new(
         parent: B256,
@@ -185,17 +180,13 @@ impl<T: Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static>
     }
 }
 
-impl<BaseTransactionSigned> From<EthPayloadBuilderAttributes>
-    for BasePayloadBuilderAttributes<BaseTransactionSigned>
-{
+impl From<EthPayloadBuilderAttributes> for BasePayloadBuilderAttributes {
     fn from(value: EthPayloadBuilderAttributes) -> Self {
         Self { payload_attributes: value, ..Default::default() }
     }
 }
 
-impl<BaseTransactionSigned> From<EthPayloadAttributes>
-    for BasePayloadBuilderAttributes<BaseTransactionSigned>
-{
+impl From<EthPayloadAttributes> for BasePayloadBuilderAttributes {
     fn from(value: EthPayloadAttributes) -> Self {
         Self {
             payload_attributes: EthPayloadBuilderAttributes {
@@ -214,7 +205,7 @@ impl<BaseTransactionSigned> From<EthPayloadAttributes>
     }
 }
 
-impl<T> serde::Serialize for BasePayloadBuilderAttributes<T> {
+impl serde::Serialize for BasePayloadBuilderAttributes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -223,10 +214,7 @@ impl<T> serde::Serialize for BasePayloadBuilderAttributes<T> {
     }
 }
 
-impl<'de, T> serde::Deserialize<'de> for BasePayloadBuilderAttributes<T>
-where
-    T: Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static,
-{
+impl<'de> serde::Deserialize<'de> for BasePayloadBuilderAttributes {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -236,27 +224,29 @@ where
     }
 }
 
-impl<T> crate::PayloadAttributes for BasePayloadBuilderAttributes<T>
-where
-    T: Clone + Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static,
-{
-    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
+impl BasePayloadBuilderAttributes {
+    /// Computes the Base payload job identifier for the parent hash.
+    pub fn payload_id(&self, parent_hash: &B256) -> PayloadId {
         self.as_rpc_payload_attributes().payload_id(parent_hash, 3)
     }
 
-    fn timestamp(&self) -> u64 {
+    /// Returns the timestamp for the new block.
+    pub fn timestamp(&self) -> u64 {
         self.payload_attributes.timestamp
     }
 
-    fn withdrawals(&self) -> Option<&Vec<alloy_eips::eip4895::Withdrawal>> {
+    /// Returns withdrawals when supplied in the original attributes.
+    pub fn withdrawals(&self) -> Option<&Vec<alloy_eips::eip4895::Withdrawal>> {
         self.payload_attributes.has_withdrawals.then_some(&self.payload_attributes.withdrawals)
     }
 
-    fn parent_beacon_block_root(&self) -> Option<B256> {
+    /// Returns the parent beacon block root.
+    pub fn parent_beacon_block_root(&self) -> Option<B256> {
         self.payload_attributes.parent_beacon_block_root
     }
 
-    fn slot_number(&self) -> Option<u64> {
+    /// Returns the optional slot number.
+    pub fn slot_number(&self) -> Option<u64> {
         self.payload_attributes.slot_number
     }
 }
@@ -480,7 +470,6 @@ mod tests {
 
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_common_consensus::BaseTransactionSigned;
 
     use super::*;
     #[test]
@@ -550,11 +539,10 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_holocene() {
-        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
-            BasePayloadBuilderAttributes {
-                eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
-                ..Default::default()
-            };
+        let attributes: BasePayloadBuilderAttributes = BasePayloadBuilderAttributes {
+            eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
+            ..Default::default()
+        };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 8, 0, 0, 0, 8]));
     }
@@ -569,12 +557,8 @@ mod tests {
             ..Default::default()
         };
 
-        let error = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
-            B256::ZERO,
-            attributes,
-            3,
-        )
-        .expect_err("targetGasLimit must be rejected");
+        let error = BasePayloadBuilderAttributes::try_new(B256::ZERO, attributes, 3)
+            .expect_err("targetGasLimit must be rejected");
 
         assert_eq!(
             error,
@@ -584,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_holocene_default() {
-        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
+        let attributes: BasePayloadBuilderAttributes =
             BasePayloadBuilderAttributes { eip_1559_params: Some(B64::ZERO), ..Default::default() };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 80, 0, 0, 0, 60]));
@@ -592,12 +576,11 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_jovian() {
-        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
-            BasePayloadBuilderAttributes {
-                eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
-                min_base_fee: Some(10),
-                ..Default::default()
-            };
+        let attributes: BasePayloadBuilderAttributes = BasePayloadBuilderAttributes {
+            eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
+            min_base_fee: Some(10),
+            ..Default::default()
+        };
         let extra_data = attributes.get_jovian_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(
             extra_data.unwrap(),
@@ -609,12 +592,11 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_jovian_default() {
-        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
-            BasePayloadBuilderAttributes {
-                eip_1559_params: Some(B64::ZERO),
-                min_base_fee: Some(10),
-                ..Default::default()
-            };
+        let attributes: BasePayloadBuilderAttributes = BasePayloadBuilderAttributes {
+            eip_1559_params: Some(B64::ZERO),
+            min_base_fee: Some(10),
+            ..Default::default()
+        };
         let extra_data = attributes.get_jovian_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(
             extra_data.unwrap(),
@@ -626,12 +608,11 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_jovian_no_base_fee() {
-        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
-            BasePayloadBuilderAttributes {
-                eip_1559_params: Some(B64::ZERO),
-                min_base_fee: None,
-                ..Default::default()
-            };
+        let attributes: BasePayloadBuilderAttributes = BasePayloadBuilderAttributes {
+            eip_1559_params: Some(B64::ZERO),
+            min_base_fee: None,
+            ..Default::default()
+        };
         let extra_data = attributes.get_jovian_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap_err(), EIP1559ParamError::MinBaseFeeNotSet);
     }

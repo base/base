@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::U256;
 use alloy_rpc_types::engine::PayloadId;
-use base_common_consensus::{BaseTxEnvelope, Block};
+use base_common_consensus::Block;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
@@ -59,7 +59,7 @@ impl PayloadJobGenerator for TestPayloadJobGenerator {
 /// A [`PayloadJob`] for testing purposes
 #[derive(Debug)]
 pub struct TestPayloadJob {
-    attr: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    attr: BasePayloadBuilderAttributes,
 }
 
 impl Future for TestPayloadJob {
@@ -84,9 +84,7 @@ impl PayloadJob for TestPayloadJob {
         ))
     }
 
-    fn payload_attributes(
-        &self,
-    ) -> Result<BasePayloadBuilderAttributes<BaseTxEnvelope>, PayloadBuilderError> {
+    fn payload_attributes(&self) -> Result<BasePayloadBuilderAttributes, PayloadBuilderError> {
         Ok(self.attr.clone())
     }
 

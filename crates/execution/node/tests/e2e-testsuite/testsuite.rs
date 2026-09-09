@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
-use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
@@ -33,7 +32,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         vec![],
         Some(B256::ZERO),
         // TODO: refactor once we have actions to generate payload attributes.
-        BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+        BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
                 payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
@@ -83,7 +82,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         vec![],
         Some(B256::ZERO),
         // TODO: refactor once we have actions to generate payload attributes.
-        BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+        BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
                 payload_attributes: alloy_rpc_types_engine::PayloadAttributes {

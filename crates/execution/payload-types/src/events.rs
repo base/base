@@ -3,7 +3,6 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use base_common_consensus::BaseTxEnvelope;
 use tokio::sync::broadcast;
 use tokio_stream::{
     Stream, StreamExt,
@@ -18,7 +17,7 @@ use crate::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 pub enum Events {
     /// The payload attributes as
     /// they are received from the CL through the engine api.
-    Attributes(BasePayloadBuilderAttributes<BaseTxEnvelope>),
+    Attributes(BasePayloadBuilderAttributes),
     /// The built payload that has been just built.
     /// Triggered by the CL whenever it asks for an execution payload.
     /// This event is only thrown if the CL is a validator.
@@ -94,7 +93,7 @@ pub struct PayloadAttributeStream {
 }
 
 impl Stream for PayloadAttributeStream {
-    type Item = BasePayloadBuilderAttributes<BaseTxEnvelope>;
+    type Item = BasePayloadBuilderAttributes;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {

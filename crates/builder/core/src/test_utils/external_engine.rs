@@ -3,7 +3,6 @@
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
-use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use jsonrpsee::{core::client::ClientT, rpc_params};
@@ -46,7 +45,7 @@ impl ExternalEngineApi {
         &self,
         current: B256,
         head: B256,
-        attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        attributes: Option<BasePayloadBuilderAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         let client = self.client()?;
         Ok(client

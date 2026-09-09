@@ -9,7 +9,6 @@ use std::{
 };
 
 use alloy_rpc_types_engine::ForkchoiceState;
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::BeaconEngineMessage;
@@ -26,7 +25,7 @@ pub enum StoredEngineApiMessage {
         /// The [`ForkchoiceState`] sent in the persisted call.
         state: ForkchoiceState,
         /// The payload attributes sent in the persisted call, if any.
-        payload_attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        payload_attrs: Option<BasePayloadBuilderAttributes>,
     },
     /// The on-disk representation of an `engine_newPayload` method call.
     NewPayload {

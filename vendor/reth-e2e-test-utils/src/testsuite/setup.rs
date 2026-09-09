@@ -5,7 +5,6 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_core::{ComponentBuilder, RethRpcAddOns};
@@ -41,8 +40,7 @@ pub struct Setup {
     /// Is this setup in dev mode
     pub is_dev: bool,
     /// Conversion for chain-specific payload attributes.
-    pub payload_attributes_converter:
-        Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+    pub payload_attributes_converter: Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes>,
 }
 
 impl Default for Setup {
@@ -75,7 +73,7 @@ impl Setup {
     /// Supplies chain-specific fields when the framework creates payload attributes.
     pub fn with_payload_attributes_converter(
         mut self,
-        converter: fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        converter: fn(PayloadAttributes) -> BasePayloadBuilderAttributes,
     ) -> Self {
         self.payload_attributes_converter = Some(converter);
         self

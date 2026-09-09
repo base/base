@@ -3,7 +3,6 @@
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
-use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, ExecutionData,
 };
@@ -48,7 +47,7 @@ impl EngineApi {
         &self,
         current_head: B256,
         new_head: B256,
-        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        payload_attributes: Option<BasePayloadBuilderAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         Ok(self
             .execution

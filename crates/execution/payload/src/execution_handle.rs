@@ -1,5 +1,4 @@
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId};
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{
     InvalidPayloadAttributesError, PayloadBuilderError, PayloadKind,
 };
@@ -45,7 +44,7 @@ impl BaseExecutionHandle {
     pub async fn update_forkchoice(
         &self,
         state: ForkchoiceState,
-        attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        attributes: Option<BasePayloadBuilderAttributes>,
     ) -> Result<ForkchoiceUpdated, ExecutionCommandError> {
         if let Some(attributes) = &attributes {
             if let Err(error) = self.validator.validate_attributes(attributes) {

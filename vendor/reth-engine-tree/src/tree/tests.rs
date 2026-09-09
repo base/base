@@ -19,7 +19,7 @@ use alloy_rpc_types_engine::{
     PayloadAttributes as EthPayloadAttributes,
 };
 use assert_matches::assert_matches;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseBlock;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
 };
@@ -854,7 +854,7 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
     test_harness.tree.state.set_pending_sparse_trie_prune(true);
 
     let updated = test_harness.tree.process_payload_attributes(
-        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
+        BasePayloadBuilderAttributes::from(EthPayloadAttributes {
             timestamp: head.timestamp() + 1,
             prev_randao: B256::ZERO,
             suggested_fee_recipient: Default::default(),
@@ -1651,16 +1651,15 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
     // An FCU to an ancestor below the latest known finalized block would reorg out the
     // finalized block and is rejected, with or without payload attributes.
-    let payload_attributes =
-        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
-            timestamp: ancestor.timestamp() + 1,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: Default::default(),
-            withdrawals: None,
-            parent_beacon_block_root: None,
-            slot_number: None,
-            target_gas_limit: None,
-        });
+    let payload_attributes = BasePayloadBuilderAttributes::from(EthPayloadAttributes {
+        timestamp: ancestor.timestamp() + 1,
+        prev_randao: B256::ZERO,
+        suggested_fee_recipient: Default::default(),
+        withdrawals: None,
+        parent_beacon_block_root: None,
+        slot_number: None,
+        target_gas_limit: None,
+    });
     for attrs in [Some(payload_attributes), None] {
         let err = test_harness
             .tree
@@ -1686,16 +1685,15 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
     // the finalized block itself is not below finality and can become the parent of the next
     // block
-    let payload_attributes =
-        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
-            timestamp: finalized.timestamp() + 1,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: Default::default(),
-            withdrawals: None,
-            parent_beacon_block_root: None,
-            slot_number: None,
-            target_gas_limit: None,
-        });
+    let payload_attributes = BasePayloadBuilderAttributes::from(EthPayloadAttributes {
+        timestamp: finalized.timestamp() + 1,
+        prev_randao: B256::ZERO,
+        suggested_fee_recipient: Default::default(),
+        withdrawals: None,
+        parent_beacon_block_root: None,
+        slot_number: None,
+        target_gas_limit: None,
+    });
     let outcome = test_harness
         .tree
         .on_forkchoice_updated(
@@ -1730,16 +1728,15 @@ async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build()
     let ancestor = blocks[2].recovered_block();
     test_harness.tree.canonical_in_memory_state.set_finalized(finalized.clone_sealed_header());
 
-    let payload_attributes =
-        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
-            timestamp: ancestor.timestamp() + 1,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: Default::default(),
-            withdrawals: None,
-            parent_beacon_block_root: None,
-            slot_number: None,
-            target_gas_limit: None,
-        });
+    let payload_attributes = BasePayloadBuilderAttributes::from(EthPayloadAttributes {
+        timestamp: ancestor.timestamp() + 1,
+        prev_randao: B256::ZERO,
+        suggested_fee_recipient: Default::default(),
+        withdrawals: None,
+        parent_beacon_block_root: None,
+        slot_number: None,
+        target_gas_limit: None,
+    });
     let outcome = test_harness
         .tree
         .on_forkchoice_updated(

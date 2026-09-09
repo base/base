@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_context::BaseNodeContext;
@@ -47,11 +46,7 @@ pub async fn setup<AO>(
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
-    attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-    + Send
-    + Sync
-    + Copy
-    + 'static,
+    attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
     AO: RethRpcAddOns<crate::Adapter> + 'static,
@@ -69,11 +64,7 @@ pub async fn setup_engine<AO>(
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
     tree_config: reth_engine_primitives::TreeConfig,
-    attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-    + Send
-    + Sync
-    + Copy
-    + 'static,
+    attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
     AO: RethRpcAddOns<crate::Adapter> + 'static,
@@ -97,11 +88,7 @@ pub async fn setup_engine_with_connection<AO>(
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
     tree_config: reth_engine_primitives::TreeConfig,
-    attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-    + Send
-    + Sync
-    + Copy
-    + 'static,
+    attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
     connect_nodes: bool,
 ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where

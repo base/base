@@ -4,32 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, Bytes};
-use alloy_rpc_types_engine::PayloadId;
-use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
+use base_common_rpc_types_engine::ExecutionData;
 
-use crate::{ExecutionPayload, PayloadAttributes};
-
-impl PayloadAttributes for BasePayloadAttributes {
-    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
-        self.payload_attributes.payload_id(parent_hash)
-    }
-
-    fn timestamp(&self) -> u64 {
-        self.payload_attributes.timestamp
-    }
-
-    fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
-        self.payload_attributes.withdrawals.as_ref()
-    }
-
-    fn parent_beacon_block_root(&self) -> Option<B256> {
-        self.payload_attributes.parent_beacon_block_root
-    }
-
-    fn slot_number(&self) -> Option<u64> {
-        self.payload_attributes.slot_number
-    }
-}
+use crate::ExecutionPayload;
 
 impl ExecutionPayload for ExecutionData {
     fn parent_hash(&self) -> B256 {

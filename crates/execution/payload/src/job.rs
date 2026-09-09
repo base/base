@@ -3,10 +3,8 @@
 use std::future::Future;
 
 use alloy_rpc_types::engine::PayloadId;
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributes, PayloadBuilderError,
-    PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
 use reth_chain_state::CanonStateNotification;
 
@@ -35,9 +33,7 @@ pub trait PayloadJob: Future<Output = Result<(), PayloadBuilderError>> {
     fn best_payload(&self) -> Result<BaseBuiltPayload, PayloadBuilderError>;
 
     /// Returns the payload attributes for the payload being built.
-    fn payload_attributes(
-        &self,
-    ) -> Result<BasePayloadBuilderAttributes<BaseTxEnvelope>, PayloadBuilderError>;
+    fn payload_attributes(&self) -> Result<BasePayloadBuilderAttributes, PayloadBuilderError>;
 
     /// Returns the payload timestamp for the payload being built.
     /// The default implementation allocates full attributes only to

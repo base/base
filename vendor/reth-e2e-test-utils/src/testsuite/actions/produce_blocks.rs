@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadAttributes, PayloadStatusEnum, payload::ExecutionPayloadEnvelopeV3,
 };
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
-use base_common_consensus::{BaseTxEnvelope, EthereumTxEnvelope, TxEip4844};
+use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
@@ -32,7 +32,7 @@ pub struct AssertMineBlock {
     pub expected_hash: Option<B256>,
     /// Block's payload attributes
     // TODO: refactor once we have actions to generate payload attributes.
-    pub payload_attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    pub payload_attributes: BasePayloadBuilderAttributes,
 }
 
 impl AssertMineBlock {
@@ -41,7 +41,7 @@ impl AssertMineBlock {
         node_idx: usize,
         transactions: Vec<Bytes>,
         expected_hash: Option<B256>,
-        payload_attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        payload_attributes: BasePayloadBuilderAttributes,
     ) -> Self {
         Self { node_idx, transactions, expected_hash, payload_attributes }
     }

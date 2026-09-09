@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use alloy_primitives::{B256, keccak256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader, Predeploys};
+use base_common_consensus::{BlockHeader, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
 use base_execution_payload_types::{
-    BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError, PayloadAttributes,
+    BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError,
 };
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_engine_primitives::InsertBlockErrorKind;
@@ -55,7 +55,7 @@ impl BaseEngineValidator {
     /// Validates native build attributes using the active Base upgrade schedule.
     pub fn validate_attributes(
         &self,
-        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attributes: &BasePayloadBuilderAttributes,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.payload_attributes.timestamp;
         let fields = &attributes.payload_attributes;
@@ -77,7 +77,7 @@ impl BaseEngineValidator {
     /// Checks Base gas and fee parameters for native builds.
     pub fn validate_base_attributes(
         &self,
-        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attributes: &BasePayloadBuilderAttributes,
     ) -> Result<(), InvalidPayloadAttributesError> {
         if attributes.gas_limit.is_none() {
             return Err(InvalidPayloadAttributesError::InvalidParams(
@@ -228,7 +228,7 @@ impl BaseEngineValidator {
     /// Checks build attributes against the parent header and active Base upgrades.
     pub fn validate_payload_attributes_against_header(
         &self,
-        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attributes: &BasePayloadBuilderAttributes,
         header: &base_common_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
@@ -315,7 +315,7 @@ mod tests {
         eip_1559_params: Option<B64>,
         min_base_fee: Option<u64>,
         timestamp: u64,
-    ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    ) -> BasePayloadBuilderAttributes {
         BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
@@ -339,14 +339,11 @@ mod tests {
         .expect("valid test payload attributes")
     }
 
-    fn cobalt_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    fn cobalt_attributes(timestamp: u64) -> BasePayloadBuilderAttributes {
         get_attributes(Some(b64!("0000000000000000")), Some(1), timestamp)
     }
 
-    fn add_base_time_transaction(
-        attributes: &mut BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        millis_part: u16,
-    ) {
+    fn add_base_time_transaction(attributes: &mut BasePayloadBuilderAttributes, millis_part: u16) {
         let metadata = BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(9);
         attributes.transactions = vec![
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),

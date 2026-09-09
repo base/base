@@ -6,7 +6,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
-use base_common_consensus::{BaseTxEnvelope, BlockHeader};
+use base_common_consensus::BlockHeader;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_evm::{BaseEvmConfig, ExecutionWitnessRecord, Executor};
 use base_execution_payload_builder::{
@@ -174,12 +174,9 @@ where
             self.inner.task_spawner.spawn_blocking_task(async move {
                 let result = async {
                     let parent_hash = parent_header.hash();
-                    let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
-                        parent_hash,
-                        attributes,
-                        3,
-                    )
-                    .map_err(PayloadBuilderError::other)?;
+                    let attributes =
+                        BasePayloadBuilderAttributes::try_new(parent_hash, attributes, 3)
+                            .map_err(PayloadBuilderError::other)?;
                     let payload_id = attributes.payload_attributes.id;
 
                     let config =

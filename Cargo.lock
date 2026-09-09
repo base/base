@@ -14681,7 +14681,6 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-engine",
- "base-common-consensus",
  "base-common-rpc-types-engine",
  "base-evm-handler",
  "base-execution-consensus",

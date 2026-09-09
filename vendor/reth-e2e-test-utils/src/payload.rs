@@ -1,7 +1,6 @@
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::{PayloadBuilderHandle, PayloadId};
 use base_execution_payload_types::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadAttributes, PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadKind,
 };
 use futures_util::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
@@ -13,18 +12,14 @@ pub struct PayloadTestContext {
     payload_builder: PayloadBuilderHandle,
     pub timestamp: u64,
     #[debug(skip)]
-    attributes_generator:
-        Box<dyn Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync>,
+    attributes_generator: Box<dyn Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync>,
 }
 
 impl PayloadTestContext {
     /// Creates a new payload helper
     pub async fn new(
         payload_builder: PayloadBuilderHandle,
-        attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
-        + Send
-        + Sync
-        + 'static,
+        attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + 'static,
     ) -> eyre::Result<Self> {
         let payload_events = payload_builder.subscribe().await?;
         let payload_event_stream = payload_events.into_stream();
@@ -38,7 +33,7 @@ impl PayloadTestContext {
     }
 
     /// Generates the next payload attributes
-    pub fn next_attributes(&mut self) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    pub fn next_attributes(&mut self) -> BasePayloadBuilderAttributes {
         self.timestamp += 1;
         (self.attributes_generator)(self.timestamp)
     }
@@ -46,7 +41,7 @@ impl PayloadTestContext {
     /// Asserts that the next event is a payload attributes event
     pub async fn expect_attr_event(
         &mut self,
-        attrs: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        attrs: BasePayloadBuilderAttributes,
     ) -> eyre::Result<()> {
         let first_event = self.payload_event_stream.next().await.unwrap()?;
         if let Events::Attributes(attr) = first_event {

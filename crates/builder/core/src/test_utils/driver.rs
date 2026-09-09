@@ -5,7 +5,7 @@ use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;
-use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
+use base_common_consensus::{BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::{Base, Transaction};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
@@ -333,7 +333,7 @@ impl ChainDriver {
 impl ChainDriver {
     async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
-        let attribs = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(latest, attribs, 3)?;
+        let attribs = BasePayloadBuilderAttributes::try_new(latest, attribs, 3)?;
         let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
 
         Ok(response)

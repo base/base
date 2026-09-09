@@ -37,7 +37,6 @@ base-execution-payload-builder = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"], optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"], optional = true }
@@ -57,7 +56,6 @@ harness = false
 
 [features]
 test-utils = [
-    "dep:base-common-consensus",
     "dep:base-execution-chainspec",
     "dep:reth-network",
     "dep:tokio",
