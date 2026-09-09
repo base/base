@@ -22,11 +22,11 @@ use base_evm_handler::BlockExecutionError;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};
 use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_payload_types::NewPayloadError;
 use base_state_api::CachedReads;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
-use reth_engine_primitives::PayloadValidator;
 use reth_execution_types::BlockExecutionOutput;
 use reth_metrics::{
     Metrics, metrics,
@@ -58,7 +58,7 @@ impl<Provider> ValidationApi<Provider> {
         evm_config: BaseEvmConfig,
         config: ValidationApiConfig,
         task_spawner: Runtime,
-        payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
+        payload_validator: Arc<BaseEngineValidator>,
     ) -> Self {
         let ValidationApiConfig { disallow, validation_window } = config;
 
@@ -625,7 +625,7 @@ pub struct ValidationApiInner<Provider> {
     /// Consensus implementation.
     consensus: Arc<BaseBeaconConsensus>,
     /// Execution payload validator.
-    payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
+    payload_validator: Arc<BaseEngineValidator>,
     /// Block executor factory.
     evm_config: BaseEvmConfig,
     /// Set of disallowed addresses

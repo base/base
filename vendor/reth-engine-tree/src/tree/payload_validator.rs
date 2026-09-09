@@ -91,7 +91,7 @@
 //! ## Payload attributes validation
 //!
 //! During `engine_forkchoiceUpdated`,
-//! [`PayloadValidator::validate_payload_attributes_against_header`] checks payload attributes
+//! [`BaseEngineValidator::validate_payload_attributes_against_header`] checks payload attributes
 //! before a payload build job starts. On failure, the engine returns
 //! `INVALID_PAYLOAD_ATTRIBUTES` without rolling back the forkchoice update.
 
@@ -110,7 +110,7 @@ use alloy_primitives::{
     map::{AddressMap, B256Set},
 };
 use base_common_consensus::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError,
+    BaseReceipt, BaseTxEnvelope, EIP1559ParamError,
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
 };
@@ -119,15 +119,15 @@ use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootB
 use base_execution_evm::{
     BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
 };
-use base_execution_payload_builder::{PayloadBuilderLease, PayloadBuilderResources};
+use base_execution_payload_builder::{
+    BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources,
+};
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
     NewPayloadError,
 };
 use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
-use reth_engine_primitives::{
-    ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
-};
+use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
 use reth_execution_cache::{CacheFillMode, CacheStats};
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
@@ -234,7 +234,7 @@ impl<'a> TreeCtx<'a> {
 /// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
 /// used as a standalone component, but rather as a building block for concrete implementations.
 #[derive(derive_more::Debug)]
-pub struct BasicEngineValidator<P, V> {
+pub struct BasicEngineValidator<P> {
     /// Provider for database access.
     provider: P,
     /// Consensus implementation for validation.
@@ -255,7 +255,7 @@ pub struct BasicEngineValidator<P, V> {
     /// Metrics for the engine api.
     metrics: EngineApiMetrics,
     /// Validator for the payload.
-    validator: V,
+    validator: BaseEngineValidator,
     /// Task runtime for spawning parallel work.
     runtime: reth_tasks::Runtime,
     /// Shared overlay manager.
@@ -270,7 +270,7 @@ pub struct BasicEngineValidator<P, V> {
     txpool_prewarm: Option<txpool_prewarm::Handle<P>>,
 }
 
-impl<P, V> BasicEngineValidator<P, V>
+impl<P> BasicEngineValidator<P>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -297,7 +297,7 @@ where
         provider: P,
         consensus: Arc<BaseBeaconConsensus>,
         evm_config: BaseEvmConfig,
-        validator: V,
+        validator: BaseEngineValidator,
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook>,
         overlay_manager: OverlayManager,
@@ -352,10 +352,7 @@ where
 
     /// Converts a [`BlockOrPayload`] to a recovered block.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    pub fn convert_to_block(&self, input: BlockOrPayload) -> Result<SealedBlock, NewPayloadError>
-    where
-        V: PayloadValidator<Block = BaseBlock>,
-    {
+    pub fn convert_to_block(&self, input: BlockOrPayload) -> Result<SealedBlock, NewPayloadError> {
         match input {
             BlockOrPayload::Payload(payload) => self.validator.convert_payload_to_block(payload),
             BlockOrPayload::Block(block) => Ok(block),
@@ -363,10 +360,7 @@ where
     }
 
     /// Returns EVM environment for the given payload or block.
-    pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor, EIP1559ParamError>
-    where
-        V: PayloadValidator<Block = BaseBlock>,
-    {
+    pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor, EIP1559ParamError> {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.evm_env(block.header())?),
@@ -377,10 +371,7 @@ where
     pub fn tx_iterator_for<'a>(
         &'a self,
         input: &'a BlockOrPayload,
-    ) -> Result<impl ExecutableTxIterator, NewPayloadError>
-    where
-        V: PayloadValidator<Block = BaseBlock>,
-    {
+    ) -> Result<impl ExecutableTxIterator, NewPayloadError> {
         Ok(match input {
             BlockOrPayload::Payload(payload) => {
                 let iter = self
@@ -401,10 +392,7 @@ where
     pub fn execution_ctx_for<'a>(
         &self,
         input: &'a BlockOrPayload,
-    ) -> Result<ExecutionCtxFor, EIP1559ParamError>
-    where
-        V: PayloadValidator<Block = BaseBlock>,
-    {
+    ) -> Result<ExecutionCtxFor, EIP1559ParamError> {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.context_for_block(block)?),
@@ -431,10 +419,7 @@ where
         &mut self,
         input: BlockOrPayload,
         mut ctx: TreeCtx<'_>,
-    ) -> InsertPayloadResult
-    where
-        V: PayloadValidator<Block = BaseBlock> + Clone,
-    {
+    ) -> InsertPayloadResult {
         let parent_hash = input.parent_hash();
         let _txpool_pause = self.txpool_prewarm.as_ref().map(txpool_prewarm::Handle::pause);
         let txpool_snapshot =
@@ -870,10 +855,7 @@ where
         &self,
         input: &BlockOrPayload,
         parent: SealedHeader,
-    ) -> LazyHandle<Result<SealedBlock, InsertPayloadError>>
-    where
-        V: PayloadValidator<Block = BaseBlock> + Clone,
-    {
+    ) -> LazyHandle<Result<SealedBlock, InsertPayloadError>> {
         let input = input.clone();
         let validator = self.validator.clone();
         let consensus = self.consensus.clone();
@@ -952,7 +934,6 @@ where
     where
         S: StateProvider + Send,
         Err: core::error::Error + Send + Sync + 'static,
-        V: PayloadValidator<Block = BaseBlock>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block");
 
@@ -1082,7 +1063,6 @@ where
         Tx: ExecutableTxFor + Send,
         Err: core::error::Error + Send + Sync + 'static,
         MakeStateProvider: Fn(bool) -> ProviderResult<StateProviderBox> + Sync,
-        V: PayloadValidator<Block = BaseBlock>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block via BAL path");
 
@@ -1253,10 +1233,7 @@ where
         ctx: &mut TreeCtx<'_>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         built_bal: Option<BlockAccessList>,
-    ) -> Result<(), InsertBlockErrorKind>
-    where
-        V: PayloadValidator<Block = BaseBlock>,
-    {
+    ) -> Result<(), InsertBlockErrorKind> {
         let start = Instant::now();
 
         trace!(target: "engine::tree::payload_validator", block=?block.num_hash(), "Validating block consensus");
@@ -1313,8 +1290,8 @@ where
         parallel_bal_execution: bool,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor + use<P, V, T>,
-            impl core::error::Error + Send + Sync + 'static + use<P, V, T>,
+            impl ExecutableTxFor + use<P, T>,
+            impl core::error::Error + Send + Sync + 'static + use<P, T>,
         >,
         InsertBlockErrorKind,
     > {
@@ -1705,7 +1682,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     ) -> PayloadBuilderResources;
 }
 
-impl<P, V> EngineValidator for BasicEngineValidator<P, V>
+impl<P> EngineValidator for BasicEngineValidator<P>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1725,7 +1702,6 @@ where
     OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
-    V: PayloadValidator<Block = BaseBlock> + Clone,
 {
     fn validate_payload_attributes_against_header(
         &self,

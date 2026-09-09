@@ -17,11 +17,9 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
-auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 base-evm-handler = {workspace = true}
 reth-trie-common = { workspace = true }
-reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
@@ -29,7 +27,6 @@ reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = {workspace = true}
 base-execution-evm = { workspace = true, optional = true }
-base-execution-chainspec = { optional = true, workspace = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 tokio = { workspace = true, features = ["sync"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -40,7 +37,7 @@ base-execution-payload-types = { workspace = true, features = ["default"], optio
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [features]
-test-utils = ["dep:base-execution-chainspec", "std"]
+test-utils = ["std"]
 default = ["std"]
 trie-debug = []
 std = [
@@ -49,7 +46,6 @@ std = [
     "reth-execution-types/std",
     "reth-primitives-traits/std",
     "reth-trie-common/std",
-    "reth-storage-api/std",
     "alloy-primitives/std",
     "base-common-consensus/std",
     "alloy-rpc-types-engine/std",

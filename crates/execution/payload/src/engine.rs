@@ -11,7 +11,7 @@ use base_execution_payload_types::{
     BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError, PayloadAttributes,
 };
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_engine_primitives::{InsertBlockErrorKind, PayloadValidator};
+use reth_engine_primitives::InsertBlockErrorKind;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProvider, StateProviderBox, errors::ProviderResult};
 use reth_trie_common::HashedPostState;
@@ -144,10 +144,19 @@ impl BaseEngineValidator {
     }
 }
 
-impl PayloadValidator for BaseEngineValidator {
-    type Block = base_common_consensus::BaseBlock;
+impl BaseEngineValidator {
+    /// Converts and validates a payload, recovering its transaction senders.
+    pub fn ensure_well_formed_payload(
+        &self,
+        payload: ExecutionData,
+    ) -> Result<RecoveredBlock, NewPayloadError> {
+        self.convert_payload_to_block(payload)?
+            .try_recover()
+            .map_err(|e| NewPayloadError::Other(e.into()))
+    }
 
-    fn validate_block_post_execution_with_hashed_state<'a>(
+    /// Checks Base post-execution rules against the parent state and hashed updates.
+    pub fn validate_block_post_execution_with_hashed_state<'a>(
         &self,
         state_updates: impl FnOnce() -> &'a HashedPostState,
         block: &RecoveredBlock,
@@ -208,14 +217,16 @@ impl PayloadValidator for BaseEngineValidator {
         Ok(())
     }
 
-    fn convert_payload_to_block(
+    /// Converts and validates a payload without recovering transaction senders.
+    pub fn convert_payload_to_block(
         &self,
         payload: ExecutionData,
     ) -> Result<SealedBlock, NewPayloadError> {
         self.inner.ensure_well_formed_payload(payload).map_err(NewPayloadError::other)
     }
 
-    fn validate_payload_attributes_against_header(
+    /// Checks build attributes against the parent header and active Base upgrades.
+    pub fn validate_payload_attributes_against_header(
         &self,
         attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
         header: &base_common_consensus::Header,
@@ -488,7 +499,7 @@ mod tests {
         add_base_time_transaction(&mut attributes, timestamp_millis_part);
         let header = Header { number: 8, timestamp: parent_timestamp, ..Default::default() };
 
-        <BaseEngineValidator as PayloadValidator>::validate_payload_attributes_against_header(
+        BaseEngineValidator::validate_payload_attributes_against_header(
             validator,
             &attributes,
             &header,
@@ -529,12 +540,11 @@ mod tests {
         let attributes = cobalt_attributes(COBALT_TIMESTAMP);
         let header = Header { number: 8, timestamp: COBALT_TIMESTAMP, ..Default::default() };
 
-        let result =
-            <BaseEngineValidator as PayloadValidator>::validate_payload_attributes_against_header(
-                &validator,
-                &attributes,
-                &header,
-            );
+        let result = BaseEngineValidator::validate_payload_attributes_against_header(
+            &validator,
+            &attributes,
+            &header,
+        );
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -552,12 +562,11 @@ mod tests {
         ];
         let header = Header { number: 8, timestamp: COBALT_TIMESTAMP, ..Default::default() };
 
-        let result =
-            <BaseEngineValidator as PayloadValidator>::validate_payload_attributes_against_header(
-                &validator,
-                &attributes,
-                &header,
-            );
+        let result = BaseEngineValidator::validate_payload_attributes_against_header(
+            &validator,
+            &attributes,
+            &header,
+        );
 
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -635,7 +644,7 @@ mod tests {
         let state_updates = HashedPostState::default();
         let parent_state = parent_state(parent_millis_part);
 
-        PayloadValidator::validate_block_post_execution_with_hashed_state(
+        BaseEngineValidator::validate_block_post_execution_with_hashed_state(
             &validator,
             || &state_updates,
             &block,
@@ -666,7 +675,7 @@ mod tests {
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
-        let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+        let error = BaseEngineValidator::validate_block_post_execution_with_hashed_state(
             &cobalt_validator(),
             || &state_updates,
             &block,
@@ -770,7 +779,7 @@ mod tests {
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
-            let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+            let error = BaseEngineValidator::validate_block_post_execution_with_hashed_state(
                 &cobalt_validator(),
                 || &state_updates,
                 &block,
@@ -792,7 +801,7 @@ mod tests {
         });
         let state_updates = HashedPostState::default();
 
-        PayloadValidator::validate_block_post_execution_with_hashed_state(
+        BaseEngineValidator::validate_block_post_execution_with_hashed_state(
             &cobalt_validator(),
             || &state_updates,
             &block,
@@ -811,7 +820,7 @@ mod tests {
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
-            let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+            let error = BaseEngineValidator::validate_block_post_execution_with_hashed_state(
                 &cobalt_validator(),
                 || &state_updates,
                 &block,
@@ -841,7 +850,7 @@ mod tests {
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
-        let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+        let error = BaseEngineValidator::validate_block_post_execution_with_hashed_state(
             &cobalt_validator(),
             || &state_updates,
             &block,

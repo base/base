@@ -47,25 +47,6 @@ use crate::{
     },
 };
 
-/// Mock engine validator for tests
-#[derive(Debug, Clone)]
-struct MockEngineValidator;
-
-impl reth_engine_primitives::PayloadValidator for MockEngineValidator {
-    type Block = BaseBlock;
-
-    fn convert_payload_to_block(
-        &self,
-        payload: ExecutionData,
-    ) -> Result<reth_primitives_traits::SealedBlock, base_execution_payload_types::NewPayloadError>
-    {
-        let block = payload.payload.try_into_block_with_sidecar(&payload.sidecar).map_err(|e| {
-            base_execution_payload_types::NewPayloadError::Other(format!("{e:?}").into())
-        })?;
-        Ok(block.seal_slow())
-    }
-}
-
 /// This is a test channel that allows you to `release` any value that is in the channel.
 ///
 /// If nothing has been sent, then the next value will be immediately sent.
@@ -121,10 +102,7 @@ impl TestChannelHandle {
 }
 
 struct TestHarness {
-    tree: EngineApiTreeHandler<
-        MockEthProvider,
-        BasicEngineValidator<MockEthProvider, MockEngineValidator>,
-    >,
+    tree: EngineApiTreeHandler<MockEthProvider, BasicEngineValidator<MockEthProvider>>,
     to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest>>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
     payload_command_rx: UnboundedReceiver<PayloadServiceCommand>,
@@ -176,7 +154,8 @@ impl TestHarness {
 
         let provider = MockEthProvider::default();
 
-        let payload_validator = MockEngineValidator;
+        let payload_validator =
+            base_execution_payload_builder::BaseEngineValidator::new(chain_spec.clone());
 
         let (from_tree_tx, from_tree_rx) = unbounded_channel();
         let runtime = reth_tasks::Runtime::test();
@@ -392,7 +371,7 @@ pub(crate) struct ValidatorTestHarness {
     /// Basic test harness
     harness: TestHarness,
     /// Direct access to validator for `validate_block_with_state` calls
-    validator: BasicEngineValidator<MockEthProvider, MockEngineValidator>,
+    validator: BasicEngineValidator<MockEthProvider>,
     /// Simple validation metrics
     metrics: TestMetrics,
 }
@@ -404,7 +383,8 @@ impl ValidatorTestHarness {
         // Create validator identical to the one in TestHarness
         let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(chain_spec.clone()));
         let provider = harness.provider.clone();
-        let payload_validator = MockEngineValidator;
+        let payload_validator =
+            base_execution_payload_builder::BaseEngineValidator::new(chain_spec.clone());
         let evm_config = BaseEvmConfig::default();
         let overlay_manager = harness.tree.state.tree_state.overlay_manager.clone();
 

@@ -686,7 +686,7 @@ impl BasicEngineValidatorBuilder {
         ctx: &AddOnsContext<'_, Node>,
         tree_config: TreeConfig,
         overlay_manager: OverlayManager,
-    ) -> eyre::Result<BasicEngineValidator<Node::Provider, BaseEngineValidator>> {
+    ) -> eyre::Result<BasicEngineValidator<Node::Provider>> {
         let validator = BaseEngineValidator::new(Arc::clone(&ctx.config.chain));
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = InvalidBlockHookBuilder::build(
