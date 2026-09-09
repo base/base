@@ -16,7 +16,7 @@ run() {
   echo "::endgroup::"
 }
 
-run cargo bench -p base-common-flz --bench flz_iai
+run cargo bench -p base-execution-evm-fees --bench flz_iai
 run cargo bench -p base-protocol --bench frame_parse_iai
 run cargo bench -p base-protocol --bench batch_transaction_iai
 run cargo bench -p base-consensus-derive --bench batch_queue_iai --features test-utils

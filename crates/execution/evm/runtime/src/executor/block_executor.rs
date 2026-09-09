@@ -4,7 +4,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::{Encodable2718, Typed2718};
 use base_common_chain_config::Upgrades;
-use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_execution_evm_fees::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip658Value, Eip8130Receipt, Header, OpTxType,
     Predeploys, Transaction, TransactionEnvelope, TxReceipt,

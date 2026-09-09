@@ -7,7 +7,7 @@
 
 use std::hint::black_box;
 
-use base_common_flz::{data_gas_fjord, flz_compress_len, tx_estimated_size_fjord};
+use base_execution_evm_fees::{data_gas_fjord, flz_compress_len, tx_estimated_size_fjord};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use hex_literal::hex;
 

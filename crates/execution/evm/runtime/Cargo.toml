@@ -20,12 +20,11 @@ tracing = { workspace = true }
 alloy-eips = {workspace = true}
 alloy-primitives = {workspace = true}
 alloy-hardforks = { workspace = true }
-base-common-flz = { workspace = true }
-base-execution-evm-crypto = { workspace = true }
-base-common-l1-fees = { workspace = true }
 base-common-types-rpc = { workspace = true}
+base-execution-evm-fees = {workspace = true}
 base-execution-evm-machine = {workspace = true}
 metrics = { workspace = true, optional = true }
+base-execution-evm-crypto = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-evm-primitives = {workspace = true}
 base-execution-evm-precompiles = {workspace = true }
@@ -65,8 +64,7 @@ std = [
     "alloy-eips/std",
     "alloy-primitives/std",
     "base-common-chain-config/std",
-    "base-common-flz/std",
-    "base-common-l1-fees/std",
+    "base-execution-evm-fees/std",
     "base-execution-evm-precompiles/std",
     "base-common-types-chain/std",
     "base-common-types-rpc/std",

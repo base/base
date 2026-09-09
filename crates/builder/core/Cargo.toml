@@ -30,7 +30,6 @@ base-cli-utils = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
-base-common-flz = { workspace = true }
 base-txpool-rpc = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -42,6 +41,7 @@ reth-rpc-eth-types = { workspace = true }
 base-common-network = { workspace = true }
 reth-execution-cache = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-evm-fees = { workspace = true }
 nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }

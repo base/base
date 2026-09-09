@@ -119,7 +119,7 @@ impl BasePooledTransaction {
     pub fn estimated_compressed_size(&self) -> u64 {
         *self
             .estimated_tx_compressed_size
-            .get_or_init(|| base_common_flz::tx_estimated_size_fjord_bytes(self.encoded_2718()))
+            .get_or_init(|| base_execution_evm_fees::tx_estimated_size_fjord_bytes(self.encoded_2718()))
     }
 
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.

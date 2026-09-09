@@ -19,11 +19,11 @@ sha2 = { workspace = true }
 either = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-common-flz = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-evm-fees = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 tokio = { workspace = true, features = ["sync"] }
 pin-project = { workspace = true, optional = true}

@@ -33,7 +33,7 @@ run cargo bench -p base-consensus-derive --bench batch_queue --features test-uti
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-execution-evm-precompiles --bench base_precompiles --features test-utils \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-common-flz --bench flz \
+run cargo bench -p base-execution-evm-fees --bench flz \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-protocol --bench frame_parse \
   -- --save-baseline "$baseline" --noplot
