@@ -33,11 +33,10 @@ alloy-eips = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 ipnet = { workspace = true, features = ["default", "serde"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["k256", "std"] }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
-base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
+base-common-rpc-types-engine = {workspace = true, features = ["std", "serde"]}
 libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "dns", "noise", "gossipsub", "ping", "yamux", "identify"] }
 [dev-dependencies]
 alloy-rlp = { workspace = true, features = ["std"] }

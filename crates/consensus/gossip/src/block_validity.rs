@@ -2,11 +2,11 @@ use std::time::SystemTime;
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types_engine::{ExecutionPayloadV3, PayloadError};
 use base_common_consensus::{BaseTxEnvelope, Block};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, NetworkPayloadEnvelope,
+    BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, ExecutionPayloadV3,
+    NetworkPayloadEnvelope, PayloadError,
 };
 use base_protocol::{BaseTimeScheduleError, BaseTimeUpdateTx};
 use libp2p::gossipsub::MessageAcceptance;
@@ -324,11 +324,13 @@ pub(crate) mod tests {
     use alloy_eips::{eip2718::Encodable2718, eip4895::Withdrawal};
     use alloy_primitives::{Address, B256, Bytes, Signature};
     use alloy_rlp::BufMut;
-    use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_consensus::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
     use base_common_genesis::RollupConfig;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV1, ExecutionPayloadV2,
+        ExecutionPayloadV3, PayloadHash,
+    };
 
     use super::*;
 

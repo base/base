@@ -48,6 +48,7 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rpc-client = { workspace = true }
 alloy-network-primitives = { workspace = true }
+alloy-serde = { workspace = true, optional = true }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["default"] }
@@ -73,13 +74,11 @@ serde = { workspace = true, features = [
 ] }
 base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
-alloy-rpc-types-engine = { workspace = true, features = ["serde"], optional = true }
 [dev-dependencies]
 reqwest = { workspace = true }
 ci_info = { workspace = true }
 alloy-rlp = { workspace = true }
 itertools = { workspace = true }
-alloy-serde = { workspace = true }
 alloy-signer = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-node-bindings = { workspace = true }
@@ -89,7 +88,6 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 http-body-util = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
-alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 tokio-tungstenite_0_29_0 = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 alloy-transport-http = { workspace = true, features = [
@@ -114,11 +112,10 @@ workspace = true
 
 [features]
 admin-api = ["dep:alloy-rpc-types-admin"]
-anvil-api = []
+anvil-api = ["dep:alloy-serde"]
 anvil-node = ["anvil-api", "reqwest", "dep:alloy-node-bindings"]
 debug-api = ["dep:alloy-rpc-types-trace", "dep:alloy-rpc-types-debug"]
 default = ["reqwest", "reqwest-default-tls"]
-engine-api = ["dep:alloy-rpc-types-engine"]
 erc4337-api = []
 hyper = ["dep:alloy-transport-http", "dep:url", "alloy-rpc-client/hyper"]
 hyper-tls = ["hyper", "alloy-transport-http/hyper-tls"]

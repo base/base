@@ -19,14 +19,13 @@ use alloc::vec::Vec;
 
 use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, Sealable, U256};
-use alloy_rpc_types_engine::{
-    ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
-    ExecutionPayloadV3, PayloadError,
-};
 use base_common_consensus::{Block, BlockHeader, HeaderInfo, Transaction, decode_2718_canonical};
 pub use v5::BaseExecutionPayloadEnvelopeV5;
 
-use crate::BaseExecutionPayloadSidecar;
+use crate::{
+    BaseExecutionPayloadSidecar, ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1,
+    ExecutionPayloadV2, ExecutionPayloadV3, PayloadError,
+};
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
 /// [`BaseExecutionPayloadV4`].
@@ -647,7 +646,7 @@ impl BaseExecutionPayload {
     /// - execution layer requests
     ///
     /// See also docs for
-    /// [`ExecutionPayload::try_into_block_with_sidecar`](alloy_rpc_types_engine::ExecutionPayload::try_into_block_with_sidecar).
+    /// [`ExecutionPayload::try_into_block_with_sidecar`](crate::ExecutionPayload::try_into_block_with_sidecar).
     pub fn try_into_block_with_sidecar<T: Decodable2718 + Encodable2718 + Typed2718>(
         self,
         sidecar: &BaseExecutionPayloadSidecar,
@@ -668,7 +667,7 @@ impl BaseExecutionPayload {
     /// - execution layer requests
     ///
     /// See also docs for
-    /// [`ExecutionPayload::try_into_block_with_sidecar_with`](alloy_rpc_types_engine::ExecutionPayload::try_into_block_with_sidecar_with).
+    /// [`ExecutionPayload::try_into_block_with_sidecar_with`](crate::ExecutionPayload::try_into_block_with_sidecar_with).
     pub fn try_into_block_with_sidecar_with<T, F, E>(
         self,
         sidecar: &BaseExecutionPayloadSidecar,

@@ -3,16 +3,16 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Bytes, U256};
-use alloy_rpc_types_engine::BlobsBundleV2;
 
 use super::v4::BaseExecutionPayloadV4;
+use crate::BlobsBundleV2;
 
 /// This structure maps to the return value of `engine_getPayload` in the beacon chain spec, for
 /// V5.
 ///
 /// The Base variant follows the same pattern as V4: it replaces `ExecutionPayloadV3` with
 /// [`BaseExecutionPayloadV4`] (which adds `withdrawalsRoot`), and keeps all other fields identical
-/// to the mainnet [`ExecutionPayloadEnvelopeV5`](alloy_rpc_types_engine::ExecutionPayloadEnvelopeV5).
+/// to the mainnet [`ExecutionPayloadEnvelopeV5`](crate::ExecutionPayloadEnvelopeV5).
 ///
 /// See also:
 /// [execution payload envelope v5] <https://specs.base.org/upgrades/azul/exec-engine#engine-api-usage>

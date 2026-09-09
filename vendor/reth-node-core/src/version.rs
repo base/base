@@ -2,11 +2,7 @@
 use std::{borrow::Cow, sync::OnceLock};
 
 use alloy_primitives::Bytes;
-use alloy_rpc_types_engine::ClientCode;
 use reth_db::ClientVersion;
-
-/// The client code for Reth
-pub const CLIENT_CODE: ClientCode = ClientCode::RH;
 
 /// Global static version metadata
 static VERSION_METADATA: OnceLock<RethCliVersionConsts> = OnceLock::new();

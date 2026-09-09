@@ -79,7 +79,7 @@ impl TestAttributesBuilder {
     /// Builds the `AttributesWithParent`
     pub fn build(self) -> AttributesWithParent {
         let attributes = BasePayloadAttributes {
-            payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+            payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
                 timestamp: self.timestamp,
                 prev_randao: self.prev_randao,
                 suggested_fee_recipient: self.suggested_fee_recipient,

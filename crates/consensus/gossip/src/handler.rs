@@ -148,10 +148,12 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
     use alloy_primitives::{B256, Signature};
-    use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit, proofs::calculate_transaction_root};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV2, ExecutionPayloadV3,
+        PayloadHash,
+    };
     use base_protocol::BaseTimeUpdateTx;
 
     use super::*;

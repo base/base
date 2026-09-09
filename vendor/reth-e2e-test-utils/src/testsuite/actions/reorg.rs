@@ -1,7 +1,7 @@
 //! Reorg actions for the e2e testing framework.
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_rpc_types_engine::ForkchoiceState;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;

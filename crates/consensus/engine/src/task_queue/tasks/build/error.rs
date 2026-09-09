@@ -1,6 +1,6 @@
 //! Contains error types for direct engine build operations.
 
-use alloy_rpc_types_engine::PayloadStatusEnum;
+use base_common_rpc_types_engine::PayloadStatusEnum;
 use thiserror::Error;
 
 use crate::{EngineClientError, EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};

@@ -11,7 +11,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, TxHash};
-use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_rpc_types_engine::ForkchoiceState;
 use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,

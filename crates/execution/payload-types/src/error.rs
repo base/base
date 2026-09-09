@@ -4,7 +4,7 @@ use alloc::{boxed::Box, string::ToString};
 use core::error;
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceUpdateError, PayloadError, PayloadStatusEnum};
+use base_common_rpc_types_engine::{ForkchoiceUpdateError, PayloadError, PayloadStatusEnum};
 use base_evm_handler::BlockExecutionError;
 use reth_storage_errors::provider::ProviderError;
 use tokio::sync::{mpsc, oneshot};

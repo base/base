@@ -1,7 +1,8 @@
 //! Execution payload envelope V3.
 
 use alloy_primitives::{B256, U256};
-use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadEnvelopeV3, ExecutionPayloadV3};
+
+use crate::{BlobsBundleV1, ExecutionPayloadEnvelopeV3, ExecutionPayloadV3};
 
 /// This structure maps to the return value of `engine_getPayload` in the beacon chain spec, for
 /// V3.

@@ -4,13 +4,15 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
-use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
 use async_trait::async_trait;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
 use base_common_rpc_types::Transaction as BaseTransaction;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, PayloadStatus,
+    PayloadStatusEnum,
+};
 use base_consensus_derive::Signal;
 use base_consensus_engine::{
     Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
@@ -279,8 +281,8 @@ fn block_info_from_rpc_block(block: &RpcBlock<BaseTransaction>) -> L2BlockInfo {
     }
 }
 
-const fn valid_fcu() -> alloy_rpc_types_engine::ForkchoiceUpdated {
-    alloy_rpc_types_engine::ForkchoiceUpdated {
+const fn valid_fcu() -> base_common_rpc_types_engine::ForkchoiceUpdated {
+    base_common_rpc_types_engine::ForkchoiceUpdated {
         payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None },
         payload_id: None,
     }

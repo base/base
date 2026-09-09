@@ -35,10 +35,10 @@ reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-storage-overlay = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 eyre = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true }
 rocksdb = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -81,7 +81,6 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "base-common-consensus/test-utils",
     "reth-db-api/test-utils",
-    "reth-trie/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
     "reth-tasks/test-utils",

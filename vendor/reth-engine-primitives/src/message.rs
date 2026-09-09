@@ -5,19 +5,15 @@ use core::{
     task::{Context, Poll, ready},
 };
 
-use alloy_eips::eip4895::Withdrawal;
-use alloy_primitives::{B256, Bytes};
-use alloy_rpc_types_engine::{
-    ExecutionData, ForkChoiceUpdateResult, ForkchoiceState, ForkchoiceUpdateError,
-    ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
+use base_common_rpc_types_engine::{
+    ForkChoiceUpdateResult, ForkchoiceState, ForkchoiceUpdateError, ForkchoiceUpdated, PayloadId,
+    PayloadStatus, PayloadStatusEnum,
 };
 use base_execution_payload_types::{BasePayloadBuilderAttributes, PayloadBuilderError};
 use futures::{FutureExt, TryFutureExt, future::Either};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
-use crate::{
-    BeaconOnNewPayloadError, ExecutionPayload, ForkchoiceStatus, error::BeaconForkChoiceUpdateError,
-};
+use crate::{BeaconOnNewPayloadError, ForkchoiceStatus, error::BeaconForkChoiceUpdateError};
 
 /// Represents the outcome of forkchoice update.
 ///
@@ -146,75 +142,6 @@ impl Future for PendingPayloadId {
                 Poll::Ready(Err(ForkchoiceUpdateError::UpdatedInvalidPayloadAttributes))
             }
         }
-    }
-}
-
-/// Additional data for big block payloads that merge multiple real blocks.
-///
-/// This is used by the `reth_newPayload` endpoint to pass environment switches
-/// and prior block hashes needed for correct multi-segment execution.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BigBlockData<ExecutionData> {
-    /// Environment switches at block boundaries.
-    /// Each entry is `(cumulative_tx_count, execution_data_of_next_block)`.
-    ///
-    /// The first entry at index 0 represents the **original unmutated** base block's
-    /// `ExecutionData`, which must be used to derive the initial EVM environment.
-    pub env_switches: Vec<ExecutionData>,
-    /// Block number → real block hash for blocks covered by previous big blocks in a sequence.
-    /// When replaying chained big blocks, the BLOCKHASH opcode needs real hashes for blocks
-    /// that were merged into earlier big blocks (and thus not individually persisted).
-    pub prior_block_hashes: Vec<(u64, alloy_primitives::B256)>,
-    /// Block number for this big block.
-    pub block_number: u64,
-    /// Merged block access list for this big block.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merged_block_access_list: Option<Bytes>,
-}
-
-impl ExecutionPayload for BigBlockData<ExecutionData> {
-    fn parent_hash(&self) -> B256 {
-        self.env_switches[0].parent_hash()
-    }
-
-    fn block_hash(&self) -> B256 {
-        self.env_switches.last().unwrap().block_hash()
-    }
-
-    fn block_number(&self) -> u64 {
-        self.block_number
-    }
-
-    fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
-        self.env_switches[0].withdrawals()
-    }
-
-    fn block_access_list(&self) -> Option<&Bytes> {
-        self.merged_block_access_list.as_ref()
-    }
-
-    fn parent_beacon_block_root(&self) -> Option<B256> {
-        self.env_switches[0].parent_beacon_block_root()
-    }
-
-    fn timestamp(&self) -> u64 {
-        self.env_switches[0].timestamp()
-    }
-
-    fn gas_used(&self) -> u64 {
-        self.env_switches.iter().map(|data| data.gas_used()).sum()
-    }
-
-    fn gas_limit(&self) -> u64 {
-        self.env_switches.iter().map(|data| data.gas_limit()).sum()
-    }
-
-    fn transaction_count(&self) -> usize {
-        self.env_switches.iter().map(|data| data.transaction_count()).sum()
-    }
-
-    fn slot_number(&self) -> Option<u64> {
-        self.env_switches[0].payload.slot_number()
     }
 }
 

@@ -202,8 +202,8 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, Bytes, b256};
-    use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_genesis::SystemConfig;
+    use base_common_rpc_types_engine::PayloadAttributes;
 
     use super::*;
     use crate::{

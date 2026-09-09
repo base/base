@@ -67,7 +67,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
@@ -81,6 +80,7 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }

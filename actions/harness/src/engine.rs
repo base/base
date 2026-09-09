@@ -9,10 +9,6 @@ use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
 use alloy_provider::{EthGetBlock, ProviderCall};
-use alloy_rpc_types_engine::{
-    ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
-    PayloadStatusEnum,
-};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
@@ -20,7 +16,8 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Predepl
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
+    ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_node::{
@@ -548,7 +545,7 @@ impl ActionEngineClient {
 
         // Convert ExecutionPayloadV1 into BasePayloadAttributes for the builder.
         let attrs = BasePayloadAttributes {
-            payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+            payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
                 timestamp: payload.timestamp,
                 prev_randao: payload.prev_randao,
                 suggested_fee_recipient: payload.fee_recipient,

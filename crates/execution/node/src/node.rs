@@ -84,7 +84,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes> for BaseLocalPayload
         let eip_1559_params = Some(B64::from(eip1559_bytes));
 
         let attributes = BasePayloadAttributes {
-            payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+            payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
                 timestamp,
                 prev_randao: B256::random(),
                 suggested_fee_recipient: Address::random(),

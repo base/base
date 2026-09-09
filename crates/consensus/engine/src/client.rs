@@ -3,12 +3,14 @@
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256};
 use alloy_provider::EthGetBlock;
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
+    PayloadId, PayloadStatus,
+};
 use base_protocol::{FromBlockError, L2BlockInfo};
 use thiserror::Error;
 
@@ -42,7 +44,7 @@ impl EngineClientError {
         match self {
             Self::Execution(base_execution_payload_builder::ExecutionCommandError::Forkchoice(
                 reth_engine_primitives::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
-                    alloy_rpc_types_engine::ForkchoiceUpdateError::InvalidState,
+                    base_common_rpc_types_engine::ForkchoiceUpdateError::InvalidState,
                 ),
             )) => true,
             _ => false,

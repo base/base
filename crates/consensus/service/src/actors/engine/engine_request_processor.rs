@@ -681,9 +681,6 @@ mod tests {
 
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
-    use alloy_rpc_types_engine::{
-        ExecutionPayloadV1, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
-    };
     use alloy_rpc_types_eth::{
         Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
@@ -693,7 +690,10 @@ mod tests {
         BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
     };
     use base_common_rpc_types::Transaction as BaseTransaction;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
+        PayloadId, PayloadStatus, PayloadStatusEnum,
+    };
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
         ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,

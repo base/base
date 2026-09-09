@@ -3,9 +3,8 @@
 use alloc::sync::Arc;
 
 use alloy_hardforks::EthereumHardforks;
-use alloy_rpc_types_engine::PayloadError;
 use base_common_consensus::BlockHeader;
-use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
+use base_common_rpc_types_engine::{BasePayloadError, ExecutionData, PayloadError};
 use base_execution_chainspec::BaseChainSpec;
 use derive_more::Constructor;
 use reth_primitives_traits::{Block as _, SealedBlock};

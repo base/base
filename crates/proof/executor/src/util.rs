@@ -101,10 +101,9 @@ pub(crate) fn encode_jovian_eip_1559_params(
 #[cfg(all(test, feature = "test-utils"))]
 mod test {
     use alloy_primitives::{B64, b64, bytes};
-    use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_consensus::Header;
     use base_common_genesis::{FeeConfig, RollupConfig};
-    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
 
     use super::decode_holocene_eip_1559_params_block_header;
     use crate::util::{

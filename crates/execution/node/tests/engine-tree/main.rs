@@ -9,7 +9,7 @@ mod fcu_finalized_blocks;
 
 use std::sync::Arc;
 
-use alloy_rpc_types_engine::PayloadStatusEnum;
+use base_common_rpc_types_engine::PayloadStatusEnum;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{

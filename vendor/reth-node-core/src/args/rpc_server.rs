@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_rpc_types_engine::JwtSecret;
+use base_common_rpc_types_engine::JwtSecret;
 use clap::{
     Arg, Args, Command,
     builder::{PossibleValue, RangedU64ValueParser, Resettable, TypedValueParser},

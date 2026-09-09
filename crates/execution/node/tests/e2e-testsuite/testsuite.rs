@@ -35,7 +35,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
-                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -85,7 +85,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
-                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()

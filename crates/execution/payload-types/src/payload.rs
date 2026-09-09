@@ -5,7 +5,6 @@ use core::fmt::Debug;
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent, eip4895::Withdrawal};
 use alloy_primitives::{B256, Bytes};
-use alloy_rpc_types_engine::ExecutionData;
 use serde::{Serialize, de::DeserializeOwned};
 
 /// Represents the core data structure of an execution payload.
@@ -65,50 +64,4 @@ pub trait ExecutionPayload:
     ///
     /// Returns `None` for pre-Amsterdam blocks.
     fn slot_number(&self) -> Option<u64>;
-}
-
-impl ExecutionPayload for ExecutionData {
-    fn parent_hash(&self) -> B256 {
-        self.payload.parent_hash()
-    }
-
-    fn block_hash(&self) -> B256 {
-        self.payload.block_hash()
-    }
-
-    fn block_number(&self) -> u64 {
-        self.payload.block_number()
-    }
-
-    fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
-        self.payload.withdrawals()
-    }
-
-    fn block_access_list(&self) -> Option<&Bytes> {
-        self.payload.block_access_list()
-    }
-
-    fn parent_beacon_block_root(&self) -> Option<B256> {
-        self.sidecar.parent_beacon_block_root()
-    }
-
-    fn timestamp(&self) -> u64 {
-        self.payload.timestamp()
-    }
-
-    fn gas_used(&self) -> u64 {
-        self.payload.as_v1().gas_used
-    }
-
-    fn gas_limit(&self) -> u64 {
-        self.payload.as_v1().gas_limit
-    }
-
-    fn transaction_count(&self) -> usize {
-        self.payload.as_v1().transactions.len()
-    }
-
-    fn slot_number(&self) -> Option<u64> {
-        self.payload.slot_number()
-    }
 }

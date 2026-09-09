@@ -1,8 +1,8 @@
 //! Direct Tier-0 invariant tests for currently-untested strategy.md labels.
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_common_consensus::Header as ConsensusHeader;
+use base_common_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};

@@ -7,12 +7,12 @@ use alloc::vec::Vec;
 
 use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, Signature, keccak256};
-use alloy_rpc_types_engine::{
-    CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
-};
 use base_common_consensus::{Block, BlockHeader, Sealable, Transaction};
 
-use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
+use crate::{
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4, CancunPayloadFields,
+    ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
+};
 
 /// Maximum allowed decoded size for a snappy-compressed [`NetworkPayloadEnvelope`].
 ///
@@ -317,9 +317,8 @@ impl NetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload = BaseExecutionPayload::V1(
-            alloy_rpc_types_engine::ExecutionPayloadV1::from_ssz_bytes(block_data)?,
-        );
+        let payload =
+            BaseExecutionPayload::V1(crate::ExecutionPayloadV1::from_ssz_bytes(block_data)?);
 
         Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
     }
@@ -360,9 +359,8 @@ impl NetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload = BaseExecutionPayload::V2(
-            alloy_rpc_types_engine::ExecutionPayloadV2::from_ssz_bytes(block_data)?,
-        );
+        let payload =
+            BaseExecutionPayload::V2(crate::ExecutionPayloadV2::from_ssz_bytes(block_data)?);
 
         Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
     }
@@ -407,9 +405,8 @@ impl NetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload = BaseExecutionPayload::V3(
-            alloy_rpc_types_engine::ExecutionPayloadV3::from_ssz_bytes(block_data)?,
-        );
+        let payload =
+            BaseExecutionPayload::V3(crate::ExecutionPayloadV3::from_ssz_bytes(block_data)?);
 
         Ok(Self {
             payload,

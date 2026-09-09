@@ -35,7 +35,6 @@ reth-execution-cache = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = false }
@@ -58,7 +57,7 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-common-rpc-types-engine = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 metrics-exporter-prometheus = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt"] }

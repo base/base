@@ -4,7 +4,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use alloy_primitives::B256;
 use alloy_rlp::Encodable;
-use alloy_rpc_types_engine::PayloadId;
+use base_common_rpc_types_engine::PayloadId;
 use either::Either;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -85,12 +85,12 @@ pub trait BuildNextEnv<Attributes, Ctx>: Sized {
     ) -> Result<Self, PayloadBuilderError>;
 }
 
-/// Generates the payload id for the configured payload from the [`alloy_rpc_types_engine::PayloadAttributes`].
+/// Generates the payload id for the configured payload from the [`base_common_rpc_types_engine::PayloadAttributes`].
 ///
 /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
 pub fn payload_id(
     parent: &B256,
-    attributes: &alloy_rpc_types_engine::PayloadAttributes,
+    attributes: &base_common_rpc_types_engine::PayloadAttributes,
 ) -> PayloadId {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
@@ -128,7 +128,7 @@ mod tests {
 
     use alloy_eips::eip4895::Withdrawal;
     use alloy_primitives::{Address, B64};
-    use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
+    use base_common_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 
     use super::*;
 

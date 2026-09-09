@@ -28,7 +28,6 @@ reth-provider = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-json-rpc = { workspace = true }
-base-state-api = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -74,7 +73,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["serde"]}
 reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
-alloy-rpc-types-engine = { workspace = true, features = ["kzg"]}
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
@@ -91,7 +89,7 @@ base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-common-rpc-types = { workspace = true, features = ["default", "reth"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-evm-handler = { workspace = true, features = ["overrides", "call-util"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-common-rpc-types-engine = {workspace = true, features = ["serde", "std", "kzg"]}
 base-execution-txpool = { workspace = true, features = ["default"], optional = false}
 revm = {workspace = true,features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"]}
 [dev-dependencies]

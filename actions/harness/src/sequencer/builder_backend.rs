@@ -20,7 +20,6 @@ use std::{
 
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
 use alloy_provider::{Identity, ProviderBuilder};
-use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_builder_core::{
     BuilderConfig,
@@ -31,7 +30,7 @@ use base_builder_core::{
 use base_common_consensus::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Base;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_node::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };

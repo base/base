@@ -2,9 +2,9 @@
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use base_common_rpc_types_engine::{
-    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, ExecutionData,
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, ExecutionData, ForkchoiceState,
+    ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use base_execution_payload_builder::BaseExecutionHandle;
 use base_execution_payload_types::BasePayloadBuilderAttributes;

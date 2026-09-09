@@ -113,8 +113,8 @@ impl EngineTaskError for SealTaskError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_rpc_types_engine::PayloadStatusEnum;
     use alloy_transport::RpcError;
+    use base_common_rpc_types_engine::PayloadStatusEnum;
     use base_protocol::{BaseTimeScheduleError, FromBlockError};
     use rstest::rstest;
 

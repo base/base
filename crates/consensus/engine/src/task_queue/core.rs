@@ -2,9 +2,8 @@
 
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 
-use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, PayloadId, PayloadStatusEnum};
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
@@ -532,8 +531,10 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::FixedBytes;
-    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
     use base_common_genesis::RollupConfig;
+    use base_common_rpc_types_engine::{
+        ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
+    };
     use tokio::sync::watch;
 
     use crate::{

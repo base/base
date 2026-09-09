@@ -15,7 +15,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 base-evm-handler = {workspace = true}
@@ -24,13 +23,12 @@ reth-chain-state = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = {workspace = true}
 base-execution-evm = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 futures = { workspace = true, optional = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
+base-common-rpc-types-engine = {workspace = true, features = ["serde"]}
 base-execution-payload-types = { workspace = true, features = ["default"], optional = false}
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
@@ -46,11 +44,10 @@ std = [
     "reth-primitives-traits/std",
     "reth-trie-common/std",
     "alloy-primitives/std",
-    "alloy-rpc-types-engine/std",
+    "base-common-rpc-types-engine/std",
     "alloy-eips/std",
     "futures/std",
     "tokio",
-    "serde/std",
     "thiserror/std",
     "base-execution-evm?/std",
 ]

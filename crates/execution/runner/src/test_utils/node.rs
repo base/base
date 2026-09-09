@@ -166,8 +166,9 @@ mod tests {
 
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::B256;
-    use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
-    use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, ForkchoiceState, PayloadAttributes,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use base_node_core::{BaseNode, NodeConfig, RollupArgs};

@@ -5,10 +5,6 @@ use core::fmt::Debug;
 
 use alloy_eips::{eip1559::BaseFeeParams, eip4895::Withdrawals, eip7685::Requests};
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
-use alloy_rpc_types_engine::{
-    BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
-};
 use base_common_consensus::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
@@ -16,7 +12,9 @@ use base_common_consensus::{
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4,
+    BaseExecutionPayloadV4, BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2,
+    ExecutionPayloadFieldV2, ExecutionPayloadV1, ExecutionPayloadV3,
+    PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
 use reth_primitives_traits::{Block as _, SealedBlock, WithEncoded};
 
@@ -469,7 +467,7 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_primitives::{FixedBytes, address, b256, bytes};
-    use alloy_rpc_types_engine::PayloadAttributes;
+    use base_common_rpc_types_engine::PayloadAttributes;
 
     use super::*;
     #[test]

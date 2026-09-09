@@ -4,8 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_eips::Decodable2718;
 use alloy_primitives::{B256, Bytes, U256};
-use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 use base_common_consensus::Block;
+
+use crate::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 
 /// The Base execution payload for `newPayloadV4` of the engine API introduced with isthmus.
 /// See also <https://specs.base.org/upgrades/isthmus/exec-engine#engine_newpayloadv4-api>
@@ -170,8 +171,8 @@ impl ssz::Decode for BaseExecutionPayloadV4 {
 
         Ok(Self {
             payload_inner: ExecutionPayloadV3 {
-                payload_inner: alloy_rpc_types_engine::ExecutionPayloadV2 {
-                    payload_inner: alloy_rpc_types_engine::ExecutionPayloadV1 {
+                payload_inner: crate::ExecutionPayloadV2 {
+                    payload_inner: crate::ExecutionPayloadV1 {
                         parent_hash: decoder.decode_next()?,
                         fee_recipient: decoder.decode_next()?,
                         state_root: decoder.decode_next()?,

@@ -1,6 +1,6 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
-use alloy_rpc_types_engine::PayloadStatusEnum;
+use base_common_rpc_types_engine::PayloadStatusEnum;
 use thiserror::Error;
 
 use crate::{EngineClientError, EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
@@ -41,8 +41,8 @@ impl EngineTaskError for SynchronizeTaskError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_rpc_types_engine::PayloadStatusEnum;
     use alloy_transport::RpcError;
+    use base_common_rpc_types_engine::PayloadStatusEnum;
     use rstest::rstest;
 
     use super::*;

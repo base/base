@@ -17,8 +17,8 @@ futures-util = { workspace = true }
 reth-storage-api = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true }
 base-execution-payload-builder = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }

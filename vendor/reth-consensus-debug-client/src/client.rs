@@ -123,7 +123,7 @@ where
                     continue;
                 }
             };
-            let state = alloy_rpc_types_engine::ForkchoiceState {
+            let state = base_common_rpc_types_engine::ForkchoiceState {
                 head_block_hash: block_hash,
                 safe_block_hash,
                 finalized_block_hash,

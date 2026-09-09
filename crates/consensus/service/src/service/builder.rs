@@ -276,9 +276,8 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256};
-    use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
     use base_common_chains::Upgrades;
-    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_common_rpc_types_engine::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
     use base_consensus_disc::LocalNode as DiscoveryNode;
     use base_consensus_engine::{EngineClient, LocalEngineClient};
     use base_consensus_providers::LocalL2Provider;

@@ -324,8 +324,9 @@ impl ShadowReconciliationGate {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
-    use alloy_rpc_types_engine::ExecutionPayloadV1;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
+    };
     use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
     use base_protocol::{BlockInfo, L2BlockInfo};
 

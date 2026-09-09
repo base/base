@@ -10,10 +10,10 @@ use std::{
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
-use alloy_rpc_types_engine::{
+use base_common_consensus::{BaseBlock, BlockHeader};
+use base_common_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
-use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};

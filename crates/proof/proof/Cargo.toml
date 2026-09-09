@@ -62,7 +62,6 @@ std = [
     "ark-bls12-381/std",
     "ark-ff/std",
     "base-common-chains/std",
-    "base-common-consensus/std",
     "base-common-evm/std",
     "base-common-genesis/std",
     "base-common-rpc-types-engine/std",

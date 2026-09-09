@@ -4,11 +4,10 @@ use std::sync::Arc;
 
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
-use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::{Predeploys, TxDeposit};
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
 use base_consensus_derive::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
 };

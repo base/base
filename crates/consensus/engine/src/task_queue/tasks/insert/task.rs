@@ -3,12 +3,12 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_rpc_types_engine::{CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
+    CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields,
 };
 use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
@@ -365,10 +365,12 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
-    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, ForkchoiceUpdated, PayloadStatus,
+        PayloadStatusEnum,
+    };
     use base_protocol::{
         BaseTimeScheduleError, BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo,
     };
@@ -412,7 +414,7 @@ mod tests {
     }
 
     fn bedrock_payload_with_parent(block_number: u64, parent_hash: B256) -> BaseExecutionPayload {
-        BaseExecutionPayload::V1(alloy_rpc_types_engine::ExecutionPayloadV1 {
+        BaseExecutionPayload::V1(base_common_rpc_types_engine::ExecutionPayloadV1 {
             parent_hash,
             fee_recipient: Address::ZERO,
             state_root: B256::ZERO,
@@ -465,8 +467,8 @@ mod tests {
     }
 
     fn canyon_payload(block_number: u64) -> BaseExecutionPayload {
-        BaseExecutionPayload::V2(alloy_rpc_types_engine::ExecutionPayloadV2 {
-            payload_inner: alloy_rpc_types_engine::ExecutionPayloadV1 {
+        BaseExecutionPayload::V2(base_common_rpc_types_engine::ExecutionPayloadV2 {
+            payload_inner: base_common_rpc_types_engine::ExecutionPayloadV1 {
                 parent_hash: B256::ZERO,
                 fee_recipient: Address::ZERO,
                 state_root: B256::ZERO,

@@ -31,7 +31,6 @@ std = [
     "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
-    "base-common-consensus/std",
     "base-common-genesis/std",
     "base-common-rpc-types-engine/std",
     "base-proof-executor/std",

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types_engine::PayloadAttributes;
+use base_common_rpc_types_engine::PayloadAttributes;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, payload::EthPayloadBuilderAttributes,

@@ -39,9 +39,9 @@ revm-bytecode = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-common-network = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 url = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 base-node-core = { workspace = true, features = ["default"] }

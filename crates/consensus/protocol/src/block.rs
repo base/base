@@ -4,12 +4,12 @@ use alloc::vec::Vec;
 
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, Block, Transaction};
 use base_common_genesis::ChainGenesis;
 use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError,
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError, CancunPayloadFields,
+    PraguePayloadFields,
 };
 use derive_more::Display;
 

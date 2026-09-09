@@ -309,9 +309,10 @@ mod tests {
     };
 
     use alloy_primitives::B256;
-    use alloy_rpc_types_engine::ExecutionPayloadV1;
     use async_trait::async_trait;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
+    };
     use base_protocol::{BlockInfo, L2BlockInfo};
     use mockall::predicate::eq;
     use tokio::{sync::Mutex, time};

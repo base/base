@@ -5,9 +5,9 @@ use alloy_provider::{
     ConnectionConfig, Provider, ProviderBuilder, WebSocketConfig,
     network::{BlockResponse, Network, primitives::HeaderResponse},
 };
-use alloy_rpc_types_engine::PayloadExtras;
 use alloy_transport::TransportResult;
 use base_common_consensus::BlockHeader;
+use base_common_rpc_types_engine::PayloadExtras;
 use base_execution_payload_types::ExecutionPayload;
 use futures::{Stream, StreamExt};
 use reth_tracing::tracing::{debug, warn};

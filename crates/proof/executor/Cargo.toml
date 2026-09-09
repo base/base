@@ -29,7 +29,6 @@ base-common-genesis = { workspace = true }
 serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
-alloy-rpc-types-engine = { workspace = true, optional = true }
 getrandom_0_2_17 = { workspace = true, features = ["custom"] }
 base-common-consensus = { workspace = true, features = ["k256"]}
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -37,8 +36,8 @@ rand = { workspace = true, optional = true, features = ["default"] }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"], optional = true }
+base-common-rpc-types-engine = {workspace = true, features = ["serde", "k256"]}
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 base-common-chains = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"], optional = true }
@@ -50,13 +49,11 @@ std = [
     "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
-    "alloy-rpc-types-engine?/std",
+    "base-common-rpc-types-engine/std",
     "alloy-trie/std",
     "base-common-chains?/std",
-    "base-common-consensus/std",
     "base-common-evm/std",
     "base-common-genesis/std",
-    "base-common-rpc-types-engine/std",
     "base-proof-mpt/std",
     "base-protocol/std",
     "getrandom_0_2_17/std",
@@ -72,7 +69,6 @@ test-utils = [
     "base-protocol/test-utils",
     "dep:alloy-provider",
     "dep:alloy-rpc-client",
-    "dep:alloy-rpc-types-engine",
     "dep:alloy-transport",
     "dep:alloy-transport-http",
     "dep:base-common-chains",

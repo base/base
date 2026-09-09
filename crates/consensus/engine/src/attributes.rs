@@ -399,7 +399,7 @@ mod tests {
     fn default_attributes() -> AttributesWithParent {
         AttributesWithParent {
             attributes: BasePayloadAttributes {
-                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
                     withdrawals: Some(vec![]),
                     ..Default::default()
                 },

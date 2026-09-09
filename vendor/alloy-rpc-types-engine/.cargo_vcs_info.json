@@ -1,6 +1,0 @@
-{
-  "git": {
-    "sha1": "df0a0b52a5a84f6a80d1cf82e44d3d51088259a1"
-  },
-  "path_in_vcs": "crates/rpc-types-engine"
-}

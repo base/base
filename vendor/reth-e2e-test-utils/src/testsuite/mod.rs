@@ -15,7 +15,7 @@ pub mod setup;
 use std::sync::Arc;
 
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use base_common_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_execution_payload_builder::BaseExecutionHandle;
 use reth_engine_primitives::ConsensusEngineHandle;
 use url::Url;

@@ -14,14 +14,12 @@ use alloy_primitives::{
     map::{B256Map, B256Set},
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types_engine::{
-    ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
-    PayloadAttributes as EthPayloadAttributes,
-};
 use assert_matches::assert_matches;
 use base_common_consensus::BaseBlock;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
+    ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
+    PayloadAttributes as EthPayloadAttributes,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;

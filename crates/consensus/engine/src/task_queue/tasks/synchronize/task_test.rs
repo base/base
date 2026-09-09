@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 
 use crate::{
     EngineTaskExt, SynchronizeTask,

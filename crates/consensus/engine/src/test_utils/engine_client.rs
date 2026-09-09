@@ -6,14 +6,16 @@ use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{Base, Transaction as BaseTransaction};
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
+    PayloadId, PayloadStatus,
+};
 use base_protocol::L2BlockInfo;
 use tokio::sync::RwLock;
 
@@ -89,7 +91,7 @@ pub struct MockEngineStorage {
 /// ```rust
 /// use base_consensus_engine::test_utils::{MockEngineClient};
 /// use base_common_genesis::RollupConfig;
-/// use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
+/// use base_common_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 /// use alloy_primitives::B256;
 /// use std::sync::Arc;
 ///

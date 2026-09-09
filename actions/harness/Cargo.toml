@@ -46,7 +46,6 @@ base-common-genesis = { workspace = true, features = ["std"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
@@ -55,7 +54,7 @@ base-batcher-core = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
-base-common-rpc-types-engine = { workspace = true, features = ["std"] }
+base-common-rpc-types-engine = {workspace = true, features = ["std"]}
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }

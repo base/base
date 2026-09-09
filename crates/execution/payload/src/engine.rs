@@ -264,12 +264,11 @@ impl BaseEngineValidator {
 mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B64, B256, U256, b64};
-    use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
     use base_common_consensus::{
         BaseBlock, BaseTxEnvelope, BlockBody, EMPTY_ROOT_HASH, Header, Sealable, TxDeposit,
     };
-    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;

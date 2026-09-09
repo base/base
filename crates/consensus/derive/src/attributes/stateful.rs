@@ -6,11 +6,10 @@ use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B64, B256, Bytes};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::{Eip658Value, Predeploys, Receipt};
 use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 

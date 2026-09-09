@@ -21,7 +21,7 @@ http = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 jsonrpsee-http-client = { workspace = true, features = ["default"] }
-alloy-rpc-types-engine = { workspace = true, features = ["jwt-aws-lc-rs", "serde"] }
+base-common-rpc-types-engine = { workspace = true, features = ["jwt-aws-lc-rs", "serde"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
 jsonrpsee = { workspace = true, features = ["server"] }

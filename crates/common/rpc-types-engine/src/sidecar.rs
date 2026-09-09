@@ -1,20 +1,21 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{
-    CancunPayloadFields, MaybeCancunPayloadFields, MaybePraguePayloadFields, PraguePayloadFields,
-};
 use base_common_consensus::{Block, BlockHeader, Transaction};
 
+use crate::{
+    CancunPayloadFields, MaybeCancunPayloadFields, MaybePraguePayloadFields, PraguePayloadFields,
+};
+
 /// Container type for all available additional `newPayload` request parameters that are not present
-/// in the [`ExecutionPayload`](alloy_rpc_types_engine::ExecutionPayload) object itself.
+/// in the [`ExecutionPayload`](crate::ExecutionPayload) object itself.
 ///
 /// Default is equivalent to pre-ecotone, payloads v1 and v2.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BaseExecutionPayloadSidecar {
     /// Ecotone request params, inherited from Cancun, introduced in `engine_newPayloadV3` that are
-    /// not present in the [`ExecutionPayloadV3`](alloy_rpc_types_engine::ExecutionPayloadV3).
+    /// not present in the [`ExecutionPayloadV3`](crate::ExecutionPayloadV3).
     ///
     /// NOTE: Blob versioned hashes should always be empty. See <https://specs.base.org/protocol/execution#engine_newpayloadv3>.
     ecotone: MaybeCancunPayloadFields,

@@ -60,8 +60,8 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-storage-api = { workspace = true, features = ["std", "db-api"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env", "string"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std", "jwt-aws-lc-rs"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-common-rpc-types-engine = { workspace = true, features = ["std", "jwt-aws-lc-rs"] }
 [dev-dependencies]
 tokio = { workspace = true }
 proptest = { workspace = true, features = ["default"] }

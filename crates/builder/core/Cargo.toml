@@ -55,7 +55,6 @@ serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 hex = { workspace = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
@@ -89,7 +88,6 @@ reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-tracing-otlp = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
@@ -99,6 +97,7 @@ alloy-transport-http = { workspace = true, features = ["default"] }
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
+base-common-rpc-types-engine = {workspace = true, features = ["std"]}
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
@@ -174,11 +173,9 @@ test-utils = [
     "reth-db/test-utils",
     "base-execution-evm/test-utils",
     "reth-execution-cache/test-utils",
-    "base-node-core/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "base-execution-evm/test-utils",
     "reth-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",

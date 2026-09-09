@@ -12,13 +12,15 @@ use std::{
 use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898BlockNumberOrTag};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, ProviderCall};
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{BaseBlockResponse, Transaction as BaseTransaction};
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
+    PayloadId, PayloadStatus,
+};
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::L2BlockInfo;
 
@@ -201,7 +203,7 @@ impl EngineClient for FakeEngineClient {
         state.calls.push(EngineClientCall::SubmitPayload(Box::new(payload)));
         Ok(state.scripted_payload.pop_front().or_else(|| state.single_payload.clone()).unwrap_or(
             PayloadStatus {
-                status: alloy_rpc_types_engine::PayloadStatusEnum::Valid,
+                status: base_common_rpc_types_engine::PayloadStatusEnum::Valid,
                 latest_valid_hash: None,
             },
         ))

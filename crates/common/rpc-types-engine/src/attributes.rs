@@ -8,11 +8,12 @@ use alloy_eips::{
 };
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
-use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
 use base_common_consensus::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
 };
 use sha2::Digest;
+
+use crate::{PayloadAttributes, PayloadId};
 
 /// Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -215,10 +216,10 @@ mod test {
     use alloy_primitives::{
         Address, B256, Bytes, FixedBytes, Signature, address, b64, b256, bytes,
     };
-    use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_consensus::{SignableTransaction, TxEip1559};
 
     use super::*;
+    use crate::PayloadAttributes;
 
     #[test]
     fn decoded_transactions_reject_non_canonical_encoding() {

@@ -1,6 +1,6 @@
 //! Payload errors.
 
-use alloy_rpc_types_engine::PayloadError;
+use crate::PayloadError;
 
 /// Extends [`PayloadError`].
 #[derive(Debug, thiserror::Error)]

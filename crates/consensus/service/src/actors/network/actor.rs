@@ -231,11 +231,12 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV3};
     use alloy_signer::SignerSync;
     use arbitrary::Arbitrary;
     use base_common_network::PrivateKeySigner;
-    use base_common_rpc_types_engine::BaseExecutionPayload;
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV3,
+    };
     use rand::Rng;
 
     use super::*;

@@ -98,12 +98,12 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, U256};
-    use alloy_rpc_types_engine::{
-        ExecutionPayloadV1, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
-    };
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
+        PayloadStatus, PayloadStatusEnum,
+    };
     use base_consensus_engine::test_utils::test_engine_client_builder;
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use tokio::time::{self, Instant};

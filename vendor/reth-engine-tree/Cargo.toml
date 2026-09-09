@@ -34,7 +34,6 @@ base-evm-handler = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-execution-cache = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-payload-builder = { workspace = true }
@@ -60,8 +59,8 @@ reth-storage-overlay = { workspace = true, features = ["rayon"] }
 base-execution-trie = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
+base-common-rpc-types-engine = {workspace = true, features = ["serde"]}
 serde_json = { workspace = true, features = ["alloc"], optional = true }
-base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, optional = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }

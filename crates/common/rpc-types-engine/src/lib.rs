@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[macro_use]
 extern crate alloc;
 
 mod attributes;
@@ -30,3 +31,23 @@ pub use payload::{
 };
 #[cfg(feature = "std")]
 pub use payload::{BoundedTransactions, BoundedWithdrawals};
+
+mod cancun;
+pub use cancun::*;
+mod prague;
+pub use prague::*;
+mod bogota;
+pub use bogota::*;
+mod ethereum_sidecar;
+pub use ethereum_sidecar::*;
+mod forkchoice;
+pub use forkchoice::*;
+mod ethereum_payload;
+pub use ethereum_payload::*;
+mod error;
+pub use error::*;
+
+#[cfg(feature = "jwt")]
+mod jwt;
+#[cfg(feature = "jwt")]
+pub use jwt::*;

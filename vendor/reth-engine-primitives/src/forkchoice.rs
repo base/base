@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
+use base_common_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
 
 /// The struct that keeps track of the received forkchoice state and their status.
 #[derive(Debug, Clone, Default)]

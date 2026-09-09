@@ -52,7 +52,7 @@ alloy-eips = { workspace = true }
 reth-network-peers = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
-alloy-rpc-types-engine = { workspace = true }
+base-common-rpc-types-engine = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 reth-rpc-api = { workspace = true, features = ["client"] }
 reth-tracing = { workspace = true, features = ["default"] }

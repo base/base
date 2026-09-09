@@ -1,4 +1,4 @@
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId};
+use base_common_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId};
 use base_execution_payload_types::{
     InvalidPayloadAttributesError, PayloadBuilderError, PayloadKind,
 };
@@ -76,7 +76,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::B256;
-    use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
+    use base_common_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
     use base_execution_chainspec::BaseChainSpec;
     use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
     use tokio::sync::mpsc;

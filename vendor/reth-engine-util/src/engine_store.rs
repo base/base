@@ -8,7 +8,7 @@ use std::{
     time::SystemTime,
 };
 
-use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_rpc_types_engine::ForkchoiceState;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::BeaconEngineMessage;

@@ -4,7 +4,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use base_common_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::{Result, eyre};

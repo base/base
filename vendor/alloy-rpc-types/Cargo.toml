@@ -40,13 +40,13 @@ alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
 alloy-rpc-types-txpool = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"], optional = true }
-alloy-rpc-types-engine = { workspace = true, features = ["serde"], optional = true }
 serde = { workspace = true, features = [
     "derive",
     "alloc",
     "derive",
     "std",
 ] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde"], optional = true }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }
 similar-asserts = { workspace = true, features = ["default"] }
@@ -59,24 +59,24 @@ arbitrary = [
     "alloy-rpc-types-eth?/arbitrary",
     "alloy-serde/arbitrary",
     "alloy-primitives/arbitrary",
-    "alloy-rpc-types-engine?/arbitrary",
+    "base-common-rpc-types-engine?/arbitrary",
 ]
 debug = ["dep:alloy-rpc-types-debug"]
 default = [
     "eth",
-    "alloy-rpc-types-engine?/default",
+    "base-common-rpc-types-engine?/default",
     "alloy-rpc-types-eth?/default",
 ]
-engine = ["dep:alloy-rpc-types-engine"]
+engine = ["dep:base-common-rpc-types-engine"]
 eth = ["dep:alloy-rpc-types-eth"]
 k256 = [
     "alloy-rpc-types-eth?/k256",
     "alloy-primitives/k256",
 ]
-kzg = ["alloy-rpc-types-engine?/kzg"]
+kzg = ["base-common-rpc-types-engine?/kzg"]
 mev = ["dep:alloy-rpc-types-mev"]
 ssz = [
-    "alloy-rpc-types-engine?/ssz",
+    "base-common-rpc-types-engine?/ssz",
 ]
 trace = ["dep:alloy-rpc-types-trace"]
 txpool = ["dep:alloy-rpc-types-txpool"]
