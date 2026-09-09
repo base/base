@@ -47,9 +47,10 @@ use crate::upgrade_signal::{
 pub struct MeteringArgs {
     /// Enable metering RPC for transaction bundle simulation.
     ///
-    /// Turns on `base_meterBundle`. Native payload admission also requires a
-    /// non-empty `--payload.resource-metering-schedule`. The Flashblocks
-    /// builder uses `--builder.enable-resource-metering` instead.
+    /// Turns on `base_meterBundle`. The native payload builder throttles
+    /// transactions against resource-unit budgets only when this is set and
+    /// `--payload.resource-metering-schedule` is a non-empty file. The
+    /// Flashblocks builder uses `--builder.enable-resource-metering` instead.
     #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
@@ -82,7 +83,8 @@ pub struct MeteringArgs {
     )]
     pub metering_target_flashblocks_per_block: Option<usize>,
 
-    /// Resource-metering schedule for native payload admission.
+    /// Resource-unit schedule used to throttle transactions in the native
+    /// payload builder.
     #[command(flatten)]
     pub resource_metering: ResourceMeteringArgs,
 }
@@ -92,9 +94,9 @@ pub struct MeteringArgs {
 pub struct ResourceMeteringArgs {
     /// JSON file containing the startup resource-metering schedule.
     ///
-    /// Resource metering runs when `--enable-metering` is set and this schedule
-    /// is non-empty. Per-dimension `dryRun` in the file observes a budget
-    /// without excluding transactions.
+    /// The native payload builder throttles transactions against this schedule
+    /// when `--enable-metering` is set and the file is non-empty. Per-dimension
+    /// `dryRun` observes a budget without excluding transactions.
     #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
     pub resource_metering_schedule: Option<PathBuf>,
 

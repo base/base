@@ -28,7 +28,8 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
-    /// Resource metering and throttling configuration for payload admission.
+    /// Resource-unit metering used to throttle transactions in the native
+    /// payload builder.
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     ///
@@ -69,7 +70,8 @@ impl BaseBuilderConfig {
         }
     }
 
-    /// Sets resource metering and throttling for payload admission.
+    /// Sets resource-unit metering used to throttle transactions in the native
+    /// payload builder.
     pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
         self.resource_metering = resource_metering;
         self
@@ -118,12 +120,13 @@ impl Default for ResourceMeteringConfig {
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
     ///
-    /// `--enable-metering` turns on `base_meterBundle`. Payload admission
-    /// runs only when that flag is set and a non-empty schedule file is
-    /// loaded. A missing schedule leaves admission inactive so mempool
-    /// clients can serve meterBundle without a builder schedule. An empty
-    /// schedule file fails closed because the operator asked to load
-    /// admission config and it has no dimensions.
+    /// `--enable-metering` turns on `base_meterBundle`. The native payload
+    /// builder throttles transactions against resource-unit budgets only when
+    /// that flag is set and a non-empty schedule file is loaded. A missing
+    /// schedule leaves those budgets inactive so mempool clients can serve
+    /// meterBundle without a builder schedule. An empty schedule file fails
+    /// closed because the operator asked to load a schedule and it has no
+    /// dimensions.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
@@ -468,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_metering_without_schedule_leaves_admission_inactive() {
+    fn enabled_metering_without_schedule_leaves_resource_throttling_inactive() {
         let config = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
             .expect("enable-metering without a schedule must still boot");
         assert!(config.enabled);
