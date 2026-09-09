@@ -30,7 +30,6 @@ reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }
-base-consensus-disc = { workspace = true }
 base-consensus-node = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
@@ -41,13 +40,13 @@ base-common-l1-transactions = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
+base-consensus-network-service = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
 base-consensus-source-providers = {workspace = true}
 alloy-eips = { workspace = true, features = ["std"] }
-base-consensus-network-service = { workspace = true }
 base-execution-evm-precompiles = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }

@@ -2903,7 +2903,6 @@ dependencies = [
  "base-common-client-ethereum",
  "base-common-runtime-tasks",
  "base-consensus-derive",
- "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-network-service",
@@ -2957,28 +2956,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-disc"
-version = "0.0.0"
-dependencies = [
- "alloy-rlp",
- "backon",
- "base-cli-utils",
- "base-common-chain-config",
- "base-common-observability-metrics",
- "base-consensus-network-service",
- "derive_more",
- "discv5",
- "libp2p",
- "metrics",
- "rand 0.9.5",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-consensus-engine"
 version = "0.0.0"
 dependencies = [
@@ -3028,7 +3005,6 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-consensus-disc",
  "base-consensus-network-service",
  "base-protocol",
  "derive_more",
@@ -3061,18 +3037,25 @@ dependencies = [
  "alloy-rlp",
  "arbitrary",
  "arbtest",
+ "backon",
  "base-common-chain-config",
+ "base-common-observability-metrics",
+ "base-common-observability-tracing",
  "derive_more",
  "dirs",
  "discv5",
  "libp2p",
  "libp2p-identity",
+ "metrics",
  "multihash",
+ "rand 0.9.5",
  "rstest",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
+ "tokio",
  "tracing",
  "unsigned-varint 0.8.0",
  "url",
@@ -3104,7 +3087,6 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-derive",
- "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-network-service",
@@ -5100,7 +5082,6 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-derive",
- "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-network-service",

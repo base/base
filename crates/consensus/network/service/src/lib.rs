@@ -42,3 +42,9 @@ pub use monitoring::PeerMonitoring;
 
 mod secrets;
 pub use secrets::{KeypairError, ParseKeyError, SecretKeyLoader};
+
+mod discovery;
+pub use discovery::{
+    Discv5Builder, Discv5BuilderError, Discv5Driver, Discv5Handler, HandlerRequest, LocalNode,
+    Metrics as DiscoveryMetrics,
+};

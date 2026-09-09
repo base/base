@@ -25,7 +25,6 @@ base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
-base-consensus-disc = { workspace = true }
 base-execution-trie = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-consensus-engine = { workspace = true }
@@ -35,6 +34,7 @@ base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
+base-consensus-network-service = {workspace = true}
 http = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
 base-consensus-source-providers = {workspace = true}
@@ -42,7 +42,6 @@ bytes = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
-base-consensus-network-service = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
@@ -92,7 +91,7 @@ base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "
 default = []
 metrics = [
     "base-consensus-derive/metrics",
-    "base-consensus-disc/metrics",
+    "base-consensus-network-service/metrics",
     "base-consensus-engine/metrics",
     "base-consensus-gossip/metrics",
     "base-consensus-source-providers/metrics",

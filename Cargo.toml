@@ -48,7 +48,6 @@ members = [
   "crates/execution/state/memory",
   "crates/consensus/cli",
   "crates/consensus/derive",
-  "crates/consensus/disc",
   "crates/consensus/engine",
   "crates/consensus/gossip",
   "crates/consensus/network/service",
@@ -325,7 +324,6 @@ base-builder-core = { path = "crates/builder/core", default-features = false }
 base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
 base-consensus-rpc = { path = "crates/consensus/rpc", default-features = false }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
-base-consensus-disc = { path = "crates/consensus/disc", default-features = false }
 base-consensus-network-service = { path = "crates/consensus/network/service", default-features = false }
 base-consensus-node = { path = "crates/consensus/service", default-features = false }
 base-consensus-safedb = { path = "crates/consensus/safedb", default-features = false }

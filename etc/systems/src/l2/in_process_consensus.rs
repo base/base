@@ -20,12 +20,12 @@ use base_common_chain_activation::{
 };
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_consensus_disc::LocalNode;
+use base_consensus_network_service::LocalNode;
+use base_consensus_network_service::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,
 };
-use base_consensus_network_service::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_source_providers::BlockSigner;
 use eyre::{Result, WrapErr};

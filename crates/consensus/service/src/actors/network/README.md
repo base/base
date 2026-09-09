@@ -18,7 +18,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use alloy_primitives::address;
 use base_common_chain_config::RollupConfig;
-use base_consensus_disc::LocalNode;
+use base_consensus_network_service::LocalNode;
 use base_consensus_service::{
     NetworkActor, NetworkBuilder, NetworkConfig, NetworkEngineClient, NodeActor,
 };

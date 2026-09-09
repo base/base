@@ -183,7 +183,7 @@ ones when full.
 
 ### Discovery: finding peers with discv5
 
-The [`base-consensus-disc`](https://github.com/base/base/tree/main/crates/consensus/disc) crate
+The [`base-consensus-network-service`](https://github.com/base/base/tree/main/crates/consensus/network/service) crate
 implements peer discovery using the discv5 protocol. Discv5 is a UDP-based protocol that maintains a
 distributed hash table (DHT) of node records. It is the successor to discv4 (used by the EL) and was
 designed specifically for the consensus layer's needs.
@@ -221,7 +221,7 @@ hardcoded into the client. The bootnode responds to FINDNODE requests, giving th
 set of peers. From there, the new node performs several random lookups to fill its routing table,
 and within minutes it has a healthy set of diverse peers.
 
-The [`Discv5Driver`](https://github.com/base/base/blob/main/crates/consensus/disc/src/driver.rs)
+The [`Discv5Driver`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs)
 orchestrates the discovery process. When it starts, it goes through a clear sequence. First, it
 initializes the discv5 UDP service with exponential backoff retries (waiting progressively longer
 between attempts — e.g. 1s, 2s, 4s, 8s). If that succeeds, it then starts the
@@ -257,7 +257,7 @@ single receiver — it is the primary way components communicate in async Rust. 
 persists the current set of known ENRs to the boot store every 60 seconds.
 
 The driver communicates with the rest of the system through a
-[`Discv5Handler`](../../crates/consensus/disc/src/handler.rs),
+[`Discv5Handler`](../../crates/consensus/network/service/src/handler.rs),
 which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request
 metrics, peer lists, the local ENR, or ask the discovery service to ban specific addresses. This
 channel-based design avoids the need for shared mutable state across async boundaries.
@@ -760,7 +760,7 @@ networks are completely separate and serve different purposes.
 **Consensus layer discovery:**
 
 -
-  [`crates/consensus/disc/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/disc/src/driver.rs)
+  [`crates/consensus/network/service/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs)
   — Discv5Driver event loop and bootstrap
 
 **Consensus layer gossip:**

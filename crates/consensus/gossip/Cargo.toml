@@ -18,17 +18,16 @@ snap = { workspace = true }
 serde_repr = { workspace = true }
 base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
-base-consensus-disc = { workspace = true }
 base-common-chain-config = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 lru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
+base-consensus-network-service = {workspace = true}
 discv5 = { workspace = true, features = ["libp2p"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
-base-consensus-network-service = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
 ipnet = { workspace = true, features = ["default", "serde"] }
@@ -53,7 +52,7 @@ base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "
 [features]
 default = []
 metrics = [
-    "base-consensus-disc/metrics",
+    "base-consensus-network-service/metrics",
     "base-common-observability-metrics/metrics",
     "dep:metrics",
     "libp2p/metrics",

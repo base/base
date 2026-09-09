@@ -9,7 +9,8 @@ use std::{
 use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chain_config::RollupConfig;
-use base_consensus_disc::{Discv5Builder, LocalNode};
+use base_consensus_network_service::Discv5Builder;
+use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
 use clap::Args;
 use discv5::{Config, ConfigBuilder, Enr, enr::k256};
@@ -224,7 +225,7 @@ impl BootnodeP2PArgs {
     pub fn discovery_driver(
         &self,
         chain_id: u64,
-    ) -> eyre::Result<base_consensus_disc::Discv5Driver> {
+    ) -> eyre::Result<base_consensus_network_service::Discv5Driver> {
         let keypair = self.keypair(chain_id)?;
         let local_node_key = Self::local_node_key(keypair)?;
         let advertised = self.advertised_node(local_node_key);

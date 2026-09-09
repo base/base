@@ -5,10 +5,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use alloy_transport::{TransportErrorKind, TransportResult};
-use base_common_chain_config::RollupConfig;
-use base_consensus_source_providers::{L1RpcProvider, OnlineBeaconClient};
-use base_consensus_rpc::RpcBuilder;
 use base_common_chain_activation::UpgradeSignalConfig;
+use base_common_chain_config::RollupConfig;
+use base_consensus_rpc::RpcBuilder;
+use base_consensus_source_providers::{L1RpcProvider, OnlineBeaconClient};
 use url::Url;
 
 use crate::{
@@ -279,8 +279,8 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::Upgrades;
     use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
-    use base_consensus_disc::LocalNode as DiscoveryNode;
     use base_consensus_engine::{EngineClient, LocalEngineClient};
+    use base_consensus_network_service::LocalNode as DiscoveryNode;
     use base_consensus_source_providers::LocalL2Provider;
     use base_node_runner::test_utils::LocalNode;
     use discv5::enr::k256::ecdsa::SigningKey;

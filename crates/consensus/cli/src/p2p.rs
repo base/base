@@ -16,13 +16,13 @@ use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_ethereum::Provider;
 use base_common_runtime_tasks::RetryConfig;
 use base_consensus_derive::ChainProvider;
-use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
     ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
     DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
 };
-use base_consensus_node::NetworkConfig;
+use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_node::NetworkConfig;
 use base_consensus_source_providers::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;
@@ -764,8 +764,9 @@ impl P2PArgs {
     pub fn keypair(&self) -> Result<Keypair> {
         // Attempt the parse the private key if specified.
         if let Some(mut private_key) = self.private_key {
-            let keypair = base_consensus_network_service::SecretKeyLoader::parse(&mut private_key.0)
-                .map_err(|e| eyre::eyre!(e))?;
+            let keypair =
+                base_consensus_network_service::SecretKeyLoader::parse(&mut private_key.0)
+                    .map_err(|e| eyre::eyre!(e))?;
             info!(
                 target: "p2p::config",
                 peer_id = %keypair.public().to_peer_id(),

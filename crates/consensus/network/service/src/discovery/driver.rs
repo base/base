@@ -1,9 +1,7 @@
 //! Discovery Module.
 
+use crate::{BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, PeerUtils};
 use backon::{ExponentialBuilder, RetryableWithContext};
-use base_consensus_network_service::{
-    BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, PeerUtils,
-};
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, enr::NodeId};
 use tokio::{
@@ -11,7 +9,7 @@ use tokio::{
     time::{Duration, sleep},
 };
 
-use crate::{Discv5Builder, Discv5Handler, HandlerRequest, LocalNode, Metrics};
+use crate::discovery::{Discv5Builder, Discv5Handler, HandlerRequest, LocalNode, Metrics};
 
 /// Attempts to forward an ENR to the gossip service without spawning or parking on backpressure.
 fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
@@ -390,7 +388,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::LocalNode;
+    use crate::discovery::LocalNode;
 
     fn test_enr() -> Enr {
         let key = CombinedKey::generate_secp256k1();
@@ -509,7 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_online_discv5_driver_bootstrap_mainnet() {
-        base_cli_utils::init_test_tracing();
+        base_common_observability_tracing::init_test_tracing();
 
         // Use a test file to make sure bootstore
         // doesn't conflict with a local bootstore.

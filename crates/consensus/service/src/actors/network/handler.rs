@@ -5,10 +5,11 @@ use async_trait::async_trait;
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
-use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
     BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, Metrics, P2pRpcRequest,
 };
+use base_consensus_network_service::Discv5Handler;
+use base_consensus_network_service::HandlerRequest;
 use base_consensus_source_providers::BlockSignerHandler;
 use discv5::Enr;
 use tokio::{

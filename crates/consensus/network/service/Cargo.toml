@@ -17,29 +17,39 @@ development = ["arbtest"]
 
 [dependencies]
 dirs = { workspace = true }
+metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
+tracing = {features = ["std"], workspace = true}
+alloy-rlp = {features = ["std"], workspace = true}
+discv5 = {features = ["libp2p"], workspace = true}
+thiserror = {features = ["std"], workspace = true}
 url = { workspace = true, features = ["default"] }
-alloy-rlp = { workspace = true, features = ["std"] }
-discv5 = { workspace = true, features = ["libp2p"] }
-thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
+base-common-observability-metrics = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 unsigned-varint = { workspace = true, features = ["std"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
+rand = { workspace = true, features = ["default", "thread_rng"] }
 base-common-chain-config = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
-derive_more = { workspace = true, features = ["display", "deref", "debug"] }
-libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
+derive_more = {features = ["debug", "deref", "display"], workspace = true}
+backon = { workspace = true, features = ["default", "std", "tokio", "tokio-sleep"] }
+libp2p = {features = ["gossipsub", "identify", "macros", "noise", "ping", "tcp", "tokio", "yamux"], workspace = true}
 
 [dev-dependencies]
 arbtest = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
 arbitrary = { workspace = true, features = ["derive"] }
+tempfile = { workspace = true, features = ["default"] }
 multihash = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
+base-common-observability-tracing = {workspace = true, features = ["std"]}
 
 [features]
 default = []
 arbitrary = ["alloy-primitives/arbitrary", "dep:arbitrary"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics", "libp2p/metrics"]

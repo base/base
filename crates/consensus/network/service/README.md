@@ -4,6 +4,8 @@
 
 ## Overview
 
+Consensus peer identities, bootnode storage, and the discovery v5 service.
+
 Networking peer types ported from reth. Provides `PeerId`, `NodeRecord`, and `AnyNode` for
 working with Ethereum network identities across discv4, discv5, and admin RPC contexts.
 
