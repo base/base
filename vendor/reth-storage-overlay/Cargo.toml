@@ -21,9 +21,9 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-api = { workspace = true }
 reth-metrics = { workspace = true }
+reth-chain-state = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-trie-common = { workspace = true }
-reth-chain-state = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 rayon = { workspace = true, optional = true }
@@ -31,8 +31,9 @@ tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["db-api"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-reth-tasks = { workspace = true, features = ["rayon"], optional = true }
 reth-primitives-traits = { workspace = true, features = ["dashmap", "std"] }
+base-common-runtime-tasks = { workspace = true, features = ["rayon"], optional = true }
+
 [dev-dependencies]
 base-common-types-chain = { workspace = true }
 reth-db = { workspace = true, features = ["test-utils"] }
@@ -43,4 +44,4 @@ reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 
 [features]
 partial-persistence = ["reth-stages-types/partial-persistence"]
-rayon = ["dep:rayon", "dep:reth-tasks"]
+rayon = ["dep:rayon", "dep:base-common-runtime-tasks"]

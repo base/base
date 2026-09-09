@@ -12,6 +12,7 @@ use alloy_primitives::{
     map::{AddressSet, HashSet},
 };
 use base_common_chain_config::ChainSpecProvider;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BlockHeader, transaction::TxHashRef};
 use futures_util::{
     FutureExt, Stream, StreamExt,
@@ -22,7 +23,6 @@ use reth_execution_types::ChangedAccount;
 use reth_fs_util::FsPathError;
 use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory, errors::provider::ProviderError};
-use reth_tasks::Runtime;
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::oneshot,
@@ -709,7 +709,7 @@ pub enum TransactionsBackupError {
 /// Task which manages saving local transactions to the persistent file in case of shutdown.
 /// Reloads the transactions from the file on the boot up and inserts them into the pool.
 pub async fn backup_local_transactions_task<P>(
-    shutdown: reth_tasks::shutdown::GracefulShutdown,
+    shutdown: base_common_runtime_tasks::shutdown::GracefulShutdown,
     pool: P,
     config: LocalTransactionBackupConfig,
 ) where
@@ -738,10 +738,10 @@ mod tests {
 
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{U256, hex};
+    use base_common_runtime_tasks::Runtime;
     use base_execution_evm_blocks::BaseEvmConfig;
     use reth_fs_util as fs;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_tasks::Runtime;
 
     use super::*;
     use crate::{

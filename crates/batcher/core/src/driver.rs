@@ -8,9 +8,9 @@ use base_batcher_encoder::{
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
+use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_chain::BaseBlock;
 use base_protocol::BlockInfo;
-use base_common_runtime_tasks::Runtime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -631,13 +631,13 @@ mod tests {
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use base_common_types_rpc::TransactionReceipt;
-    use base_protocol::{BlockInfo, Frame};
     use base_common_runtime_tasks::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
+    use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use base_common_types_rpc::TransactionReceipt;
+    use base_protocol::{BlockInfo, Frame};
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
     use tokio::sync::{mpsc, oneshot};
 
@@ -780,7 +780,7 @@ mod tests {
         }
     }
 
-    fn driver_for_next_event<R: base_common_runtime_tasks::Runtime, TM: TxManager>(
+    fn driver_for_next_event<R: base_common_runtime_tasks::AsyncRuntime, TM: TxManager>(
         runtime: R,
         source_events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>,
         l1_events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>,

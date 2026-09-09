@@ -23,7 +23,6 @@ page_size = { workspace = true }
 reth-exex = { workspace = true }
 thiserror = { workspace = true }
 reth-prune = { workspace = true }
-reth-tasks = { workspace = true }
 reth-config = { workspace = true }
 reth-db-api = { workspace = true }
 futures-util = { workspace = true }
@@ -37,6 +36,7 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
@@ -91,5 +91,5 @@ test-utils = [
     "reth-db-api/test-utils",
     "reth-trie/test-utils",
     "reth-prune-types/test-utils",
-    "reth-tasks/test-utils",
+    "base-common-runtime-tasks/test-utils",
 ]

@@ -6,6 +6,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_blocks::{BaseEvmConfig, ExecutionWitnessRecord, Executor};
@@ -27,7 +28,6 @@ use reth_provider::{
 };
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use reth_tasks::Runtime;
 use reth_trie_common::ExecutionWitnessMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};

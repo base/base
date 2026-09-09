@@ -38,7 +38,7 @@ impl TokioRuntime {
     }
 
     /// Expose the inner `CancellationToken` for interop with code that has
-    /// not yet been migrated to accept `R: Runtime`.
+    /// not yet been migrated to accept `R: AsyncRuntime`.
     pub const fn token(&self) -> &CancellationToken {
         &self.token
     }

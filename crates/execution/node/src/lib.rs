@@ -34,11 +34,11 @@ mod version;
 pub use version::CLIENT_NAME;
 
 mod proof_history;
+#[cfg(feature = "test-utils")]
+use base_common_runtime_tasks as _;
 use base_execution_evm_runtime as _;
 use base_execution_evm_runtime as _;
 pub use proof_history::*;
-#[cfg(feature = "test-utils")]
-use reth_tasks as _;
 
 mod rpc;
 pub use rpc::*;

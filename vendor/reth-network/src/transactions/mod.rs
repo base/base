@@ -30,6 +30,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set, FbBuildHasher, HashMap, HashSet, hash_map::Entry},
 };
 use alloy_rlp::Encodable;
+use base_common_runtime_tasks::EventStream;
 use base_common_types_chain::TxType;
 use base_execution_evm_blocks::SenderRecoveryCache;
 use base_execution_txpool::{
@@ -63,7 +64,6 @@ use reth_network_p2p::{
 use reth_network_peers::PeerId;
 use reth_network_types::ReputationChangeKind;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
-use base_common_runtime_tasks::EventStream;
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
@@ -2337,6 +2337,7 @@ mod tests {
     use alloy_eips::{eip2718::Encodable2718, eip4844::BlobTransactionValidationError};
     use alloy_primitives::{B256, Signature, TxKind, U256, hex};
     use alloy_rlp::Decodable;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
         BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
@@ -2357,7 +2358,6 @@ mod tests {
         sync::{NetworkSyncUpdater, SyncState},
     };
     use reth_storage_api::noop::NoopProvider;
-    use reth_tasks::Runtime;
     use secp256k1::SecretKey;
     use tracing::error;
 

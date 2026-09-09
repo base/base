@@ -19,7 +19,7 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `base-proofs` command
-    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         match self.command {
             Subcommands::Init(cmd) => cmd.execute(runtime.clone()).await,
             Subcommands::Prune(cmd) => cmd.execute(runtime.clone()).await,

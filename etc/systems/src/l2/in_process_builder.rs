@@ -9,6 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use base_builder_core::{BuilderConfig, test_utils::get_available_port};
 use base_common_chain_config::BaseChainSpec;
+use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};
@@ -21,7 +22,6 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;

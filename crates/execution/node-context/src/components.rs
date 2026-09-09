@@ -1,8 +1,8 @@
 //! Shared components of a running Base node.
 
+use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::TaskExecutor;
 
 /// Base's transaction pool with its production disk blob store.
 pub type BaseNodePool<Provider> =

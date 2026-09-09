@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
@@ -17,7 +18,6 @@ use reth_provider::{ProviderFactory, providers::BlockchainProvider};
 use reth_prune::PrunerWithFactory;
 use reth_stages_api::{MetricEventsSender, Pipeline};
 use reth_storage_overlay::OverlayManager;
-use reth_tasks::Runtime;
 
 use crate::{
     backfill::PipelineSync,

@@ -34,7 +34,7 @@ pub(crate) async fn dump_merkle_stage(
     should_run: bool,
     evm_config: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 ) -> Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 

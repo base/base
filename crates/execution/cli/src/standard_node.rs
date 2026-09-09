@@ -891,7 +891,7 @@ mod tests {
         StandardBaseRethNode::configure(
             &mut base_node_core::NodeLaunch::testing(
                 base_node_core::NodeConfig::test(),
-                reth_tasks::Runtime::test(),
+                base_common_runtime_tasks::Runtime::test(),
             ),
             args,
         )
@@ -918,7 +918,7 @@ mod tests {
             CommandParser::<StandardNodeArgs>::parse_from(["base", "--enable-metering"]).args;
         let mut launch = base_node_core::NodeLaunch::testing(
             base_node_core::NodeConfig::test(),
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
         );
         StandardBaseRethNode::configure(&mut launch, args).unwrap();
         assert!(launch.rpc.metering.unwrap().enabled);
@@ -1251,7 +1251,7 @@ mod tests {
         StandardBaseRethNode::configure(
             &mut base_node_core::NodeLaunch::testing(
                 base_node_core::NodeConfig::test(),
-                reth_tasks::Runtime::test(),
+                base_common_runtime_tasks::Runtime::test(),
             ),
             args,
         )

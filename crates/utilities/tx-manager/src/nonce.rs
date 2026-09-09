@@ -4,7 +4,7 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use base_common_runtime_tasks::{Runtime, RuntimeTimeout, TokioRuntime};
+use base_common_runtime_tasks::{AsyncRuntime as Runtime, RuntimeTimeout, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, trace, warn};
 

@@ -2,10 +2,10 @@
 
 use std::{sync::Arc, time::Duration};
 
+use base_common_runtime_tasks::TaskExecutor;
 use base_execution_txpool::{NoExtensions, TransactionPool, ValidatedTransactionExtensions};
 use futures::{StreamExt, future::join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::HttpClientBuilder;
-use reth_tasks::TaskExecutor;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -261,9 +261,9 @@ mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
+    use base_common_runtime_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
     use base_execution_txpool::ValidatedTransaction;
     use jsonrpsee::{RpcModule, server::Server};
-    use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
     use serde_json::Value;
     use tokio::sync::oneshot;
 

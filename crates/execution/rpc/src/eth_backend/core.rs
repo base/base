@@ -6,6 +6,10 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
+use base_common_runtime_tasks::{
+    Runtime,
+    pool::{BlockingTaskGuard, BlockingTaskPool},
+};
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_txpool::{
@@ -18,10 +22,6 @@ use reth_rpc_eth_types::{
     builder::config::PendingBlockKind,
 };
 use reth_storage_api::BlockReaderIdExt;
-use reth_tasks::{
-    Runtime,
-    pool::{BlockingTaskGuard, BlockingTaskPool},
-};
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
 use crate::{BaseRpcContext, BaseRpcConverter, BaseTimeCache, SequencerClient, SignersForRpc};

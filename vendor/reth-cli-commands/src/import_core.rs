@@ -87,7 +87,7 @@ pub async fn import_blocks_from_file(
     config: &Config,
     executor: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 ) -> eyre::Result<ImportResult> {
     if import_config.no_state {
         info!(target: "reth::import", "Disabled stages requiring state");
@@ -278,7 +278,7 @@ pub fn build_import_pipeline_impl(
     static_file_producer: StaticFileProducer<ProviderFactory>,
     disable_exec: bool,
     evm_config: BaseEvmConfig,
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 ) -> eyre::Result<(Pipeline, impl futures::Stream<Item = NodeEvent> + use<>)> {
     if !file_client.has_canonical_blocks() {
         eyre::bail!("unable to import non canonical blocks");

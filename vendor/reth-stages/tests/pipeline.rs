@@ -102,12 +102,13 @@ fn build_downloaders_from_file_client(
     stages_config: StageConfig,
     consensus: Arc<BaseBeaconConsensus>,
     provider_factory: reth_provider::ProviderFactory,
-) -> (impl HeaderDownloader, impl BodyDownloader<Block = Block>, reth_tasks::Runtime) {
+) -> (impl HeaderDownloader, impl BodyDownloader<Block = Block>, base_common_runtime_tasks::Runtime)
+{
     let tip = file_client.tip().expect("file client should have tip");
     let min_block = file_client.min_block().expect("file client should have min block");
     let max_block = file_client.max_block().expect("file client should have max block");
 
-    let runtime = reth_tasks::Runtime::test();
+    let runtime = base_common_runtime_tasks::Runtime::test();
 
     let mut header_downloader = ReverseHeadersDownloaderBuilder::new(stages_config.headers)
         .build(file_client.clone(), consensus.clone())
@@ -473,7 +474,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         .sealed_header(unwind_target)?
         .expect("unwind target header should exist");
 
-    let resync_runtime = reth_tasks::Runtime::test();
+    let resync_runtime = base_common_runtime_tasks::Runtime::test();
 
     let mut resync_header_downloader =
         ReverseHeadersDownloaderBuilder::new(resync_stages_config.headers)

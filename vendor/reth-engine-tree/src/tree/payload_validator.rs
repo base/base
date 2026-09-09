@@ -109,6 +109,7 @@ use alloy_primitives::{
     Address, B256,
     map::{AddressMap, B256Set},
 };
+use base_common_runtime_tasks::LazyHandle;
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, EIP1559ParamError,
     constants::KECCAK_EMPTY,
@@ -142,7 +143,6 @@ use reth_provider::{
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
-use reth_tasks::LazyHandle;
 use reth_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
@@ -251,7 +251,7 @@ pub struct BasicEngineValidator<P> {
     /// Validator for the payload.
     validator: BaseEngineValidator,
     /// Task runtime for spawning parallel work.
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
     /// Shared overlay manager.
     overlay_manager: OverlayManager,
     /// State-root strategy used to prepare per-block commitment tasks.
@@ -295,7 +295,7 @@ where
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook>,
         overlay_manager: OverlayManager,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> Self {
         let precompile_cache_map = PrecompileCacheMap::default();
         let payload_processor = PayloadProcessor::new(

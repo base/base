@@ -19,7 +19,6 @@ url = { workspace = true }
 tokio = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
-reth-tasks = { workspace = true }
 alloy-genesis = {workspace = true}
 reth-db-api = { workspace = true }
 alloy-signer = { workspace = true }
@@ -37,8 +36,8 @@ base-common-types-rpc = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }

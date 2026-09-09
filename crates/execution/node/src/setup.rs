@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
+use base_common_runtime_tasks::TaskExecutor;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
@@ -18,7 +19,6 @@ use reth_network_p2p::{
 use reth_provider::ProviderFactory;
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use reth_static_file::StaticFileProducer;
-use reth_tasks::TaskExecutor;
 use reth_tracing::tracing::debug;
 use tokio::sync::watch;
 

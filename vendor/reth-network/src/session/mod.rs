@@ -18,6 +18,7 @@ use std::{
 use active::QueuedOutgoingMessages;
 use alloy_eip2124::{ForkFilter, ForkId, ForkTransition, Head};
 use alloy_primitives::map::{FbBuildHasher, HashMap};
+use base_common_runtime_tasks::Runtime;
 pub use conn::EthRlpxConnection;
 use counter::SessionCounter;
 use futures::{FutureExt, StreamExt, future::Either, io};
@@ -38,7 +39,6 @@ use reth_network_api::{PeerRequest, PeerRequestSender};
 use reth_network_peers::PeerId;
 use reth_network_types::SessionsConfig;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
-use reth_tasks::Runtime;
 use rustc_hash::FxHashMap;
 use secp256k1::SecretKey;
 use tokio::{

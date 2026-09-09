@@ -16,11 +16,11 @@ serde = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-tasks = { workspace = true }
 serde_json = { workspace = true }
 base-metrics = { workspace = true }
 alloy-primitives = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-common-runtime-tasks = { workspace = true }
 base-observability-events = { workspace = true }
 url = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }

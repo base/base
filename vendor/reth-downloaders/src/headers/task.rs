@@ -5,6 +5,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use base_common_runtime_tasks::Runtime;
 use futures::Stream;
 use futures_util::StreamExt;
 use pin_project::pin_project;
@@ -13,7 +14,6 @@ use reth_network_p2p::headers::{
     error::HeadersDownloaderResult,
 };
 use reth_primitives_traits::SealedHeader;
-use reth_tasks::Runtime;
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_util::sync::PollSender;

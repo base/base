@@ -10,6 +10,7 @@ use std::{
 use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
 use base_common_chain_config::ChainSpecProvider;
+use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::CancelOnDrop;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
@@ -23,7 +24,6 @@ use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
 use reth_primitives_traits::SealedHeader;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
-use reth_tasks::Runtime;
 use tokio::{
     sync::{Semaphore, oneshot},
     time::{Interval, Sleep},

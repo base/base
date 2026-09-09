@@ -1345,7 +1345,7 @@ async fn run_pipeline_range(
     let tip = file_client.tip().expect("tip");
     let consensus = Arc::new(BaseBeaconConsensus::noop());
     let stages_config = StageConfig::default();
-    let runtime = reth_tasks::Runtime::test();
+    let runtime = base_common_runtime_tasks::Runtime::test();
 
     let mut header_downloader = ReverseHeadersDownloaderBuilder::new(stages_config.headers)
         .build(file_client.clone(), consensus.clone())

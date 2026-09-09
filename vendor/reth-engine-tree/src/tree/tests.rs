@@ -16,6 +16,7 @@ use alloy_primitives::{
 use alloy_rlp::Decodable;
 use assert_matches::assert_matches;
 use base_common_chain_config::BaseChainSpec;
+use base_common_runtime_tasks::spawn_os_thread;
 use base_common_types_chain::BaseBlock;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
@@ -31,7 +32,6 @@ use reth_engine_primitives::{ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_primitives_traits::Block as _;
 use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
 use reth_storage_overlay::OverlayManager;
-use reth_tasks::spawn_os_thread;
 use reth_trie_common::ComputedTrieData;
 use tokio::sync::oneshot;
 
@@ -156,7 +156,7 @@ impl TestHarness {
             base_execution_payload_builder::BaseEngineValidator::new(chain_spec.clone());
 
         let (from_tree_tx, from_tree_rx) = unbounded_channel();
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let overlay_manager = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
 
         let header = chain_spec.genesis_header().clone();
@@ -394,7 +394,7 @@ impl ValidatorTestHarness {
             TreeConfig::default(),
             Box::new(NoopInvalidBlockHook::default()),
             overlay_manager,
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
         );
 
         Self { harness, validator, metrics: TestMetrics::default() }

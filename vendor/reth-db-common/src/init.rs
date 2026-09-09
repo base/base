@@ -1287,7 +1287,7 @@ mod tests {
                 std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
-                reth_tasks::Runtime::test(),
+                base_common_runtime_tasks::Runtime::test(),
             )
             .unwrap(),
         );
@@ -1316,7 +1316,7 @@ mod tests {
                 std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
-                reth_tasks::Runtime::test(),
+                base_common_runtime_tasks::Runtime::test(),
             )
             .unwrap(),
             StorageSettings::base(),

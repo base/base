@@ -51,7 +51,7 @@
 //! };
 //! use reth_network_peers::mainnet_nodes;
 //! use reth_storage_api::noop::NoopProvider;
-//! use reth_tasks::Runtime;
+//! use base_common_runtime_tasks::Runtime;
 //!
 //! // This block provider implementation is used for testing purposes.
 //! let client = NoopProvider::default();
@@ -81,7 +81,7 @@
 //! };
 //! use reth_network_peers::mainnet_nodes;
 //! use reth_storage_api::noop::NoopProvider;
-//! use reth_tasks::Runtime;
+//! use base_common_runtime_tasks::Runtime;
 //! use base_execution_txpool::TransactionPool;
 //! async fn launch<Pool: TransactionPool>(pool: Pool) {
 //!     // This block provider implementation is used for testing purposes.

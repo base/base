@@ -14,6 +14,7 @@ use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
 use base_common_network::Base;
+use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use base_execution_txpool::{BasePooledTransaction, TransactionPool};
 use base_node_core::{BaseNode, NodeConfig, RollupArgs};
 use base_node_runner::test_utils::init_silenced_tracing;
@@ -23,7 +24,6 @@ use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 
 use crate::{
     BuilderConfig, SharedMeteringStore,

@@ -1,10 +1,10 @@
 use std::{collections::HashSet, time::Duration};
 
 use async_trait::async_trait;
+use base_common_runtime_tasks::TaskExecutor;
 use base_shadow_indexer_db::{
     ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite,
 };
-use reth_tasks::TaskExecutor;
 use tokio::{
     sync::mpsc,
     time::{MissedTickBehavior, interval, sleep},

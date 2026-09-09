@@ -53,7 +53,7 @@ pub struct InitCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> InitCommand<C> {
     /// Execute the `proofs init` command.
-    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");

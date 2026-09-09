@@ -5,6 +5,7 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
@@ -20,7 +21,6 @@ use reth_storage_api::{
     BalProvider, BlockNumReader, BlockReader, HeaderProvider, StateProviderFactory,
     StateRangeProviderFactory, noop::NoopProvider,
 };
-use reth_tasks::Runtime;
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 

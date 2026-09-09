@@ -39,11 +39,11 @@ reth-network-p2p = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 
 [dev-dependencies]
-reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 reth-db = { workspace = true, features = ["test-utils"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -57,6 +57,6 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "reth-stages-types/test-utils",
-    "reth-tasks/test-utils",
+    "base-common-runtime-tasks/test-utils",
     "base-common-types-chain/test-utils",
 ]

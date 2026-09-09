@@ -117,7 +117,7 @@ where
     /// ```
     ///
     /// use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
-    /// use reth_tasks::Runtime;
+    /// use base_common_runtime_tasks::Runtime;
     /// use base_common_chain_config::ChainSpecProvider;
     /// use reth_transaction_pool::{
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,

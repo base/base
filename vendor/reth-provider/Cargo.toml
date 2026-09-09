@@ -34,14 +34,12 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-storage-overlay = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["mdbx"] }
 serde_json = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true, features = ["default"] }
-reth-tasks = { workspace = true, features = ["rayon"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-trie = { workspace = true, features = ["metrics"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -52,6 +50,7 @@ reth-static-file-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync"], optional = true }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 reth-storage-api = { workspace = true, features = ["std", "db-api"] }
 reth-primitives-traits = { workspace = true, features = ["reth-codec", "secp256k1", "dashmap"] }
 
@@ -85,6 +84,6 @@ test-utils = [
     "reth-db-api/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
-    "reth-tasks/test-utils",
+    "base-common-runtime-tasks/test-utils",
     "dep:tokio",
 ]

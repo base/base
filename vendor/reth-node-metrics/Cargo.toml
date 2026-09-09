@@ -12,21 +12,22 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-tokio = { workspace = true }
 bytes = { workspace = true }
+tokio = { workspace = true }
 tower = { workspace = true }
 metrics = { workspace = true }
-reth-tasks = { workspace = true }
 metrics-util = { workspace = true }
 reth-metrics = { workspace = true }
 jsonrpsee-server = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
+http = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 http-body-util = { workspace = true, features = ["default"] }
 metrics-process = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
+
 [target.'cfg(unix)'.dependencies]
 mappings = { workspace = true, optional = true }
 pprof_util = { workspace = true, optional = true }
@@ -38,10 +39,18 @@ tikv-jemalloc-ctl = { workspace = true, features = ["default", "stats"], optiona
 procfs = { workspace = true, features = ["default"] }
 [dev-dependencies]
 socket2 = { workspace = true }
+
 [lints]
 workspace = true
 
 [features]
 jemalloc = ["dep:tikv-jemalloc-ctl"]
-jemalloc-prof = ["jemalloc", "dep:jemalloc_pprof", "dep:mappings", "dep:pprof_util", "dep:reth-fs-util", "dep:tempfile"]
+jemalloc-prof = [
+    "jemalloc",
+    "dep:jemalloc_pprof",
+    "dep:mappings",
+    "dep:pprof_util",
+    "dep:reth-fs-util",
+    "dep:tempfile",
+]
 jemalloc-symbols = ["jemalloc-prof", "jemalloc_pprof?/symbolize"]

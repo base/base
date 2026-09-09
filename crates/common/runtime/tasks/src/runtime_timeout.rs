@@ -1,4 +1,4 @@
-//! Runtime-backed timeout helpers.
+//! AsyncRuntime-backed timeout helpers.
 
 use std::{future::IntoFuture, time::Duration};
 

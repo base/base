@@ -89,7 +89,7 @@ pub struct ProviderFactory {
     /// Store for block access lists.
     bal_store: BalStoreHandle,
     /// Task runtime for spawning parallel I/O work.
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
     /// Minimum distance from tip required before pruning can occur.
     minimum_pruning_distance: u64,
     /// Database provider metrics shared by providers created from this factory.
@@ -121,7 +121,7 @@ impl ProviderFactory {
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> ProviderResult<Self> {
         let db = db.into();
         // Load storage settings from database at init time. Creates a temporary provider
@@ -181,7 +181,7 @@ impl ProviderFactory {
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> ProviderResult<Self> {
         Self::new(db, chain_spec, static_file_provider, rocksdb_provider, runtime)
             .and_then(Self::assert_consistent)
@@ -247,7 +247,7 @@ impl ProviderFactory {
     fn watch_db_directory(&self) {
         let factory = self.clone();
         let db_path = self.db.path();
-        reth_tasks::spawn_os_thread("ro-sync", move || {
+        base_common_runtime_tasks::spawn_os_thread("ro-sync", move || {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(
                 move |res| {
@@ -360,7 +360,7 @@ impl ProviderFactory {
         args: DatabaseArguments,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> eyre::Result<Self> {
         Ok(Self::new(
             init_db(path, args)?,
@@ -1103,7 +1103,7 @@ mod tests {
             DatabaseArguments::new(Default::default()),
             StaticFileProvider::read_write(static_dir_path).unwrap(),
             RocksDBProvider::builder(&rocksdb_path).build().unwrap(),
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
         )
         .unwrap();
         let provider = factory.provider().unwrap();

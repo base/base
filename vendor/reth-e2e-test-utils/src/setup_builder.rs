@@ -6,12 +6,12 @@
 use std::{fmt::Debug, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
+use base_common_runtime_tasks::Runtime;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_core::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_tasks::Runtime;
 use tracing::{Instrument, Level, span};
 
 use crate::{NodeHelperType, node::NodeTestContext, wallet::Wallet};

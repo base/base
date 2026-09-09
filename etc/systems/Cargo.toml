@@ -23,10 +23,8 @@ workspace = true
 tower = { workspace = true }
 libp2p = { workspace = true }
 nanoid = { workspace = true }
-reth-tasks = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -42,7 +40,7 @@ base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-sources = { workspace = true }
 base-prover-service-db = { workspace = true }
-base-execution-evm-precompiles = { workspace = true }
+base-common-runtime-tasks = {workspace = true}
 base-consensus-providers = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }
@@ -51,6 +49,7 @@ eyre = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
+base-execution-evm-precompiles = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }

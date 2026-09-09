@@ -3,6 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
 };
 
+use base_common_runtime_tasks::Runtime;
 use reth_discv4::{DEFAULT_DISCOVERY_ADDR, Discv4Config, NatResolver};
 use reth_network::{
     Discovery, NetworkConfigBuilder, NetworkManager,
@@ -10,7 +11,6 @@ use reth_network::{
 };
 use reth_network_api::{NetworkInfo, PeersInfo};
 use reth_storage_api::noop::NoopProvider;
-use reth_tasks::Runtime;
 use secp256k1::SecretKey;
 use tokio::net::TcpListener;
 

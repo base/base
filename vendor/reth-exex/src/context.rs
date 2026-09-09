@@ -1,12 +1,12 @@
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
+use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
 use reth_exex_types::ExExHead;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::TaskExecutor;
 use tokio::sync::mpsc::{UnboundedSender, error::SendError};
 
 use crate::{ExExContextDyn, ExExEvent, ExExNotifications, ExExNotificationsStream};

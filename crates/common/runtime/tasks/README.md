@@ -1,9 +1,21 @@
 # base-common-runtime-tasks
 
+Shared runtime and task infrastructure: task supervision, graceful shutdown, event streams,
+rate limiting, retry policies, and deterministic scheduling for tests. `Runtime` and
+`RuntimeBuilder` own the production Tokio and optional Rayon executors. `AsyncRuntime` is the
+clock/spawner/cancellation contract used by pipeline components that also run under a
+deterministic executor. `RetryConfig`, `EventSender`, and `EventStream` are shared by those services.
+
+Run all infrastructure and deterministic tests with:
+
+```sh
+cargo test -p base-common-runtime-tasks --features test-utils,time,rayon
+```
+
 base-common-runtime-tasks provides an async runtime abstraction for deterministic testing of base
 components such as the batch submission pipeline and the hybrid block source. The crate
 defines three composable traits — `Clock`, `Spawner`, and `Cancellation` — and a blanket
-`Runtime` supertrait that combines all three. Components accept a single `R: Runtime`
+`AsyncRuntime` supertrait that combines all three. Components accept a single `R: AsyncRuntime`
 bound rather than concrete tokio types, which makes them testable without wall-clock time
 or real concurrency.
 
@@ -22,7 +34,7 @@ The production implementation, `TokioRuntime`, wraps `tokio::time`, `tokio::spaw
 independently while a parent runtime remains live. Call `TokioRuntime::new()` to create
 a fresh cancellation scope, or `TokioRuntime::with_token(token)` to wrap an existing
 `CancellationToken` — useful when migrating code that already holds a token into the
-`R: Runtime` abstraction. The test implementation uses a fully custom async executor —
+`R: AsyncRuntime` abstraction. The test implementation uses a fully custom async executor —
 no tokio involvement — with a seeded RNG that shuffles the ready-task queue before each
 polling round. The same seed always produces the same task polling order, making races
 and timing bugs reproducible. Virtual time only advances when the executor has no ready
@@ -35,7 +47,7 @@ standard `std::task::Poll` code rather than calling into any tokio-specific exec
 Any future returned by `Clock::sleep`, `Clock::interval`, or `Cancellation::cancelled`
 can appear as a `select!` arm without modification.
 
-Components in this workspace that accept `R: Runtime`:
+Components in this workspace that accept `R: AsyncRuntime`:
 
 - `BatchDriver` (`base-batcher-core`) — uses `runtime.cancelled()` as a shutdown signal
   and `runtime.sleep(drain_timeout)` to bound the drain phase after cancellation.
@@ -85,10 +97,10 @@ runtime rather than calling `tokio::time::sleep` directly. This ensures the same
 path is exercised under the deterministic executor in tests:
 
 ```rust,ignore
-use base_common_runtime_tasks::{Runtime, Clock};
+use base_common_runtime_tasks::{AsyncRuntime, Clock};
 use std::time::Duration;
 
-async fn drain_with_timeout<R: Runtime>(runtime: R, timeout: Duration) {
+async fn drain_with_timeout<R: AsyncRuntime>(runtime: R, timeout: Duration) {
     tokio::select! {
         _ = runtime.sleep(timeout) => { /* timed out */ }
         _ = wait_for_confirmations() => { /* done */ }

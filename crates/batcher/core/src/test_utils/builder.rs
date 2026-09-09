@@ -4,8 +4,8 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use base_batcher_encoder::{BatchSubmission, BlobPayload, SubmissionId};
+use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_protocol::Frame;
-use base_common_runtime_tasks::Runtime;
 use base_tx_manager::TxManager;
 
 use crate::{

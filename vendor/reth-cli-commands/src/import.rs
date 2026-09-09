@@ -48,7 +48,7 @@ impl<C: ChainSpecParser> ImportCommand<C> {
     pub async fn execute(
         self,
         components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> eyre::Result<()> {
         info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
 

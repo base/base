@@ -11,6 +11,7 @@ use std::{
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
+use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::{
     BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
@@ -29,7 +30,6 @@ use reth_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
     StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_tasks::Runtime;
 use tracing::{Span, debug, instrument, trace, warn};
 
 use super::precompile_cache::PrecompileCacheMap;
@@ -705,7 +705,7 @@ mod tests {
     #[test]
     fn on_inserted_executed_block_populates_cache() {
         let payload_processor = PayloadProcessor::new(
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
             BaseEvmConfig::new(std::sync::Arc::new(BaseChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
@@ -734,7 +734,7 @@ mod tests {
     #[test]
     fn on_inserted_executed_block_skips_on_parent_mismatch() {
         let payload_processor = PayloadProcessor::new(
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
             BaseEvmConfig::new(std::sync::Arc::new(BaseChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn on_inserted_executed_block_does_not_mutate_checked_out_parent_cache() {
         let payload_processor = PayloadProcessor::new(
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
             BaseEvmConfig::new(std::sync::Arc::new(BaseChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),

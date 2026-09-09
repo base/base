@@ -22,7 +22,6 @@ metrics = { workspace = true }
 itertools = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-tasks = { workspace = true }
 alloy-serde = { workspace = true }
 alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
@@ -40,6 +39,7 @@ base-execution-txpool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 base-common-chain-config = {workspace = true}
 base-execution-evm-fees = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 base-execution-evm-machine = { workspace = true }

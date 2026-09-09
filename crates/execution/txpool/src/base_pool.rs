@@ -1729,6 +1729,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_network::PrivateKeySigner;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, SignableTransaction, Transaction, TxEip1559, TxEip8130,
@@ -1743,7 +1744,6 @@ mod tests {
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_tasks::Runtime;
 
     use super::*;
     use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};

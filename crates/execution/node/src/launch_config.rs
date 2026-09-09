@@ -1,8 +1,8 @@
 //! Concrete inputs for launching a Base execution node.
 
+use base_common_runtime_tasks::TaskExecutor;
 use reth_db::DatabaseEnv;
 use reth_engine_primitives::TreeConfig;
-use reth_tasks::TaskExecutor;
 
 use crate::{BaseNode, BasePayloadServiceConfig, BaseRpcServices, NodeConfig, NodeServices};
 

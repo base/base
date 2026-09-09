@@ -71,7 +71,7 @@ impl<C: ChainSpecParser> Command<C> {
     pub async fn execute(
         mut self,
         components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents + Send + Sync + 'static,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> eyre::Result<()> {
         // Default to 4GB RocksDB block cache for re-execute unless explicitly set.
         if self.env.db.rocksdb_block_cache_size.is_none() {

@@ -27,7 +27,6 @@ reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
 reth-ecies = { workspace = true }
 reth-prune = { workspace = true }
-reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }
 reth-discv5 = { workspace = true }
 reth-stages = { workspace = true }
@@ -48,6 +47,7 @@ reth-node-metrics = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 arbitrary = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }

@@ -21,12 +21,12 @@ use std::{fmt, sync::Arc};
 use alloy_primitives::U256;
 use eyre::WrapErr;
 mod context;
-pub use context::EthApiCtx;
-use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
-use reth_tasks::{
+use base_common_runtime_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
+pub use context::EthApiCtx;
+use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
 
 use crate::{BaseEthApiError, BaseEthApiInner, BaseRpcConverter, SequencerClient};
 

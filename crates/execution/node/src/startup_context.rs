@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_chain_config::BaseChainSpec;
+use base_common_runtime_tasks::TaskExecutor;
 use base_execution_txpool::{PoolConfig, TransactionPool};
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
@@ -15,7 +16,6 @@ use reth_node_core::{
     primitives::Head,
 };
 use reth_provider::{ChainSpecProvider, providers::BlockchainProvider};
-use reth_tasks::TaskExecutor;
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 

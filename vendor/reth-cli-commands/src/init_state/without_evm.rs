@@ -124,7 +124,7 @@ where
             StaticFileSegment::TransactionSenders => "init-state-senders",
             _ => "init-state-segment",
         };
-        reth_tasks::spawn_os_thread(thread_name, move || {
+        base_common_runtime_tasks::spawn_os_thread(thread_name, move || {
             let result = provider.latest_writer(segment).and_then(|mut writer| {
                 for block_num in 1..=target_height {
                     writer.increment_block(block_num)?;
@@ -138,7 +138,7 @@ where
 
     // Spawn job for appending empty headers
     let provider = sf_provider.clone();
-    reth_tasks::spawn_os_thread("init-state-headers", move || {
+    base_common_runtime_tasks::spawn_os_thread("init-state-headers", move || {
         let result = provider.latest_writer(StaticFileSegment::Headers).and_then(|mut writer| {
             for block_num in 1..=target_height {
                 // TODO: should we fill with real parent_hash?

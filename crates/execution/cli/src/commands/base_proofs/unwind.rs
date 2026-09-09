@@ -53,7 +53,7 @@ pub struct UnwindCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> UnwindCommand<C> {
     /// Execute [`UnwindCommand`].
-    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb, target } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");

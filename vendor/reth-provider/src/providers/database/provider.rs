@@ -191,7 +191,7 @@ pub struct DatabaseProvider<TX> {
     /// Manager for state trie overlays and cached changesets.
     overlay_manager: OverlayManager,
     /// Task runtime for spawning parallel I/O work.
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
     /// Path to the database directory.
     db_path: PathBuf,
     /// Pending `RocksDB` batches to be committed at provider commit time.
@@ -391,7 +391,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
         db_path: PathBuf,
         commit_order: CommitOrder,
         metrics: Arc<DatabaseProviderMetrics>,
@@ -426,7 +426,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
     ) -> Self {
@@ -456,7 +456,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
     ) -> Self {
@@ -992,7 +992,7 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
     ) -> Self {

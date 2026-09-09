@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::map::HashSet;
+use base_common_runtime_tasks::Runtime;
 use futures::StreamExt;
 use reth_discv4::Discv4Config;
 use reth_eth_wire::{DisconnectReason, HeadersDirection};
@@ -22,7 +23,6 @@ use reth_network_p2p::{
 use reth_network_peers::{NodeRecord, TrustedPeer, mainnet_nodes};
 use reth_provider::test_utils::MockEthProvider;
 use reth_storage_api::noop::NoopProvider;
-use reth_tasks::Runtime;
 use reth_tracing::init_test_tracing;
 use secp256k1::SecretKey;
 use tokio::task;

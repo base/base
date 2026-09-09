@@ -1,16 +1,4 @@
-//! Reth task management.
-//!
-//! # Feature Flags
-//!
-//! - `rayon`: Enable rayon thread pool for blocking tasks.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+//! Critical task supervision, propagated runtime context, and graceful shutdown.
 
 use std::{
     any::Any,
@@ -31,31 +19,6 @@ use tokio::{
 use tracing::debug;
 
 use crate::shutdown::{Shutdown, Signal, signal};
-
-pub mod lazy;
-pub mod metrics;
-pub mod runtime;
-pub mod shutdown;
-pub mod utils;
-pub(crate) mod worker_map;
-
-#[cfg(feature = "rayon")]
-pub mod pool;
-#[cfg(feature = "rayon")]
-pub use pool::{Worker, WorkerPool, build_pool_with_panic_handler};
-
-/// Lock-free ordered parallel iterator extension trait.
-#[cfg(feature = "rayon")]
-pub mod for_each_ordered;
-#[cfg(feature = "rayon")]
-pub use for_each_ordered::ForEachOrdered;
-pub use lazy::LazyHandle;
-#[cfg(feature = "rayon")]
-pub use runtime::RayonConfig;
-pub use runtime::{Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeConfig, TokioConfig};
-
-/// A [`TaskExecutor`] is now an alias for [`Runtime`].
-pub type TaskExecutor = Runtime;
 
 /// Spawns an OS thread with the current tokio runtime context propagated.
 ///
@@ -106,10 +69,10 @@ where
 ///
 /// The main purpose of this type is to be able to monitor if a critical task panicked, for
 /// diagnostic purposes, since tokio tasks essentially fail silently. Therefore, this type is a
-/// Future that resolves with the name of the panicked task. See [`Runtime::spawn_critical_task`].
+/// Future that resolves with the name of the panicked task. See [`crate::Runtime::spawn_critical_task`].
 ///
-/// Automatically spawned as a background task when building a [`Runtime`]. Use
-/// [`Runtime::take_task_manager_handle`] to extract the join handle if you need to poll for
+/// Automatically spawned as a background task when building a [`crate::Runtime`]. Use
+/// [`crate::Runtime::take_task_manager_handle`] to extract the join handle if you need to poll for
 /// panic errors directly.
 #[derive(Debug)]
 #[must_use = "TaskManager must be polled to monitor critical tasks"]
@@ -128,8 +91,8 @@ pub struct TaskManager {
 // === impl TaskManager ===
 
 impl TaskManager {
-    /// Create a new [`TaskManager`] without an associated [`Runtime`], returning
-    /// the shutdown/event primitives for [`RuntimeBuilder`] to wire up.
+    /// Create a new [`TaskManager`] without an associated [`crate::Runtime`], returning
+    /// the shutdown/event primitives for [`crate::RuntimeBuilder`] to wire up.
     pub(crate) fn new_parts(
         _handle: Handle,
     ) -> (Self, Shutdown, UnboundedSender<TaskEvent>, Arc<AtomicUsize>) {
@@ -173,7 +136,7 @@ impl TaskManager {
 
 /// An endless future that resolves if a critical task panicked.
 ///
-/// See [`Runtime::spawn_critical_task`]
+/// See [`crate::Runtime::spawn_critical_task`]
 impl std::future::Future for TaskManager {
     type Output = Result<(), PanickedTaskError>;
 
@@ -193,8 +156,10 @@ impl std::future::Future for TaskManager {
 /// Error with the name of the task that panicked and an error downcasted to string, if possible.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub struct PanickedTaskError {
-    task_name: &'static str,
-    error: Option<String>,
+    /// Name of the critical task that panicked.
+    pub task_name: &'static str,
+    /// Panic message when the payload is a string.
+    pub error: Option<String>,
 }
 
 impl Display for PanickedTaskError {
@@ -224,7 +189,7 @@ impl PanickedTaskError {
 
 /// Represents the events that the `TaskManager`'s main future can receive.
 #[derive(Debug)]
-pub(crate) enum TaskEvent {
+pub enum TaskEvent {
     /// Indicates that a critical task has panicked.
     Panic(PanickedTaskError),
     /// A signal requesting a graceful shutdown of the `TaskManager`.
@@ -239,6 +204,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::Runtime;
 
     #[test]
     fn test_critical() {

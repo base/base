@@ -28,6 +28,8 @@ use std::{
 };
 
 use alloy_eip2124::EnrForkIdEntry;
+use base_common_runtime_tasks::EventSender;
+use base_common_runtime_tasks::shutdown::GracefulShutdown;
 use base_common_types_chain::BaseBlock;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
@@ -42,8 +44,6 @@ use reth_network_api::{
 use reth_network_peers::{NodeRecord, PeerId};
 use reth_network_types::ReputationChangeKind;
 use reth_storage_api::BlockNumReader;
-use reth_tasks::shutdown::GracefulShutdown;
-use base_common_runtime_tasks::EventSender;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -159,7 +159,7 @@ impl NetworkManager {
     /// # async fn f() {
     ///
     /// use reth_network::{NetworkConfig, NetworkManager};
-    /// use reth_tasks::Runtime;
+    /// use base_common_runtime_tasks::Runtime;
     /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
     ///     .build_with_noop_provider(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     /// let manager = NetworkManager::eth(config).await;
@@ -373,7 +373,7 @@ impl NetworkManager {
     /// };
     /// use reth_network_peers::mainnet_nodes;
     /// use reth_storage_api::noop::NoopProvider;
-    /// use reth_tasks::Runtime;
+    /// use base_common_runtime_tasks::Runtime;
     /// use base_execution_txpool::TransactionPool;
     /// async fn launch<Pool: TransactionPool>(pool: Pool) {
     ///     // This block provider implementation is used for testing purposes.

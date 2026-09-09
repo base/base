@@ -15,7 +15,7 @@ pub struct BaseInitStateCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> BaseInitStateCommand<C> {
     /// Execute the `init` command
-    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         self.init_state.execute(runtime).await
     }
 }

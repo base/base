@@ -10,6 +10,7 @@ use std::{
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
+use base_common_runtime_tasks::{spawn_os_thread, utils::increase_thread_priority};
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_common_types_payload::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
@@ -40,7 +41,6 @@ use reth_provider::{
 use reth_stages_api::ControlFlow;
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::OverlayManager;
-use reth_tasks::{spawn_os_thread, utils::increase_thread_priority};
 use reth_trie::ComputedTrieData;
 use state::TreeState;
 use tokio::sync::{
@@ -389,7 +389,7 @@ pub struct EngineApiTreeHandler<P> {
     /// payload jobs finish.
     pending_persisted_handoff: Option<PersistenceResult>,
     /// Task runtime for spawning blocking work on named, reusable threads.
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 }
 
 impl<P: Debug> std::fmt::Debug for EngineApiTreeHandler<P> {
@@ -457,7 +457,7 @@ where
         config: TreeConfig,
         engine_kind: EngineApiKind,
         evm_config: BaseEvmConfig,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> Self {
         let (incoming_tx, incoming) = crossbeam_channel::unbounded();
 
@@ -505,7 +505,7 @@ where
         config: TreeConfig,
         kind: EngineApiKind,
         evm_config: BaseEvmConfig,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> (Sender<FromEngine>, UnboundedReceiver<EngineApiEvent>) {
         let best_block_number = provider.best_block_number().unwrap_or(0);
         let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();

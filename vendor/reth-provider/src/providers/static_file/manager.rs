@@ -592,7 +592,7 @@ impl StaticFileProvider {
         blocks: &[ExecutedBlock],
         tx_nums: &[TxNumber],
         ctx: StaticFileWriteCtx,
-        runtime: &reth_tasks::Runtime,
+        runtime: &base_common_runtime_tasks::Runtime,
     ) -> ProviderResult<()> {
         if blocks.is_empty() {
             return Ok(());

@@ -11,6 +11,7 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber};
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::{FutureExt, stream::Stream};
@@ -28,7 +29,6 @@ use reth_network_p2p::{
 };
 use reth_network_peers::PeerId;
 use reth_primitives_traits::{GotExpected, SealedHeader};
-use reth_tasks::Runtime;
 use thiserror::Error;
 use tracing::{debug, error, trace};
 

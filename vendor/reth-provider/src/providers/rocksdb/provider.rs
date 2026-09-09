@@ -1378,7 +1378,7 @@ impl RocksDBProvider {
         blocks: &[ExecutedBlock],
         tx_nums: &[TxNumber],
         ctx: RocksDBWriteCtx,
-        runtime: &reth_tasks::Runtime,
+        runtime: &base_common_runtime_tasks::Runtime,
     ) -> ProviderResult<()> {
         let mut r_tx_hash = None;
         let mut r_account_history = None;

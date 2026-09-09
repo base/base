@@ -10,6 +10,7 @@ use std::{
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader};
 use base_execution_evm_runtime::{
     bytecode::Bytecode,
@@ -25,7 +26,6 @@ use reth_execution_types::Chain;
 use reth_primitives_traits::{InMemorySize, RecoveredBlock};
 use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use reth_tasks::Runtime;
 use schnellru::{ByLength, Limiter, LruMap};
 use tokio::sync::{
     Semaphore,

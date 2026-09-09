@@ -9,6 +9,8 @@ use std::{
 };
 
 use base_common_chain_config::ChainSpecProvider;
+use base_common_runtime_tasks::EventStream;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_txpool::{
@@ -28,8 +30,6 @@ use reth_storage_api::{
     BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, StateProviderFactory,
     StateRangeProviderFactory, noop::NoopProvider,
 };
-use reth_tasks::Runtime;
-use base_common_runtime_tasks::EventStream;
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},

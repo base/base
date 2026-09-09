@@ -49,13 +49,13 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::Provider;
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
-use base_common_types_chain::TxEnvelope;
 use base_common_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
 };
+use base_common_runtime_tasks::{AsyncRuntime as Runtime, RuntimeTimeout, TokioRuntime};
+use base_common_types_chain::TxEnvelope;
 use base_common_types_rpc::{TransactionReceipt, TransactionRequest};
-use base_common_runtime_tasks::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -1836,12 +1836,12 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
     use alloy_transport::mock::Asserter;
-    use base_common_types_chain::TxEip1559;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_common_runtime_tasks::{
         Clock,
         deterministic::{Config, Runner},
     };
+    use base_common_types_chain::TxEip1559;
     use rstest::rstest;
 
     use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};

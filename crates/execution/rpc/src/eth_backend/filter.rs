@@ -13,6 +13,7 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::TxHash;
 use async_trait::async_trait;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::{
     Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
@@ -37,7 +38,6 @@ use reth_storage_api::{
     ReceiptProvider,
 };
 use reth_storage_errors::provider::ProviderError;
-use reth_tasks::Runtime;
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,
@@ -95,7 +95,7 @@ impl EthFilter {
     ///
     /// ```no_run
     /// use crate::EthFilter;
-    /// use reth_tasks::Runtime;
+    /// use base_common_runtime_tasks::Runtime;
     ///
     /// fn filters(eth_api: BaseEthApi, runtime: Runtime) -> EthFilter {
     ///     EthFilter::new(eth_api, Default::default(), runtime)
@@ -1289,10 +1289,10 @@ mod tests {
     use std::{collections::VecDeque, sync::Arc};
 
     use alloy_primitives::FixedBytes;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{BaseBlock, BaseReceipt};
     use rand::Rng;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_tasks::Runtime;
     use reth_testing_utils::generators;
 
     use super::*;

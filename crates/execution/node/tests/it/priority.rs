@@ -7,6 +7,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{Address, TxKind};
 use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_network::TxSignerSync;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_node_core::NodeConfig;
 use reth_db::test_utils::create_test_rw_db_with_path;
@@ -14,7 +15,6 @@ use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_core::args::DatadirArgs;
-use reth_tasks::Runtime;
 use tokio::sync::Mutex;
 
 #[tokio::test(flavor = "multi_thread")]

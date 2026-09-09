@@ -44,7 +44,11 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `db stage unwind` command
-    pub async fn execute<F>(self, components: F, runtime: reth_tasks::Runtime) -> eyre::Result<()>
+    pub async fn execute<F>(
+        self,
+        components: F,
+        runtime: base_common_runtime_tasks::Runtime,
+    ) -> eyre::Result<()>
     where
         F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
     {

@@ -192,7 +192,6 @@ members = [
   "vendor/reth-storage-api",
   "vendor/reth-storage-errors",
   "vendor/reth-storage-overlay",
-  "vendor/reth-tasks",
   "vendor/reth-testing-utils",
   "vendor/reth-tracing",
   "vendor/reth-tracing-otlp",
@@ -482,7 +481,6 @@ reth-db = { path = "vendor/reth-db", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
-reth-tasks = { path = "vendor/reth-tasks", default-features = false }
 reth-ecies = { path = "vendor/reth-ecies", default-features = false }
 reth-prune = { path = "vendor/reth-prune", default-features = false }
 reth-discv4 = { path = "vendor/reth-discv4", default-features = false }

@@ -9,9 +9,9 @@
 
 use std::task::{Context, Poll, ready};
 
+use base_common_runtime_tasks::Runtime;
 use futures::FutureExt;
 use reth_stages_api::{ControlFlow, Pipeline, PipelineError, PipelineTarget, PipelineWithResult};
-use reth_tasks::Runtime;
 use tokio::sync::oneshot;
 use tracing::trace;
 
@@ -227,13 +227,13 @@ mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::Header;
     use futures::poll;
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
     use reth_stages::ExecOutput;
     use reth_stages_api::StageCheckpoint;
-    use reth_tasks::Runtime;
 
     use super::*;
     use crate::test_utils::{TestPipelineBuilder, insert_headers_into_client};

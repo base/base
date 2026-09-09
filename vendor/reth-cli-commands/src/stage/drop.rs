@@ -38,7 +38,7 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `db` command
-    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()>
+    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()>
     where
         C: ChainSpecParser,
     {

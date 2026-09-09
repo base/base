@@ -1,6 +1,6 @@
 use std::{future::Future, pin::pin, sync::mpsc, time::Duration};
 
-use reth_tasks::{PanickedTaskError, TaskExecutor};
+use base_common_runtime_tasks::{PanickedTaskError, TaskExecutor};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
@@ -10,23 +10,23 @@ use tracing::{debug, error, info};
 #[derive(Debug)]
 pub struct CliRunner {
     config: CliRunnerConfig,
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 }
 
 impl CliRunner {
     /// Attempts to create a new [`CliRunner`] using the default
-    /// [`Runtime`](reth_tasks::Runtime).
+    /// [`Runtime`](base_common_runtime_tasks::Runtime).
     ///
     /// The default runtime is multi-threaded, with both I/O and time drivers enabled.
-    pub fn try_default_runtime() -> Result<Self, reth_tasks::RuntimeBuildError> {
-        Self::try_with_runtime_config(reth_tasks::RuntimeConfig::default())
+    pub fn try_default_runtime() -> Result<Self, base_common_runtime_tasks::RuntimeBuildError> {
+        Self::try_with_runtime_config(base_common_runtime_tasks::RuntimeConfig::default())
     }
 
-    /// Creates a new [`CliRunner`] with the given [`RuntimeConfig`](reth_tasks::RuntimeConfig).
+    /// Creates a new [`CliRunner`] with the given [`RuntimeConfig`](base_common_runtime_tasks::RuntimeConfig).
     pub fn try_with_runtime_config(
-        config: reth_tasks::RuntimeConfig,
-    ) -> Result<Self, reth_tasks::RuntimeBuildError> {
-        let runtime = reth_tasks::RuntimeBuilder::new(config).build()?;
+        config: base_common_runtime_tasks::RuntimeConfig,
+    ) -> Result<Self, base_common_runtime_tasks::RuntimeBuildError> {
+        let runtime = base_common_runtime_tasks::RuntimeBuilder::new(config).build()?;
         Ok(Self { config: CliRunnerConfig::default(), runtime })
     }
 
@@ -36,8 +36,8 @@ impl CliRunner {
         self
     }
 
-    /// Returns a clone of the underlying [`Runtime`](reth_tasks::Runtime).
-    pub fn runtime(&self) -> reth_tasks::Runtime {
+    /// Returns a clone of the underlying [`Runtime`](base_common_runtime_tasks::Runtime).
+    pub fn runtime(&self) -> base_common_runtime_tasks::Runtime {
         self.runtime.clone()
     }
 
@@ -64,7 +64,7 @@ impl CliRunner {
             + Sync
             + std::fmt::Display
             + From<std::io::Error>
-            + From<reth_tasks::PanickedTaskError>
+            + From<base_common_runtime_tasks::PanickedTaskError>
             + 'static,
     {
         let (context, task_manager_handle) = cli_context(&self.runtime);
@@ -103,7 +103,7 @@ impl CliRunner {
             + Sync
             + std::fmt::Display
             + From<std::io::Error>
-            + From<reth_tasks::PanickedTaskError>
+            + From<base_common_runtime_tasks::PanickedTaskError>
             + 'static,
     {
         let (context, task_manager_handle) = cli_context(&self.runtime);
@@ -167,7 +167,7 @@ impl CliRunner {
 
 /// Extracts the task manager handle from the runtime and creates the [`CliContext`].
 pub fn cli_context(
-    runtime: &reth_tasks::Runtime,
+    runtime: &base_common_runtime_tasks::Runtime,
 ) -> (CliContext, JoinHandle<Result<(), PanickedTaskError>>) {
     let handle =
         runtime.take_task_manager_handle().expect("Runtime must contain a TaskManager handle");
@@ -223,7 +223,7 @@ pub async fn run_to_completion_or_panic<F, E>(
 ) -> Result<(), E>
 where
     F: Future<Output = Result<(), E>>,
-    E: Send + Sync + From<reth_tasks::PanickedTaskError> + 'static,
+    E: Send + Sync + From<base_common_runtime_tasks::PanickedTaskError> + 'static,
 {
     let fut = pin!(fut);
     tokio::select! {
@@ -285,11 +285,11 @@ where
 /// Default timeout for waiting on the tokio runtime to shut down.
 const DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Shut down the given [`Runtime`](reth_tasks::Runtime), and wait for it if `wait` is set.
+/// Shut down the given [`Runtime`](base_common_runtime_tasks::Runtime), and wait for it if `wait` is set.
 ///
 /// Dropping the runtime on the current thread could block due to tokio pool teardown.
 /// Instead, we drop it on a separate thread and optionally wait for completion.
-pub fn runtime_shutdown(rt: reth_tasks::Runtime, wait: bool) {
+pub fn runtime_shutdown(rt: base_common_runtime_tasks::Runtime, wait: bool) {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("rt-shutdown".to_string())

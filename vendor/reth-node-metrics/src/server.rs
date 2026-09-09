@@ -1,5 +1,6 @@
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
+use base_common_runtime_tasks::TaskExecutor;
 use bytes::Bytes;
 use eyre::WrapErr;
 use http::{HeaderValue, Request, Response, StatusCode, header::CONTENT_TYPE};
@@ -8,7 +9,6 @@ use metrics::describe_gauge;
 use metrics_process::Collector;
 use reqwest::Client;
 use reth_metrics::metrics::Unit;
-use reth_tasks::TaskExecutor;
 
 use crate::{
     chain::ChainSpecInfo,
@@ -497,8 +497,8 @@ async fn handle_tokio_dump() -> Response<Full<Bytes>> {
 mod tests {
     use std::net::{SocketAddr, TcpListener};
 
+    use base_common_runtime_tasks::Runtime;
     use reqwest::Client;
-    use reth_tasks::Runtime;
     use socket2::{Domain, Socket, Type};
 
     use super::*;

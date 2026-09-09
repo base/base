@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use base_common_runtime_tasks::{Runtime, pool::BlockingTaskPool};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
@@ -13,7 +14,6 @@ use reth_rpc_server_types::constants::{
     DEFAULT_ETH_PROOF_WINDOW, DEFAULT_MAX_BLOCKING_IO_REQUEST, DEFAULT_MAX_SIMULATE_BLOCKS,
     DEFAULT_PROOF_PERMITS,
 };
-use reth_tasks::{Runtime, pool::BlockingTaskPool};
 
 use crate::{BaseEthApi, BaseRpcContext, BaseRpcConverter, eth_backend::core::BaseEthApiInner};
 

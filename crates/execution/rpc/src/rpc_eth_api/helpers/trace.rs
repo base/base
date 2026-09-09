@@ -9,13 +9,13 @@ use base_execution_evm_blocks::{
     BlockExecutor, Evm, EvmEnvFor, EvmFactoryExt, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv,
     TracingCtx, TxEnvFor,
 };
+use base_execution_evm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use base_execution_evm_machine::{Block, ResultAndState};
 use futures::Future;
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::ProviderTx;
-use base_execution_evm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 
 use crate::BaseEthApi;
 
@@ -44,7 +44,7 @@ impl BaseEthApi {
     /// and the database that points to the beginning of the transaction.
     ///
     /// Note: Implementers should use a threadpool where blocking is allowed, such as
-    /// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool).
+    /// [`BlockingTaskPool`](base_common_runtime_tasks::pool::BlockingTaskPool).
     pub fn spawn_trace_transaction_in_block<F, R>(
         &self,
         hash: B256,
@@ -73,7 +73,7 @@ impl BaseEthApi {
     /// and the database that points to the beginning of the transaction.
     ///
     /// Note: Implementers should use a threadpool where blocking is allowed, such as
-    /// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool).
+    /// [`BlockingTaskPool`](base_common_runtime_tasks::pool::BlockingTaskPool).
     pub fn spawn_trace_transaction_in_block_with_inspector<Insp, F, R>(
         &self,
         hash: B256,

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_txpool::{
@@ -18,7 +19,6 @@ use reth_provider::{
     providers::BlockchainProvider,
     test_utils::{MockEthProvider, create_test_provider_factory_with_chain_spec},
 };
-use reth_tasks::Runtime;
 
 use crate::{BaseRpcContext, EthApiBuilder};
 

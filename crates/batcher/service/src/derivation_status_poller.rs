@@ -3,10 +3,10 @@
 use std::{future::Future, time::Duration};
 
 use base_batcher_core::DerivationStatus;
+use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_rpc::BlockNumberOrTag;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
-use base_common_runtime_tasks::Runtime;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -114,11 +114,11 @@ mod tests {
 
     use alloy_primitives::B256;
     use base_batcher_core::DerivationStatus;
-    use base_protocol::BlockInfo;
     use base_common_runtime_tasks::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
+    use base_protocol::BlockInfo;
     use tokio::sync::mpsc;
 
     use super::{DerivationStatusPoller, DerivationStatusProvider};

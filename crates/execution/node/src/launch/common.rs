@@ -36,6 +36,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_chain_config::BaseChainSpec;
+use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_txpool::TransactionPool;
@@ -83,7 +84,6 @@ use reth_stages::{
 };
 use reth_static_file::{StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance};
 use reth_storage_overlay::OverlayManager;
-use reth_tasks::TaskExecutor;
 use reth_tracing::{
     throttle,
     tracing::{debug, error, info, warn},

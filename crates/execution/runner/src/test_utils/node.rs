@@ -6,6 +6,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
 use base_common_network::Base;
+use base_common_runtime_tasks::Runtime;
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
 use reth_db::{
@@ -16,7 +17,6 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::Runtime;
 
 use crate::test_utils::engine::EngineApi;
 
@@ -167,6 +167,7 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::B256;
     use base_common_chain_config::BaseChainSpec;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_payload::{
         BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, ForkchoiceState, PayloadAttributes,
     };
@@ -178,7 +179,6 @@ mod tests {
         dirs::{DataDirPath, MaybePlatformPath},
     };
     use reth_provider::{DatabaseProviderROFactory, HeaderProvider};
-    use reth_tasks::Runtime;
 
     use super::LocalNode;
     use crate::test_utils::engine::EngineApi;

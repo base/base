@@ -27,7 +27,7 @@ pub(crate) async fn dump_execution_stage(
     should_run: bool,
     evm_config: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 ) -> eyre::Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 

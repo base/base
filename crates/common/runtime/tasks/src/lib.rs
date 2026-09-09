@@ -13,8 +13,8 @@ pub use cancellation::Cancellation;
 mod clock;
 pub use clock::Clock;
 
-mod runtime;
-pub use runtime::Runtime;
+mod async_runtime;
+pub use async_runtime::AsyncRuntime;
 
 mod runtime_timeout;
 pub use runtime_timeout::RuntimeTimeout;
@@ -46,3 +46,32 @@ pub use event_stream::EventStream;
 
 #[cfg(feature = "time")]
 pub mod ratelimit;
+
+mod task_manager;
+pub use task_manager::{
+    PanickedTaskError, TaskEvent, TaskManager, spawn_os_thread, spawn_scoped_os_thread,
+};
+
+mod lazy;
+pub use lazy::LazyHandle;
+
+pub mod metrics;
+pub mod runtime;
+pub use runtime::{
+    Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeConfig, TaskExecutor, TokioConfig,
+};
+
+pub mod shutdown;
+pub mod utils;
+mod worker_map;
+
+#[cfg(feature = "rayon")]
+pub mod pool;
+#[cfg(feature = "rayon")]
+pub use pool::{Worker, WorkerPool, build_pool_with_panic_handler};
+#[cfg(feature = "rayon")]
+pub mod for_each_ordered;
+#[cfg(feature = "rayon")]
+pub use for_each_ordered::ForEachOrdered;
+#[cfg(feature = "rayon")]
+pub use runtime::RayonConfig;

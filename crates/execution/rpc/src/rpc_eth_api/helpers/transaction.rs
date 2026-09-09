@@ -39,7 +39,7 @@ use crate::BaseEthApi;
 /// This includes utilities for transaction tracing, transacting and inspection.
 ///
 /// Async functions that are spawned onto the
-/// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool) begin with `spawn_`
+/// [`BlockingTaskPool`](base_common_runtime_tasks::pool::BlockingTaskPool) begin with `spawn_`
 ///
 /// ## Calls
 ///

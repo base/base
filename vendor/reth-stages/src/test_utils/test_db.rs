@@ -53,7 +53,7 @@ impl Default for TestStageDB {
                 std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
-                reth_tasks::Runtime::test(),
+                base_common_runtime_tasks::Runtime::test(),
             )
             .expect("failed to create test provider factory"),
         }
@@ -73,7 +73,7 @@ impl TestStageDB {
                 std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
-                reth_tasks::Runtime::test(),
+                base_common_runtime_tasks::Runtime::test(),
             )
             .expect("failed to create test provider factory"),
         }

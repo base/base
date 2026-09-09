@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_rpc::{
     Filter, Header, Log,
     pubsub::{
@@ -18,7 +19,6 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use reth_storage_api::BlockNumReader;
-use reth_tasks::Runtime;
 use serde::Serialize;
 use tokio_stream::{
     Stream,

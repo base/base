@@ -18,7 +18,6 @@ dashmap = { workspace = true }
 dirs-next = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-trie = { workspace = true }
-reth-tasks = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 base-metrics = { workspace = true }
@@ -45,6 +44,7 @@ base-execution-evm-fees = { workspace = true }
 nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
+base-common-runtime-tasks = { workspace = true }
 base-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["default"] }
@@ -167,7 +167,7 @@ test-utils = [
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "reth-tasks/test-utils",
+    "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",
     "rlimit",

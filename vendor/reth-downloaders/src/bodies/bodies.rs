@@ -9,6 +9,7 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::Stream;
@@ -24,7 +25,6 @@ use reth_network_p2p::{
 };
 use reth_primitives_traits::{InMemorySize, SealedHeader};
 use reth_storage_api::HeaderProvider;
-use reth_tasks::Runtime;
 use tracing::info;
 
 use super::queue::BodiesRequestQueue;

@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_runtime_tasks::TaskExecutor;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use clap::Parser;
 use metrics::{self, Counter};
@@ -25,7 +26,6 @@ use reth_node_metrics::{
 };
 use reth_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
 use reth_stages::StageId;
-use reth_tasks::TaskExecutor;
 use reth_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,
     StorageTrieEntryLike, TrieTableAdapter,

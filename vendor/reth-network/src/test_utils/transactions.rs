@@ -5,11 +5,11 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
+use base_common_runtime_tasks::Runtime;
 use reth_eth_wire::EthVersion;
 use reth_network_api::{PeerKind, PeerRequest, PeerRequestSender};
 use reth_network_peers::PeerId;
 use reth_storage_api::noop::NoopProvider;
-use reth_tasks::Runtime;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc;
 use tracing::trace;

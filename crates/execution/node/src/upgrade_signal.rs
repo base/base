@@ -854,9 +854,9 @@ mod tests {
         use std::net::Ipv4Addr;
 
         use base_common_chain_config::BaseChainSpecBuilder;
+        use base_common_runtime_tasks::Runtime;
         use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
         use reth_network::{NetworkConfigBuilder, NetworkManager};
-        use reth_tasks::Runtime;
 
         // Use a scheduled fork so startup and the later runtime update advertise different IDs.
         // Concrete Base specs always use the opel discovery entry, including custom chain IDs.

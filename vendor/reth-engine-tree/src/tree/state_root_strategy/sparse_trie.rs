@@ -7,6 +7,7 @@ use alloy_primitives::{
     map::{B256Map, hash_map::Entry},
 };
 use alloy_rlp::{Decodable, Encodable};
+use base_common_runtime_tasks::Runtime;
 use base_execution_trie::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
     ProofWorkerHandle, StateRootTaskError,
@@ -16,7 +17,6 @@ use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, FastInstant as Instant};
-use reth_tasks::Runtime;
 use reth_trie::{
     DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,
     updates::TrieUpdates,
@@ -1226,7 +1226,7 @@ mod tests {
 
     #[test]
     fn run_returns_parent_root_without_revealing_blind_trie_when_no_state_updates() {
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
@@ -1280,7 +1280,7 @@ mod tests {
 
     #[test]
     fn stall_check_waits_for_in_flight_proofs_then_reports_pending_updates() {
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
@@ -1367,7 +1367,7 @@ mod tests {
 
     #[test]
     fn run_errors_when_cancel_guard_drops_before_updates_finish() {
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
@@ -1419,7 +1419,7 @@ mod tests {
 
     #[test]
     fn run_ignores_hints_queued_after_updates_finish() {
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(

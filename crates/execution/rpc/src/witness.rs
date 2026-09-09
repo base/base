@@ -5,6 +5,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chain_config::ChainSpecProvider;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilder;
 use base_execution_txpool::TransactionPool;
@@ -16,7 +17,6 @@ use reth_storage_api::{
     BlockReaderIdExt, StateProviderFactory,
     errors::{ProviderError, ProviderResult},
 };
-use reth_tasks::Runtime;
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]

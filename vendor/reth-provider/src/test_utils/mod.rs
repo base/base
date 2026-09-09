@@ -83,7 +83,7 @@ fn create_test_provider_factory_with_genesis(
             .with_default_tables()
             .build()
             .expect("failed to create test RocksDB provider"),
-        reth_tasks::Runtime::test(),
+        base_common_runtime_tasks::Runtime::test(),
     )
     .expect("failed to create test provider factory")
 }
@@ -115,7 +115,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
             .with_default_tables()
             .build()
             .expect("failed to create test RocksDB provider"),
-        reth_tasks::Runtime::test(),
+        base_common_runtime_tasks::Runtime::test(),
     )
     .expect("failed to create test provider factory")
 }

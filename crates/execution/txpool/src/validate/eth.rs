@@ -13,6 +13,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, U256};
 use alloy_rlp::Encodable;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{
     BaseBlock, BlockHeader, Transaction, Typed2718,
     constants::{
@@ -29,7 +30,6 @@ use reth_storage_api::{
     AccountInfoReader, BlockReaderIdExt, BytecodeReader, StateProviderBox, StateProviderFactory,
     errors::ProviderError,
 };
-use reth_tasks::Runtime;
 
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;
 use crate::{

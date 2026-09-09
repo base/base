@@ -350,7 +350,7 @@ mod tests {
                 .build()
                 .unwrap(),
             RocksDBProvider::builder(create_test_rocksdb_dir().0.keep()).build().unwrap(),
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
         )
         .unwrap();
 

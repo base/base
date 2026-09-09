@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 reth-provider = { workspace = true }
 base-common-network = {workspace = true}
-reth-tasks = { workspace = true, optional = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
@@ -28,6 +27,7 @@ base-testing-support = { workspace = true, optional = true }
 base-node-core = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, optional = true}
 base-common-types-chain = { workspace = true, optional = true }
+base-common-runtime-tasks = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true, optional = true}
 tokio = { workspace = true, features = ["default"], optional = true }
@@ -74,12 +74,12 @@ test-utils = [
     "dep:base-common-types-payload",
     "dep:base-testing-support",
     "dep:reth-node-core",
-    "dep:reth-tasks",
+    "dep:base-common-runtime-tasks",
     "dep:tracing-subscriber",
     "reth-db/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "reth-tasks?/test-utils",
+    "base-common-runtime-tasks?/test-utils",
     "dep:reth-primitives-traits",
     "dep:base-execution-payload-types",
 ]

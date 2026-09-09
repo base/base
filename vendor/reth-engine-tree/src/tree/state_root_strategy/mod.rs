@@ -65,6 +65,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_common_runtime_tasks::utils::increase_thread_priority;
 use base_execution_evm_blocks::OnStateHook;
 pub use base_execution_trie::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
@@ -84,7 +85,6 @@ use reth_provider::{
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
-use reth_tasks::utils::increase_thread_priority;
 use reth_trie::{
     HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
     updates::TrieUpdates,
@@ -103,7 +103,7 @@ use crate::tree::{
 };
 
 /// Handle to a [`HashedPostState`] computed on a background thread.
-pub type LazyHashedPostState = reth_tasks::LazyHandle<Arc<HashedPostState>>;
+pub type LazyHashedPostState = base_common_runtime_tasks::LazyHandle<Arc<HashedPostState>>;
 
 /// Strategy used by engine-tree validation to prepare per-block state-root work.
 pub trait StateRootStrategy<P>: Send + Sync {
@@ -129,7 +129,7 @@ pub trait StateRootStrategy<P>: Send + Sync {
 
 /// Data available while preparing one payload-builder state-root handle.
 pub struct PayloadStateRootJobContext<'a, P> {
-    executor: &'a reth_tasks::Runtime,
+    executor: &'a base_common_runtime_tasks::Runtime,
     overlay_manager: &'a OverlayManager,
     parent_hash: B256,
     parent_header: &'a base_common_types_chain::Header,
@@ -155,7 +155,7 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
     /// Creates a payload-builder state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
-        executor: &'a reth_tasks::Runtime,
+        executor: &'a base_common_runtime_tasks::Runtime,
         overlay_manager: &'a OverlayManager,
         parent_hash: B256,
         parent_header: &'a base_common_types_chain::Header,
@@ -204,7 +204,7 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
     }
 
     /// Returns the task runtime used by state-root work.
-    pub const fn executor(&self) -> &reth_tasks::Runtime {
+    pub const fn executor(&self) -> &base_common_runtime_tasks::Runtime {
         self.executor
     }
 
@@ -227,7 +227,7 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
 
 /// Data available while preparing one state-root job.
 pub struct StateRootJobContext<'a, P> {
-    executor: &'a reth_tasks::Runtime,
+    executor: &'a base_common_runtime_tasks::Runtime,
     overlay_manager: &'a OverlayManager,
     env: &'a ExecutionEnv,
     parent_header: &'a SealedHeader,
@@ -251,7 +251,7 @@ impl<'a, P> StateRootJobContext<'a, P> {
     /// Creates a new state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
-        executor: &'a reth_tasks::Runtime,
+        executor: &'a base_common_runtime_tasks::Runtime,
         overlay_manager: &'a OverlayManager,
         env: &'a ExecutionEnv,
         parent_header: &'a SealedHeader,
@@ -285,7 +285,7 @@ impl<'a, P> StateRootJobContext<'a, P> {
     }
 
     /// Returns the task runtime used by state-root work.
-    pub const fn executor(&self) -> &reth_tasks::Runtime {
+    pub const fn executor(&self) -> &base_common_runtime_tasks::Runtime {
         self.executor
     }
 
@@ -488,7 +488,7 @@ impl DefaultStateRootStrategy {
     #[instrument(level = "debug", target = "engine::tree::payload_processor", skip_all)]
     fn spawn_state_root<F>(
         &self,
-        executor: &reth_tasks::Runtime,
+        executor: &base_common_runtime_tasks::Runtime,
         overlay_manager: &OverlayManager,
         multiproof_provider_factory: F,
         options: StateRootTaskOptions<'_>,
@@ -559,7 +559,7 @@ impl DefaultStateRootStrategy {
     #[expect(clippy::too_many_arguments)]
     fn spawn_sparse_trie_task(
         &self,
-        executor: &reth_tasks::Runtime,
+        executor: &base_common_runtime_tasks::Runtime,
         overlay_manager: &OverlayManager,
         proof_worker_handle: ProofWorkerHandle,
         proof_result_tx: CrossbeamSender<ProofResultMessage>,
@@ -582,7 +582,7 @@ impl DefaultStateRootStrategy {
 
         let parent_span = Span::current();
         executor.clone().spawn_blocking_named("sparse-trie", move || {
-            reth_tasks::once!(increase_thread_priority);
+            base_common_runtime_tasks::once!(increase_thread_priority);
 
             let parent_hash = parent_header.hash();
             let parent_state_root = parent_header.state_root();
@@ -984,7 +984,7 @@ struct SparseTrieStateRootJob<P> {
     handle: StateRootHandle,
     provider_builder: StateProviderBuilder<P>,
     overlay_factory: OverlayStateProviderFactory<P>,
-    executor: reth_tasks::Runtime,
+    executor: base_common_runtime_tasks::Runtime,
     timeout: Option<Duration>,
     compare_trie_updates: bool,
     metrics: BlockValidationMetrics,
@@ -1004,7 +1004,7 @@ where
         + 'static,
 {
     fn serial_fallback(
-        executor: &reth_tasks::Runtime,
+        executor: &base_common_runtime_tasks::Runtime,
         provider_builder: StateProviderBuilder<P>,
         output: Arc<BlockExecutionOutput>,
     ) -> ProviderResult<SerialFallbackRx> {
@@ -1302,7 +1302,7 @@ mod tests {
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_execution_evm_blocks::OnStateHook;
     use base_execution_evm_runtime::state::{
-        AccountInfo, JournalAccountStatus, EvmState, EvmStorageSlot, TransactionId,
+        AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, TransactionId,
     };
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
@@ -1464,7 +1464,7 @@ mod tests {
 
         let provider_factory = BlockchainProvider::new(factory).unwrap();
         let env: ExecutionEnv = ExecutionEnv::test_default();
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let overlay_manager = OverlayManager::default();
         let mut state_root_handle = DefaultStateRootStrategy::default().spawn_state_root(
             &runtime,

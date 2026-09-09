@@ -52,7 +52,6 @@ reth-rpc-server-types = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 base-execution-eip8130-rpc = { workspace = true }
 base-execution-payload-types = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
@@ -61,7 +60,6 @@ clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }
-reth-tasks = { workspace = true, features = ["rayon"]}
 serde_json = { workspace = true,  features = ["alloc"]}
 tracing = { workspace = true, features = ["attributes"]}
 parking_lot = { workspace = true, features = ["default"] }
@@ -77,6 +75,7 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default", "std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
+base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
@@ -158,7 +157,7 @@ test-utils = [
     "reth-provider/test-utils",
     "base-execution-evm-blocks/test-utils",
     "reth-stages-types/test-utils",
-    "reth-tasks/test-utils",
+    "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",
     "reth-engine-tree/test-utils",

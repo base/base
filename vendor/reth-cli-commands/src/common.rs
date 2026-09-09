@@ -86,7 +86,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
     pub fn init(
         &self,
         access: AccessRights,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> eyre::Result<Environment>
     where
         C: ChainSpecParser,
@@ -180,7 +180,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         access: AccessRights,
-        runtime: reth_tasks::Runtime,
+        runtime: base_common_runtime_tasks::Runtime,
     ) -> eyre::Result<ProviderFactory>
     where
         C: ChainSpecParser,

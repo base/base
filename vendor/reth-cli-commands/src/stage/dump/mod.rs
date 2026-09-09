@@ -94,7 +94,11 @@ macro_rules! handle_stage {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `dump-stage` command
-    pub async fn execute<F>(self, components: F, runtime: reth_tasks::Runtime) -> eyre::Result<()>
+    pub async fn execute<F>(
+        self,
+        components: F,
+        runtime: base_common_runtime_tasks::Runtime,
+    ) -> eyre::Result<()>
     where
         F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
     {

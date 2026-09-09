@@ -19,6 +19,9 @@ use base_execution_evm_blocks::{
     BlockBuilder, BlockEnvironment, BlockExecutor, CancelOnDrop, Evm, EvmEnvFor, EvmFor,
     HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
 };
+use base_execution_evm_inspectors::{
+    access_list::AccessListInspector, transfer::TransferInspector,
+};
 use base_execution_evm_machine::{Block, Cfg, ResultAndState, Transaction};
 use base_execution_evm_runtime::{
     Database, DatabaseCommit,
@@ -36,7 +39,6 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockIdReader, ProviderTx};
 use reth_storage_errors::provider::ProviderError;
-use base_execution_evm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 
 use crate::BaseEthApi;
@@ -613,7 +615,7 @@ impl BaseEthApi {
     /// and the database that points to the beginning of the transaction.
     ///
     /// Note: Implementers should use a threadpool where blocking is allowed, such as
-    /// [`BlockingTaskPool`](reth_tasks::pool::BlockingTaskPool).
+    /// [`BlockingTaskPool`](base_common_runtime_tasks::pool::BlockingTaskPool).
     pub fn spawn_replay_transaction<F, R>(
         &self,
         hash: B256,

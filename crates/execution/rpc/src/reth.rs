@@ -4,6 +4,7 @@ use crate::{RethApiServer, RethJitAction};
 use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
+use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use futures::{Stream, StreamExt};
@@ -18,7 +19,6 @@ use reth_rpc_eth_types::{EthApiError, EthResult};
 use reth_storage_api::{
     BlockReader, BlockReaderIdExt, ChangeSetReader, StateProviderFactory, TransactionVariant,
 };
-use reth_tasks::{Runtime, pool::BlockingTaskGuard};
 use serde::Serialize;
 use tokio::sync::oneshot;
 

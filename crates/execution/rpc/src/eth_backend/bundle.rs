@@ -5,6 +5,7 @@ use std::sync::Arc;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Keccak256, U256, uint};
 use base_common_chain_config::ChainSpecProvider;
+use base_common_runtime_tasks::pool::BlockingTaskGuard;
 use base_common_types_chain::{Transaction as _, transaction::TxHashRef};
 use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_execution_evm_blocks::Evm;
@@ -16,7 +17,6 @@ use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
 };
-use reth_tasks::pool::BlockingTaskGuard;
 
 use crate::{BaseEthApi, EthCallBundleApiServer};
 

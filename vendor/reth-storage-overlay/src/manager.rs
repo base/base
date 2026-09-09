@@ -13,6 +13,8 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber};
+#[cfg(feature = "rayon")]
+use base_common_runtime_tasks::WorkerPool;
 use parking_lot::Mutex;
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_metrics::{
@@ -28,8 +30,6 @@ use reth_storage_api::{
     StorageChangeSetReader, StorageSettingsCache,
 };
 use reth_storage_errors::provider::ProviderResult;
-#[cfg(feature = "rayon")]
-use reth_tasks::WorkerPool;
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, trace};
 

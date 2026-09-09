@@ -678,6 +678,7 @@ mod tests {
 
     use alloy_primitives::Address;
     use base_common_chain_config::BaseChainSpec;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{BaseBlock, Header};
     use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
     use base_execution_evm_blocks::BaseEvmConfig;
@@ -686,7 +687,6 @@ mod tests {
         EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
     };
     use reth_provider::test_utils::MockEthProvider;
-    use reth_tasks::Runtime;
 
     use super::*;
     use crate::{BasePayloadBuilder, BasicPayloadJobGeneratorConfig};

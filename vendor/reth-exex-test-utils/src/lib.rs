@@ -17,6 +17,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::NoopPayloadBuilderService;
 use base_execution_txpool::Pool;
@@ -38,7 +39,6 @@ use reth_provider::{
     BlockReader, ProviderFactory,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
-use reth_tasks::Runtime;
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
@@ -139,7 +139,7 @@ pub async fn test_exex_context_with_chain_spec(
         chain_spec,
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
         RocksDBProvider::builder(rocksdb_dir.keep()).with_default_tables().build().unwrap(),
-        reth_tasks::Runtime::test(),
+        base_common_runtime_tasks::Runtime::test(),
     )?;
 
     let genesis_hash = init_genesis(&provider_factory)?;

@@ -12,6 +12,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
+use base_common_runtime_tasks::Runtime;
 use clap::{
     Args,
     builder::{OsStr, Resettable},
@@ -47,7 +48,6 @@ use reth_network::{
     },
 };
 use reth_network_peers::{TrustedPeer, mainnet_nodes};
-use reth_tasks::Runtime;
 use secp256k1::SecretKey;
 use tracing::error;
 

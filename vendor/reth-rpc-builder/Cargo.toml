@@ -33,17 +33,16 @@ reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 tower = { workspace = true, features = ["full"] }
 http = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server"] }
-reth-tasks = { workspace = true, features = ["rayon"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-metrics = { workspace = true, features = ["common"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
+base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
 
 [dev-dependencies]
@@ -53,7 +52,6 @@ base-common-types-rpc = {workspace = true}
 base-common-types-payload = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 reth-tracing = { workspace = true, features = ["default"] }
-reth-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -61,6 +59,7 @@ base-common-types-chain = { workspace = true, features = ["serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-rpc = { workspace = true, features = ["test-utils", "client"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }

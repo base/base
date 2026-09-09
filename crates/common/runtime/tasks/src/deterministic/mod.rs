@@ -133,7 +133,7 @@ impl Runner {
 /// The runtime handle passed to tasks within a [`Runner::start`] call.
 ///
 /// Cloneable and `Send`. Implements [`Clock`], [`Spawner`], and
-/// [`Cancellation`], and therefore [`Runtime`](crate::Runtime). Pass
+/// [`Cancellation`], and therefore [`AsyncRuntime`](crate::AsyncRuntime). Pass
 /// `ctx.clone()` into futures passed to [`Spawner::spawn`].
 #[derive(Clone)]
 pub struct Context {

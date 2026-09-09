@@ -1,3 +1,5 @@
+//! Ordered traversal of work processed in parallel.
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossbeam_utils::CachePadded;

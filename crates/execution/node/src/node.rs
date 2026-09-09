@@ -232,7 +232,7 @@ impl BaseNode {
     /// use base_node_core::BaseNode;
     /// use std::sync::Arc;
     ///
-    /// fn demo(runtime: reth_tasks::Runtime) {
+    /// fn demo(runtime: base_common_runtime_tasks::Runtime) {
     ///     let factory = BaseNode::provider_factory_builder()
     ///         .open_read_only(Arc::new(BaseChainSpec::mainnet()), "datadir", runtime)
     ///         .unwrap();
@@ -246,7 +246,7 @@ impl BaseNode {
     /// use base_node_core::BaseNode;
     /// use reth_provider::providers::ReadOnlyConfig;
     ///
-    /// fn demo(runtime: reth_tasks::Runtime) {
+    /// fn demo(runtime: base_common_runtime_tasks::Runtime) {
     ///     let factory = BaseNode::provider_factory_builder()
     ///         .open_read_only(
     ///             BaseChainSpecBuilder::base_mainnet().build(),
@@ -582,7 +582,9 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::with_rng_secret_key(reth_tasks::Runtime::test()),
+                NetworkConfigBuilder::with_rng_secret_key(
+                    base_common_runtime_tasks::Runtime::test(),
+                ),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,
@@ -605,7 +607,9 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::with_rng_secret_key(reth_tasks::Runtime::test()),
+                NetworkConfigBuilder::with_rng_secret_key(
+                    base_common_runtime_tasks::Runtime::test(),
+                ),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,

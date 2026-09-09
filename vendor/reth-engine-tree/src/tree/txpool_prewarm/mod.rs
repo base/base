@@ -42,7 +42,7 @@ where
     /// Spawns the long-lived worker, which owns its mutable read cache and starts a fresh one for
     /// each new head.
     pub(crate) fn spawn(
-        runtime: &reth_tasks::Runtime,
+        runtime: &base_common_runtime_tasks::Runtime,
         source: Arc<dyn Source>,
         evm_config: BaseEvmConfig,
     ) -> Self {

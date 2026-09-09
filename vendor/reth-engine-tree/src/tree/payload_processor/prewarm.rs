@@ -20,6 +20,7 @@ use std::sync::{
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
+use base_common_runtime_tasks::{Runtime, pool::WorkerPool};
 use base_execution_evm_blocks::{
     BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor,
 };
@@ -32,7 +33,6 @@ use reth_provider::{
     PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
     TryIntoHistoricalStateProvider,
 };
-use reth_tasks::{Runtime, pool::WorkerPool};
 use reth_trie_common::MultiProofTargetsV2;
 use tokio::sync::oneshot;
 use tracing::{Span, debug, debug_span, instrument, trace, trace_span, warn};
@@ -123,7 +123,7 @@ where
     /// Kicks off EVM init on every pool thread, then uses `in_place_scope` to dispatch
     /// transactions as they arrive and wait for all spawned tasks to complete before
     /// clearing per-thread state. Workers that start via work-stealing lazily initialise
-    /// their EVM state on first access via [`get_or_init`](reth_tasks::pool::Worker::get_or_init).
+    /// their EVM state on first access via [`get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init).
     fn spawn_txs_prewarm<Tx>(
         &self,
         pending: mpsc::Receiver<(usize, Tx)>,
@@ -203,7 +203,7 @@ where
     /// Executes a single prewarm transaction on the current pool thread's EVM.
     ///
     /// Lazily initialises per-thread [`PrewarmEvmState`] via
-    /// [`get_or_init`](reth_tasks::pool::Worker::get_or_init) on first access.
+    /// [`get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init) on first access.
     fn transact_worker<Tx>(
         ctx: &PrewarmContext<P>,
         index: usize,
@@ -553,7 +553,7 @@ pub struct PrewarmContext<P> {
 }
 
 /// Per-thread EVM state initialised by [`PrewarmContext::evm_for_ctx`] and stored in
-/// [`WorkerPool`] workers via [`Worker::get_or_init`](reth_tasks::pool::Worker::get_or_init).
+/// [`WorkerPool`] workers via [`Worker::get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init).
 type PrewarmEvmState = Option<EvmFor<reth_provider::StateProviderBox>>;
 
 impl<P> PrewarmContext<P>

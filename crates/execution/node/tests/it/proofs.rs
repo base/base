@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_common_chain_config::BaseChainSpecBuilder;
+use base_common_runtime_tasks::Runtime;
 use base_execution_trie::InitializationJob;
 use base_node_core::{
     BaseNode, NodeConfig, ProofHistory, ProofHistoryBackend, ProofsHistoryDbBackend, RollupArgs,
@@ -11,7 +12,6 @@ use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
-use reth_tasks::Runtime;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Result<()> {

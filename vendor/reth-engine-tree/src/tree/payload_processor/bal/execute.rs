@@ -22,6 +22,7 @@ use alloy_eip7928::{
     compute_block_access_list_hash,
 };
 use alloy_primitives::Address;
+use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BaseReceipt;
 use base_execution_evm_blocks::{
     BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
@@ -36,7 +37,6 @@ use base_execution_evm_runtime::{
 };
 use crossbeam_channel::{Receiver, Sender};
 use reth_provider::BlockExecutionOutput;
-use reth_tasks::Runtime;
 
 use super::{BalExecutionError, ordered_outputs::ordered_worker_outputs, worker};
 use crate::tree::payload_processor::receipt_root_task::IndexedReceipt;
@@ -303,6 +303,7 @@ mod tests {
     };
     use alloy_primitives::{B256, U256, keccak256};
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
         SystemAddresses, TxDeposit,
@@ -313,7 +314,6 @@ mod tests {
         state::{AccountInfo, Bytecode},
     };
     use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
-    use reth_tasks::Runtime;
 
     use super::*;
 

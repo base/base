@@ -8,6 +8,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
+use base_common_runtime_tasks::spawn_os_thread;
 use crossbeam_channel::Sender as CrossbeamSender;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
@@ -17,7 +18,6 @@ use reth_provider::{
 use reth_prune::{PrunerError, PrunerWithFactory};
 use reth_stages_api::{MetricEvent, MetricEventsSender};
 use reth_storage_errors::provider::ProviderError;
-use reth_tasks::spawn_os_thread;
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
 
@@ -657,7 +657,7 @@ mod tests {
                 .with_read_only(true)
                 .build()
                 .unwrap(),
-            reth_tasks::Runtime::test(),
+            base_common_runtime_tasks::Runtime::test(),
         )
         .unwrap()
         .with_read_only_sync(true);

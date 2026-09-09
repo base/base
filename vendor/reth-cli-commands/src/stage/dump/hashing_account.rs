@@ -19,7 +19,7 @@ pub(crate) async fn dump_hashing_account_stage(
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
-    runtime: reth_tasks::Runtime,
+    runtime: base_common_runtime_tasks::Runtime,
 ) -> Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 

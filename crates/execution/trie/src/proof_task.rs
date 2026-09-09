@@ -43,11 +43,11 @@ use alloy_primitives::{
     B256, U256,
     map::{B256Map, B256Set},
 };
+use base_common_runtime_tasks::Runtime;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use reth_primitives_traits::{FastInstant as Instant, dashmap::DashMap};
 use reth_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
 use reth_storage_errors::{StateProofError, db::DatabaseError};
-use reth_tasks::Runtime;
 use reth_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
     hashed_cursor::{
@@ -1246,7 +1246,7 @@ mod tests {
         );
         let ctx = test_ctx(factory);
 
-        let runtime = reth_tasks::Runtime::test();
+        let runtime = base_common_runtime_tasks::Runtime::test();
         let (proof_result_tx, _) = unbounded();
         let proof_handle = ProofWorkerHandle::new(&runtime, ctx, false, proof_result_tx);
 

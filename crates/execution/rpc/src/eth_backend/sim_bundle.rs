@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Duration};
 use crate::MevSimApiServer;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
+use base_common_runtime_tasks::pool::BlockingTaskGuard;
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_common_types_rpc::{
     BlockId, BundleItem, Inclusion, Log, Privacy, RefundConfig, SimBundleLogs, SimBundleOverrides,
@@ -20,7 +21,6 @@ use reth_primitives_traits::Recovered;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
-use reth_tasks::pool::BlockingTaskGuard;
 use tracing::trace;
 
 use crate::BaseEthApi;

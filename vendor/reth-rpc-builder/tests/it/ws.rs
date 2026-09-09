@@ -3,10 +3,10 @@
 
 use std::time::Duration;
 
+use base_common_runtime_tasks::EventSender;
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
 use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
-use base_common_runtime_tasks::EventSender;
 use serde_json::Value;
 
 use crate::utils::{launch_ws, test_rpc_registry};
@@ -146,10 +146,10 @@ async fn test_eth_subscribe_not_available_over_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
+    use base_common_runtime_tasks::Runtime;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_txpool::{TransactionOrigin, TransactionPool};
     use reth_rpc_builder::RpcRegistryInner;
-    use reth_tasks::Runtime;
 
     reth_tracing::init_test_tracing();
 
