@@ -13,7 +13,6 @@ use revm_primitives::{
 };
 use revm_state::{Account, Bytecode, EvmStorageSlot, TransactionId};
 
-use super::entry::JournalEntryTr;
 use crate::{
     ErasedError, StateLoad,
     context::SStoreResult,
@@ -123,13 +122,13 @@ pub trait JournaledAccountTr {
 ///
 /// Useful to encapsulate account and journal entries together. So when account gets changed, we can add a journal entry for it.
 #[derive(Debug, PartialEq, Eq)]
-pub struct JournaledAccount<'a, DB, ENTRY: JournalEntryTr = JournalEntry> {
+pub struct JournaledAccount<'a, DB> {
     /// Address of the account.
     address: Address,
     /// Mutable account.
     account: &'a mut Account,
     /// Journal entries.
-    journal_entries: &'a mut Vec<ENTRY>,
+    journal_entries: &'a mut Vec<JournalEntry>,
     /// Access list.
     access_list: &'a AddressMap<HashSet<StorageKey>>,
     /// Transaction ID.
@@ -138,13 +137,13 @@ pub struct JournaledAccount<'a, DB, ENTRY: JournalEntryTr = JournalEntry> {
     db: &'a mut DB,
 }
 
-impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
+impl<'a, DB: Database> JournaledAccount<'a, DB> {
     /// Creates new JournaledAccount
     #[inline]
     pub const fn new(
         address: Address,
         account: &'a mut Account,
-        journal_entries: &'a mut Vec<ENTRY>,
+        journal_entries: &'a mut Vec<JournalEntry>,
         db: &'a mut DB,
         access_list: &'a AddressMap<HashSet<StorageKey>>,
         transaction_id: TransactionId,
@@ -205,7 +204,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
 
         if is_cold {
             // add it to journal as cold loaded.
-            self.journal_entries.push(ENTRY::storage_warmed(self.address, key));
+            self.journal_entries.push(JournalEntry::storage_warmed(self.address, key));
         }
 
         Ok(StateLoad::new(slot, is_cold))
@@ -245,7 +244,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
             slot.data.present_value = new;
 
             // add journal entry.
-            self.journal_entries.push(ENTRY::storage_changed(self.address, key, previous_value));
+            self.journal_entries.push(JournalEntry::storage_changed(self.address, key, previous_value));
         }
 
         ret
@@ -276,8 +275,8 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
     }
 }
 
-impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
-    for JournaledAccount<'a, DB, ENTRY>
+impl<'a, DB: Database> JournaledAccountTr
+    for JournaledAccount<'a, DB>
 {
     /// Returns the account.
     fn account(&self) -> &Account {
@@ -313,7 +312,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
     fn touch(&mut self) {
         if !self.account.status.is_touched() {
             self.account.mark_touch();
-            self.journal_entries.push(ENTRY::account_touched(self.address));
+            self.journal_entries.push(JournalEntry::account_touched(self.address));
         }
     }
 
@@ -338,7 +337,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
         self.touch();
         if self.account.info.balance != balance {
             self.journal_entries
-                .push(ENTRY::balance_changed(self.address, self.account.info.balance));
+                .push(JournalEntry::balance_changed(self.address, self.account.info.balance));
             self.account.info.set_balance(balance);
         }
     }
@@ -381,7 +380,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
             return false;
         };
         self.account.info.set_nonce(nonce);
-        self.journal_entries.push(ENTRY::nonce_bumped(self.address));
+        self.journal_entries.push(JournalEntry::nonce_bumped(self.address));
         true
     }
 
@@ -393,7 +392,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
         self.touch();
         let previous_nonce = self.account.info.nonce;
         self.account.info.set_nonce(nonce);
-        self.journal_entries.push(ENTRY::nonce_changed(self.address, previous_nonce));
+        self.journal_entries.push(JournalEntry::nonce_changed(self.address, previous_nonce));
     }
 
     /// Set the nonce of the account without creating a journal entry.
@@ -412,7 +411,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
     fn set_code(&mut self, code_hash: B256, code: Bytecode) {
         self.touch();
         let (had_code_hash, had_code) = self.account.info.set_code_and_hash(code, code_hash);
-        self.journal_entries.push(ENTRY::code_changed(self.address, had_code_hash, had_code));
+        self.journal_entries.push(JournalEntry::code_changed(self.address, had_code_hash, had_code));
     }
 
     /// Sets the code of the account. Calculates hash of the code.

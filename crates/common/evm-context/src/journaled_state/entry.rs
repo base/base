@@ -3,97 +3,12 @@
 //! Journal entries are used to track changes to the state and are used to revert it.
 //!
 //! They are created when there is change to the state from loading (making it warm), changes to the balance,
-//! or removal of the storage slot. Check [`JournalEntryTr`] for more details.
+//! or removal of the storage slot. Check [`JournalEntry`] for more details.
 
 use revm_primitives::{Address, B256, PRECOMPILE3, StorageKey, StorageValue, U256};
 use revm_state::{Bytecode, EvmState, TransientStorage};
 
-/// Trait for tracking and reverting state changes in the EVM.
-/// Journal entry contains information about state changes that can be reverted.
-pub trait JournalEntryTr {
-    /// Creates a journal entry for when an account is accessed and marked as "warm" for gas metering
-    fn account_warmed(address: Address) -> Self;
 
-    /// Creates a journal entry for when an account is destroyed via SELFDESTRUCT
-    /// Records the target address that received the destroyed account's balance,
-    /// whether the account was already destroyed, and its balance before destruction
-    /// on revert, the balance is transferred back to the original account
-    fn account_destroyed(
-        address: Address,
-        target: Address,
-        destroyed_status: SelfdestructionRevertStatus,
-        had_balance: U256,
-    ) -> Self;
-
-    /// Creates a journal entry for when an account is "touched" - accessed in a way that may require saving it.
-    /// If account is empty and touch it will be removed from the state (EIP-161 state clear EIP)
-    fn account_touched(address: Address) -> Self;
-
-    /// Creates a journal entry for a balance transfer between accounts
-    fn balance_transfer(from: Address, to: Address, balance: U256) -> Self;
-
-    /// Creates a journal entry for when an account's balance is changed.
-    fn balance_changed(address: Address, old_balance: U256) -> Self;
-
-    /// Creates a journal entry for when an account's nonce is changed.
-    fn nonce_changed(address: Address, previous_nonce: u64) -> Self;
-
-    /// Creates a journal entry for when an account's nonce is bumped.
-    fn nonce_bumped(address: Address) -> Self;
-
-    /// Creates a journal entry for when a new account is created
-    fn account_created(address: Address, is_created_globally: bool) -> Self;
-
-    /// Creates a journal entry for when a storage slot is modified
-    /// Records the previous value for reverting
-    fn storage_changed(address: Address, key: StorageKey, had_value: StorageValue) -> Self;
-
-    /// Creates a journal entry for when a storage slot is accessed and marked as "warm" for gas metering
-    /// This is called with SLOAD opcode.
-    fn storage_warmed(address: Address, key: StorageKey) -> Self;
-
-    /// Creates a journal entry for when a transient storage slot is modified (EIP-1153)
-    /// Records the previous value for reverting
-    fn transient_storage_changed(
-        address: Address,
-        key: StorageKey,
-        had_value: StorageValue,
-    ) -> Self;
-
-    /// Creates a journal entry for when an account's code is modified
-    ///
-    /// Records the previous code hash and bytecode for reverting: since
-    /// EIP-7702 the code of an already-delegated account can be changed (and
-    /// the change reverted), so the revert cannot assume the previous code was
-    /// empty.
-    fn code_changed(address: Address, had_code_hash: B256, had_code: Option<Bytecode>) -> Self;
-
-    /// Reverts the state change recorded by this journal entry
-    ///
-    /// More information on what is reverted can be found in [`JournalEntry`] enum.
-    ///
-    /// If transient storage is not provided, revert on transient storage will not be performed.
-    /// This is used when we revert whole transaction and know that transient storage is empty.
-    ///
-    /// # Notes
-    ///
-    /// The spurious dragon flag is used to skip revertion 0x000..0003 precompile. This
-    /// Behaviour is special and it caused by bug in Geth and Parity that is explained in [PR#716](https://github.com/ethereum/EIPs/issues/716).
-    ///
-    /// From yellow paper:
-    /// ```text
-    /// K.1. Deletion of an Account Despite Out-of-gas. At block 2675119, in the transaction 0xcf416c536ec1a19ed1fb89e
-    /// 4ec7ffb3cf73aa413b3aa9b77d60e4fd81a4296ba, an account at address 0x03 was called and an out-of-gas occurred during
-    /// the call. Against the equation (209), this added 0x03 in the set of touched addresses, and this transaction turned σ[0x03]
-    /// into ∅.
-    /// ```
-    fn revert(
-        self,
-        state: &mut EvmState,
-        transient_storage: Option<&mut TransientStorage>,
-        is_spurious_dragon_enabled: bool,
-    );
-}
 
 /// Status of selfdestruction revert.
 ///
@@ -237,12 +152,17 @@ pub enum JournalEntry {
     },
 }
 
-impl JournalEntryTr for JournalEntry {
-    fn account_warmed(address: Address) -> Self {
+impl JournalEntry {
+    /// Creates a journal entry for when an account is accessed and marked as "warm" for gas metering
+    pub fn account_warmed(address: Address) -> Self {
         JournalEntry::AccountWarmed { address }
     }
 
-    fn account_destroyed(
+    /// Creates a journal entry for when an account is destroyed via SELFDESTRUCT
+    /// Records the target address that received the destroyed account's balance,
+    /// whether the account was already destroyed, and its balance before destruction
+    /// on revert, the balance is transferred back to the original account
+    pub fn account_destroyed(
         address: Address,
         target: Address,
         destroyed_status: SelfdestructionRevertStatus,
@@ -251,39 +171,52 @@ impl JournalEntryTr for JournalEntry {
         JournalEntry::AccountDestroyed { address, target, destroyed_status, had_balance }
     }
 
-    fn account_touched(address: Address) -> Self {
+    /// Creates a journal entry for when an account is "touched" - accessed in a way that may require saving it.
+    /// If account is empty and touch it will be removed from the state (EIP-161 state clear EIP)
+    pub fn account_touched(address: Address) -> Self {
         JournalEntry::AccountTouched { address }
     }
 
-    fn balance_changed(address: Address, old_balance: U256) -> Self {
+    /// Creates a journal entry for when an account's balance is changed.
+    pub fn balance_changed(address: Address, old_balance: U256) -> Self {
         JournalEntry::BalanceChange { address, old_balance }
     }
 
-    fn balance_transfer(from: Address, to: Address, balance: U256) -> Self {
+    /// Creates a journal entry for a balance transfer between accounts
+    pub fn balance_transfer(from: Address, to: Address, balance: U256) -> Self {
         JournalEntry::BalanceTransfer { from, to, balance }
     }
 
-    fn account_created(address: Address, is_created_globally: bool) -> Self {
+    /// Creates a journal entry for when a new account is created
+    pub fn account_created(address: Address, is_created_globally: bool) -> Self {
         JournalEntry::AccountCreated { address, is_created_globally }
     }
 
-    fn storage_changed(address: Address, key: StorageKey, had_value: StorageValue) -> Self {
+    /// Creates a journal entry for when a storage slot is modified
+    /// Records the previous value for reverting
+    pub fn storage_changed(address: Address, key: StorageKey, had_value: StorageValue) -> Self {
         JournalEntry::StorageChanged { address, key, had_value }
     }
 
-    fn nonce_changed(address: Address, previous_nonce: u64) -> Self {
+    /// Creates a journal entry for when an account's nonce is changed.
+    pub fn nonce_changed(address: Address, previous_nonce: u64) -> Self {
         JournalEntry::NonceChange { address, previous_nonce }
     }
 
-    fn nonce_bumped(address: Address) -> Self {
+    /// Creates a journal entry for when an account's nonce is bumped.
+    pub fn nonce_bumped(address: Address) -> Self {
         JournalEntry::NonceBump { address }
     }
 
-    fn storage_warmed(address: Address, key: StorageKey) -> Self {
+    /// Creates a journal entry for when a storage slot is accessed and marked as "warm" for gas metering
+    /// This is called with SLOAD opcode.
+    pub fn storage_warmed(address: Address, key: StorageKey) -> Self {
         JournalEntry::StorageWarmed { address, key }
     }
 
-    fn transient_storage_changed(
+    /// Creates a journal entry for when a transient storage slot is modified (EIP-1153)
+    /// Records the previous value for reverting
+    pub fn transient_storage_changed(
         address: Address,
         key: StorageKey,
         had_value: StorageValue,
@@ -291,11 +224,36 @@ impl JournalEntryTr for JournalEntry {
         JournalEntry::TransientStorageChange { address, key, had_value }
     }
 
-    fn code_changed(address: Address, had_code_hash: B256, had_code: Option<Bytecode>) -> Self {
+    /// Creates a journal entry for when an account's code is modified
+    ///
+    /// Records the previous code hash and bytecode for reverting: since
+    /// EIP-7702 the code of an already-delegated account can be changed (and
+    /// the change reverted), so the revert cannot assume the previous code was
+    /// empty.
+    pub fn code_changed(address: Address, had_code_hash: B256, had_code: Option<Bytecode>) -> Self {
         JournalEntry::CodeChange { address, had_code_hash, had_code }
     }
 
-    fn revert(
+    /// Reverts the state change recorded by this journal entry
+    ///
+    /// More information on what is reverted can be found in [`JournalEntry`] enum.
+    ///
+    /// If transient storage is not provided, revert on transient storage will not be performed.
+    /// This is used when we revert whole transaction and know that transient storage is empty.
+    ///
+    /// # Notes
+    ///
+    /// The spurious dragon flag is used to skip revertion 0x000..0003 precompile. This
+    /// Behaviour is special and it caused by bug in Geth and Parity that is explained in [PR#716](https://github.com/ethereum/EIPs/issues/716).
+    ///
+    /// From yellow paper:
+    /// ```text
+    /// K.1. Deletion of an Account Despite Out-of-gas. At block 2675119, in the transaction 0xcf416c536ec1a19ed1fb89e
+    /// 4ec7ffb3cf73aa413b3aa9b77d60e4fd81a4296ba, an account at address 0x03 was called and an out-of-gas occurred during
+    /// the call. Against the equation (209), this added 0x03 in the set of touched addresses, and this transaction turned σ[0x03]
+    /// into ∅.
+    /// ```
+    pub fn revert(
         self,
         state: &mut EvmState,
         transient_storage: Option<&mut TransientStorage>,

@@ -3,7 +3,7 @@ use core::mem;
 use std::vec::Vec;
 
 use base_evm_context::{
-    AccountLoad, JournalCheckpoint, JournalEntryTr, JournalLoadError, JournaledAccount,
+    AccountLoad, JournalCheckpoint, JournalEntry, JournalLoadError, JournaledAccount,
     JournaledAccountTr, SStoreResult, SelfDestructResult, SelfdestructionRevertStatus, StateLoad,
     TransferError,
 };
@@ -58,7 +58,7 @@ pub struct JournalCfg {
 /// Spec Id is a essential information for the Journal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct JournalInner<ENTRY> {
+pub struct JournalInner {
     /// The current state
     pub state: EvmState,
     /// Transient storage that is discarded after every transaction.
@@ -70,7 +70,7 @@ pub struct JournalInner<ENTRY> {
     /// The current call stack depth
     pub depth: usize,
     /// The journal of state changes, one for each transaction
-    pub journal: Vec<ENTRY>,
+    pub journal: Vec<JournalEntry>,
     /// Global transaction id that represent number of transactions executed (Including reverted ones).
     /// It can be different from number of `journal_history` as some transaction could be
     /// reverted or had a error on execution.
@@ -93,18 +93,18 @@ pub struct JournalInner<ENTRY> {
     pub selfdestructed_addresses: Vec<Address>,
 }
 
-impl<ENTRY: JournalEntryTr> Default for JournalInner<ENTRY> {
+impl Default for JournalInner {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
+impl JournalInner {
     /// Creates new [`JournalInner`].
     ///
     /// `warm_preloaded_addresses` is used to determine if address is considered warm loaded.
     /// In ordinary case this is precompile or beneficiary.
-    pub fn new() -> JournalInner<ENTRY> {
+    pub fn new() -> JournalInner {
         Self {
             state: HashMap::default(),
             transient_storage: TransientStorage::default(),
@@ -350,9 +350,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
     /// Mark account as touched.
     #[inline]
-    fn touch_account(journal: &mut Vec<ENTRY>, address: Address, account: &mut Account) {
+    fn touch_account(journal: &mut Vec<JournalEntry>, address: Address, account: &mut Account) {
         if !account.is_touched() {
-            journal.push(ENTRY::account_touched(address));
+            journal.push(JournalEntry::account_touched(address));
             account.mark_touch();
         }
     }
@@ -379,7 +379,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         let had_code_hash = account.info.code_hash;
         let had_code = account.info.code.take();
-        self.journal.push(ENTRY::code_changed(address, had_code_hash, had_code));
+        self.journal.push(JournalEntry::code_changed(address, had_code_hash, had_code));
 
         account.info.code_hash = hash;
         account.info.code = Some(code);
@@ -413,13 +413,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         bump_nonce: bool,
     ) {
         // account balance changed.
-        self.journal.push(ENTRY::balance_changed(address, old_balance));
+        self.journal.push(JournalEntry::balance_changed(address, old_balance));
         // account is touched.
-        self.journal.push(ENTRY::account_touched(address));
+        self.journal.push(JournalEntry::account_touched(address));
 
         if bump_nonce {
             // nonce changed.
-            self.journal.push(ENTRY::nonce_bumped(address));
+            self.journal.push(JournalEntry::nonce_bumped(address));
         }
     }
 
@@ -442,7 +442,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     #[inline]
     #[deprecated]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
-        self.journal.push(ENTRY::nonce_bumped(address));
+        self.journal.push(JournalEntry::nonce_bumped(address));
     }
 
     /// Transfers balance from two accounts. Returns error if sender balance is not enough.
@@ -491,7 +491,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         *to_balance = to_balance_incr;
 
         // add journal entry
-        self.journal.push(ENTRY::balance_transfer(from, to, balance));
+        self.journal.push(JournalEntry::balance_transfer(from, to, balance));
 
         // EIP-7708: emit ETH transfer log
         self.eip7708_transfer_log(from, to, balance);
@@ -556,7 +556,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let is_created_globally = target_acc.mark_created_locally();
 
         // this entry will revert set nonce.
-        last_journal.push(ENTRY::account_created(target_address, is_created_globally));
+        last_journal.push(JournalEntry::account_created(target_address, is_created_globally));
         target_acc.info.code = None;
         // EIP-161: State trie clearing (invariant-preserving alternative)
         if spec_id.is_enabled_in(SPURIOUS_DRAGON) {
@@ -585,7 +585,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         caller_account.info.balance -= balance;
 
         // add journal entry of transferred balance
-        last_journal.push(ENTRY::balance_transfer(caller, target_address, balance));
+        last_journal.push(JournalEntry::balance_transfer(caller, target_address, balance));
 
         // EIP-7708: emit ETH transfer log
         self.eip7708_transfer_log(caller, target_address, balance);
@@ -709,13 +709,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 balance
             };
 
-            Some(ENTRY::account_destroyed(address, target, destroyed_status, had_balance))
+            Some(JournalEntry::account_destroyed(address, target, destroyed_status, had_balance))
         } else if address != target {
             acc.info.balance = U256::ZERO;
             // EIP-7708: emit appropriate log for selfdestruct
             // Transfer log for balance transferred to different address
             self.eip7708_transfer_log(address, target, balance);
-            Some(ENTRY::balance_transfer(address, target, balance))
+            Some(JournalEntry::balance_transfer(address, target, balance))
         } else {
             // State is not changed:
             // * if we are after Cancun upgrade and
@@ -833,7 +833,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         &'a mut self,
         db: &'db mut DB,
         address: Address,
-    ) -> Result<StateLoad<JournaledAccount<'a, DB, ENTRY>>, DB::Error>
+    ) -> Result<StateLoad<JournaledAccount<'a, DB>>, DB::Error>
     where
         'db: 'a,
     {
@@ -849,7 +849,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         address: Address,
         load_code: bool,
         skip_cold_load: bool,
-    ) -> Result<StateLoad<JournaledAccount<'a, DB, ENTRY>>, JournalLoadError<DB::Error>>
+    ) -> Result<StateLoad<JournaledAccount<'a, DB>>, JournalLoadError<DB::Error>>
     where
         'db: 'a,
     {
@@ -874,7 +874,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         &'a mut self,
         db: &'db mut DB,
         address: Address,
-    ) -> Option<JournaledAccount<'a, DB, ENTRY>>
+    ) -> Option<JournaledAccount<'a, DB>>
     where
         'db: 'a,
     {
@@ -896,7 +896,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &'db mut DB,
         address: Address,
         skip_cold_load: bool,
-    ) -> Result<StateLoad<JournaledAccount<'a, DB, ENTRY>>, JournalLoadError<DB::Error>>
+    ) -> Result<StateLoad<JournaledAccount<'a, DB>>, JournalLoadError<DB::Error>>
     where
         'db: 'a,
     {
@@ -925,7 +925,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                     account.unmark_created_locally();
 
                     // journal loading of cold account.
-                    self.journal.push(ENTRY::account_warmed(address));
+                    self.journal.push(JournalEntry::account_warmed(address));
                 }
                 (account, is_cold)
             }
@@ -944,7 +944,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
                 // journal loading of cold account.
                 if is_cold {
-                    self.journal.push(ENTRY::account_warmed(address));
+                    self.journal.push(JournalEntry::account_warmed(address));
                 }
 
                 (vac.insert(account), is_cold)
@@ -1069,7 +1069,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         if let Some(had_value) = had_value {
             // insert in journal only if value was changed.
-            self.journal.push(ENTRY::transient_storage_changed(address, key, had_value));
+            self.journal.push(JournalEntry::transient_storage_changed(address, key, had_value));
         }
     }
 
@@ -1114,7 +1114,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
 #[cfg(test)]
 mod tests {
-    use base_evm_context::JournalEntry;
     use base_state_api::EmptyDB;
     use revm_primitives::{HashSet, U256, address};
     use revm_state::AccountInfo;
@@ -1123,7 +1122,7 @@ mod tests {
 
     #[test]
     fn test_sload_skip_cold_load() {
-        let mut journal = JournalInner::<JournalEntry>::new();
+        let mut journal = JournalInner::new();
         let test_address = address!("1000000000000000000000000000000000000000");
         let test_key = U256::from(1);
 

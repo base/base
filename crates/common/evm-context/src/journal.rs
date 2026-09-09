@@ -1,6 +1,6 @@
 //! This module contains [`Journal`] struct and implements [`JournalTr`] trait for it.
 //!
-//! Entry submodule contains [`JournalEntry`] and [`JournalEntryTr`] traits.
+//! Entry submodule contains [`JournalEntry`] entries.
 //! and inner submodule contains [`JournalInner`] struct that contains state.
 mod inner;
 mod warm_addresses;
@@ -8,7 +8,7 @@ use core::ops::{Deref, DerefMut};
 use std::vec::Vec;
 
 use base_evm_context::{
-    AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalEntry, JournalEntryTr,
+    AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalEntry,
     JournalLoadError, JournalTr, JournaledAccount, SStoreResult, SelfDestructResult, StateLoad,
     TransferError,
 };
@@ -29,74 +29,67 @@ pub use warm_addresses::*;
 /// The journal contains every state change that happens within that call, making it possible to revert changes made in a specific call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Journal<DB, ENTRY = JournalEntry>
-where
-    ENTRY: JournalEntryTr,
+pub struct Journal<DB>
 {
     /// Database
     pub database: DB,
     /// Inner journal state.
-    pub inner: JournalInner<ENTRY>,
+    pub inner: JournalInner,
 }
 
-impl<DB, ENTRY> Deref for Journal<DB, ENTRY>
-where
-    ENTRY: JournalEntryTr,
+impl<DB> Deref for Journal<DB>
 {
-    type Target = JournalInner<ENTRY>;
+    type Target = JournalInner;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<DB, ENTRY> DerefMut for Journal<DB, ENTRY>
-where
-    ENTRY: JournalEntryTr,
+impl<DB> DerefMut for Journal<DB>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<DB, ENTRY: JournalEntryTr> Journal<DB, ENTRY> {
+impl<DB> Journal<DB> {
     /// Creates a new JournaledState by copying state data from a JournalInit and provided database.
     /// This allows reusing the state, logs, and other data from a previous execution context while
     /// connecting it to a different database backend.
-    pub const fn new_with_inner(database: DB, inner: JournalInner<ENTRY>) -> Self {
+    pub const fn new_with_inner(database: DB, inner: JournalInner) -> Self {
         Self { database, inner }
     }
 
     /// Consumes the [`Journal`] and returns [`JournalInner`].
     ///
     /// If you need to preserve the original journal, use [`Self::to_inner`] instead which clones the state.
-    pub fn into_init(self) -> JournalInner<ENTRY> {
+    pub fn into_init(self) -> JournalInner {
         self.inner
     }
 }
 
-impl<DB, ENTRY: JournalEntryTr + Clone> Journal<DB, ENTRY> {
+impl<DB> Journal<DB> {
     /// Creates a new [`JournalInner`] by cloning all internal state data (state, storage, logs, etc)
     /// This allows creating a new journaled state with the same state data but without
     /// carrying over the original database.
     ///
     /// This is useful when you want to reuse the current state for a new transaction or
     /// execution context, but want to start with a fresh database.
-    pub fn to_inner(&self) -> JournalInner<ENTRY> {
+    pub fn to_inner(&self) -> JournalInner {
         self.inner.clone()
     }
 }
 
-impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
+impl<DB: Database> JournalTr for Journal<DB> {
     type Database = DB;
     type State = EvmState;
     type JournaledAccount<'a>
-        = JournaledAccount<'a, DB, ENTRY>
+        = JournaledAccount<'a, DB>
     where
-        ENTRY: 'a,
         DB: 'a;
 
-    fn new(database: DB) -> Journal<DB, ENTRY> {
+    fn new(database: DB) -> Journal<DB> {
         Self { inner: JournalInner::new(), database }
     }
 
