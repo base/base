@@ -15,7 +15,6 @@ use base_execution_txpool::{
 use clap::{Args, builder::Resettable};
 use reth_cli_util::{parse_duration_from_secs_or_ms, parsers::format_duration_as_secs_or_ms};
 
-use crate::cli::config::RethTransactionPoolConfig;
 
 /// Global static transaction pool defaults
 static TXPOOL_DEFAULTS: OnceLock<DefaultTxPoolValues> = OnceLock::new();
@@ -500,9 +499,9 @@ impl Default for TxPoolArgs {
     }
 }
 
-impl RethTransactionPoolConfig for TxPoolArgs {
+impl TxPoolArgs {
     /// Returns transaction pool configuration.
-    fn pool_config(&self) -> PoolConfig {
+    pub fn pool_config(&self) -> PoolConfig {
         let default_config = PoolConfig::default();
         PoolConfig {
             local_transactions_config: LocalTransactionConfig {
@@ -543,10 +542,6 @@ impl RethTransactionPoolConfig for TxPoolArgs {
         }
     }
 
-    /// Returns max batch size for transaction batch insertion.
-    fn max_batch_size(&self) -> usize {
-        self.max_batch_size
-    }
 }
 
 #[cfg(test)]

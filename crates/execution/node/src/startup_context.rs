@@ -10,7 +10,6 @@ use reth_network::{
     transactions::config::StrictEthAnnouncementFilter,
 };
 use reth_node_core::{
-    cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
     primitives::Head,
@@ -107,11 +106,6 @@ impl BuilderContext {
     /// Loads `EnvKzgSettings::Default`.
     pub const fn kzg_settings(&self) -> eyre::Result<EnvKzgSettings> {
         Ok(EnvKzgSettings::Default)
-    }
-
-    /// Returns the config for payload building.
-    pub fn payload_builder_config(&self) -> impl PayloadBuilderConfig {
-        self.config().builder.clone()
     }
 
     /// Starts the Base network tasks using the configured propagation settings.

@@ -10,7 +10,7 @@
 
 pub mod args;
 pub use args::ByteSize;
-pub mod cli;
+
 pub mod dirs;
 pub mod exit;
 pub mod node_config;

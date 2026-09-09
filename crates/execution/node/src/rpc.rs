@@ -17,7 +17,7 @@ pub use jsonrpsee::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_engine_primitives::TreeConfig;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
-use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
+use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_builder::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
@@ -212,7 +212,7 @@ impl BaseRpcServer {
             cache_new_blocks_task(c, new_canonical_blocks).await;
         });
 
-        let eth_config = config.rpc.eth_config().max_batch_size(config.txpool.max_batch_size());
+        let eth_config = config.rpc.eth_config().max_batch_size(config.txpool.max_batch_size);
         let ctx = EthApiCtx {
             components: &node,
             config: eth_config,

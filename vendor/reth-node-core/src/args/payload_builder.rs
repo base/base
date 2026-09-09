@@ -11,7 +11,7 @@ use reth_cli_util::{
     parsers::format_duration_as_secs_or_ms,
 };
 
-use crate::{cli::config::PayloadBuilderConfig, version::default_extra_data};
+use crate::version::default_extra_data;
 
 /// Global static payload builder defaults
 static PAYLOAD_BUILDER_DEFAULTS: OnceLock<DefaultPayloadBuilderValues> = OnceLock::new();
@@ -143,32 +143,6 @@ impl Default for PayloadBuilderArgs {
             max_payload_tasks: defaults.max_payload_tasks,
             max_blobs_per_block: None,
         }
-    }
-}
-
-impl PayloadBuilderConfig for PayloadBuilderArgs {
-    fn extra_data(&self) -> Bytes {
-        self.extra_data.clone()
-    }
-
-    fn interval(&self) -> Duration {
-        self.interval
-    }
-
-    fn deadline(&self) -> Duration {
-        self.deadline
-    }
-
-    fn gas_limit(&self) -> Option<u64> {
-        self.gas_limit
-    }
-
-    fn max_payload_tasks(&self) -> usize {
-        self.max_payload_tasks
-    }
-
-    fn max_blobs_per_block(&self) -> Option<u64> {
-        self.max_blobs_per_block
     }
 }
 
