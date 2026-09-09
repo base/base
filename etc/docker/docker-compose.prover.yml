@@ -43,6 +43,8 @@ services:
     depends_on:
       prover-service-postgres:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # Requester RPC. Loopback plus the NAT-mode network below keep this
       # unauthenticated API host-local. The override is a bare port number.
@@ -59,6 +61,8 @@ services:
       - POSTGRES_PASSWORD=prover
       - POSTGRES_SSLMODE=disable
       - OTEL_SERVICE_NAME=base-prover-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
       <<: *healthcheck-defaults
@@ -87,6 +91,8 @@ services:
       - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-3600}
       - RUST_LOG=${RUST_LOG:-}
       - OTEL_SERVICE_NAME=base-prover-zk-host
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
     restart: unless-stopped
 
 networks:

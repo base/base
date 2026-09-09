@@ -92,7 +92,11 @@ impl ProofSubmitter {
     /// RPC failures, root mismatches, invalid signers, or contract-level
     /// rejections — is mapped to a [`SubmitAction`] variant that tells the
     /// pipeline how to react.
-    #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
+    #[instrument(
+        name = "proposer.submit_proof",
+        skip_all,
+        fields(target_block = target_block, parent_address = %parent_address)
+    )]
     pub async fn submit(
         &self,
         aggregate_proposal: &Proposal,

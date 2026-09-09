@@ -33,6 +33,7 @@ use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
+use reth_node_core::args::TraceArgs;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tokio_util::sync::CancellationToken;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -59,6 +60,10 @@ pub(crate) struct Cli {
     /// Metrics arguments.
     #[command(flatten)]
     metrics: MetricsArgs,
+
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    traces: TraceArgs,
 }
 
 /// Nitro host subcommands.
@@ -212,14 +217,14 @@ struct WorkerArgs {
 impl Cli {
     /// Run the selected worker subcommand.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        let Self { command, logging, metrics } = self;
-        LogConfig::from(logging).init_tracing_subscriber()?;
+        let Self { command, logging, metrics, traces } = self;
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
 
         RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_shutdown(
             |cancel| async move {
+                LogConfig::from(logging).init_with_trace_args(&traces, &[])?;
                 #[cfg(not(any(target_os = "linux", feature = "local")))]
                 let _ = cancel;
 

@@ -2,6 +2,7 @@
 
 use clap::Parser;
 use eyre::WrapErr;
+use reth_node_core::args::TraceArgs;
 
 /// Base Proposer.
 #[derive(Parser)]
@@ -10,13 +11,16 @@ use eyre::WrapErr;
 pub(crate) struct Cli {
     #[command(flatten)]
     args: base_proposer::Cli,
+
+    #[command(flatten)]
+    traces: TraceArgs,
 }
 
 impl Cli {
     /// Run the proposer service.
     pub(crate) async fn run(self) -> eyre::Result<()> {
         let config = base_proposer::ProposerConfig::from_cli(self.args)?;
-        config.log.init_tracing_subscriber()?;
+        config.log.init_with_trace_args(&self.traces, &[])?;
         config
             .metrics
             .init_with(|| {
