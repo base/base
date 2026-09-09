@@ -7,7 +7,7 @@ use alloy_primitives::{B256, map::HashSet};
 #[cfg(test)]
 use alloy_trie::TrieMask;
 use alloy_trie::proof::AddedRemovedKeys;
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 use tracing::{instrument, trace};
 
 #[cfg(feature = "metrics")]

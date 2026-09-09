@@ -9,10 +9,10 @@ use base_common_types_chain::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
 use base_common_types_rpc::{Filter, Log};
+use base_execution_state_types::ProviderError;
 use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use reth_storage_api::BlockReader;
-use reth_storage_errors::provider::ProviderError;
 use thiserror::Error;
 
 use crate::EthApiError;

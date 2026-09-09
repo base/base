@@ -3,8 +3,8 @@ use std::time::Duration;
 use alloy_primitives::B256;
 #[cfg(feature = "metrics")]
 use base_common_observability_metrics::metrics::{self, Histogram};
+use base_execution_state_types::DatabaseError;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_storage_errors::db::DatabaseError;
 use tracing::trace_span;
 
 use super::{TrieCursor, TrieStorageCursor};

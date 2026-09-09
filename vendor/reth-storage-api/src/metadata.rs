@@ -2,8 +2,8 @@
 
 use alloc::vec::Vec;
 
+use base_execution_state_types::ProviderResult;
 use reth_db_api::models::StorageSettings;
-use reth_storage_errors::provider::ProviderResult;
 
 /// Metadata keys.
 pub mod keys {

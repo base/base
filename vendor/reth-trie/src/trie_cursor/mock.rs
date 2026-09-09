@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use alloy_primitives::{B256, map::B256Map};
-use parking_lot::{Mutex, MutexGuard};
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 use base_execution_state_types::updates::TrieUpdates;
+use parking_lot::{Mutex, MutexGuard};
 use tracing::instrument;
 
 use super::{TrieCursor, TrieCursorFactory, TrieStorageCursor};

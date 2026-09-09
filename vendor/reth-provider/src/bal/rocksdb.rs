@@ -8,6 +8,7 @@ use alloy_eips::NumHash;
 use alloy_primitives::{BlockHash, BlockNumber, Bytes};
 use base_common_runtime_tasks::EventSender;
 use base_execution_state_types::PruneMode;
+use base_execution_state_types::{ProviderError, ProviderResult};
 use parking_lot::RwLock;
 use reth_db_api::{
     DatabaseError,
@@ -18,7 +19,6 @@ use reth_db_api::{
 use reth_storage_api::{
     BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, RawBal,
 };
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 use crate::providers::RocksDBProvider;
 

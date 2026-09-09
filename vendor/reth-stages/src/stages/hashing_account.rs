@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use base_execution_state_types::ProviderResult;
 use reth_config::config::{EtlConfig, HashingConfig};
 use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{DBProvider, HashingWriter, StatsReader};
@@ -7,7 +8,6 @@ use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
-use reth_storage_errors::provider::ProviderResult;
 
 /// Advances the hashed-state checkpoint and restores hashed account state during unwind.
 #[derive(Clone, Debug)]

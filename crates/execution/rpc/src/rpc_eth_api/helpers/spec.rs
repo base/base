@@ -33,7 +33,7 @@ impl BaseEthApi {
     }
 
     /// Returns provider chain info
-    pub fn chain_info(&self) -> reth_storage_errors::provider::ProviderResult<ChainInfo> {
+    pub fn chain_info(&self) -> base_execution_state_types::ProviderResult<ChainInfo> {
         Ok(self.provider().chain_info()?)
     }
 
@@ -41,7 +41,7 @@ impl BaseEthApi {
     ///
     /// The response follows the `eth_capabilities` execution API proposal:
     /// <https://github.com/ethereum/execution-apis/pull/755>.
-    pub fn capabilities(&self) -> reth_storage_errors::provider::ProviderResult<EthCapabilities> {
+    pub fn capabilities(&self) -> base_execution_state_types::ProviderResult<EthCapabilities> {
         let chain_info = self.chain_info()?;
         let provider = self.provider();
 
@@ -86,7 +86,7 @@ impl BaseEthApi {
     }
 
     /// Returns the [`SyncStatus`] of the network
-    pub fn sync_status(&self) -> reth_storage_errors::provider::ProviderResult<SyncStatus> {
+    pub fn sync_status(&self) -> base_execution_state_types::ProviderResult<SyncStatus> {
         let status = if self.is_syncing() {
             let current_block = U256::from(
                 self.provider().chain_info().map(|info| info.best_number).unwrap_or_default(),
@@ -128,7 +128,7 @@ impl BaseEthApi {
 fn effective_resource(
     provider: &impl PruneCheckpointReader,
     segments: &[PruneSegment],
-) -> reth_storage_errors::provider::ProviderResult<EthCapabilitiesResource> {
+) -> base_execution_state_types::ProviderResult<EthCapabilitiesResource> {
     let mut oldest_block = 0;
     let mut retention_blocks = None::<u64>;
     let mut disabled = false;
@@ -182,7 +182,7 @@ mod tests {
     use std::collections::HashMap;
 
     use base_execution_state_types::PruneCheckpoint;
-    use reth_storage_api::errors::provider::ProviderResult;
+    use reth_storage_api::ProviderResult;
 
     use super::*;
 

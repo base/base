@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
-use reth_primitives_traits::Account;
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 use base_execution_state_types::HashedPostStateSorted;
+use reth_primitives_traits::Account;
 
 use super::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
 use crate::forward_cursor::ForwardInMemoryCursor;
@@ -443,7 +443,8 @@ mod tests {
     }
 
     fn storage_post_state(storage_slots: Vec<(B256, U256)>) -> HashedPostStateSorted {
-        let storage_sorted = base_execution_state_types::HashedStorageSorted { storage_slots, wiped: false };
+        let storage_sorted =
+            base_execution_state_types::HashedStorageSorted { storage_slots, wiped: false };
         let mut storages = alloy_primitives::map::B256Map::default();
         storages.insert(B256::ZERO, storage_sorted);
         HashedPostStateSorted::new(Vec::new(), storages)

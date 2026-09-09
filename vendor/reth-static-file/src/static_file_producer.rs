@@ -7,6 +7,7 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_runtime_tasks::{EventSender, EventStream};
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::PruneModes;
 use base_execution_state_types::StageId;
 use base_execution_state_types::{HighestStaticFiles, StaticFileTargets};
@@ -17,7 +18,6 @@ use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileWriter,
 };
-use reth_storage_errors::provider::ProviderResult;
 use tracing::{debug, trace};
 
 use crate::{StaticFileProducerEvent, segments, segments::Segment};

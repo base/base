@@ -3,10 +3,10 @@ use core::ops::RangeBounds;
 
 use alloy_primitives::{Address, B256, BlockNumber, map::B256Map};
 use auto_impl::auto_impl;
-use reth_db_api::models::BlockNumberAddress;
 use base_execution_state_types::AccountBeforeTx;
+use base_execution_state_types::ProviderResult;
+use reth_db_api::models::BlockNumberAddress;
 use reth_primitives_traits::{Account, StorageEntry};
-use reth_storage_errors::provider::ProviderResult;
 
 /// Hashing Writer
 #[auto_impl(&, Arc, Box)]

@@ -20,6 +20,7 @@ use base_execution_state_types::{
     DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles, SegmentHeader, SegmentRangeInclusive,
     StaticFileMap, StaticFileSegment, find_fixed_range,
 };
+use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
 use reth_db::{
@@ -44,7 +45,6 @@ use reth_storage_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, PruneCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
-use reth_storage_errors::provider::{ProviderError, ProviderResult, StaticFileWriterError};
 use tracing::{debug, info, info_span, instrument, trace, warn};
 
 use super::{

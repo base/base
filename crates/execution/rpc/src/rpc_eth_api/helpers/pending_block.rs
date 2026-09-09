@@ -19,6 +19,8 @@ use base_execution_evm_blocks::{
 use base_execution_evm_machine::{Block, Cfg as _};
 use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{BlockExecutionError, BlockValidationError};
+use base_execution_state_types::ComputedTrieData;
+use base_execution_state_types::ProviderError;
 use base_execution_txpool::{
     BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
 };
@@ -29,8 +31,6 @@ use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
 };
 use reth_storage_api::{BlockReader, BlockReaderIdExt, StateProviderFactory, noop::NoopProvider};
-use reth_storage_errors::provider::ProviderError;
-use base_execution_state_types::ComputedTrieData;
 use tracing::debug;
 
 use crate::BaseEthApi;

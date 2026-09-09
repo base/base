@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use alloy_primitives::{B256, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_trie::{BranchNodeCompact, TrieMask};
-use reth_storage_errors::StateProofError;
+use base_execution_state_types::StateProofError;
 use base_execution_state_types::{
     BranchNodeMasks, BranchNodeRef, BranchNodeV2, Nibbles, ProofTrieNodeV2, ProofV2Target, RlpNode,
     TrieNodeV2, prefix_set::PrefixSet,
@@ -1980,10 +1980,10 @@ mod tests {
     use alloy_primitives::map::B256Set;
     use alloy_rlp::Decodable;
     use alloy_trie::proof::AddedRemovedKeys;
-    use itertools::Itertools;
     use base_execution_state_types::{
         EMPTY_ROOT_HASH, ProofTrieNode, ProofV2TargetParent, TrieNode, prefix_set::PrefixSetMut,
     };
+    use itertools::Itertools;
 
     use super::*;
     use crate::{

@@ -19,9 +19,8 @@ workspace = true
 thiserror = { workspace = true }
 reth-db-api = { workspace = true }
 reth-fs-util = { workspace = true }
-reth-storage-errors = { workspace = true }
+base-execution-state-types = {workspace = true}
 metrics = { workspace = true, optional = true }
-base-execution-state-types = { workspace = true }
 page_size = { workspace = true, optional = true }
 sysinfo = { workspace = true, features = ["system"] }
 derive_more = { workspace = true, features = ["full"] }

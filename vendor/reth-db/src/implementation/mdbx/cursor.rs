@@ -2,6 +2,7 @@
 
 use std::{borrow::Cow, collections::Bound, marker::PhantomData, ops::RangeBounds};
 
+use base_execution_state_types::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation};
 use reth_db_api::{
     common::{PairResult, ValueOnlyResult},
     cursor::{
@@ -11,7 +12,6 @@ use reth_db_api::{
     table::{Compress, Decode, Decompress, DupSort, Encode, IntoVec, Table},
 };
 use reth_libmdbx::{Error as MDBXError, RO, RW, TransactionKind, WriteFlags};
-use reth_storage_errors::db::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation};
 
 use super::utils::*;
 use crate::{

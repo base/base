@@ -23,6 +23,7 @@ use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
 };
+use base_execution_state_types::{ProviderResult, StaticFileWriterError};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
@@ -48,7 +49,6 @@ use reth_storage_api::{
     StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
     WriteStateInput,
 };
-use reth_storage_errors::provider::{ProviderResult, StaticFileWriterError};
 use reth_storage_overlay::OverlayManager;
 use reth_trie::{
     ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,

@@ -20,13 +20,13 @@ use base_common_observability_metrics::{
     metrics::{Counter, Gauge},
 };
 use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
+use base_execution_state_types::{ProviderError, ProviderResult};
 use parking_lot::RwLock;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 #[cfg(test)]
 use reth_trie::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
 use reth_trie::{

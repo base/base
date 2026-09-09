@@ -19,9 +19,9 @@ mod writer_tests;
 use std::{io, ops::Deref, sync::Arc};
 
 use crate::ChangesetOffsetReader;
+use base_execution_state_types::{ProviderError, ProviderResult};
 use base_execution_state_types::{SegmentHeader, StaticFileSegment};
 use reth_nippy_jar::NippyJar;
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 /// Alias type for each specific `NippyJar`.
 type LoadedJarRef<'a> =

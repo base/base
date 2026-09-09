@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 use alloy_trie::proof::AddedRemovedKeys;
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 use tracing::{instrument, trace};
 
 use crate::{
@@ -317,12 +317,12 @@ mod tests {
     use alloy_trie::{
         BranchNodeCompact, EMPTY_ROOT_HASH, HashBuilder, Nibbles, TrieAccount, TrieMask,
     };
-    use itertools::Itertools;
-    use reth_primitives_traits::Account;
     use base_execution_state_types::{
         BranchNode, HashedPostState, LeafNode, RlpNode, prefix_set::PrefixSetMut,
         updates::TrieUpdates,
     };
+    use itertools::Itertools;
+    use reth_primitives_traits::Account;
 
     use super::{TrieElement, TrieNodeIter};
     use crate::{

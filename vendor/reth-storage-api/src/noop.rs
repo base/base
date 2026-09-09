@@ -21,13 +21,13 @@ use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
+use base_execution_state_types::{ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 #[cfg(feature = "db-api")]
 use reth_db_api::mock::TxMock;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{Account, Bytecode, RecoveredBlock, SealedHeader};
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 pub use crate::bal::NoopBalStore;
 use crate::{

@@ -15,6 +15,7 @@ use alloy_primitives::{
 };
 use base_common_observability_metrics::Metrics;
 use base_execution_evm_runtime::database::BundleState;
+use base_execution_state_types::ProviderResult;
 use fixed_cache::{AnyRef, CacheConfig, Stats, StatsHandler};
 use metrics::{Counter, Gauge, Histogram};
 use parking_lot::Once;
@@ -23,7 +24,6 @@ use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateRootProvider, StorageRootProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,

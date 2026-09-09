@@ -21,13 +21,13 @@ use base_execution_evm_runtime::{
     database::State,
     primitives::{Address, B256, Bytes as RevmBytes},
 };
+#[cfg(not(feature = "std"))]
+use base_execution_state_types as _;
+#[cfg(feature = "std")]
+use base_execution_state_types::AnyError;
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
-#[cfg(not(feature = "std"))]
-use reth_storage_errors as _;
-#[cfg(feature = "std")]
-use reth_storage_errors::any::AnyError;
 
 #[cfg(feature = "std")]
 use crate::ExecutableTxIterator;

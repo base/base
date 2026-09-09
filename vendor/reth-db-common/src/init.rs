@@ -7,6 +7,7 @@ use alloy_primitives::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
+use base_execution_state_types::StateRootError;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_config::config::EtlConfig;
@@ -22,12 +23,11 @@ use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader, Stora
 use reth_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,
-    OriginalValuesKnown, ProviderError, ProviderFactory, RevertsInit, RocksDBProviderFactory,
-    StageCheckpointReader, StateWriteConfig, StateWriter, StaticFileProviderFactory,
-    StorageSettings, StorageSettingsCache, TrieWriter, errors::provider::ProviderResult,
+    OriginalValuesKnown, ProviderError, ProviderFactory, ProviderResult, RevertsInit,
+    RocksDBProviderFactory, StageCheckpointReader, StateWriteConfig, StateWriter,
+    StaticFileProviderFactory, StorageSettings, StorageSettingsCache, TrieWriter,
     providers::StaticFileWriter,
 };
-use reth_storage_errors::StateRootError;
 use reth_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot as StateRootComputer,
     StateRootProgress, prefix_set::TriePrefixSets,

@@ -20,7 +20,7 @@ metrics = { workspace = true }
 reth-trie = { workspace = true }
 reth-provider = { workspace = true }
 reth-storage-api = { workspace = true }
-reth-storage-errors = {workspace = true}
+base-execution-state-types = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-memory = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }

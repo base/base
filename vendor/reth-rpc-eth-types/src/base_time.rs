@@ -9,7 +9,7 @@ use alloy_primitives::BlockHash;
 use base_common_types_chain::BaseTransaction;
 use base_protocol::BaseTimeUpdateTx;
 use lru::LruCache;
-use reth_storage_api::{TransactionsProvider, errors::ProviderError};
+use reth_storage_api::{ProviderError, TransactionsProvider};
 
 /// Cache of validated `BaseTime` timestamps keyed by block hash.
 #[derive(Clone, Debug)]

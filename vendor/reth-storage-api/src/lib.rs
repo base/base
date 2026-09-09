@@ -12,7 +12,7 @@
 extern crate alloc;
 
 // Re-export used error types.
-pub use reth_storage_errors as errors;
+pub use base_execution_state_types::{ProviderError, ProviderResult};
 mod bal;
 pub use bal::*;
 

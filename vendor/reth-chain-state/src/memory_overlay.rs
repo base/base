@@ -5,12 +5,12 @@ use alloy_primitives::{
 };
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_runtime::database::BundleState;
+use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     TrieInput, updates::TrieUpdates,

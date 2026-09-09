@@ -20,6 +20,7 @@ use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm_runtime::interpreter::debug_unreachable;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use base_execution_payload_types::{BasePayloadBuilderAttributes, NewPayloadError};
+use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
 use reth_chain_state::{
@@ -39,7 +40,6 @@ use reth_provider::{
     TransactionVariant, TryIntoHistoricalStateProvider,
 };
 use reth_stages_api::ControlFlow;
-use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::OverlayManager;
 use reth_trie::ComputedTrieData;
 use state::TreeState;

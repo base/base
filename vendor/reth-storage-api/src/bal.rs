@@ -4,7 +4,7 @@ use alloy_eip7928::bal::DecodedBal;
 pub use alloy_eip7928::bal::RawBal;
 use alloy_eips::NumHash;
 use alloy_primitives::{BlockHash, BlockNumber, Bytes};
-use reth_storage_errors::provider::ProviderResult;
+use base_execution_state_types::ProviderResult;
 
 /// Notification emitted when a new BAL is inserted into the store.
 #[derive(Clone, Debug, PartialEq, Eq)]

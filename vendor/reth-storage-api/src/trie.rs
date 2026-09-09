@@ -1,13 +1,13 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use reth_primitives_traits::Account;
-use reth_storage_errors::provider::ProviderResult;
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::{StorageTrieUpdatesSorted, TrieUpdates, TrieUpdatesSorted},
 };
+use reth_primitives_traits::Account;
 
 /// A type that can compute the state root of a given post state.
 #[auto_impl::auto_impl(&, Box, Arc)]

@@ -4,12 +4,12 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, U256, keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
+use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateRootProvider, StorageRootProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,

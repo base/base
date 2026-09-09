@@ -21,12 +21,12 @@
 use std::cmp::Ordering;
 
 use alloy_primitives::{B256, map::B256Map};
-use itertools::{EitherOrBoth, merge_join_by};
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 use base_execution_state_types::{
     BranchNodeCompact, Nibbles,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
+use itertools::{EitherOrBoth, merge_join_by};
 
 use crate::trie_cursor::{TrieCursor, TrieCursorFactory, TrieCursorIter, TrieStorageCursor};
 

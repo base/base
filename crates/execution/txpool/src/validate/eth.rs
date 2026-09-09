@@ -27,8 +27,8 @@ use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
-    AccountInfoReader, BlockReaderIdExt, BytecodeReader, StateProviderBox, StateProviderFactory,
-    errors::ProviderError,
+    AccountInfoReader, BlockReaderIdExt, BytecodeReader, ProviderError, StateProviderBox,
+    StateProviderFactory,
 };
 
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;

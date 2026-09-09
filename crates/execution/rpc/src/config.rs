@@ -15,11 +15,11 @@ use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::{BaseEvmConfig, Evm, PrecompilesMap};
 use base_execution_evm_runtime::Precompile;
 use base_execution_evm_runtime::database::EmptyDB;
+use base_execution_state_types::ProviderError;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::BlockReaderIdExt;
-use reth_storage_errors::provider::ProviderError;
 
 /// RPC endpoint support for [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910)
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]

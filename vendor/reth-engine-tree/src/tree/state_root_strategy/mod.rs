@@ -67,6 +67,7 @@ use std::{
 use alloy_primitives::B256;
 use base_common_runtime_tasks::utils::increase_thread_priority;
 use base_execution_evm_blocks::OnStateHook;
+use base_execution_state_types::ProviderResult;
 pub use base_execution_trie::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
@@ -83,7 +84,6 @@ use reth_provider::{
     HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
     StateRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
 use reth_trie::{
     HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,

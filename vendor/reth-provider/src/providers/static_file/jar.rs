@@ -10,13 +10,13 @@ use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
 use base_execution_state_types::ChangesetOffset;
+use base_execution_state_types::{ProviderError, ProviderResult};
 use reth_db::static_file::{
     BlockHashMask, HeaderMask, HeaderWithHashMask, ReceiptMask, StaticFileCursor, TransactionMask,
     TransactionSenderMask,
 };
 use reth_primitives_traits::SealedHeader;
 use reth_storage_api::range_size_hint;
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 use super::{
     LoadedJarRef,

@@ -210,8 +210,8 @@ where
 mod tests {
     use alloy_eips::{BlockHashOrNumber, NumHash};
     use alloy_primitives::{B256, BlockNumber, keccak256};
+    use base_execution_state_types::ProviderResult;
     use mockall::mock;
-    use reth_storage_errors::provider::ProviderResult;
 
     use super::*;
 

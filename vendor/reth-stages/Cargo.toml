@@ -30,7 +30,6 @@ reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-storage-api = { workspace = true }
-reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }

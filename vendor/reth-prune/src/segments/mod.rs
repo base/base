@@ -12,7 +12,7 @@ use base_execution_state_types::{
     SegmentOutputCheckpoint,
 };
 use reth_provider::{
-    BlockReader, PruneCheckpointWriter, StaticFileProviderFactory, errors::provider::ProviderResult,
+    BlockReader, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
 };
 pub use set::SegmentSet;
 use tracing::error;

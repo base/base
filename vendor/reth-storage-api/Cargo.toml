@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
@@ -50,7 +49,6 @@ std = [
     "base-execution-state-types/std",
     "base-execution-evm-runtime/std",
     "reth-execution-types/std",
-    "reth-storage-errors/std",
     "serde_json?/std",
     "dep:base-common-runtime-tasks",
     "alloy-eip7928/std",

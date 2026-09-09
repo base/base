@@ -12,11 +12,11 @@ use base_execution_evm_runtime::{
     database::{EvmDatabaseError, State},
     primitives::KECCAK_EMPTY,
 };
+use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, RpcInvalidTransactionError};
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use reth_storage_api::StateProvider;
-use reth_storage_errors::provider::ProviderError;
 use tracing::trace;
 
 use crate::BaseEthApi;

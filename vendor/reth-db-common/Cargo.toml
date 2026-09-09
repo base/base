@@ -21,7 +21,6 @@ reth-db-api = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-provider = { workspace = true }
-reth-storage-errors = {workspace = true}
 boyer-moore-magiclen = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }

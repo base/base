@@ -142,3 +142,10 @@ pub use static_files::{
     SegmentConfig, SegmentHeader, SegmentRangeInclusive, StaticFileMap, StaticFileProducerEvent,
     StaticFileSegment, StaticFileTargets, blocks_per_file_for_prune_distance, find_fixed_range,
 };
+
+mod storage_errors;
+pub use storage_errors::{
+    AnyError, ConsistentViewError, DatabaseError, DatabaseErrorInfo, DatabaseWriteError,
+    DatabaseWriteOperation, LogLevel, ProviderError, ProviderResult, RootMismatch, StateProofError,
+    StateRootError, StaticFileWriterError, StorageLockError, StorageRootError, TrieWitnessError,
+};

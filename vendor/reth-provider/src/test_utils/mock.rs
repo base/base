@@ -21,6 +21,7 @@ use base_common_types_chain::{
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use parking_lot::Mutex;
@@ -40,7 +41,6 @@ use reth_storage_api::{
     HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
     StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_storage_errors::provider::{ConsistentViewError, ProviderError, ProviderResult};
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,

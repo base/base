@@ -1,7 +1,7 @@
 //! Base consensus errors
 
 use alloy_primitives::B256;
-use reth_storage_errors::provider::ProviderError;
+use base_execution_state_types::ProviderError;
 
 use crate::ConsensusError;
 

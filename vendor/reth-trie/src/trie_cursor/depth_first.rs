@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, iter::FusedIterator};
 
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 use tracing::trace;
 
 use super::TrieCursor;

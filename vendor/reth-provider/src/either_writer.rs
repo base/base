@@ -10,6 +10,7 @@ use std::{
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::{ProviderError, ProviderResult};
 use rayon::slice::ParallelSliceMut;
 use reth_db::{
     cursor::{DbCursorRO, DbDupCursorRW},
@@ -26,7 +27,6 @@ use reth_db_api::{
 };
 use reth_primitives_traits::StorageEntry;
 use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider};
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use strum::{Display, EnumIs};
 
 use crate::{

@@ -21,11 +21,11 @@ alloy-eips = {workspace = true}
 fixed-map = { workspace = true }
 bytes = {workspace = true, optional = true}
 reth-primitives-traits = {workspace = true}
-base-common-types-chain = {workspace = true }
+base-common-types-chain = {workspace = true}
 rayon = { workspace = true, optional = true }
 arrayvec = { workspace = true, optional = true }
+base-execution-state-memory = {workspace = true}
 strum = {workspace = true, features = ["derive"]}
-base-execution-state-memory = { workspace = true }
 nybbles = { workspace = true, features = ["rlp"] }
 alloy-serde = { workspace = true, optional = true }
 derive_more = {features = ["full"], workspace = true}
@@ -36,7 +36,7 @@ itertools = { workspace = true, features = ["use_alloc"] }
 serde = {workspace = true,  features = ["alloc", "derive"]}
 base-common-types-rpc = { workspace = true, optional = true }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
-alloy-rlp = { workspace = true, features = ["core-net", "arrayvec"] }
+alloy-rlp = {features = ["arrayvec", "core-net"], workspace = true}
 arbitrary = {features = ["derive"], optional = true, workspace = true}
 hash-db = { workspace = true, optional = true, features = ["default"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }

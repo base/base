@@ -2,7 +2,7 @@
 
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_evm_runtime::BlockExecutionError;
-use reth_storage_errors::provider::ProviderError;
+use base_execution_state_types::ProviderError;
 
 /// Errors surfaced by `execute_block`.
 #[derive(Debug, thiserror::Error)]

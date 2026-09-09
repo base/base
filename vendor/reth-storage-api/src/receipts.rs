@@ -3,8 +3,8 @@ use core::ops::{RangeBounds, RangeInclusive};
 
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{BlockNumber, TxHash, TxNumber};
+use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::Receipt;
-use reth_storage_errors::provider::ProviderResult;
 
 use crate::BlockIdReader;
 

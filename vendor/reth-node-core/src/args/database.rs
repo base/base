@@ -2,6 +2,7 @@
 
 use std::{fmt, str::FromStr, time::Duration};
 
+use base_execution_state_types::LogLevel;
 use clap::{
     Arg, Args, Command, Error,
     builder::{PossibleValue, TypedValueParser},
@@ -12,7 +13,6 @@ use reth_db::{
     ClientVersion,
     mdbx::{MaxReadTransactionDuration, SyncMode},
 };
-use reth_storage_errors::db::LogLevel;
 
 use crate::version::default_client_version;
 

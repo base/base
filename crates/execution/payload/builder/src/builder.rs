@@ -10,6 +10,9 @@ use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chain_config::Upgrades;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_common_observability_events::{
+    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use base_common_types_chain::{
     BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
@@ -25,20 +28,17 @@ use base_execution_evm_runtime::L1BlockInfo;
 use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{CommitChanges, Evm as AlloyEvm, TxResult};
 use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderError};
+use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
-use base_common_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
-};
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
-use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
-use base_execution_state_types::ExecutionWitnessMode;
+use reth_storage_api::{BlockReader, ProviderError, StateProvider, StateProviderFactory};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -1362,6 +1362,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
     use base_common_chain_config::BaseUpgrade;
     use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_common_observability_events::{TransactionEventCapture, TransactionEventType};
     use base_common_types_chain::{
         BaseTxEnvelope, Header, Predeploys, SignableTransaction, TxEip1559,
     };
@@ -1372,16 +1373,15 @@ mod tests {
     use base_execution_evm_runtime::BaseTime;
     use base_execution_evm_runtime::{database::State, state::EvmState};
     use base_execution_payload_types::{MeterBundleResponse, OpcodeGas, TransactionResult};
+    use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
     use base_execution_trie::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,
     };
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
-    use base_common_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
-    use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

@@ -21,7 +21,6 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-api = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-storage-errors = { workspace = true }
 rayon = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true}
 tracing = { workspace = true, features = ["attributes"] }

@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use reth_storage_errors::lockfile::StorageLockError;
+use base_execution_state_types::StorageLockError;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 /// File lock name.

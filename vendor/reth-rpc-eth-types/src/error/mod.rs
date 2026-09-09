@@ -10,6 +10,7 @@ use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
+use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
 use base_execution_evm_machine::{
     EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError,
 };
@@ -17,6 +18,7 @@ use base_execution_evm_runtime::{
     BlockExecutionError, BlockValidationError, CallError, StateOverrideError,
 };
 use base_execution_evm_runtime::{database::EvmDatabaseError, state::bal::BalError};
+use base_execution_state_types::ProviderError;
 use base_execution_txpool::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
@@ -26,8 +28,6 @@ use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError}
 use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
-use reth_storage_errors::provider::ProviderError;
-use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
 use tokio::sync::oneshot::error::RecvError;
 
 /// A trait to convert an error to an RPC error.
@@ -535,8 +535,8 @@ impl From<BlockExecutionError> for EthApiError {
     }
 }
 
-impl From<reth_storage_errors::provider::ProviderError> for EthApiError {
-    fn from(error: reth_storage_errors::provider::ProviderError) -> Self {
+impl From<base_execution_state_types::ProviderError> for EthApiError {
+    fn from(error: base_execution_state_types::ProviderError) -> Self {
         match error {
             ProviderError::HeaderNotFound(hash) => Self::HeaderNotFound(hash.into()),
             ProviderError::BlockHashNotFound(hash) | ProviderError::UnknownBlockHash(hash) => {

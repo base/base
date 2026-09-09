@@ -3,8 +3,8 @@ use base_execution_state_types::{
 };
 use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
-    BlockReader, DBProvider, PruneCheckpointWriter, StaticFileProviderFactory,
-    StorageSettingsCache, TransactionsProvider, errors::provider::ProviderResult,
+    BlockReader, DBProvider, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
+    StorageSettingsCache, TransactionsProvider,
 };
 use tracing::instrument;
 

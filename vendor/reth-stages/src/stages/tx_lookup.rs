@@ -1,4 +1,5 @@
 use alloy_primitives::{TxHash, TxNumber};
+use base_execution_state_types::ProviderError;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::{EtlConfig, TransactionLookupConfig};
 use reth_db_api::{
@@ -17,7 +18,6 @@ use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
-use reth_storage_errors::provider::ProviderError;
 use tracing::*;
 
 /// The transaction lookup stage.

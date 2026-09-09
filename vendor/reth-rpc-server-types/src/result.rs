@@ -105,7 +105,7 @@ macro_rules! impl_to_rpc_result {
 impl_to_rpc_result!(PayloadError);
 impl_to_rpc_result!(ConsensusError);
 impl_to_rpc_result!(Box<dyn core::error::Error + Send + Sync>);
-impl_to_rpc_result!(reth_storage_errors::provider::ProviderError);
+impl_to_rpc_result!(base_execution_state_types::ProviderError);
 impl_to_rpc_result!(reth_network_api::NetworkError);
 
 /// Constructs an invalid params JSON-RPC error.

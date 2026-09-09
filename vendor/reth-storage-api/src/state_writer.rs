@@ -5,9 +5,9 @@ use base_common_types_chain::{BaseReceipt, transaction::Either};
 use base_execution_evm_runtime::database::{
     BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
 };
-use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
-use reth_storage_errors::provider::ProviderResult;
 use base_execution_state_types::HashedPostStateSorted;
+use base_execution_state_types::ProviderResult;
+use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 
 /// A helper type used as input to [`StateWriter`] for writing execution outcome for one or many
 /// blocks.

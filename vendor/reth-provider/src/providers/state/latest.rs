@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageValue};
+use base_execution_state_types::{ProviderError, ProviderResult};
 use reth_db_api::{cursor::DbDupCursorRO, tables, transaction::DbTx};
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     BytecodeReader, DBProvider, StateProofProvider, StorageRootProvider, StorageSettingsCache,
 };
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,

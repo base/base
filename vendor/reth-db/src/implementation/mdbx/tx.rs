@@ -11,13 +11,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_observability_tracing::tracing::{debug, instrument, trace, warn};
+use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
 use reth_db_api::{
     table::{Compress, DupSort, Encode, IntoVec, Table, TableImporter},
     transaction::{DbTx, DbTxMut},
 };
 use reth_libmdbx::{CommitLatency, RW, Transaction, TransactionKind, WriteFlags, ffi::MDBX_dbi};
-use reth_storage_errors::db::{DatabaseWriteError, DatabaseWriteOperation};
-use base_common_observability_tracing::tracing::{debug, instrument, trace, warn};
 
 use super::{cursor::Cursor, utils::*};
 use crate::{
@@ -443,9 +443,9 @@ impl DbTxMut for Tx<RW> {
 mod tests {
     use std::{sync::atomic::Ordering, thread::sleep, time::Duration};
 
+    use base_execution_state_types::DatabaseError;
     use reth_db_api::{database::Database, models::ClientVersion, transaction::DbTx};
     use reth_libmdbx::MaxReadTransactionDuration;
-    use reth_storage_errors::db::DatabaseError;
     use tempfile::tempdir;
 
     use crate::{DatabaseEnv, DatabaseEnvKind, mdbx::DatabaseArguments, tables};

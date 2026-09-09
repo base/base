@@ -5,7 +5,7 @@ use base_execution_evm_blocks::ConsensusError;
 use base_execution_evm_runtime::{
     BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };
-use reth_storage_errors::provider::ProviderError;
+use base_execution_state_types::ProviderError;
 
 /// Represents all error cases when handling a new payload.
 ///

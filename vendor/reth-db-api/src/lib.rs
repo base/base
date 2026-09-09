@@ -85,7 +85,7 @@ pub use tables::{IntegerListInput, *};
 pub mod transaction;
 
 /// Re-exports
-pub use reth_storage_errors::db::{DatabaseError, DatabaseWriteOperation};
+pub use base_execution_state_types::{DatabaseError, DatabaseWriteOperation};
 
 pub mod models;
 

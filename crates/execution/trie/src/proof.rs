@@ -4,8 +4,15 @@ use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
 };
+use base_execution_state_types::{
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
+    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    updates::TrieUpdates,
+};
+use base_execution_state_types::{
+    StateProofError, StateRootError, StorageRootError, TrieWitnessError,
+};
 use reth_db::DatabaseError;
-use reth_storage_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
     StateRoot, StorageRoot, TrieType,
     hashed_cursor::HashedPostStateCursorFactory,
@@ -13,11 +20,6 @@ use reth_trie::{
     proof::{self, Proof},
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
-};
-use base_execution_state_types::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
 };
 
 use crate::{

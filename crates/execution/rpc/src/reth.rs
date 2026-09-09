@@ -90,7 +90,7 @@ where
         let accounts_before = self.provider().account_block_changeset(block_number)?;
         let hash_map = accounts_before.iter().try_fold(
             AddressMap::default(),
-            |mut hash_map, account_before| -> reth_storage_errors::provider::ProviderResult<_> {
+            |mut hash_map, account_before| -> base_execution_state_types::ProviderResult<_> {
                 let current_balance = state.account_balance(&account_before.address)?;
                 let prev_balance = account_before.info.map(|info| info.balance);
                 if current_balance != prev_balance {

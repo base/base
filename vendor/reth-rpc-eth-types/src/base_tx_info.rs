@@ -4,7 +4,7 @@ use std::fmt::{Debug, Formatter};
 
 use base_common_types_chain::{BaseReceipt, BaseTransactionInfo, BaseTxEnvelope, DepositInfo};
 use base_common_types_rpc::TransactionInfo;
-use reth_storage_api::{ReceiptProvider, TransactionsProvider, errors::ProviderError};
+use reth_storage_api::{ProviderError, ReceiptProvider, TransactionsProvider};
 
 use crate::BaseTimeCache;
 

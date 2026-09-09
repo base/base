@@ -30,7 +30,7 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
         headers_provider: &HP,
         block_number: u64,
         mode: ExecutionWitnessMode,
-    ) -> reth_storage_errors::provider::ProviderResult<alloy_rpc_types_debug::ExecutionWitness>
+    ) -> base_execution_state_types::ProviderResult<alloy_rpc_types_debug::ExecutionWitness>
     where
         SP: reth_storage_api::HashedPostStateProvider
             + reth_storage_api::StateProofProvider
@@ -94,7 +94,7 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
     fn hashed_post_state<SP>(
         &self,
         state_provider: &SP,
-    ) -> reth_storage_errors::provider::ProviderResult<(HashedPostState, Vec<Bytes>)>
+    ) -> base_execution_state_types::ProviderResult<(HashedPostState, Vec<Bytes>)>
     where
         SP: reth_storage_api::HashedPostStateProvider + ?Sized,
     {
@@ -139,8 +139,8 @@ mod tests {
         database::{AccountStatus, BundleAccount, CacheAccount, EmptyDB},
         state::AccountInfo,
     };
+    use base_execution_state_types::ProviderResult;
     use reth_storage_api::HashedPostStateProvider;
-    use reth_storage_errors::provider::ProviderResult;
 
     use super::*;
 

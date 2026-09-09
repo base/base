@@ -8,6 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base_common_observability_tracing::tracing::error;
+use base_execution_state_types::LogLevel;
 use eyre::Context;
 use metrics::{Label, gauge};
 use reth_db_api::{
@@ -21,8 +23,6 @@ use reth_libmdbx::{
     DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
     MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
 };
-use reth_storage_errors::db::LogLevel;
-use base_common_observability_tracing::tracing::error;
 use tx::Tx;
 
 use crate::{
@@ -702,6 +702,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_types_chain::Header;
+    use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
     use reth_db_api::{
         cursor::{DbDupCursorRO, DbDupCursorRW, ReverseWalker, Walker},
         models::{AccountBeforeTx, IntegerList, ShardedKey},
@@ -709,7 +710,6 @@ mod tests {
     };
     use reth_libmdbx::Error;
     use reth_primitives_traits::{Account, StorageEntry};
-    use reth_storage_errors::db::{DatabaseWriteError, DatabaseWriteOperation};
     use tempfile::TempDir;
 
     use super::*;

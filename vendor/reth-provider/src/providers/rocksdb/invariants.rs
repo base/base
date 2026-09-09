@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StageId;
 use base_execution_state_types::StaticFileSegment;
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
@@ -16,7 +17,6 @@ use reth_storage_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache, TransactionsProviderExt,
 };
-use reth_storage_errors::provider::ProviderResult;
 
 use super::RocksDBProvider;
 use crate::StaticFileProviderFactory;

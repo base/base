@@ -21,7 +21,6 @@ serde = { workspace = true }
 metrics = { workspace = true }
 arrayvec = { workspace = true }
 modular-bitfield = { workspace = true }
-reth-storage-errors = { workspace = true }
 roaring = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 base-common-types-chain = { workspace = true, features = ["serde"]}

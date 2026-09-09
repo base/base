@@ -1,6 +1,6 @@
 use std::ops::RangeBounds;
 
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 
 use crate::{cursor::DbCursorRO, table::Table, transaction::DbTxMut};
 

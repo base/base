@@ -6,7 +6,7 @@ use core::error;
 use alloy_primitives::B256;
 use base_common_types_payload::{ForkchoiceUpdateError, PayloadError, PayloadStatusEnum};
 use base_execution_evm_runtime::BlockExecutionError;
-use reth_storage_errors::provider::ProviderError;
+use base_execution_state_types::ProviderError;
 use tokio::sync::{mpsc, oneshot};
 
 /// Possible error variants during payload building.

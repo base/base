@@ -13,10 +13,7 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use reth_storage_api::{
-    BlockReaderIdExt, StateProviderFactory,
-    errors::{ProviderError, ProviderResult},
-};
+use reth_storage_api::{BlockReaderIdExt, ProviderError, ProviderResult, StateProviderFactory};
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]

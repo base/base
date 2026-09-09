@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 use core::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StoredBlockBodyIndices;
-use reth_storage_errors::provider::ProviderResult;
 
 ///  Client trait for fetching block body indices related data.
 #[auto_impl::auto_impl(&, Arc)]

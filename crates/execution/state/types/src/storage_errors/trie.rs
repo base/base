@@ -2,11 +2,11 @@
 
 use alloc::string::ToString;
 
+use crate::{SparseStateTrieError, SparseStateTrieErrorKind};
 use alloy_primitives::B256;
-use base_execution_state_types::{SparseStateTrieError, SparseStateTrieErrorKind};
 use thiserror::Error;
 
-use crate::{db::DatabaseError, provider::ProviderError};
+use super::{db::DatabaseError, provider::ProviderError};
 
 /// State root errors.
 #[derive(Error, Clone, Debug)]

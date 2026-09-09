@@ -18,12 +18,11 @@ workspace = true
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-blocks = { workspace = true}
 base-execution-evm-runtime = {workspace = true}
-base-execution-state-types = { workspace = true }
+base-execution-state-types = {workspace = true}
 tokio = { workspace = true, features = ["sync"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}

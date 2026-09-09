@@ -22,7 +22,7 @@ use reth_chain_state::CanonStateNotification;
 use reth_execution_types::ChangedAccount;
 use reth_fs_util::FsPathError;
 use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
-use reth_storage_api::{BlockReaderIdExt, StateProviderFactory, errors::provider::ProviderError};
+use reth_storage_api::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::oneshot,

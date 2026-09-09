@@ -17,6 +17,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment,
@@ -31,7 +32,6 @@ use reth_storage_api::{
     BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::OverlayManager;
 use tracing::{info, instrument, trace, warn};
 
@@ -1013,6 +1013,7 @@ mod tests {
     use alloy_primitives::{B256, TxNumber};
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_execution_state_types::ProviderError;
     use base_execution_state_types::{PruneMode, PruneModes};
     use reth_db::{
         mdbx::DatabaseArguments,
@@ -1020,7 +1021,6 @@ mod tests {
     };
     use reth_db_api::{tables, transaction::DbTxMut};
     use reth_primitives_traits::SignerRecoverable;
-    use reth_storage_errors::provider::ProviderError;
     use reth_testing_utils::generators::{self, BlockParams, random_header};
 
     use super::*;

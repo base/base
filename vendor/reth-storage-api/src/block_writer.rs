@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::BlockNumber;
+use base_execution_state_types::HashedPostStateSorted;
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StoredBlockBodyIndices;
 use reth_execution_types::{Chain, ExecutionOutcome};
 use reth_primitives_traits::{Block, RecoveredBlock};
-use reth_storage_errors::provider::ProviderResult;
-use base_execution_state_types::HashedPostStateSorted;
 
 /// `BlockExecution` Writer
 pub trait BlockExecutionWriter: BlockWriter {

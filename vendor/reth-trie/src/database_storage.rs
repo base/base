@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, BlockNumber, keccak256, map::hash_map};
+use base_execution_state_types::{ProviderResult, StorageRootError};
 use reth_db_api::{models::BlockNumberAddress, transaction::DbTx};
 use reth_storage_api::{BlockNumReader, StorageChangeSetReader};
-use reth_storage_errors::{StorageRootError, provider::ProviderResult};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::TrieRootMetrics;

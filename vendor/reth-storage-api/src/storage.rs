@@ -5,8 +5,8 @@ use alloc::{
 use core::ops::RangeInclusive;
 
 use alloy_primitives::{Address, B256, BlockNumber};
+use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::StorageEntry;
-use reth_storage_errors::provider::ProviderResult;
 
 /// Storage reader
 #[auto_impl::auto_impl(&, Arc, Box)]

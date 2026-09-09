@@ -10,6 +10,10 @@ use alloy_primitives::{
     map::{AddressMap, HashMap},
 };
 use base_execution_state_types::PruneMode;
+use base_execution_state_types::{
+    DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation, LogLevel, ProviderError,
+    ProviderResult,
+};
 use metrics::Label;
 use parking_lot::Mutex;
 use reth_chain_state::ExecutedBlock;
@@ -21,10 +25,6 @@ use reth_db_api::{
     tables,
 };
 use reth_primitives_traits::{BlockBody as _, FastInstant as Instant};
-use reth_storage_errors::{
-    db::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation, LogLevel},
-    provider::{ProviderError, ProviderResult},
-};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, CompactionPri, DB, DBCompressionType,
     DBRawIteratorWithThreadMode, DEFAULT_COLUMN_FAMILY_NAME, IteratorMode, OptimisticTransactionDB,

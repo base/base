@@ -1,9 +1,9 @@
+use base_execution_state_types::DatabaseError;
 use reth_db::{Database, DatabaseEnv, test_utils::TempDatabase};
 use reth_provider::{DatabaseProvider, ProviderError};
 use reth_stages_api::{
     ExecInput, ExecOutput, Stage, StageError, StageExt, UnwindInput, UnwindOutput,
 };
-use reth_storage_errors::db::DatabaseError;
 use tokio::sync::oneshot;
 
 use super::TestStageDB;

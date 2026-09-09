@@ -1,6 +1,6 @@
 use alloy_primitives::BlockNumber;
+use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::{BlockHeader, SealedHeader};
-use reth_storage_errors::provider::ProviderResult;
 
 /// Provider for getting the local tip header for sync gap calculation.
 pub trait HeaderSyncGapProvider: Send {

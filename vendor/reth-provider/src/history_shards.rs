@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, BlockNumber};
+use base_execution_state_types::{ProviderError, ProviderResult};
 use itertools::Itertools;
 use rayon::prelude::*;
 use reth_db_api::{
@@ -25,7 +26,6 @@ use reth_db_api::{
     table::Table,
     tables,
 };
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 /// A history table whose keys are sharded by highest block number.
 ///

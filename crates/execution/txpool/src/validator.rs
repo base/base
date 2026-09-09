@@ -1490,7 +1490,7 @@ where
     fn account_has_code(
         state: &dyn StateProvider,
         address: Address,
-    ) -> Result<bool, reth_storage_api::errors::ProviderError> {
+    ) -> Result<bool, reth_storage_api::ProviderError> {
         Ok(state
             .basic_account(&address)?
             .and_then(|account| account.bytecode_hash)

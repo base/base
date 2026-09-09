@@ -1,5 +1,5 @@
+use base_execution_state_types::ProviderResult;
 use reth_storage_api::StorageSettingsCache;
-use reth_storage_errors::provider::ProviderResult;
 
 use crate::{
     either_writer::{RawRocksDBBatch, RocksBatchArg, RocksDBRefArg},

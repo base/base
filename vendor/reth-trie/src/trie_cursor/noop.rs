@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use reth_storage_errors::db::DatabaseError;
+use base_execution_state_types::DatabaseError;
 
 use super::{TrieCursor, TrieCursorFactory, TrieStorageCursor};
 use crate::{BranchNodeCompact, Nibbles};

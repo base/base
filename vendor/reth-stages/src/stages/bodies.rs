@@ -3,6 +3,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::TryStreamExt;
 use reth_db_api::{
@@ -19,7 +20,6 @@ use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
-use reth_storage_errors::provider::ProviderResult;
 use tracing::*;
 
 use super::missing_static_data_error;

@@ -16,7 +16,7 @@ mod tests {
         let builder = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
         let mut db = CacheDB::<
             base_execution_evm_runtime::database::EmptyDBTyped<
-                reth_storage_errors::provider::ProviderError,
+                base_execution_state_types::ProviderError,
             >,
         >::default();
         let tx = TransactionRequest::default();
@@ -33,7 +33,7 @@ mod tests {
     fn test_resolve_transaction_legacy() {
         let mut db = CacheDB::<
             base_execution_evm_runtime::database::EmptyDBTyped<
-                reth_storage_errors::provider::ProviderError,
+                base_execution_state_types::ProviderError,
             >,
         >::default();
         let builder = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
@@ -53,7 +53,7 @@ mod tests {
     fn test_resolve_transaction_partial_eip1559() {
         let mut db = CacheDB::<
             base_execution_evm_runtime::database::EmptyDBTyped<
-                reth_storage_errors::provider::ProviderError,
+                base_execution_state_types::ProviderError,
             >,
         >::default();
         let rpc_converter = BaseRpcConverter::new(MockEthProvider::default(), Default::default());
@@ -78,7 +78,7 @@ mod tests {
     fn test_resolve_transaction_wraps_max_nonce_when_nonce_check_disabled() {
         let mut db = CacheDB::<
             base_execution_evm_runtime::database::EmptyDBTyped<
-                reth_storage_errors::provider::ProviderError,
+                base_execution_state_types::ProviderError,
             >,
         >::default();
         let rpc_converter = BaseRpcConverter::new(MockEthProvider::default(), Default::default());

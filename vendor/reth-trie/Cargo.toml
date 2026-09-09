@@ -20,7 +20,6 @@ auto_impl = { workspace = true }
 itertools = { workspace = true }
 alloy-trie = { workspace = true }
 reth-db-api = { workspace = true }
-reth-storage-errors = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }

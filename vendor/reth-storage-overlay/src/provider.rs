@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
+use base_execution_state_types::ProviderResult;
 use metrics::{Counter, Histogram};
 use reth_db_api::{DatabaseError, transaction::DbTx};
 use reth_primitives_traits::dashmap::{self, DashMap};
@@ -10,7 +11,6 @@ use reth_storage_api::{
     DatabaseProviderROFactory, DbTxProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     DatabaseAccountTrieCursor, DatabaseHashedCursorFactory, DatabaseStorageTrieCursor,
     HashedPostStateSorted, PackedAccountsTrie, PackedKeyAdapter, PackedStoragesTrie,

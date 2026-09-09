@@ -7,10 +7,10 @@ use base_common_observability_metrics::{
 };
 use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
 use base_execution_evm_blocks::ExecutorMetrics;
+use base_execution_state_types::ProviderError;
 use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{FastInstant as Instant, constants::gas_units::MEGAGAS};
-use reth_storage_errors::provider::ProviderError;
 use reth_trie::updates::TrieUpdates;
 
 use crate::tree::{TreeOutcome, error::InsertBlockFatalError};

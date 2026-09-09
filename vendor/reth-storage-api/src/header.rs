@@ -3,8 +3,8 @@ use core::ops::RangeBounds;
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{BlockHash, BlockNumber};
+use base_execution_state_types::ProviderResult;
 use reth_primitives_traits::SealedHeader;
-use reth_storage_errors::provider::ProviderResult;
 
 /// A helper type alias to access [`Headeralloy_consensus::Header`].
 pub type ProviderHeader = base_common_types_chain::Header;
@@ -29,7 +29,8 @@ pub trait HeaderProvider: Send {
     }
 
     /// Get header by block number
-    fn header_by_number(&self, num: u64) -> ProviderResult<Option<base_common_types_chain::Header>>;
+    fn header_by_number(&self, num: u64)
+    -> ProviderResult<Option<base_common_types_chain::Header>>;
 
     /// Get header by block number or hash
     fn header_by_hash_or_number(

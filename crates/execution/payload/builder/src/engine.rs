@@ -12,11 +12,11 @@ use base_execution_evm_runtime::BaseTime;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError,
 };
+use base_execution_state_types::HashedPostState;
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_engine_primitives::InsertBlockErrorKind;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
-use reth_storage_api::{StateProvider, StateProviderBox, errors::ProviderResult};
-use base_execution_state_types::HashedPostState;
+use reth_storage_api::{ProviderResult, StateProvider, StateProviderBox};
 
 use crate::BaseExecutionPayloadValidator;
 

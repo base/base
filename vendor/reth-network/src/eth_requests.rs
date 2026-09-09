@@ -33,9 +33,8 @@ use reth_network_p2p::{
 use reth_network_peers::PeerId;
 use reth_primitives_traits::Block;
 use reth_storage_api::{
-    BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider, RangeEnd,
-    RangeResponse, StateProviderFactory, StateRangeProviderFactory,
-    errors::provider::ProviderResult,
+    BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
+    ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
 };
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -129,7 +128,10 @@ where
     C: BlockReader,
 {
     /// Returns the list of requested headers
-    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<base_common_types_chain::Header> {
+    fn get_headers_response(
+        &self,
+        request: GetBlockHeaders,
+    ) -> Vec<base_common_types_chain::Header> {
         let GetBlockHeaders { start_block, limit, skip, direction } = request;
 
         let mut headers = Vec::new();
@@ -207,7 +209,9 @@ where
         &self,
         _peer_id: PeerId,
         request: GetBlockBodies,
-        response: oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
+        response: oneshot::Sender<
+            RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>,
+        >,
     ) {
         self.metrics.eth_bodies_requests_received_total.increment(1);
         let mut bodies = Vec::new();
@@ -728,7 +732,8 @@ pub enum IncomingEthRequest {
         /// The specific block bodies requested.
         request: GetBlockBodies,
         /// The channel sender for the response containing block bodies.
-        response: oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
+        response:
+            oneshot::Sender<RequestResult<BlockBodies<base_common_types_chain::BaseBlockBody>>>,
     },
     /// Request Node Data from the peer.
     ///

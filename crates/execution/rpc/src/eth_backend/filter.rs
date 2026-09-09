@@ -18,6 +18,7 @@ use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::{
     Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
 };
+use base_execution_state_types::ProviderError;
 use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
 use base_node_context::BaseNodePool;
 use futures::{
@@ -37,7 +38,6 @@ use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderReceipt,
     ReceiptProvider,
 };
-use reth_storage_errors::provider::ProviderError;
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,

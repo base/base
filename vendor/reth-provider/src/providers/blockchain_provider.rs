@@ -12,6 +12,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_types_payload::ForkchoiceState;
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
@@ -29,7 +30,6 @@ use reth_storage_api::{
     StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
     TryIntoHistoricalStateProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{
     AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
 };

@@ -11,6 +11,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_execution_evm_runtime::database::PlainStorageRevert;
+use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
@@ -24,7 +25,6 @@ use reth_storage_api::{
     BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
     TryIntoHistoricalStateProvider,
 };
-use reth_storage_errors::provider::ProviderResult;
 
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{

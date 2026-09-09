@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use alloy_hardforks::EthereumHardforks;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlockBody, BaseTxEnvelope, Header};
-use reth_storage_errors::provider::ProviderResult;
+use base_execution_state_types::ProviderResult;
 
 /// Reconstructs Base block bodies from transactions and the chain's fork schedule.
 #[derive(Debug, Default, Clone, Copy)]

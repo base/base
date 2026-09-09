@@ -8,6 +8,7 @@ use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
 use base_execution_state_types::PruneSegment;
 use base_execution_state_types::StageId;
+use base_execution_state_types::{ProviderError, ProviderResult};
 use metrics::{Counter, Histogram};
 use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::AlloyBlockHeader;
@@ -15,7 +16,6 @@ use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use reth_trie::{DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, debug_span, instrument};
 

@@ -28,11 +28,11 @@ pub mod version;
 #[cfg(feature = "mdbx")]
 pub mod mdbx;
 
+pub use base_execution_state_types::{DatabaseError, DatabaseWriteOperation};
 #[cfg(feature = "mdbx")]
 pub use mdbx::{DatabaseEnv, DatabaseEnvKind, create_db, init_db, open_db, open_db_read_only};
 pub use models::ClientVersion;
 pub use reth_db_api::*;
-pub use reth_storage_errors::db::{DatabaseError, DatabaseWriteOperation};
 #[cfg(feature = "mdbx")]
 pub use utils::is_database_empty;
 

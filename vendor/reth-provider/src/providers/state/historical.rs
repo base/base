@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::merge::EPOCH_SLOTS;
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageValue};
+use base_execution_state_types::ProviderResult;
 use reth_db_api::{
     BlockNumberList,
     cursor::{DbCursorRO, DbDupCursorRO},
@@ -14,7 +15,6 @@ use reth_storage_api::{
     BlockNumReader, BytecodeReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StateProofProvider, StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
 };
-use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{Overlay, OverlayManager};
 use reth_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
@@ -874,6 +874,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256, keccak256};
+    use base_execution_state_types::ProviderError;
     use reth_db_api::{
         BlockNumberList,
         models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
@@ -886,7 +887,6 @@ mod tests {
         PruneCheckpointReader, StageCheckpointReader, StateReadProvider, StorageChangeSetReader,
         StorageSettingsCache,
     };
-    use reth_storage_errors::provider::ProviderError;
     use reth_storage_overlay::OverlayManager;
 
     use super::needs_prev_shard_check;
