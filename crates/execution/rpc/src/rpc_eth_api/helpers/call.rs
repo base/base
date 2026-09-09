@@ -37,7 +37,7 @@ use revm::{
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 
-use crate::{BaseEthApi, EthApiTypes, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, FromEvmError, RpcNodeCore};
 
 /// Result type for `eth_simulateV1` RPC method.
 pub type SimulatedBlocksResult<E> = Result<Vec<SimulatedBlock<BaseBlockResponse>>, E>;

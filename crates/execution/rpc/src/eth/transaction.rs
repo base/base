@@ -21,8 +21,8 @@ use reth_storage_api::{BlockReaderIdExt, ProviderTx, TransactionsProvider};
 use tracing::{debug, instrument, warn};
 
 use crate::{
-    BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, EthApiTypes as _, FromEthApiError,
-    RpcNodeCore, SequencerClient, SignersForRpc,
+    BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, FromEthApiError, RpcNodeCore,
+    SequencerClient, SignersForRpc,
 };
 
 impl<N: RpcNodeCore> BaseEthApi<N> {

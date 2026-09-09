@@ -10,7 +10,7 @@ use base_evm_context::BlockEnv;
 use base_evm_handler::EvmFactory;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
-use base_execution_rpc::{BaseEthApi, EthApiTypes, RpcNodeCore};
+use base_execution_rpc::{BaseEthApi, RpcNodeCore};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -63,7 +63,7 @@ pub trait Eip8130EthApiOverride {
 
 /// Standalone EIP-8130 `eth_getTransactionCount` extension.
 #[derive(Debug)]
-pub struct Eip8130EthApiExt<Eth: EthApiTypes> {
+pub struct Eip8130EthApiExt<Eth: RpcNodeCore> {
     eth_api: Eth,
 }
 

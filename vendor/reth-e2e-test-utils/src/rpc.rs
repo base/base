@@ -2,13 +2,13 @@ use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::{EthereumTxEnvelope, TxEip4844Variant};
 use base_common_network::eip2718::Decodable2718;
-use base_execution_rpc::{BaseEthApi, BaseEthApiError, EthApiTypes};
+use base_execution_rpc::{BaseEthApi, BaseEthApiError, RpcNodeCore};
 use base_node_context::FullNodeComponents;
 use base_node_core::RpcRegistry;
 use reth_rpc_api::DebugApiServer;
 
 #[expect(missing_debug_implementations)]
-pub struct RpcTestContext<Node: FullNodeComponents, EthApi: EthApiTypes> {
+pub struct RpcTestContext<Node: FullNodeComponents, EthApi: RpcNodeCore> {
     pub inner: RpcRegistry<Node, EthApi>,
 }
 

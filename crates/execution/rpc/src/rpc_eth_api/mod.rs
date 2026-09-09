@@ -9,7 +9,6 @@ pub use helpers::*;
 mod node;
 pub use node::*;
 mod pubsub;
-mod types;
 #[cfg(feature = "client")]
 pub use core::EthApiClient;
 pub use core::EthApiServer;
@@ -35,4 +34,3 @@ pub use reth_rpc_eth_types::{
     error::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError},
 };
 use reth_trie_common as _;
-pub use types::EthApiTypes;

@@ -43,9 +43,7 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
-use crate::{
-    BaseEthApi, EthApiTypes, EthFilterApiServer, QueryLimits, RpcNodeCore, RpcNodeCoreExt,
-};
+use crate::{BaseEthApi, EthFilterApiServer, QueryLimits, RpcNodeCore, RpcNodeCoreExt};
 
 /// Threshold for deciding between cached and range mode processing
 const CACHED_MODE_BLOCK_THRESHOLD: u64 = 250;
@@ -71,14 +69,14 @@ const DEFAULT_PARALLEL_CONCURRENCY: usize = 4;
 /// `Eth` filter RPC implementation.
 ///
 /// This type handles `eth_` rpc requests related to filters (`eth_getLogs`).
-pub struct EthFilter<Eth: EthApiTypes> {
+pub struct EthFilter<Eth: RpcNodeCore> {
     /// All nested fields bundled together
     inner: Arc<EthFilterInner<Eth>>,
 }
 
 impl<Eth> Clone for EthFilter<Eth>
 where
-    Eth: EthApiTypes,
+    Eth: RpcNodeCore,
 {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
@@ -99,10 +97,10 @@ impl<ApiNode: RpcNodeCore> EthFilter<BaseEthApi<ApiNode>> {
     ///
     /// ```no_run
     /// use crate::EthFilter;
-    /// use crate::EthApiTypes;
+    /// use crate::RpcNodeCore;
     /// use reth_tasks::Runtime;
     ///
-    /// fn filters<BaseEthApi<ApiNode>: EthApiTypes + 'static>(eth_api: BaseEthApi<ApiNode>, runtime: Runtime) -> EthFilter<BaseEthApi<ApiNode>> {
+    /// fn filters<BaseEthApi<ApiNode>: RpcNodeCore + 'static>(eth_api: BaseEthApi<ApiNode>, runtime: Runtime) -> EthFilter<BaseEthApi<ApiNode>> {
     ///     EthFilter::new(eth_api, Default::default(), runtime)
     /// }
     /// ```
@@ -393,7 +391,7 @@ impl<ApiNode: RpcNodeCore> EthFilterApiServer<base_common_rpc_types::Transaction
 
 impl<Eth> std::fmt::Debug for EthFilter<Eth>
 where
-    Eth: EthApiTypes,
+    Eth: RpcNodeCore,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EthFilter").finish_non_exhaustive()
@@ -402,7 +400,7 @@ where
 
 /// Container type `EthFilter`
 #[derive(Debug)]
-struct EthFilterInner<Eth: EthApiTypes> {
+struct EthFilterInner<Eth: RpcNodeCore> {
     /// Inner `eth` API implementation.
     eth_api: Eth,
     /// All currently installed filters.
@@ -1020,9 +1018,7 @@ where
 }
 
 /// Represents different modes for processing block ranges when filtering logs
-enum RangeMode<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + EthApiTypes + 'static,
-> {
+enum RangeMode<Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + 'static> {
     /// Use cache-based processing for recent blocks
     Cached(CachedMode<Eth>),
     /// Use range-based processing for older blocks
@@ -1100,9 +1096,7 @@ impl<ApiNode: RpcNodeCore> RangeMode<BaseEthApi<ApiNode>> {
 }
 
 /// Mode for processing blocks using cache optimization for recent blocks
-struct CachedMode<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + EthApiTypes + 'static,
-> {
+struct CachedMode<Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + 'static> {
     filter_inner: Arc<EthFilterInner<Eth>>,
     headers_iter: std::vec::IntoIter<SealedHeader>,
 }
@@ -1133,9 +1127,8 @@ type ReceiptFetchFuture<P> =
     Pin<Box<dyn Future<Output = Result<Vec<ReceiptBlockResult<P>>, EthFilterError>> + Send>>;
 
 /// Mode for processing blocks using range queries for older blocks
-struct RangeBlockMode<
-    Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + EthApiTypes + 'static,
-> {
+struct RangeBlockMode<Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool> + 'static>
+{
     filter_inner: Arc<EthFilterInner<Eth>>,
     iter: Peekable<std::vec::IntoIter<SealedHeader>>,
     next: VecDeque<ReceiptBlockResult<Eth::Provider>>,

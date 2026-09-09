@@ -7,7 +7,7 @@ mod transaction;
 
 use base_execution_evm::BaseEvmConfig;
 
-use crate::{BaseTimeCache, EthApiTypes, RpcNodeCore};
+use crate::{BaseTimeCache, RpcNodeCore};
 
 mod block;
 mod call;
@@ -77,11 +77,12 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     }
 }
 
-impl<N> EthApiTypes for BaseEthApi<N>
+impl<N> BaseEthApi<N>
 where
     N: RpcNodeCore,
 {
-    fn converter(&self) -> &BaseRpcConverter<N::Provider> {
+    /// Returns the Base transaction and receipt response converter.
+    pub fn converter(&self) -> &BaseRpcConverter<N::Provider> {
         self.inner.converter()
     }
 }

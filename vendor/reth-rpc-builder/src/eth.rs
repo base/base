@@ -1,10 +1,10 @@
-use base_execution_rpc::{BaseEthApi, EthApiTypes, EthFilter, EthPubSub, RpcNodeCore};
+use base_execution_rpc::{BaseEthApi, EthFilter, EthPubSub, RpcNodeCore};
 use reth_rpc_eth_types::EthConfig;
 use reth_tasks::Runtime;
 
 /// Handlers for core, filter and pubsub `eth` namespace APIs.
 #[derive(Debug, Clone)]
-pub struct EthHandlers<EthApi: EthApiTypes> {
+pub struct EthHandlers<EthApi: RpcNodeCore> {
     /// Main `eth_` request handler
     pub api: EthApi,
     /// Polling based filter handler available on all transports

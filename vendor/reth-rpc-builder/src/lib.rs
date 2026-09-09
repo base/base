@@ -34,9 +34,9 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_rpc::{
-    AdminApi, BaseEthApi, DebugApi, EthApiBuilder, EthApiServer, EthApiTypes, EthBundle,
-    EthCallBundleApiServer, EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi,
-    RPCApi, RethApi, RpcNodeCore, RpcNodeCoreAdapter, TraceApi, TxPoolApi, Web3Api,
+    AdminApi, BaseEthApi, DebugApi, EthApiBuilder, EthApiServer, EthBundle, EthCallBundleApiServer,
+    EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi, RPCApi, RethApi,
+    RpcNodeCore, RpcNodeCoreAdapter, TraceApi, TxPoolApi, Web3Api,
 };
 use base_execution_txpool::{NoopTransactionPool, TransactionPool};
 pub use cors::CorsDomainError;
@@ -366,7 +366,7 @@ impl RpcModuleConfigBuilder {
 
 /// A Helper type the holds instances of the configured modules.
 #[derive(Debug)]
-pub struct RpcRegistryInner<Provider, Pool, Network, EthApi: EthApiTypes> {
+pub struct RpcRegistryInner<Provider, Pool, Network, EthApi: RpcNodeCore> {
     provider: Provider,
     pool: Pool,
     network: Network,
@@ -434,7 +434,7 @@ where
 
 impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     /// Returns a reference to the installed [`EthApi`].
     pub const fn eth_api(&self) -> &EthApi {
@@ -484,7 +484,7 @@ where
 impl<Provider, Pool, Network, EthApi> RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
     Network: NetworkInfo + Clone + 'static,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
     Provider: BlockReader + ChainSpecProvider,
 {
     /// Instantiates `AdminApi`
@@ -829,7 +829,7 @@ where
 
 impl<Provider, Pool, Network, EthApi> Clone for RpcRegistryInner<Provider, Pool, Network, EthApi>
 where
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
     Provider: Clone,
     Pool: Clone,
     Network: Clone,

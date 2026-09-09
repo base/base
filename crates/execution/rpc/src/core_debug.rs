@@ -47,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;
 
-use crate::{BaseEthApi, EthApiTypes, FromEthApiError, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError, FromEvmError, RpcNodeCore};
 
 /// `debug` API implementation.
 ///

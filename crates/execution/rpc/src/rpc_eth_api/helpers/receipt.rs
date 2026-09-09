@@ -14,7 +14,7 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{ProviderReceipt, ProviderTx};
 
-use crate::{BaseEthApi, EthApiTypes, RpcNodeCore, RpcNodeCoreExt};
+use crate::{BaseEthApi, RpcNodeCore, RpcNodeCoreExt};
 
 /// Assembles transaction receipt data w.r.t to network.
 ///

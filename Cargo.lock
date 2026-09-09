@@ -4381,7 +4381,6 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
- "base-common-consensus",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",

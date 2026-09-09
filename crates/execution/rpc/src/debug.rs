@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
 use crate::{
-    BaseEthApi, EthApiTypes, RpcNodeCore,
+    BaseEthApi, RpcNodeCore,
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
 };
@@ -69,7 +69,7 @@ pub trait DebugApiOverride<Attributes> {
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
-pub struct DebugApiExt<Eth: EthApiTypes, Storage, Provider> {
+pub struct DebugApiExt<Eth: RpcNodeCore, Storage, Provider> {
     inner: Arc<DebugApiExtInner<Eth, Storage, Provider>>,
 }
 
@@ -100,7 +100,7 @@ where
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for historical proofs `ExEx`.
-pub struct DebugApiExtInner<Eth: EthApiTypes, Storage, Provider> {
+pub struct DebugApiExtInner<Eth: RpcNodeCore, Storage, Provider> {
     provider: Provider,
     eth_api: Eth,
     storage: BaseProofsStorage<Storage>,

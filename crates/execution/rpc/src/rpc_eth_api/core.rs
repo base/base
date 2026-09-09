@@ -23,7 +23,7 @@ use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use serde_json::Value;
 use tracing::trace;
 
-use crate::{BaseEthApi, EthApiTypes, RpcNodeCore};
+use crate::{BaseEthApi, RpcNodeCore};
 
 /// Eth rpc interface: <https://ethereum.github.io/execution-apis/api-documentation>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]

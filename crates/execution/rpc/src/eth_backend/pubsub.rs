@@ -27,7 +27,7 @@ use tokio_stream::{
 };
 use tracing::error;
 
-use crate::{BaseEthApi, EthApiTypes, EthPubSubApiServer, RpcNodeCore};
+use crate::{BaseEthApi, EthPubSubApiServer, RpcNodeCore};
 
 /// `Eth` pubsub RPC implementation.
 ///

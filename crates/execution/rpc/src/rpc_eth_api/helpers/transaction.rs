@@ -32,9 +32,7 @@ use reth_storage_api::{
 };
 
 use super::EthSigner;
-use crate::{
-    BaseEthApi, EthApiTypes, FromEthApiError, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt,
-};
+use crate::{BaseEthApi, FromEthApiError, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt};
 
 /// Transaction related functions for the [`EthApiServer`](crate::EthApiServer) trait in
 /// the `eth_` namespace.

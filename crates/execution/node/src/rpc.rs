@@ -10,7 +10,7 @@ use std::{
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::{
-    AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, EthApiTypes,
+    AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, RpcNodeCore,
 };
 use base_node_context::{AddOnsContext, FullNodeComponents, NodeAddOns};
 pub use jsonrpsee::{
@@ -52,7 +52,7 @@ pub struct RpcHooks<Node: FullNodeComponents, EthApi> {
 impl<Node, EthApi> Default for RpcHooks<Node, EthApi>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn default() -> Self {
         Self { on_rpc_started: Box::<()>::default(), extend_rpc_modules: Box::<()>::default() }
@@ -62,7 +62,7 @@ where
 impl<Node, EthApi> RpcHooks<Node, EthApi>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     /// Sets the hook that is run once the rpc server is started.
     pub(crate) fn set_on_rpc_started<F>(&mut self, hook: F) -> &mut Self
@@ -106,7 +106,7 @@ where
 impl<Node, EthApi> fmt::Debug for RpcHooks<Node, EthApi>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcHooks")
@@ -117,7 +117,7 @@ where
 }
 
 /// Event hook that is called once the rpc server is started.
-pub trait OnRpcStarted<Node: FullNodeComponents, EthApi: EthApiTypes>: Send {
+pub trait OnRpcStarted<Node: FullNodeComponents, EthApi: RpcNodeCore>: Send {
     /// The hook that is called once the rpc server is started.
     fn on_rpc_started(
         self: Box<Self>,
@@ -130,7 +130,7 @@ impl<Node, EthApi, F> OnRpcStarted<Node, EthApi> for F
 where
     F: FnOnce(RpcContext<'_, Node, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send,
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn on_rpc_started(
         self: Box<Self>,
@@ -144,7 +144,7 @@ where
 impl<Node, EthApi> OnRpcStarted<Node, EthApi> for ()
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn on_rpc_started(
         self: Box<Self>,
@@ -156,7 +156,7 @@ where
 }
 
 /// Event hook that is called when the rpc server is started.
-pub trait ExtendRpcModules<Node: FullNodeComponents, EthApi: EthApiTypes>: Send {
+pub trait ExtendRpcModules<Node: FullNodeComponents, EthApi: RpcNodeCore>: Send {
     /// The hook that is called once the rpc server is started.
     fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, Node, EthApi>) -> eyre::Result<()>;
 }
@@ -165,7 +165,7 @@ impl<Node, EthApi, F> ExtendRpcModules<Node, EthApi> for F
 where
     F: FnOnce(RpcContext<'_, Node, EthApi>) -> eyre::Result<()> + Send,
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn extend_rpc_modules(self: Box<Self>, ctx: RpcContext<'_, Node, EthApi>) -> eyre::Result<()> {
         (*self)(ctx)
@@ -175,7 +175,7 @@ where
 impl<Node, EthApi> ExtendRpcModules<Node, EthApi> for ()
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn extend_rpc_modules(self: Box<Self>, _: RpcContext<'_, Node, EthApi>) -> eyre::Result<()> {
         Ok(())
@@ -185,7 +185,7 @@ where
 /// Helper wrapper type to encapsulate the [`RpcRegistryInner`] over components trait.
 #[derive(Debug, Clone)]
 #[expect(clippy::type_complexity)]
-pub struct RpcRegistry<Node: FullNodeComponents, EthApi: EthApiTypes> {
+pub struct RpcRegistry<Node: FullNodeComponents, EthApi: RpcNodeCore> {
     pub(crate) registry: RpcRegistryInner<
         Node::Provider,
         base_node_context::BaseNodePool<Node::Provider>,
@@ -197,7 +197,7 @@ pub struct RpcRegistry<Node: FullNodeComponents, EthApi: EthApiTypes> {
 impl<Node, EthApi> Deref for RpcRegistry<Node, EthApi>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     type Target = RpcRegistryInner<
         Node::Provider,
@@ -214,7 +214,7 @@ where
 impl<Node, EthApi> DerefMut for RpcRegistry<Node, EthApi>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.registry
@@ -223,7 +223,7 @@ where
 
 /// Helper container for the parameters commonly passed to RPC module extension functions.
 #[expect(missing_debug_implementations)]
-pub struct RpcModuleContainer<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
+pub struct RpcModuleContainer<'a, Node: FullNodeComponents, EthApi: RpcNodeCore> {
     /// Holds installed modules per transport type.
     pub modules: &'a mut TransportRpcModules,
     /// A Helper type the holds instances of the configured modules.
@@ -237,7 +237,7 @@ pub struct RpcModuleContainer<'a, Node: FullNodeComponents, EthApi: EthApiTypes>
 /// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`].
 #[expect(missing_debug_implementations)]
-pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
+pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: RpcNodeCore> {
     /// The node components.
     pub(crate) node: Node,
 
@@ -257,7 +257,7 @@ pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
 impl<Node, EthApi> RpcContext<'_, Node, EthApi>
 where
     Node: FullNodeComponents,
-    EthApi: EthApiTypes,
+    EthApi: RpcNodeCore,
 {
     /// Returns the config of the node.
     pub const fn config(&self) -> &NodeConfig {
@@ -293,14 +293,14 @@ where
 }
 
 /// Handle to the launched RPC servers.
-pub struct RpcHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
+pub struct RpcHandle<Node: FullNodeComponents, EthApi: RpcNodeCore> {
     /// Handles to launched servers.
     pub rpc_server_handles: RethRpcServerHandles,
     /// Configured RPC modules.
     pub rpc_registry: RpcRegistry<Node, EthApi>,
 }
 
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> Clone for RpcHandle<Node, EthApi> {
+impl<Node: FullNodeComponents, EthApi: RpcNodeCore> Clone for RpcHandle<Node, EthApi> {
     fn clone(&self) -> Self {
         Self {
             rpc_server_handles: self.rpc_server_handles.clone(),
@@ -309,7 +309,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> Clone for RpcHandle<Node, Et
     }
 }
 
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> Deref for RpcHandle<Node, EthApi> {
+impl<Node: FullNodeComponents, EthApi: RpcNodeCore> Deref for RpcHandle<Node, EthApi> {
     type Target = RpcRegistry<Node, EthApi>;
 
     fn deref(&self) -> &Self::Target {
@@ -317,7 +317,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> Deref for RpcHandle<Node, Et
     }
 }
 
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> Debug for RpcHandle<Node, EthApi>
+impl<Node: FullNodeComponents, EthApi: RpcNodeCore> Debug for RpcHandle<Node, EthApi>
 where
     RpcRegistry<Node, EthApi>: Debug,
 {
@@ -329,7 +329,7 @@ where
     }
 }
 
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
+impl<Node: FullNodeComponents, EthApi: RpcNodeCore> RpcHandle<Node, EthApi> {
     /// Returns the RPC server handles.
     pub const fn rpc_server_handles(&self) -> &RethRpcServerHandles {
         &self.rpc_server_handles
@@ -350,7 +350,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
 }
 
 /// Prepared public RPC modules and lifecycle hooks.
-pub struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
+pub struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: RpcNodeCore> {
     pub node: Node,
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
@@ -358,7 +358,7 @@ pub struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     pub on_rpc_started: Box<dyn OnRpcStarted<Node, EthApi>>,
 }
 
-impl<Node: FullNodeComponents, EthApi: EthApiTypes> fmt::Debug
+impl<Node: FullNodeComponents, EthApi: RpcNodeCore> fmt::Debug
     for RpcSetupContext<'_, Node, EthApi>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -10,7 +10,7 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::logs_utils;
 use tracing::error;
 
-use crate::{BaseEthApi, EthApiTypes, RpcNodeCore};
+use crate::{BaseEthApi, RpcNodeCore};
 
 /// Provides streams subscriptions for `eth_subscribe`.
 ///
