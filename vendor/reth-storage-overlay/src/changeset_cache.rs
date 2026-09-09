@@ -34,7 +34,7 @@ use reth_trie::{
 };
 #[cfg(test)]
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
-use reth_trie_common::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
+use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
 use tracing::{debug, warn};
 
 use crate::{OverlayManager, OverlayStateProvider, database_state_frontiers};

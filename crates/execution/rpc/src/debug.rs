@@ -28,7 +28,7 @@ use reth_provider::{
 };
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use reth_trie_common::ExecutionWitnessMode;
+use base_execution_state_types::ExecutionWitnessMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 

@@ -26,7 +26,7 @@ reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-storage-api = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-cache = { workspace = true }
 reth-execution-types = { workspace = true }
@@ -106,7 +106,7 @@ test-utils = [
     "reth-static-file",
     "base-common-observability-tracing",
     "reth-trie/test-utils",
-    "reth-trie-common/test-utils",
+    "base-execution-state-types/test-utils",
     "reth-trie-sparse/test-utils",
     "base-execution-trie/test-utils",
     "base-common-runtime-tasks/test-utils",

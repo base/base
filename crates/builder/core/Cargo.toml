@@ -122,7 +122,7 @@ rstest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 hyper-util = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
-reth-trie-common = { workspace = true, features = ["default"] }
+base-execution-state-types = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 alloy-provider = { workspace = true, features = ["default", "txpool-api"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }

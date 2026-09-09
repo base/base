@@ -8,7 +8,7 @@ use alloy_primitives::{
     map::{B256Map, HashMap, HashSet},
 };
 use alloy_trie::BranchNodeCompact;
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeMasks, Nibbles, ProofTrieNodeV2, ProofV2TargetParent, SparseTrieResult, TrieNodeV2,
 };
 

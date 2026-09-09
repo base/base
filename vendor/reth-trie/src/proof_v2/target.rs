@@ -1,4 +1,4 @@
-use reth_trie_common::{Nibbles, ProofV2Target};
+use base_execution_state_types::{Nibbles, ProofV2Target};
 
 // Returns the path of the already-revealed parent branch for a target. `None` means the target
 // needs the actual trie root, while `Some(Nibbles::new())` means the root branch is already
@@ -63,7 +63,7 @@ pub(crate) fn iter_sub_trie_targets(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_trie_common::ProofV2TargetParent;
+    use base_execution_state_types::ProofV2TargetParent;
 
     use super::*;
 

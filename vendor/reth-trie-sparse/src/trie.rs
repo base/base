@@ -1,7 +1,7 @@
 use alloc::{borrow::Cow, boxed::Box};
 
 use alloy_primitives::{B256, map::B256Map};
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeMasks, Nibbles, ProofTrieNodeV2, ProofV2TargetParent, RlpNode, SparseTrieErrorKind,
     SparseTrieResult, TrieMask, TrieNodeV2,
 };

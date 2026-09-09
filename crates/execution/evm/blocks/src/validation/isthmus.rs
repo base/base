@@ -5,7 +5,7 @@ use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_types_chain::{BlockHeader, Predeploys};
 use base_execution_evm_runtime::database::BundleState;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
-use reth_trie_common::HashedStorage;
+use base_execution_state_types::HashedStorage;
 use tracing::warn;
 
 use crate::BaseConsensusError;
@@ -140,7 +140,7 @@ mod tests {
     };
     use reth_storage_api::StateProviderFactory;
     use reth_trie::{HashedStorage, test_utils::storage_root_prehashed};
-    use reth_trie_common::HashedPostState;
+    use base_execution_state_types::HashedPostState;
 
     use super::*;
 

@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 use reth_storage_errors::db::DatabaseError;
-use reth_trie_common::{BranchNodeCompact, Nibbles};
+use base_execution_state_types::{BranchNodeCompact, Nibbles};
 
 use super::{TrieCursor, TrieCursorFactory, TrieStorageCursor};
 use crate::{forward_cursor::ForwardInMemoryCursor, updates::TrieUpdatesSorted};

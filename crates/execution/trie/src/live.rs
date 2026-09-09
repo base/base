@@ -10,7 +10,7 @@ use reth_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,
 };
-use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
+use base_execution_state_types::{HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{info, warn};
 
 use crate::{

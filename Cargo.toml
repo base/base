@@ -194,7 +194,7 @@ members = [
   "vendor/reth-testing-utils",
   "crates/common/observability/tracing",
   "vendor/reth-trie",
-  "vendor/reth-trie-common",
+  "crates/execution/state/types",
   "vendor/reth-trie-sparse",
   "vendor/reth-zstd-compressors",
   "crates/execution/evm/inspectors",
@@ -504,7 +504,7 @@ reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }
 reth-chain-state = { path = "vendor/reth-chain-state", default-features = false }
-reth-trie-common = { path = "vendor/reth-trie-common", default-features = false }
+base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 reth-rpc-convert = { path = "vendor/reth-rpc-convert", default-features = false }
 reth-network-api = { path = "vendor/reth-network-api", default-features = false }
 reth-storage-api = { path = "vendor/reth-storage-api", default-features = false }

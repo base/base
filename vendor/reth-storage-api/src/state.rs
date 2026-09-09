@@ -8,7 +8,7 @@ use base_execution_evm_runtime::database::BundleState;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::Bytecode;
 use reth_storage_errors::provider::ProviderResult;
-use reth_trie_common::HashedPostState;
+use base_execution_state_types::HashedPostState;
 
 use super::{
     AccountReader, BlockHashReader, BlockIdReader, StateProofProvider, StateRootProvider,

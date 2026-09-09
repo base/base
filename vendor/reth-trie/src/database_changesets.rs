@@ -8,7 +8,7 @@ use std::ops::RangeInclusive;
 use alloy_primitives::BlockNumber;
 use reth_storage_api::{BlockNumReader, ChangeSetReader, StorageChangeSetReader};
 use reth_storage_errors::provider::ProviderError;
-use reth_trie_common::updates::TrieUpdatesSorted;
+use base_execution_state_types::updates::TrieUpdatesSorted;
 use tracing::debug;
 
 use crate::{

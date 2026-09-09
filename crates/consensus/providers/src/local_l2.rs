@@ -9,7 +9,7 @@ use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, R
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use reth_provider::{BlockReaderIdExt, StateProviderFactory, providers::BlockchainProvider};
 use reth_storage_api::errors::ProviderError;
-use reth_trie_common::HashedStorage;
+use base_execution_state_types::HashedStorage;
 
 /// Direct access to the execution node's canonical and in-memory L2 state.
 #[derive(Debug, Clone)]

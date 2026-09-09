@@ -4,7 +4,7 @@ use alloc::{format, string::String, vec::Vec};
 use core::ops::RangeInclusive;
 
 use alloy_primitives::{Address, B256, BlockNumber, U256};
-use reth_trie_common::{StoredSubNode, hash_builder::HashBuilderState};
+use base_execution_state_types::{StoredSubNode, hash_builder::HashBuilderState};
 
 use super::StageId;
 

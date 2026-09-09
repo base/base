@@ -77,7 +77,7 @@ alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"]}
 base-execution-payload-types = { workspace = true, features = ["default"]}
-reth-trie-common = { workspace = true, features = ["default", "eip1186"] }
+base-execution-state-types = { workspace = true, features = ["default", "eip1186"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }

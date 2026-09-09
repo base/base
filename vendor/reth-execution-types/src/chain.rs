@@ -11,7 +11,7 @@ use base_common_types_chain::{
 use reth_primitives_traits::{
     BlockBody, IndexedTx, RecoveredBlock, SealedHeader, transaction::signed::SignedTransaction,
 };
-use reth_trie_common::LazyTrieData;
+use base_execution_state_types::LazyTrieData;
 
 use crate::ExecutionOutcome;
 
@@ -506,7 +506,7 @@ pub(super) mod serde_bincode_compat {
     use alloy_rlp::Decodable;
     use base_common_types_chain::BaseBlock;
     use reth_primitives_traits::SealedBlock;
-    use reth_trie_common::ComputedTrieData;
+    use base_execution_state_types::ComputedTrieData;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -535,12 +535,12 @@ pub(super) mod serde_bincode_compat {
         #[serde(default)]
         trie_updates: BTreeMap<
             BlockNumber,
-            reth_trie_common::serde_bincode_compat::updates::TrieUpdatesSorted<'a>,
+            base_execution_state_types::serde_bincode_compat::updates::TrieUpdatesSorted<'a>,
         >,
         #[serde(default)]
         hashed_state: BTreeMap<
             BlockNumber,
-            reth_trie_common::serde_bincode_compat::hashed_state::HashedPostStateSorted<'a>,
+            base_execution_state_types::serde_bincode_compat::hashed_state::HashedPostStateSorted<'a>,
         >,
     }
 
@@ -580,7 +580,7 @@ pub(super) mod serde_bincode_compat {
     impl<'a> From<Chain<'a>> for super::Chain {
         fn from(value: Chain<'a>) -> Self {
             use reth_primitives_traits::RecoveredBlock;
-            use reth_trie_common::LazyTrieData;
+            use base_execution_state_types::LazyTrieData;
 
             let hashed_state_map: BTreeMap<_, _> =
                 value.hashed_state.into_iter().map(|(k, v)| (k, Arc::new(v.into()))).collect();

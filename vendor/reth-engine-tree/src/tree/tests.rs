@@ -32,7 +32,7 @@ use reth_engine_primitives::{ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_primitives_traits::Block as _;
 use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
 use reth_storage_overlay::OverlayManager;
-use reth_trie_common::ComputedTrieData;
+use base_execution_state_types::ComputedTrieData;
 use tokio::sync::oneshot;
 
 use super::*;

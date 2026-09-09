@@ -19,7 +19,7 @@ use reth_rpc_eth_types::{
 };
 use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 use reth_storage_api::{BlockIdReader, BlockReaderIdExt, StateProviderBox, StateProviderFactory};
-use reth_trie_common::MultiProofTargets;
+use base_execution_state_types::MultiProofTargets;
 
 use crate::BaseEthApi;
 

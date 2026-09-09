@@ -8,7 +8,7 @@ use base_common_types_payload::PayloadId;
 use either::Either;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 
 use crate::PayloadBuilderError;
 

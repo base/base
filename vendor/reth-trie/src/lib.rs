@@ -48,7 +48,7 @@ pub use progress::{
 pub mod stats;
 
 // re-export for convenience
-pub use reth_trie_common::*;
+pub use base_execution_state_types::*;
 
 /// Trie calculation metrics.
 #[cfg(feature = "metrics")]

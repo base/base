@@ -30,7 +30,7 @@
 //! # Example
 //!
 //! ```
-//! use reth_trie_common::ordered_root::OrderedTrieRootEncodedBuilder;
+//! use base_execution_state_types::ordered_root::OrderedTrieRootEncodedBuilder;
 //!
 //! let mut builder = OrderedTrieRootEncodedBuilder::new();
 //! builder.push_next(b"encoded_item_0");

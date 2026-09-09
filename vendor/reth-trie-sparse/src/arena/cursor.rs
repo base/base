@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use reth_trie_common::Nibbles;
+use base_execution_state_types::Nibbles;
 use tracing::{instrument, trace};
 
 use super::{

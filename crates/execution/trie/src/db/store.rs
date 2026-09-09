@@ -15,7 +15,7 @@ use reth_db::{
 };
 use reth_primitives_traits::Account;
 use reth_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
     updates::{StorageTrieUpdates, TrieUpdates},
 };

@@ -20,7 +20,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, StateReadProvider, noop::NoopProvider};
-use reth_trie_common::ExecutionWitnessMode;
+use base_execution_state_types::ExecutionWitnessMode;
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;

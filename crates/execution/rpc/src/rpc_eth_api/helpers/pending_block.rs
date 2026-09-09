@@ -30,7 +30,7 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockReader, BlockReaderIdExt, StateProviderFactory, noop::NoopProvider};
 use reth_storage_errors::provider::ProviderError;
-use reth_trie_common::ComputedTrieData;
+use base_execution_state_types::ComputedTrieData;
 use tracing::debug;
 
 use crate::BaseEthApi;

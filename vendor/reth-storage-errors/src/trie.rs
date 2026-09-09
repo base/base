@@ -3,7 +3,7 @@
 use alloc::string::ToString;
 
 use alloy_primitives::B256;
-use reth_trie_common::{SparseStateTrieError, SparseStateTrieErrorKind};
+use base_execution_state_types::{SparseStateTrieError, SparseStateTrieErrorKind};
 use thiserror::Error;
 
 use crate::{db::DatabaseError, provider::ProviderError};

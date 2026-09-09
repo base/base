@@ -12,7 +12,7 @@ use cursor::{ArenaCursor, NextResult, SeekResult};
 use nodes::{
     ArenaSparseNode, ArenaSparseNodeBranch, ArenaSparseNodeBranchChild, ArenaSparseNodeState,
 };
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeMasks, BranchNodeRef, EMPTY_ROOT_HASH, ExtensionNodeRef, LeafNodeRef, Nibbles,
     ProofTrieNodeV2, ProofV2TargetParent, RlpNode, SparseTrieResult, TrieNodeV2,
 };
@@ -3132,7 +3132,7 @@ mod tests {
     use alloy_primitives::{B256, U256, map::B256Map};
     use rand::{Rng, SeedableRng, seq::SliceRandom};
     use reth_trie::test_utils::TrieTestHarness;
-    use reth_trie_common::ProofV2Target;
+    use base_execution_state_types::ProofV2Target;
     use tracing::{info, trace};
 
     use super::TRACE_TARGET;

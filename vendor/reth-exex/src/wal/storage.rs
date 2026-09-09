@@ -178,7 +178,7 @@ mod tests {
     use reth_primitives_traits::Account;
     use reth_provider::Chain;
     use reth_testing_utils::generators::{self};
-    use reth_trie_common::{
+    use base_execution_state_types::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, LazyTrieData, Nibbles,
         updates::{StorageTrieUpdates, TrieUpdates},
     };

@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{B256, map::B256Map};
 use either::Either;
-use reth_trie_common::{
+use base_execution_state_types::{
     DecodedMultiProof, MultiProof, Nibbles, ProofTrieNodeV2, SparseStateTrieResult,
     SparseTrieErrorKind,
     updates::{StorageTrieUpdates, TrieUpdates},
@@ -258,9 +258,9 @@ where
     #[instrument(level = "debug", target = "trie::sparse", skip_all)]
     pub fn reveal_decoded_multiproof_v2(
         &mut self,
-        multiproof: reth_trie_common::DecodedMultiProofV2,
+        multiproof: base_execution_state_types::DecodedMultiProofV2,
     ) -> SparseStateTrieResult<()> {
-        let reth_trie_common::DecodedMultiProofV2 { account_proofs, mut storage_proofs, .. } =
+        let base_execution_state_types::DecodedMultiProofV2 { account_proofs, mut storage_proofs, .. } =
             multiproof;
 
         // Collect `(trie, proof_nodes)` pairs for both the account trie and every storage trie
@@ -600,7 +600,7 @@ mod tests {
     use rand::{Rng, SeedableRng, rngs::StdRng};
     use reth_primitives_traits::Account;
     use reth_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
-    use reth_trie_common::{
+    use base_execution_state_types::{
         BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode,
         SparseStateTrieErrorKind, SparseTrieErrorKind, StorageMultiProof, TrieAccount, TrieMask,
         TrieNodeV2,
@@ -919,7 +919,7 @@ mod tests {
 
         // Reveal V2 proof nodes
         sparse
-            .reveal_decoded_multiproof_v2(reth_trie_common::DecodedMultiProofV2 {
+            .reveal_decoded_multiproof_v2(base_execution_state_types::DecodedMultiProofV2 {
                 account_proofs: v2_proof_nodes,
                 ..Default::default()
             })
@@ -969,7 +969,7 @@ mod tests {
 
         // Reveal V2 storage proof nodes for account
         sparse
-            .reveal_decoded_multiproof_v2(reth_trie_common::DecodedMultiProofV2 {
+            .reveal_decoded_multiproof_v2(base_execution_state_types::DecodedMultiProofV2 {
                 storage_proofs: B256Map::from_iter([(B256::ZERO, v2_proof_nodes)]),
                 ..Default::default()
             })

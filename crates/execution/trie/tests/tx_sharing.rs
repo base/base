@@ -30,7 +30,7 @@ use reth_provider::{
     AccountReader, StateProofProvider, StateReadProvider, StateRootProvider, StorageRootProvider,
     noop::NoopProvider,
 };
-use reth_trie_common::{
+use base_execution_state_types::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
 };
 use tempfile::TempDir;

@@ -5,7 +5,7 @@ use reth_db::{
     DatabaseError,
     table::{Compress, Decode, Decompress, Encode},
 };
-use reth_trie_common::StoredNibbles;
+use base_execution_state_types::StoredNibbles;
 use serde::{Deserialize, Serialize};
 
 /// Composite key: `(hashed-address, path)` for storage trie branches

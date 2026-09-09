@@ -3,7 +3,7 @@ use alloc::{boxed::Box, vec::Vec};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use reth_primitives_traits::Account;
 use reth_storage_errors::provider::ProviderResult;
-use reth_trie_common::{
+use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::{StorageTrieUpdatesSorted, TrieUpdates, TrieUpdatesSorted},

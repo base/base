@@ -26,7 +26,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, noop::NoopProvider};
-use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 1_000;

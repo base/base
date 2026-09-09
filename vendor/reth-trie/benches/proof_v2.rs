@@ -13,7 +13,7 @@ use reth_trie::{
     proof_v2::StorageProofCalculator,
     trie_cursor::{TrieCursorFactory, mock::MockTrieCursorFactory},
 };
-use reth_trie_common::{HashedPostState, HashedStorage};
+use base_execution_state_types::{HashedPostState, HashedStorage};
 
 /// Generate test data for benchmarking.
 ///
@@ -98,7 +98,7 @@ fn create_cursor_factories(
         .collect();
 
     let empty_trie_cursor_factory =
-        MockTrieCursorFactory::from_trie_updates(reth_trie_common::updates::TrieUpdates {
+        MockTrieCursorFactory::from_trie_updates(base_execution_state_types::updates::TrieUpdates {
             storage_tries: storage_tries.clone(),
             ..Default::default()
         });

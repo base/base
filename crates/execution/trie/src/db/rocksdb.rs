@@ -24,7 +24,7 @@ use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles, updates::TrieUpdates,
 };
 use rocksdb::{
@@ -3546,9 +3546,9 @@ mod tests {
         ];
 
         let branch = BranchNodeCompact::new(
-            reth_trie_common::TrieMask::new(0b11),
-            reth_trie_common::TrieMask::default(),
-            reth_trie_common::TrieMask::default(),
+            base_execution_state_types::TrieMask::new(0b11),
+            base_execution_state_types::TrieMask::default(),
+            base_execution_state_types::TrieMask::default(),
             vec![],
             None,
         );
@@ -3559,7 +3559,7 @@ mod tests {
             let parent = block(block_number.saturating_sub(1), parent_hash);
 
             let mut trie_updates = TrieUpdates::default();
-            let mut storage_updates = reth_trie_common::updates::StorageTrieUpdates::default();
+            let mut storage_updates = base_execution_state_types::updates::StorageTrieUpdates::default();
             storage_updates.storage_nodes.insert(*path, branch.clone());
             trie_updates.storage_tries.insert(address, storage_updates);
 

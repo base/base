@@ -2099,7 +2099,7 @@ pub mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_trie_common::{serde_bincode_compat, HashedPostState};
+    /// use base_execution_state_types::{serde_bincode_compat, HashedPostState};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
@@ -2159,7 +2159,7 @@ pub mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_trie_common::{serde_bincode_compat, HashedStorage};
+    /// use base_execution_state_types::{serde_bincode_compat, HashedStorage};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
@@ -2210,7 +2210,7 @@ pub mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_trie_common::{serde_bincode_compat, HashedPostStateSorted};
+    /// use base_execution_state_types::{serde_bincode_compat, HashedPostStateSorted};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
@@ -2270,7 +2270,7 @@ pub mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_trie_common::{serde_bincode_compat, HashedStorageSorted};
+    /// use base_execution_state_types::{serde_bincode_compat, HashedStorageSorted};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///

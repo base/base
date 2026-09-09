@@ -24,7 +24,7 @@ use reth_db::{
     tables,
 };
 use reth_primitives_traits::Account;
-use reth_trie_common::{BranchNodeCompact, StoredNibbles};
+use base_execution_state_types::{BranchNodeCompact, StoredNibbles};
 
 tables! {
     /// Stores historical branch nodes for the account state trie.

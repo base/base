@@ -38,7 +38,7 @@ use reth_execution_types::BlockExecutionOutput;
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
-use reth_trie_common::ExecutionWitnessMode;
+use base_execution_state_types::ExecutionWitnessMode;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -1381,7 +1381,7 @@ mod tests {
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
-    use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+    use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

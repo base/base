@@ -14,7 +14,7 @@ use reth_trie::{
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
 };
-use reth_trie_common::{
+use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,

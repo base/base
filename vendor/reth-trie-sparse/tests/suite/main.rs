@@ -23,7 +23,7 @@ use alloy_primitives::{B256, U256, map::B256Map};
 use alloy_rlp::{Decodable, encode_fixed_size};
 use alloy_trie::EMPTY_ROOT_HASH;
 use reth_trie::test_utils::TrieTestHarness;
-use reth_trie_common::{Nibbles, ProofV2Target, TrieNodeV2};
+use base_execution_state_types::{Nibbles, ProofV2Target, TrieNodeV2};
 use reth_trie_sparse::{LeafLookup, LeafLookupError, LeafUpdate, SparseTrie, TrieNodeEpoch};
 
 mod find_leaf;

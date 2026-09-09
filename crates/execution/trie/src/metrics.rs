@@ -19,7 +19,7 @@ use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
-use reth_trie_common::{BranchNodeCompact, Nibbles};
+use base_execution_state_types::{BranchNodeCompact, Nibbles};
 
 use crate::{
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,

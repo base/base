@@ -10,7 +10,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, map::HashMap};
 use crossbeam_channel::Receiver;
 use reth_primitives_traits::Receipt;
-use reth_trie_common::ordered_root::OrderedTrieRootEncodedBuilder;
+use base_execution_state_types::ordered_root::OrderedTrieRootEncodedBuilder;
 use tokio::sync::oneshot;
 use tracing::debug_span;
 
@@ -151,7 +151,7 @@ mod tests {
         let (root, bloom) = result_rx.await.unwrap();
 
         // Empty trie root
-        assert_eq!(root, reth_trie_common::EMPTY_ROOT_HASH);
+        assert_eq!(root, base_execution_state_types::EMPTY_ROOT_HASH);
         assert_eq!(bloom, Bloom::ZERO);
     }
 

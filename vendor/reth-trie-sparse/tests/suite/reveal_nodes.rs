@@ -1,5 +1,5 @@
 use alloy_trie::{TrieMask, nodes::BranchNodeRef};
-use reth_trie_common::{BranchNodeV2, RlpNode};
+use base_execution_state_types::{BranchNodeV2, RlpNode};
 
 use super::*;
 
@@ -423,8 +423,8 @@ pub(super) fn test_reveal_boundary_node_with_missing_upper_parent_branch<T: Spar
     // The missing entry is the upper parent at [0x1], which the old code incorrectly unwrapped.
     let boundary_path = Nibbles::from_nibbles([0x1, 0x2]);
     let leaf =
-        TrieNodeV2::Leaf(reth_trie_common::LeafNode::new(Nibbles::from_nibbles([0x3]), vec![0x01]));
-    trie.reveal_nodes(&mut [reth_trie_common::ProofTrieNodeV2 {
+        TrieNodeV2::Leaf(base_execution_state_types::LeafNode::new(Nibbles::from_nibbles([0x3]), vec![0x01]));
+    trie.reveal_nodes(&mut [base_execution_state_types::ProofTrieNodeV2 {
         path: boundary_path,
         node: leaf,
         masks: None,

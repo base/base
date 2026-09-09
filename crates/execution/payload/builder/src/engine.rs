@@ -16,7 +16,7 @@ use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_engine_primitives::InsertBlockErrorKind;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProvider, StateProviderBox, errors::ProviderResult};
-use reth_trie_common::HashedPostState;
+use base_execution_state_types::HashedPostState;
 
 use crate::BaseExecutionPayloadValidator;
 

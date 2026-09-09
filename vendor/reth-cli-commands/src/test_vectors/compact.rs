@@ -37,7 +37,7 @@ use reth_stages_types::{
     StorageHashingCheckpoint,
 };
 use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
-use reth_trie_common::{StoredNibbles, StoredNibblesSubKey, hash_builder::HashBuilderState};
+use base_execution_state_types::{StoredNibbles, StoredNibblesSubKey, hash_builder::HashBuilderState};
 
 pub const VECTORS_FOLDER: &str = "testdata/micro/compact";
 pub const VECTOR_SIZE: usize = 100;

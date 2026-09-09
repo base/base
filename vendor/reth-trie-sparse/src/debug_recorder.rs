@@ -8,7 +8,7 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{B256, Bytes, hex};
 use alloy_trie::nodes::TrieNode;
-use reth_trie_common::Nibbles;
+use base_execution_state_types::Nibbles;
 use serde::Serialize;
 
 /// Records mutating operations performed on a sparse trie in the order they occurred.
@@ -112,8 +112,8 @@ pub enum NodeStateRecord {
 }
 
 impl ProofTrieNodeRecord {
-    /// Creates a record from a [`reth_trie_common::ProofTrieNode`].
-    pub fn from_proof_trie_node(node: &reth_trie_common::ProofTrieNode) -> Self {
+    /// Creates a record from a [`base_execution_state_types::ProofTrieNode`].
+    pub fn from_proof_trie_node(node: &base_execution_state_types::ProofTrieNode) -> Self {
         Self {
             path: node.path,
             node: TrieNodeRecord(node.node.clone()),
@@ -123,9 +123,9 @@ impl ProofTrieNodeRecord {
         }
     }
 
-    /// Creates a record from a [`reth_trie_common::ProofTrieNodeV2`].
-    pub fn from_proof_trie_node_v2(node: &reth_trie_common::ProofTrieNodeV2) -> Self {
-        use reth_trie_common::TrieNodeV2;
+    /// Creates a record from a [`base_execution_state_types::ProofTrieNodeV2`].
+    pub fn from_proof_trie_node_v2(node: &base_execution_state_types::ProofTrieNodeV2) -> Self {
+        use base_execution_state_types::TrieNodeV2;
         let (trie_node, short_key) = match &node.node {
             TrieNodeV2::EmptyRoot => (TrieNode::EmptyRoot, None),
             TrieNodeV2::Leaf(leaf) => (TrieNode::Leaf(leaf.clone()), None),

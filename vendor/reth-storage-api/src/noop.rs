@@ -24,7 +24,7 @@ use reth_prune_types::PruneModes;
 use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use reth_trie_common::{
+use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };

@@ -21,7 +21,7 @@ use reth_trie::{
     DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,
     updates::TrieUpdates,
 };
-use reth_trie_common::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
+use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
 use reth_trie_sparse::{
     ArenaParallelSparseTrie, DeferredDrops, LeafUpdate, RevealableSparseTrie, SparseStateTrie,
     SparseTrie, TrieNodeEpoch,

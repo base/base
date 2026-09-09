@@ -7,7 +7,7 @@ use base_common_types_rpc::{
     GethDebugTracingOptions, GethTrace, GethTraceResult as TraceResult, Index, StateContext,
 };
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_trie_common::{ExecutionWitnessMode, HashedPostState, updates::TrieUpdates};
+use base_execution_state_types::{ExecutionWitnessMode, HashedPostState, updates::TrieUpdates};
 
 /// Debug rpc interface.
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "debug"))]

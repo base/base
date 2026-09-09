@@ -30,7 +30,7 @@ derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 reth-storage-api = {features = ["default"], workspace = true}
-reth-trie-common = {features = ["default"], workspace = true}
+base-execution-state-types = {features = ["default"], workspace = true}
 base-common-types-chain = {features = ["reth"], workspace = true}
 reth-execution-types = {features = ["default"], workspace = true}
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
@@ -86,7 +86,7 @@ std = [
     "reth-primitives-traits/std",
     "reth-storage-api/std",
     "reth-storage-errors/std",
-    "reth-trie-common/std",
+    "base-execution-state-types/std",
     "thiserror/std",
     "tracing/std",
 ]
@@ -94,7 +94,7 @@ portable = ["base-execution-evm-runtime/portable"]
 test-utils = [
     "dep:reth-trie",
     "reth-primitives-traits/test-utils",
-    "reth-trie-common/test-utils",
+    "base-execution-state-types/test-utils",
     "reth-trie?/test-utils",
     "std",
 ]

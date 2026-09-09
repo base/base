@@ -11,7 +11,7 @@ use base_execution_evm_runtime::{
     state::AccountInfo,
 };
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
-use reth_trie_common::HashedPostState;
+use base_execution_state_types::HashedPostState;
 
 use crate::{BlockExecutionOutput, BlockExecutionResult};
 

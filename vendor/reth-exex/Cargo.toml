@@ -58,7 +58,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
-reth-trie-common = { workspace = true, features = ["serde-bincode-compat"] }
+base-execution-state-types = { workspace = true, features = ["serde-bincode-compat"] }
 
 [features]
 serde = [
@@ -71,7 +71,7 @@ serde = [
     "rand/serde",
     "secp256k1/serde",
     "reth-primitives-traits/serde",
-    "reth-trie-common/serde",
+    "base-execution-state-types/serde",
     "reth-prune-types/serde",
     "reth-config/serde",
     "reth-chain-state/serde",

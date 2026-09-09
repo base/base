@@ -14,7 +14,7 @@ use reth_db::{
 };
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::{PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter};
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };
 use tracing::{debug, info};

@@ -5,7 +5,7 @@ use reth_db_models::StoredBlockBodyIndices;
 use reth_execution_types::{Chain, ExecutionOutcome};
 use reth_primitives_traits::{Block, RecoveredBlock};
 use reth_storage_errors::provider::ProviderResult;
-use reth_trie_common::HashedPostStateSorted;
+use base_execution_state_types::HashedPostStateSorted;
 
 /// `BlockExecution` Writer
 pub trait BlockExecutionWriter: BlockWriter {

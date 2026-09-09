@@ -8,9 +8,9 @@ use crate::{BranchNodeCompact, Nibbles};
 
 /// Compares two Nibbles in depth-first order.
 ///
-/// See [`reth_trie_common::depth_first_cmp`] for details.
+/// See [`base_execution_state_types::depth_first_cmp`] for details.
 pub fn cmp(a: &Nibbles, b: &Nibbles) -> Ordering {
-    reth_trie_common::depth_first_cmp(a, b)
+    base_execution_state_types::depth_first_cmp(a, b)
 }
 
 /// An iterator that traverses trie nodes in depth-first post-order.

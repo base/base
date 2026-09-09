@@ -24,7 +24,7 @@ pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
 use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::StageCheckpoint;
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeCompact, PackedStorageTrieEntry, PackedStoredNibbles, PackedStoredNibblesSubKey,
     StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };

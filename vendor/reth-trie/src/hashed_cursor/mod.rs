@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256, U256, keccak256};
 use base_execution_evm_runtime::database::BundleAccount;
 use reth_primitives_traits::Account;
 use reth_storage_errors::db::DatabaseError;
-use reth_trie_common::HashedPostState;
+use base_execution_state_types::HashedPostState;
 
 /// Implementation of hashed state cursor traits for the post state.
 mod post_state;

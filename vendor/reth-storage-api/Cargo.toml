@@ -20,7 +20,7 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-models = { workspace = true }
 reth-prune-types = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
@@ -56,7 +56,7 @@ std = [
     "reth-prune-types/std",
     "reth-storage-errors/std",
     "reth-db-models/std",
-    "reth-trie-common/std",
+    "base-execution-state-types/std",
     "serde_json?/std",
     "dep:base-common-runtime-tasks",
     "alloy-eip7928/std",
@@ -70,7 +70,7 @@ serde = [
     "reth-primitives-traits/serde",
     "reth-prune-types/serde",
     "reth-stages-types/serde",
-    "reth-trie-common/serde",
+    "base-execution-state-types/serde",
     "base-execution-evm-runtime/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
@@ -81,7 +81,7 @@ serde = [
 
 serde-bincode-compat = [
     "reth-execution-types/serde-bincode-compat",
-    "reth-trie-common/serde-bincode-compat",
+    "base-execution-state-types/serde-bincode-compat",
     "alloy-eips/serde-bincode-compat",
     "base-common-types-chain/serde-bincode-compat",
 ]

@@ -38,7 +38,7 @@ use reth_storage_api::{
     ReceiptProviderIdExt, StateProviderFactory, StateRootProvider, StorageRootProvider,
     TransactionVariant,
 };
-use reth_trie_common::{
+use base_execution_state_types::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, root::storage_root_unsorted,
     updates::TrieUpdates,
 };

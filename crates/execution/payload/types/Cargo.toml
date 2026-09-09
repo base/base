@@ -19,7 +19,7 @@ sha2 = { workspace = true }
 either = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -50,7 +50,7 @@ default = ["std"]
 std = [
     "base-common-types-payload/std",
     "reth-execution-types/std",
-    "reth-trie-common/std",
+    "base-execution-state-types/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "serde/std",

@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 alloy-eips = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
@@ -45,12 +45,12 @@ serde = [
     "alloy-primitives/serde",
     "reth-primitives-traits/serde",
     "base-common-types-chain/serde",
-    "reth-trie-common/serde",
+    "base-execution-state-types/serde",
 ]
 serde-bincode-compat = [
     "serde",
     "alloy-rlp",
-    "reth-trie-common/serde-bincode-compat",
+    "base-execution-state-types/serde-bincode-compat",
     "serde_with",
     "base-common-types-chain/serde-bincode-compat",
     "alloy-eips/serde-bincode-compat",
@@ -64,6 +64,6 @@ std = [
     "base-common-types-chain/std",
     "serde_with?/std",
     "derive_more/std",
-    "reth-trie-common/std",
+    "base-execution-state-types/std",
     "alloy-rlp?/std",
 ]

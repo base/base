@@ -319,7 +319,7 @@ mod tests {
     };
     use itertools::Itertools;
     use reth_primitives_traits::Account;
-    use reth_trie_common::{
+    use base_execution_state_types::{
         BranchNode, HashedPostState, LeafNode, RlpNode, prefix_set::PrefixSetMut,
         updates::TrieUpdates,
     };

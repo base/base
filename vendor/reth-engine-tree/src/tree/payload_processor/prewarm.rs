@@ -33,7 +33,7 @@ use reth_provider::{
     PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
     TryIntoHistoricalStateProvider,
 };
-use reth_trie_common::MultiProofTargetsV2;
+use base_execution_state_types::MultiProofTargetsV2;
 use tokio::sync::oneshot;
 use tracing::{Span, debug, debug_span, instrument, trace, trace_span, warn};
 

@@ -22,7 +22,7 @@ pub use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
-use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 
 use crate::{Database, OnStateHook, TxEnvFor};
 

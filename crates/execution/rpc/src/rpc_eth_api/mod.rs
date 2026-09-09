@@ -29,4 +29,4 @@ pub use reth_rpc_eth_types::{
     BaseReceiptBuilder, BaseReceiptConverter, BaseRpcConverter, BaseTimeCache, BaseTxInfoMapper,
     ReceiptFieldsBuilder,
 };
-use reth_trie_common as _;
+use base_execution_state_types as _;

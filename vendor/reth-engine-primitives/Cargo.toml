@@ -18,7 +18,7 @@ workspace = true
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -41,7 +41,7 @@ std = [
     "base-execution-evm-runtime/std",
     "reth-execution-types/std",
     "reth-primitives-traits/std",
-    "reth-trie-common/std",
+    "base-execution-state-types/std",
     "alloy-primitives/std",
     "base-common-types-payload/std",
     "alloy-eips/std",

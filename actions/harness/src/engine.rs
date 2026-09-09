@@ -42,7 +42,7 @@ use reth_provider::{
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_trie_common::HashedStorage;
+use base_execution_state_types::HashedStorage;
 
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
 

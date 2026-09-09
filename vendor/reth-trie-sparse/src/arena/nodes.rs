@@ -2,7 +2,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use alloy_primitives::{B256, keccak256};
 use alloy_trie::{BranchNodeCompact, TrieMask};
-use reth_trie_common::{BranchNodeMasks, Nibbles, ProofTrieNodeV2, RlpNode, TrieNodeV2};
+use base_execution_state_types::{BranchNodeMasks, Nibbles, ProofTrieNodeV2, RlpNode, TrieNodeV2};
 use smallvec::SmallVec;
 use strum::AsRefStr;
 

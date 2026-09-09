@@ -20,7 +20,7 @@ serde = { workspace = true }
 bytes = { workspace = true }
 metrics = { workspace = true }
 arrayvec = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 modular-bitfield = { workspace = true }
 reth-storage-errors = { workspace = true }
 roaring = { workspace = true, features = ["default"] }
@@ -49,7 +49,7 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
     "reth-db-models/test-utils",
-    "reth-trie-common/test-utils",
+    "base-execution-state-types/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
 ]
@@ -58,7 +58,7 @@ arbitrary = [
     "dep:arbitrary",
     "dep:proptest",
     "reth-primitives-traits/arbitrary",
-    "reth-trie-common/arbitrary",
+    "base-execution-state-types/arbitrary",
     "alloy-primitives/arbitrary",
     "base-common-types-chain/arbitrary",
     "reth-prune-types/arbitrary",

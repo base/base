@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::{Compact, add_arbitrary_tests, impl_compression_for_compact};
 use reth_prune_types::PruneSegment;
-use reth_trie_common::{StoredNibbles, StoredNibblesSubKey, *};
+use base_execution_state_types::{StoredNibbles, StoredNibblesSubKey, *};
 use serde::{Deserialize, Serialize};
 
 use crate::{

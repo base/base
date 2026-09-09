@@ -4,7 +4,7 @@ use reth_db::{
     DatabaseError,
     table::{self, Decode, Encode},
 };
-use reth_trie_common::StoredNibbles;
+use base_execution_state_types::StoredNibbles;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{HashedStorageKey, StorageTrieKey};

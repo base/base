@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_rlp::encode_fixed_size;
 use reth_primitives_traits::Account;
-use reth_trie_common::triehash::KeccakHasher;
+use base_execution_state_types::triehash::KeccakHasher;
 /// Re-export of [triehash].
 pub use triehash;
 
@@ -54,7 +54,7 @@ pub fn storage_root_prehashed<I: IntoIterator<Item = (B256, U256)>>(storage: I) 
 use std::{collections::BTreeMap, iter::once};
 
 use alloy_primitives::map::HashSet;
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeCompact, HashedPostStateSorted, HashedStorage, Nibbles, ProofTrieNodeV2,
     ProofV2Target, prefix_set::PrefixSetMut, updates::StorageTrieUpdates,
 };

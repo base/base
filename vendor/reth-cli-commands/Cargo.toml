@@ -63,7 +63,7 @@ crossterm = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["crossterm"] }
 reth-config = { workspace = true, features = ["serde"] }
 reth-trie = { workspace = true, features = ["metrics"] }
-reth-trie-common = { workspace = true, optional = true }
+base-execution-state-types = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-network = { workspace = true, features = ["serde"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -98,7 +98,7 @@ arbitrary = [
     "dep:proptest",
     "dep:arbitrary",
     "dep:proptest-arbitrary-interop",
-    "dep:reth-trie-common",
+    "dep:base-execution-state-types",
     "reth-db-api/arbitrary",
     "reth-eth-wire/arbitrary",
     "reth-db/arbitrary",
@@ -107,10 +107,10 @@ arbitrary = [
     "base-common-types-chain/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
-    "reth-trie-common?/test-utils",
+    "base-execution-state-types?/test-utils",
     "base-common-types-chain/arbitrary",
     "reth-prune-types/arbitrary",
     "reth-stages-types/arbitrary",
-    "reth-trie-common?/arbitrary",
+    "base-execution-state-types?/arbitrary",
     "reth-primitives-traits/arbitrary",
 ]

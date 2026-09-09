@@ -23,7 +23,7 @@ use std::cmp::Ordering;
 use alloy_primitives::{B256, map::B256Map};
 use itertools::{EitherOrBoth, merge_join_by};
 use reth_storage_errors::db::DatabaseError;
-use reth_trie_common::{
+use base_execution_state_types::{
     BranchNodeCompact, Nibbles,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
@@ -239,7 +239,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_primitives::map::B256Map;
-    use reth_trie_common::updates::StorageTrieUpdatesSorted;
+    use base_execution_state_types::updates::StorageTrieUpdatesSorted;
 
     use super::*;
     use crate::trie_cursor::mock::MockTrieCursorFactory;

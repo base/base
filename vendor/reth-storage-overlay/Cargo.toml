@@ -22,7 +22,7 @@ alloy-eips = { workspace = true }
 reth-db-api = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-prune-types = { workspace = true }
-reth-trie-common = { workspace = true }
+base-execution-state-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 rayon = { workspace = true, optional = true }

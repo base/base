@@ -4,7 +4,7 @@ use alloy_primitives::{B256, U256, map::B256Map};
 use parking_lot::{Mutex, MutexGuard};
 use reth_primitives_traits::Account;
 use reth_storage_errors::db::DatabaseError;
-use reth_trie_common::HashedPostState;
+use base_execution_state_types::HashedPostState;
 use tracing::instrument;
 
 use super::{HashedCursor, HashedCursorFactory, HashedStorageCursor};

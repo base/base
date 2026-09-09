@@ -1,5 +1,5 @@
 [package]
-name = "reth-trie-common"
+name = "base-execution-state-types"
 description = "Commonly used types for trie usage in reth."
 version.workspace = true
 edition.workspace = true

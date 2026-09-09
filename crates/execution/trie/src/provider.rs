@@ -19,7 +19,7 @@ use reth_trie::{
     proof::{self, Proof},
     witness::TrieWitness,
 };
-use reth_trie_common::{
+use base_execution_state_types::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
