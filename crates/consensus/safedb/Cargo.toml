@@ -21,6 +21,8 @@ base-protocol = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "rt"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["serde", "std"] }
+base-common-types-rpc = {workspace = true, features = ["std", "serde"]}
+
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "macros"] }

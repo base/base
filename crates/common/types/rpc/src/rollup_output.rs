@@ -1,13 +1,15 @@
 //! Output Types
 
+use crate::RollupSyncStatus;
 use alloy_primitives::B256;
-use base_protocol::{L2BlockInfo, OutputRoot, SyncStatus};
+use base_common_types_chain::{L2BlockInfo, OutputRoot};
 
 /// An [output response][or] for Base Rollup.
 ///
 /// [or]: https://github.com/ethereum-optimism/optimism/blob/f20b92d3eb379355c876502c4f28e72a91ab902f/op-service/eth/output.go#L10-L17
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct OutputResponse {
     /// The output version.
     pub version: B256,
@@ -20,12 +22,12 @@ pub struct OutputResponse {
     /// The state root.
     pub state_root: B256,
     /// The status of the node sync.
-    pub sync_status: SyncStatus,
+    pub sync_status: RollupSyncStatus,
 }
 
 impl OutputResponse {
     /// Builds an [`OutputResponse`] from its parts.
-    pub fn from_v0(v0: OutputRoot, sync_status: SyncStatus, block_ref: L2BlockInfo) -> Self {
+    pub fn from_v0(v0: OutputRoot, sync_status: RollupSyncStatus, block_ref: L2BlockInfo) -> Self {
         Self {
             version: v0.version(),
             output_root: v0.hash(),

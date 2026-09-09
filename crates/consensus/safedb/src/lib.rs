@@ -10,8 +10,7 @@
 mod error;
 pub use error::SafeDBError;
 
-mod response;
-pub use response::SafeHeadResponse;
+pub use base_common_types_rpc::SafeHeadResponse;
 
 mod traits;
 pub use traits::{SafeDBReader, SafeHeadListener};

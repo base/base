@@ -3140,6 +3140,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "async-trait",
+ "base-common-types-rpc",
  "base-protocol",
  "redb",
  "serde",
