@@ -19,7 +19,6 @@ sha2 = { workspace = true }
 serde = { workspace = true }
 either = { workspace = true }
 thiserror = { workspace = true }
-auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 base-evm-handler = {workspace = true}
 reth-trie-common = { workspace = true }

@@ -3876,7 +3876,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "assert_matches",
- "auto_impl",
  "base-common-consensus",
  "base-common-genesis",
  "base-common-rpc-types-engine",

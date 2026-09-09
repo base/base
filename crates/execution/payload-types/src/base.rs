@@ -23,7 +23,7 @@ use base_common_rpc_types_engine::{
 };
 use reth_primitives_traits::{Block as _, SealedBlock, WithEncoded};
 
-use crate::{BuiltPayload, BuiltPayloadExecutedBlock};
+use crate::BuiltPayloadExecutedBlock;
 
 /// Minimal Ethereum payload builder attributes retained for Base payload construction.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -276,7 +276,7 @@ pub struct BaseBuiltPayload {
     pub fees: U256,
 }
 
-// === impl BuiltPayload ===
+// === Base built payload ===
 
 impl BaseBuiltPayload {
     /// Converts a sealed Base block into its Engine API execution data.
@@ -323,24 +323,19 @@ impl BaseBuiltPayload {
     }
 }
 
-impl BuiltPayload for BaseBuiltPayload {
-    fn block(&self) -> &SealedBlock {
-        self.block()
-    }
-
-    fn fees(&self) -> U256 {
-        self.fees
-    }
-
-    fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock> {
+impl BaseBuiltPayload {
+    /// Returns the execution state produced by this build.
+    pub fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock> {
         self.executed_block.clone()
     }
 
-    fn block_access_list(&self) -> Option<&Bytes> {
+    /// Returns the block access list, when one was built.
+    pub fn block_access_list(&self) -> Option<&Bytes> {
         self.block_access_list.as_ref()
     }
 
-    fn requests(&self) -> Option<Requests> {
+    /// Base blocks do not produce execution requests.
+    pub fn requests(&self) -> Option<Requests> {
         None
     }
 }

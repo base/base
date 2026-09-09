@@ -23,8 +23,8 @@ pub use error::{InvalidPayloadAttributesError, NewPayloadError, PayloadBuilderEr
 
 mod traits;
 pub use traits::{
-    BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock, PayloadAttributes,
-    PayloadAttributesBuilder, payload_id,
+    BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes, PayloadAttributesBuilder,
+    payload_id,
 };
 
 mod payload;

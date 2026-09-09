@@ -13,8 +13,8 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::CancelOnDrop;
 use base_execution_payload_types::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, PayloadAttributes,
-    PayloadBuilderError, PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributes, PayloadBuilderError,
+    PayloadKind,
 };
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{BasePooledTx, TransactionPool};
@@ -851,7 +851,7 @@ impl BuildArguments {
 ///
 /// This compares the total fees of the blocks, higher is better.
 #[inline(always)]
-pub fn is_better_payload<T: BuiltPayload>(best_payload: Option<&T>, new_fees: U256) -> bool {
+pub fn is_better_payload(best_payload: Option<&BaseBuiltPayload>, new_fees: U256) -> bool {
     if let Some(best_payload) = best_payload { new_fees > best_payload.fees() } else { true }
 }
 
