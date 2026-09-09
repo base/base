@@ -1,7 +1,7 @@
 //! Sequencer timing defaults for subsecond block production.
 
 /// The default fixed offset into a subsecond slot at which the sequencer requests the
-/// sealed payload (`engine_getPayload`) once Denim is active.
+/// sealed payload (`engine_getPayload`) once Cobalt is active.
 ///
 /// This is the single shared default for both timing knobs derived from it: the CL's block
 /// seal target and the builder's wall-clock transaction cutoff. The two run in separate

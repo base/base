@@ -131,7 +131,7 @@ pub use transaction::BlobTransactionValidationError;
 pub use transaction::{
     EthereumTxEnvelope, EthereumTypedTransaction, SignableTransaction, Transaction,
     TransactionEnvelope, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar,
-    TxEip7702, TxEnvelope, TxLegacy, TxType, TypedTransaction,
+    TxEip7702, TxEnvelope, TxLegacy, TxType, TypedTransaction, decode_2718_canonical,
 };
 
 mod signed;

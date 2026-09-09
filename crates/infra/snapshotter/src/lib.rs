@@ -9,14 +9,14 @@
 
 pub use base_reth_cli::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ProgressDisplay, SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
 
 mod config;
 pub use config::{DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig};
 
 mod progress;
-pub use progress::{ProgressDisplay, UploadProgress};
+pub use progress::UploadProgress;
 
 mod container;
 pub use container::{ContainerManager, DockerContainerManager};

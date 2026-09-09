@@ -30,7 +30,7 @@ use tokio::time::{sleep, timeout};
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const COBALT_ACTIVATION_BLOCK: u64 = 0;
-const DENIM_ACTIVATION_BLOCK: u64 = 1;
+const ZENITH_ACTIVATION_BLOCK: u64 = 0;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const PENDING_TX_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -48,14 +48,14 @@ async fn wait_for_pending_transaction(provider: &RootProvider<Base>, tx_hash: B2
     .wrap_err("transaction did not become pending on the builder")?
 }
 
-/// Starts a separate mempool and builder pair using the native Denim payload builder with validity
-/// transport enabled on both nodes.
+/// Starts a separate mempool and builder pair using the native Cobalt payload builder with validity
+/// transport enabled on both nodes and Zenith active for EIP-8130 transactions.
 async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
+        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
@@ -430,8 +430,8 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     Ok(())
 }
 
-/// Verifies a Cobalt EIP-8130 transaction can carry validity predicates through forwarding and be
-/// included by the native Denim payload builder.
+/// Verifies a Zenith EIP-8130 transaction can carry validity predicates through forwarding and be
+/// included by the native Cobalt payload builder.
 #[tokio::test]
 async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {
     let system = start_validity_system().await?;
@@ -557,7 +557,7 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     client_provider.wait_for_balance(storage_signer.address(), Duration::from_secs(15)).await?;
 
     let current_block = builder_provider.get_block_number().await?;
-    // Native Denim blocks advance every 200 ms, so leave enough time to submit and observe all
+    // Native Cobalt blocks advance every 200 ms, so leave enough time to submit and observe all
     // three transactions before the future predicate becomes true.
     let target_block = current_block + 50;
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;

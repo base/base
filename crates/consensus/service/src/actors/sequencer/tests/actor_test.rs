@@ -1058,15 +1058,15 @@ type TestSequencerActor = SequencerActor<
 >;
 
 /// Returns a test actor whose rollup config anchors L2 genesis at 100s with 2s blocks and
-/// activates Denim at 102s (block 1) via genesis config. Block timestamps:
-/// block 0 → `100_000ms`, block 1 → `102_000ms` (first Denim block), block 2 → `102_200ms`, …
-fn denim_seal_target_actor() -> TestSequencerActor {
+/// activates Cobalt at 102s (block 1) via genesis config. Block timestamps:
+/// block 0 → `100_000ms`, block 1 → `102_000ms` (first Cobalt block), block 2 → `102_200ms`, …
+fn cobalt_seal_target_actor() -> TestSequencerActor {
     let mut actor = test_actor();
     actor.rollup_config = Arc::new(RollupConfig {
         block_time: 2,
         genesis: ChainGenesis { l2_time: 100, ..Default::default() },
         upgrades: UpgradeConfig {
-            base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+            base: BaseUpgradeConfig { cobalt: Some(102), ..Default::default() },
             ..Default::default()
         },
         ..Default::default()
@@ -1075,8 +1075,8 @@ fn denim_seal_target_actor() -> TestSequencerActor {
 }
 
 #[test]
-fn denim_seal_target_is_fixed_offset_into_slot() {
-    let actor = denim_seal_target_actor();
+fn cobalt_seal_target_is_fixed_offset_into_slot() {
+    let actor = cobalt_seal_target_actor();
 
     // Block 2's slot starts at T_1 = 102_000ms; the fixed target is T_1 + 150ms
     // (equivalently T_2 − 50ms).
@@ -1085,8 +1085,8 @@ fn denim_seal_target_is_fixed_offset_into_slot() {
 }
 
 #[test]
-fn denim_seal_target_ignores_last_seal_duration() {
-    let actor = denim_seal_target_actor();
+fn cobalt_seal_target_ignores_last_seal_duration() {
+    let actor = cobalt_seal_target_actor();
 
     // Never grant minimum build time when behind: a slow previous seal must not move the
     // target. A target already in the past makes the ticker fire immediately instead.
@@ -1096,10 +1096,10 @@ fn denim_seal_target_ignores_last_seal_duration() {
 }
 
 #[test]
-fn first_denim_block_seal_target_is_relative_to_own_timestamp() {
-    let actor = denim_seal_target_actor();
+fn first_cobalt_block_seal_target_is_relative_to_own_timestamp() {
+    let actor = cobalt_seal_target_actor();
 
-    // Block 1 is the first Denim-active block; its parent slot spans a full legacy block
+    // Block 1 is the first Cobalt-active block; its parent slot spans a full legacy block
     // time, so the target is T_1 − (interval − seal_offset) = 102_000 − 50, not
     // T_0 + 150 = 100_150.
     let expected = UNIX_EPOCH + Duration::from_millis(101_950);
@@ -1107,8 +1107,8 @@ fn first_denim_block_seal_target_is_relative_to_own_timestamp() {
 }
 
 #[test]
-fn denim_seal_target_uses_configured_offset() {
-    let mut actor = denim_seal_target_actor();
+fn cobalt_seal_target_uses_configured_offset() {
+    let mut actor = cobalt_seal_target_actor();
     actor.seal_offset = Duration::from_millis(100);
 
     let expected = UNIX_EPOCH + Duration::from_millis(102_100);
@@ -1116,7 +1116,7 @@ fn denim_seal_target_uses_configured_offset() {
 }
 
 #[test]
-fn pre_denim_seal_target_keeps_adaptive_compensation() {
+fn pre_cobalt_seal_target_keeps_adaptive_compensation() {
     let mut actor = test_actor();
     actor.rollup_config = Arc::new(RollupConfig {
         block_time: 2,

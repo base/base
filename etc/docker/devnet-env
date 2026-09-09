@@ -109,7 +109,30 @@ PROVER_SERVICE_RPC_PORT=19000
 PROPOSER_HEALTH_PORT=18080
 
 # Batcher Ports
+# The canonical Go op-batcher uses BATCHER_METRICS_PORT; the shadow Rust
+# base-batcher uses SHADOW_BATCHER_METRICS_PORT. Both run by default.
 BATCHER_METRICS_PORT=6060
+SHADOW_BATCHER_METRICS_PORT=6061
+
+# Shadow batcher / validator configuration.
+# The Rust base-batcher runs alongside the canonical op-batcher in --shadow-mode,
+# posting to SHADOW_BATCH_INBOX_ADDRESS from a distinct L1 sender
+# (SHADOW_BATCHER_ADDR, an otherwise-unused funded dev account) so it never
+# collides with the op-batcher's L1 nonces. base-shadow-validator derives L2 from
+# this shadow DA via the matching inbox/sender overrides.
+SHADOW_BATCH_INBOX_ADDRESS=0x0000000000000000000000000000000000ba7c4e
+SHADOW_BATCHER_ADDR=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+SHADOW_BATCHER_KEY=0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+
+# L2 Shadow Validator Ports
+L2_SHADOW_ADVERTISE_IP=172.30.0.25
+L2_SHADOW_HTTP_PORT=8845
+L2_SHADOW_WS_PORT=8846
+L2_SHADOW_AUTH_PORT=8851
+L2_SHADOW_P2P_PORT=8803
+L2_SHADOW_METRICS_PORT=8890
+L2_SHADOW_CL_RPC_PORT=8849
+L2_SHADOW_CL_P2P_PORT=8203
 
 # L2 Sequencer-1 Ports
 L2_SEQ1_HTTP_PORT=10545

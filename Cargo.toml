@@ -136,8 +136,8 @@ inherits = "release"
 debug = true
 strip = false
 
-# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
-# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
+# Docker profiling builds add `-Cforce-frame-pointers=yes` in docker-bake.hcl.
+# Move it here once profile-rustflags is stabilized (tracking: rust-lang/cargo#10271).
 [profile.profiling]
 inherits = "release"
 lto = false
@@ -249,6 +249,7 @@ base-prover-service-protocol = { path = "crates/proof/prover-service/protocol", 
 # Batcher
 base-comp = { path = "crates/batcher/comp", default-features = false }
 base-blobs = { path = "crates/batcher/blobs", default-features = false }
+base-batcher-cli = { path = "crates/batcher/cli", default-features = false }
 base-batcher-core = { path = "crates/batcher/core", default-features = false }
 base-batcher-admin = { path = "crates/batcher/admin", default-features = false }
 base-batcher-source = { path = "crates/batcher/source", default-features = false }

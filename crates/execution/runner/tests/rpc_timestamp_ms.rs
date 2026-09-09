@@ -1,4 +1,4 @@
-//! End-to-end wire checks for canonical Denim RPC timestamps.
+//! End-to-end wire checks for canonical Cobalt RPC timestamps.
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -43,9 +43,9 @@ fn receipt_logs(receipts: &Value, transaction_hash: &str) -> Value {
 }
 
 #[tokio::test]
-async fn canonical_denim_rpc_responses_include_millisecond_timestamps() -> eyre::Result<()> {
+async fn canonical_cobalt_rpc_responses_include_millisecond_timestamps() -> eyre::Result<()> {
     let mut genesis = build_test_genesis();
-    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 3 }));
+    genesis.config.extra_fields.insert("base".into(), json!({ "cobalt": 3 }));
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
         .build()

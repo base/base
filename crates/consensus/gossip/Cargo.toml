@@ -17,6 +17,7 @@ sha2 = { workspace = true }
 snap = { workspace = true }
 serde_repr = { workspace = true }
 base-metrics = { workspace = true }
+base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
 base-consensus-disc = { workspace = true }
 base-common-genesis = { workspace = true }

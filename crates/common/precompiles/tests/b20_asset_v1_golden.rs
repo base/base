@@ -24,7 +24,7 @@
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
@@ -2346,6 +2346,35 @@ fn golden_announce_reverts_id_already_used() {
     assert_eq!(
         err,
         BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id: "dup".into() })
+    );
+}
+
+/// Cantina #16 follow-up: a malformed `announce` (invalid UTF-8 in `id`) must keep falling
+/// through to the owned decoder's diagnostic at V1, unchanged — V1's revert bytes are
+/// consensus-frozen and must never take the new V2-only bounded-rejection path.
+#[test]
+fn golden_announce_malformed_id_stays_on_owned_diagnostic_at_v1() {
+    let mut s = fresh();
+    let marker = "malformed-id-marker";
+    let mut calldata = IB20Asset::announceCall {
+        internalCalls: vec![],
+        id: marker.into(),
+        description: String::new(),
+        uri: String::new(),
+    }
+    .abi_encode();
+    let at = calldata.windows(marker.len()).position(|w| w == marker.as_bytes()).unwrap();
+    calldata[at..at + marker.len()].fill(0xff);
+
+    let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata.clone()).unwrap_err();
+    let oracle_error = IB20Asset::IB20AssetCalls::abi_decode_validate(&calldata).unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::AbiDecodeFailed {
+            selector: IB20Asset::announceCall::SELECTOR,
+            error: oracle_error.to_string(),
+        },
+        "V1 must keep falling through to the owned decoder's diagnostic, unchanged",
     );
 }
 

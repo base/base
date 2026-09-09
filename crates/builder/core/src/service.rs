@@ -20,6 +20,7 @@ impl BlockServiceBuilder {
                 predicate_eval_hard_cutoff: builder_config.predicate_eval_hard_cutoff,
                 max_gas_per_txn: builder_config.max_gas_per_txn,
                 max_uncompressed_block_size: builder_config.max_uncompressed_block_size,
+                ..Default::default()
             },
             builder_config.block_time.saturating_add(builder_config.block_time_leeway),
         )

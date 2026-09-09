@@ -18,6 +18,9 @@ pub use config::ResourceMeteringConfig;
 pub mod error;
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
+mod rejection_cache;
+pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
+
 mod resource_metering;
 pub use resource_metering::{
     ResourceMeteringDimension, ResourceMeteringError, ResourceMeteringOperation,
@@ -25,7 +28,7 @@ pub use resource_metering::{
     ResourceThrottlingDecision, ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
 };
 mod resource_metering_metrics;
-pub use resource_metering_metrics::ResourceMeteringMetrics;
+pub use resource_metering_metrics::{RejectionCacheMetrics, ResourceMeteringMetrics};
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 

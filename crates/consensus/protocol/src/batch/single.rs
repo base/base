@@ -190,11 +190,11 @@ impl SingleBatch {
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }
-            // If cobalt is not active yet and the transaction is an 8130, drop the batch.
-            if !cfg.is_cobalt_active(self.timestamp)
+            // If Zenith is not active yet and the transaction is an 8130, drop the batch.
+            if !cfg.is_zenith_active(self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
             {
-                return BatchValidity::Drop(BatchDropReason::Eip8130PreCobalt);
+                return BatchValidity::Drop(BatchDropReason::Eip8130PreZenith);
             }
         }
 
@@ -354,12 +354,12 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_timestamp_accepts_same_second_in_denim_era() {
+    fn test_check_batch_timestamp_accepts_same_second_in_cobalt_era() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis { l2_time: 98, ..Default::default() },
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(102), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_timestamp_non_denim_unchanged() {
+    fn test_check_batch_timestamp_pre_cobalt_unchanged() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis { l2_time: 98, ..Default::default() },
@@ -607,14 +607,14 @@ mod tests {
     }
 
     /// Minimal batch tx bytes whose leading 2718 type byte marks an EIP-8130
-    /// transaction. Batch validation keys the Cobalt gate on this type byte, so
+    /// transaction. Batch validation keys the Zenith gate on this type byte, so
     /// a fully formed envelope is unnecessary here.
     fn eip_8130_tx_bytes() -> Bytes {
         Bytes::from(vec![OpTxType::Eip8130 as u8, 0x00])
     }
 
     #[test]
-    fn test_check_batch_drop_8130_pre_cobalt() {
+    fn test_check_batch_drop_8130_pre_zenith() {
         let mut transactions = example_transactions();
         transactions.push(eip_8130_tx_bytes());
 
@@ -622,12 +622,20 @@ mod tests {
             parent_hash: BlockHash::ZERO,
             epoch_num: 1,
             epoch_hash: BlockHash::ZERO,
-            timestamp: 1,
+            timestamp: 0,
             transactions,
         };
 
-        // Notice: Cobalt is _not_ active yet.
-        let cfg = RollupConfig { max_sequencer_drift: 1, block_time: 1, ..Default::default() };
+        // Cobalt is active, but Zenith is not active yet.
+        let cfg = RollupConfig {
+            max_sequencer_drift: 1,
+            block_time: 1,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { cobalt: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
         let l2_safe_head = L2BlockInfo {
             block_info: BlockInfo { timestamp: 0, ..Default::default() },
@@ -636,12 +644,12 @@ mod tests {
         let inclusion_block = BlockInfo::default();
         assert_eq!(
             single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::Eip8130PreCobalt)
+            BatchValidity::Drop(BatchDropReason::Eip8130PreZenith)
         );
     }
 
     #[test]
-    fn test_check_batch_accept_8130_post_cobalt() {
+    fn test_check_batch_accept_8130_post_zenith() {
         let mut transactions = example_transactions();
         transactions.push(eip_8130_tx_bytes());
 
@@ -649,16 +657,16 @@ mod tests {
             parent_hash: BlockHash::ZERO,
             epoch_num: 1,
             epoch_hash: BlockHash::ZERO,
-            timestamp: 1,
+            timestamp: 0,
             transactions,
         };
 
-        // Notice: Cobalt is active.
+        // Notice: Zenith is active.
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
             block_time: 1,
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { cobalt: Some(0), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(0), zenith: Some(0), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()

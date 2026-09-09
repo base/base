@@ -31,8 +31,8 @@ use crate::utils::{BaselineError, Result};
 const CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Delay between probes while a scheduled block is becoming visible over RPC.
 const BLOCK_AVAILABILITY_PROBE_INTERVAL: Duration = Duration::from_millis(10);
-/// Maximum missed canonical blocks recovered after the newest pulse is published.
-const MAX_LIVE_CATCHUP_BLOCKS: u64 = 8;
+/// Maximum age of missed canonical blocks recovered after the newest pulse is published.
+const LIVE_CATCHUP_WINDOW: Duration = Duration::from_secs(16);
 /// Canonical blocks between live gas-calibration receipt samples.
 const LIVE_RECEIPT_SAMPLE_BLOCKS: u64 = 10;
 /// Maximum time to wait for a block watcher RPC request.
@@ -43,9 +43,9 @@ const RECEIPT_RPC_TIMEOUT: Duration = Duration::from_secs(50);
 ///
 /// If early polls fail (rate limits, RPC errors) while submissions are already
 /// landing, a tiny lookback permanently misses those inclusions and every tx
-/// eventually expires as "without confirmation". Sized for ~2s L2 blocks over
-/// the pending-confirmation timeout (~200s) plus margin.
-const CATCHUP_BLOCK_LOOKBACK: u64 = 256;
+/// eventually expires as "without confirmation". Covers the pending-confirmation
+/// timeout (~200s) plus margin, preserving the legacy 256-block horizon at 2s.
+const STARTUP_CATCHUP_WINDOW: Duration = Duration::from_secs(512);
 /// Maximum concurrent `eth_getBlockReceipts` requests during the end-of-run pass.
 /// Blocks are independent, so they are fetched in parallel up to this bound.
 const RECEIPT_FETCH_CONCURRENCY: usize = 3;
@@ -81,14 +81,14 @@ pub struct BlockClock {
 }
 
 impl BlockClock {
-    /// Creates a clock aligned to the boundary after `block_timestamp`.
-    pub fn from_block_timestamp(
+    /// Creates a clock aligned to the boundary after `block_timestamp_ms`.
+    pub fn from_block_timestamp_ms(
         block_time: Duration,
-        block_timestamp: u64,
+        block_timestamp_ms: u64,
         system_now: SystemTime,
         instant_now: Instant,
     ) -> Self {
-        let block_timestamp = Duration::from_secs(block_timestamp);
+        let block_timestamp = Duration::from_millis(block_timestamp_ms);
         let system_elapsed = system_now.duration_since(UNIX_EPOCH).unwrap_or_default();
         if block_timestamp > system_elapsed.saturating_add(block_time) {
             return Self::from_now(block_time, instant_now);
@@ -143,7 +143,7 @@ struct ObservedBlock {
     gas_used: u64,
     gas_limit: u64,
     base_fee: u128,
-    timestamp: u64,
+    timestamp_ms: u64,
 }
 
 /// Polls canonical blocks and reports their transaction hashes for landing detection.
@@ -183,9 +183,9 @@ impl BlockWatcher {
         let mut clock = baseline.as_ref().map_or_else(
             || BlockClock::from_now(self.block_time, Instant::now()),
             |block| {
-                BlockClock::from_block_timestamp(
+                BlockClock::from_block_timestamp_ms(
                     self.block_time,
-                    block.timestamp,
+                    block.timestamp_ms,
                     SystemTime::now(),
                     Instant::now(),
                 )
@@ -358,13 +358,16 @@ impl BlockWatcher {
             }
 
             let catchup_first = match last_seen_block {
-                Some(previous) if latest_number > previous.saturating_add(1) => Some(
-                    previous
-                        .saturating_add(1)
-                        .max(latest_number.saturating_sub(MAX_LIVE_CATCHUP_BLOCKS)),
-                ),
+                Some(previous) if latest_number > previous.saturating_add(1) => {
+                    Some(previous.saturating_add(1).max(latest_number.saturating_sub(
+                        Self::catchup_blocks(LIVE_CATCHUP_WINDOW, self.block_time),
+                    )))
+                }
                 None if self.results_tracker.pending_count() > 0 => {
-                    Some(latest_number.saturating_sub(CATCHUP_BLOCK_LOOKBACK))
+                    Some(latest_number.saturating_sub(Self::catchup_blocks(
+                        STARTUP_CATCHUP_WINDOW,
+                        self.block_time,
+                    )))
                 }
                 _ => None,
             };
@@ -412,7 +415,7 @@ impl BlockWatcher {
     ///
     /// Returns `None` if the tip cannot be read before cancellation or the short
     /// startup budget expires; the main loop then falls back to
-    /// [`CATCHUP_BLOCK_LOOKBACK`] on its first success.
+    /// [`STARTUP_CATCHUP_WINDOW`] on its first success.
     async fn establish_tip_baseline(&self) -> Option<ObservedBlock> {
         let started = Instant::now();
         let budget = Duration::from_secs(3);
@@ -479,8 +482,15 @@ impl BlockWatcher {
             gas_used: block.header.gas_used,
             gas_limit: block.header.gas_limit,
             base_fee: u128::from(block.header.base_fee_per_gas.unwrap_or_default()),
-            timestamp: block.header.timestamp,
+            timestamp_ms: Self::block_timestamp_ms(&block),
         }))
+    }
+
+    /// Returns the full RPC millisecond timestamp, or derives it from legacy seconds.
+    pub fn block_timestamp_ms(
+        block: &<Base as base_common_network::Network>::BlockResponse,
+    ) -> u64 {
+        block.header.timestamp_ms.unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000))
     }
 
     /// Waits until every hash in `pending` lands in a canonical block, then batch-fetches
@@ -500,10 +510,11 @@ impl BlockWatcher {
         provider: &RootProvider<Base>,
         mut pending: HashSet<TxHash>,
         timeout: Duration,
+        block_time: Duration,
         mut on_landed: impl FnMut(TxHash),
     ) -> Result<HashMap<TxHash, BlockReceipt>> {
         let mut blocks_by_hash = HashMap::with_capacity(pending.len());
-        Self::await_hashes(provider, &mut pending, timeout, |hash, block_number| {
+        Self::await_hashes(provider, &mut pending, timeout, block_time, |hash, block_number| {
             blocks_by_hash.insert(hash, block_number);
             on_landed(hash);
         })
@@ -585,6 +596,7 @@ impl BlockWatcher {
         provider: &RootProvider<Base>,
         pending: &mut HashSet<TxHash>,
         timeout: Duration,
+        block_time: Duration,
         mut on_confirmed: impl FnMut(TxHash, u64),
     ) -> Result<()> {
         if pending.is_empty() {
@@ -631,7 +643,12 @@ impl BlockWatcher {
                 Ok(Some((latest_number, latest_hashes))) => {
                     backoff = Duration::from_millis(100);
                     let first_block = last_seen_block.map_or_else(
-                        || latest_number.saturating_sub(CATCHUP_BLOCK_LOOKBACK),
+                        || {
+                            latest_number.saturating_sub(Self::catchup_blocks(
+                                STARTUP_CATCHUP_WINDOW,
+                                block_time,
+                            ))
+                        },
                         |block| block.saturating_add(1),
                     );
 
@@ -714,6 +731,12 @@ impl BlockWatcher {
             return Ok(None);
         };
         Ok(Some((block.header.number, block.transactions.hashes().collect())))
+    }
+
+    /// Converts a catch-up duration to a block count, rounding partial blocks up.
+    pub fn catchup_blocks(window: Duration, block_time: Duration) -> u64 {
+        assert!(!block_time.is_zero(), "block time must be greater than zero");
+        u64::try_from(window.as_nanos().div_ceil(block_time.as_nanos())).unwrap_or(u64::MAX)
     }
 
     /// Fetches canonical receipts for the given block numbers in a single batch pass.
@@ -801,13 +824,60 @@ impl BlockWatcher {
 mod tests {
     use super::*;
 
+    fn rpc_block(
+        timestamp: u64,
+        timestamp_ms: Option<u64>,
+    ) -> <Base as base_common_network::Network>::BlockResponse {
+        let block = <Base as base_common_network::Network>::BlockResponse::default();
+        let mut json = serde_json::to_value(block).unwrap();
+        json["timestamp"] = serde_json::json!(format!("0x{timestamp:x}"));
+        if let Some(timestamp_ms) = timestamp_ms {
+            json["timestampMs"] = serde_json::json!(format!("0x{timestamp_ms:x}"));
+        }
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn rpc_block_uses_full_millisecond_timestamp() {
+        let block = rpc_block(100, Some(100_800));
+
+        assert_eq!(BlockWatcher::block_timestamp_ms(&block), 100_800);
+    }
+
+    #[test]
+    fn rpc_block_falls_back_to_legacy_second_timestamp() {
+        let block = rpc_block(100, None);
+
+        assert_eq!(BlockWatcher::block_timestamp_ms(&block), 100_000);
+    }
+
+    #[test]
+    fn clock_preserves_millisecond_timestamp_across_second_boundary() {
+        let instant_now = Instant::now();
+        let clock = BlockClock::from_block_timestamp_ms(
+            Duration::from_millis(200),
+            100_800,
+            UNIX_EPOCH + Duration::from_millis(100_850),
+            instant_now,
+        );
+
+        assert_eq!(
+            clock.expected_boundary().duration_since(instant_now),
+            Duration::from_millis(150)
+        );
+    }
+
     #[test]
     fn clock_keeps_recent_boundary_in_the_past_for_immediate_probe() {
         let instant_now = Instant::now();
         let system_now = UNIX_EPOCH + Duration::from_millis(100_100);
 
-        let clock =
-            BlockClock::from_block_timestamp(Duration::from_secs(2), 98, system_now, instant_now);
+        let clock = BlockClock::from_block_timestamp_ms(
+            Duration::from_secs(2),
+            98_000,
+            system_now,
+            instant_now,
+        );
 
         assert_eq!(
             instant_now.saturating_duration_since(clock.expected_boundary()),
@@ -821,7 +891,8 @@ mod tests {
         let block_time = Duration::from_millis(200);
         let system_now = UNIX_EPOCH + Duration::from_millis(100_100);
 
-        let clock = BlockClock::from_block_timestamp(block_time, 105, system_now, instant_now);
+        let clock =
+            BlockClock::from_block_timestamp_ms(block_time, 105_000, system_now, instant_now);
 
         assert_eq!(clock.expected_boundary().duration_since(instant_now), block_time);
     }
@@ -855,5 +926,36 @@ mod tests {
         clock.correct_earlier();
 
         assert_eq!(before.duration_since(clock.expected_boundary()), Duration::from_millis(25));
+    }
+
+    #[test]
+    fn catchup_windows_preserve_two_second_behavior_and_scale_for_cobalt() {
+        assert_eq!(BlockWatcher::catchup_blocks(LIVE_CATCHUP_WINDOW, Duration::from_secs(2)), 8);
+        assert_eq!(
+            BlockWatcher::catchup_blocks(STARTUP_CATCHUP_WINDOW, Duration::from_secs(2)),
+            256
+        );
+        assert_eq!(
+            BlockWatcher::catchup_blocks(LIVE_CATCHUP_WINDOW, Duration::from_millis(200)),
+            80
+        );
+        assert_eq!(
+            BlockWatcher::catchup_blocks(STARTUP_CATCHUP_WINDOW, Duration::from_millis(200)),
+            2_560
+        );
+    }
+
+    #[test]
+    fn catchup_blocks_rounds_partial_intervals_up() {
+        assert_eq!(
+            BlockWatcher::catchup_blocks(Duration::from_millis(201), Duration::from_millis(200)),
+            2
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "block time must be greater than zero")]
+    fn catchup_blocks_rejects_zero_block_time() {
+        BlockWatcher::catchup_blocks(Duration::from_secs(1), Duration::ZERO);
     }
 }

@@ -1,4 +1,4 @@
-//! Reusable Denim activation checks over one hash-pinned L2 snapshot.
+//! Reusable Cobalt activation checks over one hash-pinned L2 snapshot.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -33,9 +33,9 @@ alloy_sol_types::sol! {
     function timestampMs() external view returns (uint64);
 }
 
-/// Snapshot selection for a Denim check.
+/// Snapshot selection for a Cobalt check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DenimCheckTarget {
+pub enum CobaltCheckTarget {
     /// Resolve the latest block once, then pin all reads to its hash.
     Latest,
     /// Check the snapshot identified by this block hash.
@@ -44,29 +44,29 @@ pub enum DenimCheckTarget {
 
 /// Last hash-pinned snapshot checked by a caller that polls `Latest`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DenimCheckCursor {
+pub struct CobaltCheckCursor {
     /// Checked block number.
     pub block_number: u64,
     /// Checked block hash.
     pub block_hash: B256,
 }
 
-/// Denim schedule state at the snapshot.
+/// Cobalt schedule state at the snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DenimSchedule {
-    /// The CL has no Denim activation configured.
+pub enum CobaltSchedule {
+    /// The CL has no Cobalt activation configured.
     NotScheduled,
-    /// Denim is configured after the snapshot timestamp.
+    /// Cobalt is configured after the snapshot timestamp.
     Scheduled,
-    /// Denim is active at the snapshot timestamp.
+    /// Cobalt is active at the snapshot timestamp.
     Active,
 }
 
 /// Status of a report dimension or individual check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DenimCheckStatus {
+pub enum CobaltCheckStatus {
     /// The invariant holds.
     Pass,
     /// The invariant does not hold.
@@ -75,26 +75,26 @@ pub enum DenimCheckStatus {
     Indeterminate,
 }
 
-/// One evaluated Denim invariant.
+/// One evaluated Cobalt invariant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DenimCheck {
+pub struct CobaltCheck {
     /// Stable check name.
     pub name: String,
     /// Check result.
-    pub status: DenimCheckStatus,
+    pub status: CobaltCheckStatus,
     /// Expected value.
     pub expected: String,
     /// Observed value.
     pub observed: String,
 }
 
-/// Serializable report for one hash-pinned Denim snapshot.
+/// Serializable report for one hash-pinned Cobalt snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DenimReport {
+pub struct CobaltReport {
     /// Activation state.
-    pub schedule: DenimSchedule,
+    pub schedule: CobaltSchedule,
     /// Explicit snapshot block number.
     pub block_number: u64,
     /// Explicit snapshot block hash.
@@ -103,19 +103,19 @@ pub struct DenimReport {
     pub timestamp: u64,
     /// Snapshot timestamp in milliseconds, when exposed.
     pub timestamp_ms: Option<u64>,
-    /// CL Denim activation timestamp.
+    /// CL Cobalt activation timestamp.
     pub activation: Option<u64>,
     /// Detailed checks.
-    pub checks: Vec<DenimCheck>,
+    pub checks: Vec<CobaltCheck>,
     /// Safe polling cursor, absent when cadence ancestry was incomplete.
     #[serde(skip)]
-    pub cursor: Option<DenimCheckCursor>,
+    pub cursor: Option<CobaltCheckCursor>,
 }
 
-/// Pure observations used to evaluate a Denim report.
+/// Pure observations used to evaluate a Cobalt report.
 #[derive(Debug, Clone)]
-pub struct DenimObservations {
-    /// CL Denim activation timestamp.
+pub struct CobaltObservations {
+    /// CL Cobalt activation timestamp.
     pub activation: Option<u64>,
     /// Snapshot block number.
     pub block_number: u64,
@@ -153,20 +153,20 @@ pub struct DenimObservations {
     pub getter_timestamp_ms_error: Option<String>,
 }
 
-/// Denim RPC entry point.
+/// Cobalt RPC entry point.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DenimChecker;
+pub struct CobaltChecker;
 
-impl DenimChecker {
+impl CobaltChecker {
     /// Checks a snapshot, including every cadence edge after `previous` for `Latest`.
     pub async fn check(
         &self,
         el_rpc: &Url,
         cl_rpc: &Url,
         el_ws_rpc: Option<&Url>,
-        target: DenimCheckTarget,
-        previous: Option<DenimCheckCursor>,
-    ) -> Result<DenimReport> {
+        target: CobaltCheckTarget,
+        previous: Option<CobaltCheckCursor>,
+    ) -> Result<CobaltReport> {
         let http = alloy_transport_http::reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
@@ -182,7 +182,7 @@ impl DenimChecker {
             .await
             .with_context(|| format!("fetching optimism_rollupConfig from {cl_rpc}"))?;
         let hash = match target {
-            DenimCheckTarget::Latest => {
+            CobaltCheckTarget::Latest => {
                 provider
                     .get_block_by_number(BlockNumberOrTag::Latest)
                     .full()
@@ -191,7 +191,7 @@ impl DenimChecker {
                     .header
                     .hash
             }
-            DenimCheckTarget::BlockHash(hash) => hash,
+            CobaltCheckTarget::BlockHash(hash) => hash,
         };
         let block_id = BlockId::Hash(hash.into());
         let full_hash = provider
@@ -229,7 +229,7 @@ impl DenimChecker {
             None
         };
 
-        let active = rollup.upgrades.base.denim.is_some_and(|at| full_hash.header.timestamp >= at);
+        let active = rollup.upgrades.base.cobalt.is_some_and(|at| full_hash.header.timestamp >= at);
         let envelopes: Vec<_> =
             full_hash.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect();
         let metadata = active
@@ -294,8 +294,8 @@ impl DenimChecker {
             (None, None)
         };
 
-        let mut report = DenimReport::evaluate(DenimObservations {
-            activation: rollup.upgrades.base.denim,
+        let mut report = CobaltReport::evaluate(CobaltObservations {
+            activation: rollup.upgrades.base.cobalt,
             block_number: number,
             block_hash: hash,
             timestamp: full_hash.header.timestamp,
@@ -319,8 +319,8 @@ impl DenimChecker {
             .checks
             .iter()
             .find(|check| check.name == "cadence_200ms")
-            .is_some_and(|check| check.status == DenimCheckStatus::Pass);
-        report.cursor = (cadence_complete && cadence_passed).then_some(DenimCheckCursor {
+            .is_some_and(|check| check.status == CobaltCheckStatus::Pass);
+        report.cursor = (cadence_complete && cadence_passed).then_some(CobaltCheckCursor {
             block_number: report.block_number,
             block_hash: report.block_hash,
         });
@@ -365,7 +365,7 @@ async fn raw_call<P: Provider<Base>>(
 }
 
 fn check_wire_object(
-    report: &mut DenimReport,
+    report: &mut CobaltReport,
     name: &str,
     outcome: RawOutcome,
     field: &str,
@@ -374,7 +374,7 @@ fn check_wire_object(
 ) {
     match outcome {
         RawOutcome::Value(value) if value.is_null() => {
-            report.add_check(name, DenimCheckStatus::Fail, field, "known snapshot object missing")
+            report.add_check(name, CobaltCheckStatus::Fail, field, "known snapshot object missing")
         }
         RawOutcome::Value(value) => {
             let object = value.as_object();
@@ -396,7 +396,7 @@ fn check_wire_object(
             let pass = timestamp == Some(expected_timestamp) && identity_matches;
             report.add_check(
                 name,
-                if pass { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
+                if pass { CobaltCheckStatus::Pass } else { CobaltCheckStatus::Fail },
                 format!("{field}=0x{expected_timestamp:x} with pinned identity"),
                 timestamp.map_or_else(
                     || format!("missing or invalid {field}"),
@@ -411,16 +411,16 @@ fn check_wire_object(
             );
         }
         RawOutcome::MethodError(error) => {
-            report.add_check(name, DenimCheckStatus::Fail, field, error)
+            report.add_check(name, CobaltCheckStatus::Fail, field, error)
         }
         RawOutcome::Unavailable(error) => {
-            report.add_check(name, DenimCheckStatus::Indeterminate, field, error)
+            report.add_check(name, CobaltCheckStatus::Indeterminate, field, error)
         }
     }
 }
 
 fn check_wire_logs(
-    report: &mut DenimReport,
+    report: &mut CobaltReport,
     name: &str,
     outcome: RawOutcome,
     expected_timestamp: u64,
@@ -429,13 +429,13 @@ fn check_wire_logs(
     match outcome {
         RawOutcome::Value(value) => {
             let Some(logs) = value.as_array() else {
-                report.add_check(name, DenimCheckStatus::Fail, "log array", "invalid result");
+                report.add_check(name, CobaltCheckStatus::Fail, "log array", "invalid result");
                 return;
             };
             if logs.is_empty() {
                 report.add_check(
                     name,
-                    DenimCheckStatus::Fail,
+                    CobaltCheckStatus::Fail,
                     "at least one pinned log",
                     "no logs in evidence block",
                 );
@@ -452,16 +452,16 @@ fn check_wire_logs(
             });
             report.add_check(
                 name,
-                if valid { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
+                if valid { CobaltCheckStatus::Pass } else { CobaltCheckStatus::Fail },
                 "blockTimestampMs with pinned blockHash",
                 if valid { "conformant" } else { "missing, wrong, or mismatched log field" },
             );
         }
         RawOutcome::MethodError(error) => {
-            report.add_check(name, DenimCheckStatus::Fail, "blockTimestampMs", error)
+            report.add_check(name, CobaltCheckStatus::Fail, "blockTimestampMs", error)
         }
         RawOutcome::Unavailable(error) => {
-            report.add_check(name, DenimCheckStatus::Indeterminate, "blockTimestampMs", error)
+            report.add_check(name, CobaltCheckStatus::Indeterminate, "blockTimestampMs", error)
         }
     }
 }
@@ -474,42 +474,42 @@ fn parse_quantity(value: &str) -> Option<u64> {
     u64::from_str_radix(digits, 16).ok()
 }
 
-fn cadence_status(parent: Option<u64>, child: Option<u64>, contiguous: bool) -> DenimCheckStatus {
+fn cadence_status(parent: Option<u64>, child: Option<u64>, contiguous: bool) -> CobaltCheckStatus {
     match (parent, child, contiguous) {
         (Some(parent), Some(child), true) if parent.checked_add(200) == Some(child) => {
-            DenimCheckStatus::Pass
+            CobaltCheckStatus::Pass
         }
-        (Some(_), Some(_), true) => DenimCheckStatus::Fail,
-        _ => DenimCheckStatus::Indeterminate,
+        (Some(_), Some(_), true) => CobaltCheckStatus::Fail,
+        _ => CobaltCheckStatus::Indeterminate,
     }
 }
 
 async fn append_cadence_check<P: Provider<Base>>(
     provider: &P,
-    report: &mut DenimReport,
-    target: DenimCheckTarget,
-    previous: Option<DenimCheckCursor>,
+    report: &mut CobaltReport,
+    target: CobaltCheckTarget,
+    previous: Option<CobaltCheckCursor>,
 ) -> bool {
     if previous.is_some_and(|cursor| {
-        matches!(target, DenimCheckTarget::Latest)
+        matches!(target, CobaltCheckTarget::Latest)
             && cursor.block_number == report.block_number
             && cursor.block_hash == report.block_hash
     }) {
         report.add_check(
             "cadence_200ms",
-            DenimCheckStatus::Pass,
+            CobaltCheckStatus::Pass,
             "every canonical parent-child edge is exactly +200ms",
             "no new blocks",
         );
         return true;
     }
     let stop = match (target, previous) {
-        (DenimCheckTarget::Latest, Some(cursor)) => Some(cursor),
+        (CobaltCheckTarget::Latest, Some(cursor)) => Some(cursor),
         _ => None,
     };
     let mut hash = report.block_hash;
     let mut child_ms = None;
-    let mut status = DenimCheckStatus::Pass;
+    let mut status = CobaltCheckStatus::Pass;
     let mut complete = false;
     let mut checked_edge = false;
     let mut child_number = None;
@@ -517,18 +517,18 @@ async fn append_cadence_check<P: Provider<Base>>(
     let mut visited = HashSet::new();
     loop {
         if !visited.insert(hash) {
-            status = DenimCheckStatus::Indeterminate;
+            status = CobaltCheckStatus::Indeterminate;
             break;
         }
         let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
             Ok(Some(block)) => block,
             _ => {
-                status = DenimCheckStatus::Indeterminate;
+                status = CobaltCheckStatus::Indeterminate;
                 break;
             }
         };
         if block.header.hash != hash {
-            status = DenimCheckStatus::Indeterminate;
+            status = CobaltCheckStatus::Indeterminate;
             break;
         }
         let envelopes: Vec<_> =
@@ -540,18 +540,18 @@ async fn append_cadence_check<P: Provider<Base>>(
             });
         let active = report.activation.is_some_and(|at| block.header.timestamp >= at);
         if active && millis.is_none() {
-            status = DenimCheckStatus::Fail;
+            status = CobaltCheckStatus::Fail;
         }
         let mut edge_checked = false;
         if active && child_ms.is_some() {
             if child_number != block.header.number.checked_add(1) {
-                status = DenimCheckStatus::Indeterminate;
+                status = CobaltCheckStatus::Indeterminate;
                 break;
             }
             edge_checked = true;
             checked_edge = true;
             let edge = cadence_status(millis, child_ms, true);
-            if edge != DenimCheckStatus::Pass && status != DenimCheckStatus::Fail {
+            if edge != CobaltCheckStatus::Pass && status != CobaltCheckStatus::Fail {
                 status = edge;
             }
         }
@@ -568,7 +568,7 @@ async fn append_cadence_check<P: Provider<Base>>(
         if stop.is_some_and(|cursor| block.header.number == cursor.block_number) {
             replacement_cursor = true;
         } else if stop.is_some_and(|cursor| block.header.number < cursor.block_number) {
-            status = DenimCheckStatus::Indeterminate;
+            status = CobaltCheckStatus::Indeterminate;
             break;
         }
         if stop.is_none() && checked_edge {
@@ -577,7 +577,7 @@ async fn append_cadence_check<P: Provider<Base>>(
         }
         if !active {
             if stop.is_some() {
-                status = DenimCheckStatus::Indeterminate;
+                status = CobaltCheckStatus::Indeterminate;
             } else {
                 complete = true;
             }
@@ -587,17 +587,17 @@ async fn append_cadence_check<P: Provider<Base>>(
         child_number = Some(block.header.number);
         hash = block.header.parent_hash;
     }
-    if status == DenimCheckStatus::Pass && !checked_edge {
-        status = DenimCheckStatus::Indeterminate;
+    if status == CobaltCheckStatus::Pass && !checked_edge {
+        status = CobaltCheckStatus::Indeterminate;
     }
     report.add_check(
         "cadence_200ms",
         status,
         "every canonical parent-child edge is exactly +200ms",
         match status {
-            DenimCheckStatus::Pass => "exact +200ms progression",
-            DenimCheckStatus::Fail => "wrong timestamp gap",
-            DenimCheckStatus::Indeterminate => "activation boundary, missing range, or reorg",
+            CobaltCheckStatus::Pass => "exact +200ms progression",
+            CobaltCheckStatus::Fail => "wrong timestamp gap",
+            CobaltCheckStatus::Indeterminate => "activation boundary, missing range, or reorg",
         },
     );
     complete
@@ -605,10 +605,10 @@ async fn append_cadence_check<P: Provider<Base>>(
 
 async fn append_wire_checks<P: Provider<Base>>(
     provider: &P,
-    report: &mut DenimReport,
+    report: &mut CobaltReport,
     block: &<Base as Network>::BlockResponse,
     el_ws_rpc: Option<&Url>,
-    target: DenimCheckTarget,
+    target: CobaltCheckTarget,
 ) {
     let transactions =
         block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
@@ -687,7 +687,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         ] {
             report.add_check(
                 name,
-                DenimCheckStatus::Indeterminate,
+                CobaltCheckStatus::Indeterminate,
                 "canonical metadata timestamp",
                 "canonical BaseTime metadata unavailable",
             );
@@ -705,18 +705,18 @@ async fn append_wire_checks<P: Provider<Base>>(
     const LOG_DISCOVERY_CALLS: usize = 16;
     const INITIAL_LOG_WINDOW: u64 = 32;
     const MAX_LOG_WINDOW: u64 = 32_768;
-    let add_indeterminate_log_checks = |report: &mut DenimReport, reason: &str| {
+    let add_indeterminate_log_checks = |report: &mut CobaltReport, reason: &str| {
         for name in LOG_CHECKS {
             report.add_check(
                 name,
-                DenimCheckStatus::Indeterminate,
-                "post-Denim log evidence",
+                CobaltCheckStatus::Indeterminate,
+                "post-Cobalt log evidence",
                 reason,
             );
         }
     };
-    if report.schedule != DenimSchedule::Active {
-        add_indeterminate_log_checks(report, "Denim is not active at the snapshot");
+    if report.schedule != CobaltSchedule::Active {
+        add_indeterminate_log_checks(report, "Cobalt is not active at the snapshot");
         append_subscription_checks(provider, report, el_ws_rpc, target).await;
         return;
     }
@@ -726,7 +726,7 @@ async fn append_wire_checks<P: Provider<Base>>(
     let mut window = INITIAL_LOG_WINDOW;
     let mut max_window = MAX_LOG_WINDOW;
     let mut evidence = None;
-    let mut discovery_reason = "no post-Denim log found within scan bounds".to_string();
+    let mut discovery_reason = "no post-Cobalt log found within scan bounds".to_string();
     for _ in 0..LOG_DISCOVERY_CALLS {
         let width = window.min(upper - floor + 1);
         let lower = upper - (width - 1);
@@ -767,7 +767,7 @@ async fn append_wire_checks<P: Provider<Base>>(
                     discovery_reason = "eth_getLogs returned malformed log identity".into();
                     break;
                 }
-                discovery_reason = "no post-Denim log found within scan bounds".into();
+                discovery_reason = "no post-Cobalt log found within scan bounds".into();
                 if lower == floor {
                     break;
                 }
@@ -831,7 +831,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         (evidence_active && evidence_identity_matches).then_some(evidence_timestamp_ms).flatten()
     else {
         let reason = if !evidence_active {
-            "newest log predates Denim activation"
+            "newest log predates Cobalt activation"
         } else if !evidence_identity_matches {
             "log evidence no longer matches its canonical transaction"
         } else {
@@ -878,7 +878,7 @@ async fn append_wire_checks<P: Provider<Base>>(
                     if let Some(check) =
                         report.checks.iter_mut().rev().find(|check| check.name == name)
                     {
-                        check.status = DenimCheckStatus::Fail;
+                        check.status = CobaltCheckStatus::Fail;
                         check.observed = "filter cleanup failed".into();
                     }
                 }
@@ -890,11 +890,11 @@ async fn append_wire_checks<P: Provider<Base>>(
                 "rpc_eth_getFilterLogs_blockTimestampMs",
             ] {
                 let (status, reason) = match &outcome {
-                    RawOutcome::MethodError(error) => (DenimCheckStatus::Fail, error.as_str()),
+                    RawOutcome::MethodError(error) => (CobaltCheckStatus::Fail, error.as_str()),
                     RawOutcome::Unavailable(error) => {
-                        (DenimCheckStatus::Indeterminate, error.as_str())
+                        (CobaltCheckStatus::Indeterminate, error.as_str())
                     }
-                    RawOutcome::Value(_) => (DenimCheckStatus::Fail, "invalid filter identifier"),
+                    RawOutcome::Value(_) => (CobaltCheckStatus::Fail, "invalid filter identifier"),
                 };
                 report.add_check(name, status, "blockHash filter", reason);
             }
@@ -961,9 +961,9 @@ async fn subscription_event_result<P: Provider<Base>>(
     provider: &P,
     kind: &str,
     notification: &Value,
-) -> (DenimCheckStatus, String) {
+) -> (CobaltCheckStatus, String) {
     let Some(result) = notification.pointer("/params/result") else {
-        return (DenimCheckStatus::Fail, "notification has no result".into());
+        return (CobaltCheckStatus::Fail, "notification has no result".into());
     };
     let block_hash = match kind {
         "newHeads" => result.get("hash").and_then(Value::as_str),
@@ -977,11 +977,11 @@ async fn subscription_event_result<P: Provider<Base>>(
         _ => None,
     };
     let Some(hash) = block_hash.and_then(|hash| hash.parse::<B256>().ok()) else {
-        return (DenimCheckStatus::Fail, "event has no valid block hash".into());
+        return (CobaltCheckStatus::Fail, "event has no valid block hash".into());
     };
     let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
         Ok(Some(block)) if block.header.hash == hash => block,
-        _ => return (DenimCheckStatus::Indeterminate, "event block unavailable".into()),
+        _ => return (CobaltCheckStatus::Indeterminate, "event block unavailable".into()),
     };
     let transactions =
         block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
@@ -990,11 +990,11 @@ async fn subscription_event_result<P: Provider<Base>>(
             |metadata| block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()),
         )
     else {
-        return (DenimCheckStatus::Indeterminate, "event block metadata unavailable".into());
+        return (CobaltCheckStatus::Indeterminate, "event block metadata unavailable".into());
     };
     if kind == "transactionReceipts" {
         let Some(receipts) = result.as_array().filter(|receipts| !receipts.is_empty()) else {
-            return (DenimCheckStatus::Fail, "malformed receipt event".into());
+            return (CobaltCheckStatus::Fail, "malformed receipt event".into());
         };
         if !receipts.iter().all(|receipt| {
             receipt
@@ -1006,7 +1006,7 @@ async fn subscription_event_result<P: Provider<Base>>(
                     == Some(block.header.number)
                 && receipt.get("logs").is_some_and(Value::is_array)
         }) {
-            return (DenimCheckStatus::Fail, "malformed or mismatched receipt event".into());
+            return (CobaltCheckStatus::Fail, "malformed or mismatched receipt event".into());
         }
         let logs: Vec<_> = receipts
             .iter()
@@ -1014,7 +1014,7 @@ async fn subscription_event_result<P: Provider<Base>>(
             .flatten()
             .collect();
         if logs.is_empty() {
-            return (DenimCheckStatus::Indeterminate, "receipt event has no logs".into());
+            return (CobaltCheckStatus::Indeterminate, "receipt event has no logs".into());
         }
         let valid = logs.iter().all(|log| {
             log.get("blockHash")
@@ -1025,7 +1025,7 @@ async fn subscription_event_result<P: Provider<Base>>(
                     == Some(expected)
         });
         return (
-            if valid { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
+            if valid { CobaltCheckStatus::Pass } else { CobaltCheckStatus::Fail },
             if valid {
                 format!("matching event timestamp 0x{expected:x}")
             } else {
@@ -1045,7 +1045,7 @@ async fn subscription_event_result<P: Provider<Base>>(
         _ => false,
     };
     (
-        if valid { DenimCheckStatus::Pass } else { DenimCheckStatus::Fail },
+        if valid { CobaltCheckStatus::Pass } else { CobaltCheckStatus::Fail },
         if valid {
             format!("matching event timestamp 0x{expected:x}")
         } else {
@@ -1056,9 +1056,9 @@ async fn subscription_event_result<P: Provider<Base>>(
 
 async fn append_subscription_checks<P: Provider<Base>>(
     provider: &P,
-    report: &mut DenimReport,
+    report: &mut CobaltReport,
     el_ws_rpc: Option<&Url>,
-    target: DenimCheckTarget,
+    target: CobaltCheckTarget,
 ) {
     const SUBSCRIPTIONS: [(&str, &str); 3] = [
         ("rpc_eth_subscribe_newHeads_timestampMs", "newHeads"),
@@ -1069,18 +1069,18 @@ async fn append_subscription_checks<P: Provider<Base>>(
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
                 name,
-                DenimCheckStatus::Indeterminate,
+                CobaltCheckStatus::Indeterminate,
                 "matching WebSocket event",
                 "standard execution WebSocket RPC is not configured",
             );
         }
         return;
     };
-    if matches!(target, DenimCheckTarget::BlockHash(_)) {
+    if matches!(target, CobaltCheckTarget::BlockHash(_)) {
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
                 name,
-                DenimCheckStatus::Indeterminate,
+                CobaltCheckStatus::Indeterminate,
                 "matching WebSocket event",
                 "historical block subscriptions cannot be replayed",
             );
@@ -1094,7 +1094,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
         for (name, _) in SUBSCRIPTIONS {
             report.add_check(
                 name,
-                DenimCheckStatus::Indeterminate,
+                CobaltCheckStatus::Indeterminate,
                 "accepted WebSocket subscription",
                 "WebSocket connection unavailable",
             );
@@ -1139,7 +1139,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
             if let Some(error) = value.get("error") {
                 report.add_check(
                     name,
-                    DenimCheckStatus::Fail,
+                    CobaltCheckStatus::Fail,
                     "accepted WebSocket subscription",
                     error.get("message").and_then(Value::as_str).unwrap_or("subscription rejected"),
                 );
@@ -1149,7 +1149,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
             } else {
                 report.add_check(
                     name,
-                    DenimCheckStatus::Fail,
+                    CobaltCheckStatus::Fail,
                     "subscription identifier",
                     "malformed subscription response",
                 );
@@ -1166,7 +1166,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
             continue;
         }
         let (status, observed) = subscription_event_result(provider, kind, &value).await;
-        if status == DenimCheckStatus::Indeterminate {
+        if status == CobaltCheckStatus::Indeterminate {
             indeterminate.insert(name, observed);
             continue;
         }
@@ -1177,7 +1177,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
         if !completed.contains(name) {
             report.add_check(
                 name,
-                DenimCheckStatus::Indeterminate,
+                CobaltCheckStatus::Indeterminate,
                 "matching timestamped WebSocket event",
                 if pending.values().any(|(pending_name, _)| *pending_name == name) {
                     "subscription response unavailable"
@@ -1192,16 +1192,16 @@ async fn append_subscription_checks<P: Provider<Base>>(
     let _ = socket.close(None).await;
 }
 
-impl DenimReport {
+impl CobaltReport {
     /// Appends a detailed check.
     pub fn add_check(
         &mut self,
         name: &str,
-        status: DenimCheckStatus,
+        status: CobaltCheckStatus,
         expected: impl ToString,
         observed: impl ToString,
     ) {
-        self.checks.push(DenimCheck {
+        self.checks.push(CobaltCheck {
             name: name.into(),
             status,
             expected: expected.to_string(),
@@ -1210,13 +1210,13 @@ impl DenimReport {
     }
 
     /// Evaluates complete RPC observations into detailed snapshot checks.
-    pub fn evaluate(input: DenimObservations) -> Self {
+    pub fn evaluate(input: CobaltObservations) -> Self {
         let schedule = match input.activation {
-            None => DenimSchedule::NotScheduled,
-            Some(at) if input.timestamp < at => DenimSchedule::Scheduled,
-            Some(_) => DenimSchedule::Active,
+            None => CobaltSchedule::NotScheduled,
+            Some(at) if input.timestamp < at => CobaltSchedule::Scheduled,
+            Some(_) => CobaltSchedule::Active,
         };
-        let active = schedule == DenimSchedule::Active;
+        let active = schedule == CobaltSchedule::Active;
         let initial = input.implementation
             == U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice());
         let empty_code_hash = keccak256([]);
@@ -1257,11 +1257,11 @@ impl DenimReport {
         };
         let status = |matches| {
             if matches {
-                DenimCheckStatus::Pass
+                CobaltCheckStatus::Pass
             } else if active {
-                DenimCheckStatus::Fail
+                CobaltCheckStatus::Fail
             } else {
-                DenimCheckStatus::Indeterminate
+                CobaltCheckStatus::Indeterminate
             }
         };
         for (name, matches, expected, observed) in [
@@ -1374,17 +1374,16 @@ mod tests {
 
     use super::*;
 
-    async fn denim_rpc_fixture(
-        State(requests): State<Arc<Mutex<Vec<Value>>>>,
+    async fn cobalt_rpc_fixture(
+        State((requests, rollup)): State<(Arc<Mutex<Vec<Value>>>, RollupConfig)>,
         Json(request): Json<Value>,
     ) -> Json<Value> {
         requests.lock().unwrap().push(request.clone());
         let hash = B256::repeat_byte(0x42);
         let result = match request["method"].as_str().unwrap() {
             "optimism_rollupConfig" => {
-                let mut config = serde_json::to_value(RollupConfig::default()).unwrap();
+                let mut config = serde_json::to_value(rollup).unwrap();
                 config["l2_chain_id"] = json!(8453);
-                config["base"]["denim"] = json!(20);
                 config
             }
             "eth_getBlockByHash"
@@ -1418,7 +1417,8 @@ mod tests {
             "eth_getStorageAt" if request["params"][1] == json!(BaseTime::ADMIN_SLOT) => {
                 json!(format!("{:#066x}", U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice())))
             }
-            "eth_getStorageAt" => json!(format!("{:#066x}", U256::ZERO)),
+            "eth_getStorageAt" | "eth_call" => json!(format!("{:#066x}", U256::ZERO)),
+            "eth_getBlockReceipts" => json!([]),
             method => panic!("unexpected RPC method {method}"),
         };
         Json(json!({ "jsonrpc": "2.0", "id": request["id"], "result": result }))
@@ -1499,7 +1499,7 @@ mod tests {
         })
     }
 
-    async fn denim_log_rpc_fixture(
+    async fn cobalt_log_rpc_fixture(
         State(requests): State<Arc<Mutex<Vec<Value>>>>,
         Json(request): Json<Value>,
     ) -> Json<Value> {
@@ -1571,7 +1571,7 @@ mod tests {
         Json(json!({ "jsonrpc": "2.0", "id": request["id"], "result": result }))
     }
 
-    async fn denim_log_ws_fixture(listener: TcpListener) {
+    async fn cobalt_log_ws_fixture(listener: TcpListener) {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
         for _ in 0..3 {
@@ -1634,9 +1634,9 @@ mod tests {
         }
     }
 
-    fn observations(activation: Option<u64>, timestamp: u64) -> DenimObservations {
+    fn observations(activation: Option<u64>, timestamp: u64) -> CobaltObservations {
         let part = 200;
-        DenimObservations {
+        CobaltObservations {
             activation,
             block_number: 10,
             block_hash: B256::ZERO,
@@ -1661,19 +1661,22 @@ mod tests {
     #[tokio::test]
     async fn block_hash_target_pins_snapshot_and_state_reads() {
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut rollup = RollupConfig::default();
+        rollup.upgrades.base.cobalt = Some(20);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let router =
-            Router::new().route("/", post(denim_rpc_fixture)).with_state(Arc::clone(&requests));
+        let router = Router::new()
+            .route("/", post(cobalt_rpc_fixture))
+            .with_state((Arc::clone(&requests), rollup));
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let url = Url::parse(&format!("http://{address}")).unwrap();
         let hash = B256::repeat_byte(0x42);
-        let report = DenimChecker
-            .check(&url, &url, None, DenimCheckTarget::BlockHash(hash), None)
+        let report = CobaltChecker
+            .check(&url, &url, None, CobaltCheckTarget::BlockHash(hash), None)
             .await
             .unwrap();
 
-        assert_eq!(report.schedule, DenimSchedule::Scheduled);
+        assert_eq!(report.schedule, CobaltSchedule::Scheduled);
         assert_eq!(report.block_number, 10);
         assert_eq!(report.block_hash, hash);
 
@@ -1705,25 +1708,86 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn checker_uses_cobalt_activation_independently_of_denim() {
+        for (cobalt, denim, expected) in [
+            (None, Some(20), CobaltSchedule::NotScheduled),
+            (None, Some(0), CobaltSchedule::NotScheduled),
+            (Some(20), None, CobaltSchedule::Scheduled),
+            (Some(20), Some(30), CobaltSchedule::Scheduled),
+            (Some(10), None, CobaltSchedule::Active),
+            (Some(5), None, CobaltSchedule::Active),
+            (Some(5), Some(20), CobaltSchedule::Active),
+            (Some(5), Some(10), CobaltSchedule::Active),
+        ] {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let mut rollup = RollupConfig::default();
+            rollup.upgrades.base.cobalt = cobalt;
+            rollup.upgrades.base.denim = denim;
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let router = Router::new()
+                .route("/", post(cobalt_rpc_fixture))
+                .with_state((Arc::clone(&requests), rollup));
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let url = Url::parse(&format!("http://{address}")).unwrap();
+
+            let report = CobaltChecker
+                .check(
+                    &url,
+                    &url,
+                    None,
+                    CobaltCheckTarget::BlockHash(B256::repeat_byte(0x42)),
+                    None,
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(report.schedule, expected, "cobalt={cobalt:?}, denim={denim:?}");
+            assert_eq!(report.activation, cobalt);
+            for name in
+                ["metadata", "metadata_receipt", "getter_millis_part", "getter_timestamp_ms"]
+            {
+                let status =
+                    report.checks.iter().find(|check| check.name == name).map(|check| check.status);
+                assert_eq!(
+                    status,
+                    (expected == CobaltSchedule::Active).then_some(CobaltCheckStatus::Fail),
+                    "missing BaseTime data: {name}, cobalt={cobalt:?}, denim={denim:?}",
+                );
+            }
+            let active_reads = requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| {
+                    matches!(request["method"].as_str(), Some("eth_getBlockReceipts" | "eth_call"))
+                })
+                .count();
+            assert_eq!(active_reads, if expected == CobaltSchedule::Active { 3 } else { 0 });
+            server.abort();
+        }
+    }
+
     #[test]
     fn schedule_selection_and_inactive_metadata_are_stable() {
-        let unscheduled = DenimReport::evaluate(observations(None, 10));
-        assert_eq!(unscheduled.schedule, DenimSchedule::NotScheduled);
-        assert!(unscheduled.checks.iter().all(|check| check.status != DenimCheckStatus::Fail));
+        let unscheduled = CobaltReport::evaluate(observations(None, 10));
+        assert_eq!(unscheduled.schedule, CobaltSchedule::NotScheduled);
+        assert!(unscheduled.checks.iter().all(|check| check.status != CobaltCheckStatus::Fail));
 
-        let scheduled = DenimReport::evaluate(observations(Some(20), 10));
-        assert_eq!(scheduled.schedule, DenimSchedule::Scheduled);
+        let scheduled = CobaltReport::evaluate(observations(Some(20), 10));
+        assert_eq!(scheduled.schedule, CobaltSchedule::Scheduled);
     }
 
     #[test]
     fn active_snapshot_requires_canonical_metadata_and_state() {
         let mut input = observations(Some(10), 10);
         input.storage_millis_part = 400;
-        let report = DenimReport::evaluate(input);
-        assert_eq!(report.schedule, DenimSchedule::Active);
+        let report = CobaltReport::evaluate(input);
+        assert_eq!(report.schedule, CobaltSchedule::Active);
         assert_eq!(
             report.checks.iter().find(|check| check.name == "storage_millis_part").unwrap().status,
-            DenimCheckStatus::Fail
+            CobaltCheckStatus::Fail
         );
     }
 
@@ -1732,10 +1796,10 @@ mod tests {
         let mut input = observations(Some(10), 10);
         input.implementation = U256::from(1);
         input.implementation_code_hash = Some(B256::with_last_byte(1));
-        let report = DenimReport::evaluate(input);
+        let report = CobaltReport::evaluate(input);
         assert_eq!(
             report.checks.iter().find(|check| check.name == "implementation").unwrap().status,
-            DenimCheckStatus::Pass
+            CobaltCheckStatus::Pass
         );
     }
 
@@ -1751,12 +1815,12 @@ mod tests {
         unavailable.implementation_code_hash = None;
 
         for input in [malformed, empty, unavailable] {
-            let check = DenimReport::evaluate(input)
+            let check = CobaltReport::evaluate(input)
                 .checks
                 .into_iter()
                 .find(|check| check.name == "implementation")
                 .unwrap();
-            assert_eq!(check.status, DenimCheckStatus::Fail);
+            assert_eq!(check.status, CobaltCheckStatus::Fail);
             assert_eq!(check.observed, "Inconsistent");
         }
     }
@@ -1770,12 +1834,12 @@ mod tests {
         input.getter_millis_part_error = Some("execution reverted".into());
         input.getter_timestamp_ms = None;
         input.getter_timestamp_ms_error = Some("execution reverted".into());
-        let report = DenimReport::evaluate(input);
+        let report = CobaltReport::evaluate(input);
 
         let getter_checks: Vec<_> =
             report.checks.iter().filter(|check| check.name.starts_with("getter_")).collect();
         assert_eq!(getter_checks.len(), 2);
-        assert!(getter_checks.iter().all(|check| check.status == DenimCheckStatus::Fail));
+        assert!(getter_checks.iter().all(|check| check.status == CobaltCheckStatus::Fail));
     }
 
     #[test]
@@ -1787,12 +1851,12 @@ mod tests {
         input.getter_timestamp_ms = Some(expected);
 
         assert!(
-            DenimReport::evaluate(input)
+            CobaltReport::evaluate(input)
                 .checks
                 .iter()
                 .filter(|check| check.name.starts_with("getter_")
                     || check.name == "header_timestamp_ms")
-                .all(|check| check.status == DenimCheckStatus::Pass)
+                .all(|check| check.status == CobaltCheckStatus::Pass)
         );
     }
 
@@ -1800,7 +1864,7 @@ mod tests {
     fn report_serializes_consumer_dimensions_and_failure_context() {
         let mut input = observations(Some(10), 10);
         input.metadata_receipt_valid = Some(false);
-        let value = serde_json::to_value(DenimReport::evaluate(input)).unwrap();
+        let value = serde_json::to_value(CobaltReport::evaluate(input)).unwrap();
         assert_eq!(value["schedule"], "active");
         assert_eq!(
             value["checks"]
@@ -1822,18 +1886,18 @@ mod tests {
 
     #[test]
     fn cadence_classifies_boundary_exact_gap_and_wrong_gap() {
-        assert_eq!(cadence_status(None, Some(1_000), true), DenimCheckStatus::Indeterminate);
-        assert_eq!(cadence_status(Some(1_000), Some(1_200), true), DenimCheckStatus::Pass);
-        assert_eq!(cadence_status(Some(1_000), Some(1_400), true), DenimCheckStatus::Fail);
+        assert_eq!(cadence_status(None, Some(1_000), true), CobaltCheckStatus::Indeterminate);
+        assert_eq!(cadence_status(Some(1_000), Some(1_200), true), CobaltCheckStatus::Pass);
+        assert_eq!(cadence_status(Some(1_000), Some(1_400), true), CobaltCheckStatus::Fail);
         assert_eq!(
             cadence_status(Some(1_000), Some(1_200), false),
-            DenimCheckStatus::Indeterminate
+            CobaltCheckStatus::Indeterminate
         );
     }
 
     #[test]
     fn raw_object_classifies_field_and_method_evidence() {
-        let mut report = DenimReport::evaluate(observations(Some(10), 10));
+        let mut report = CobaltReport::evaluate(observations(Some(10), 10));
         let identity = [("hash", B256::repeat_byte(0x42).to_string())];
         check_wire_object(
             &mut report,
@@ -1865,10 +1929,10 @@ mod tests {
         assert_eq!(
             statuses,
             vec![
-                DenimCheckStatus::Fail,
-                DenimCheckStatus::Fail,
-                DenimCheckStatus::Fail,
-                DenimCheckStatus::Pass,
+                CobaltCheckStatus::Fail,
+                CobaltCheckStatus::Fail,
+                CobaltCheckStatus::Fail,
+                CobaltCheckStatus::Pass,
             ]
         );
     }
@@ -1896,8 +1960,9 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let router =
-            Router::new().route("/", post(denim_log_rpc_fixture)).with_state(Arc::clone(&requests));
+        let router = Router::new()
+            .route("/", post(cobalt_log_rpc_fixture))
+            .with_state(Arc::clone(&requests));
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
@@ -1906,13 +1971,13 @@ mod tests {
         let latest_hash = B256::repeat_byte(0x42);
         let latest_block = rpc_block(latest_hash, 65_000, false);
         let block: <Base as Network>::BlockResponse = serde_json::from_value(latest_block).unwrap();
-        let mut report = DenimReport::evaluate(DenimObservations {
+        let mut report = CobaltReport::evaluate(CobaltObservations {
             block_number: 65_000,
             block_hash: latest_hash,
             ..observations(Some(0), 10)
         });
 
-        append_wire_checks(&provider, &mut report, &block, None, DenimCheckTarget::Latest).await;
+        append_wire_checks(&provider, &mut report, &block, None, CobaltCheckTarget::Latest).await;
 
         for name in [
             "rpc_eth_getLogs_blockTimestampMs",
@@ -1922,7 +1987,7 @@ mod tests {
             "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
         ] {
             let check = report.checks.iter().find(|check| check.name == name).unwrap();
-            assert_eq!(check.status, DenimCheckStatus::Pass, "{check:?}");
+            assert_eq!(check.status, CobaltCheckStatus::Pass, "{check:?}");
         }
         let log_hash = B256::repeat_byte(0x24);
         let log_transaction = rpc_block(log_hash, 40, true)["transactions"][2]["hash"].clone();
@@ -1953,22 +2018,28 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let http_address = http_listener.local_addr().unwrap();
-        let router =
-            Router::new().route("/", post(denim_log_rpc_fixture)).with_state(Arc::clone(&requests));
+        let router = Router::new()
+            .route("/", post(cobalt_log_rpc_fixture))
+            .with_state(Arc::clone(&requests));
         let http_server =
             tokio::spawn(async move { axum::serve(http_listener, router).await.unwrap() });
         let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws_address = ws_listener.local_addr().unwrap();
-        let ws_server = tokio::spawn(denim_log_ws_fixture(ws_listener));
+        let ws_server = tokio::spawn(cobalt_log_ws_fixture(ws_listener));
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
             .connect_http(Url::parse(&format!("http://{http_address}")).unwrap());
         let ws_url = Url::parse(&format!("ws://{ws_address}")).unwrap();
-        let mut report = DenimReport::evaluate(observations(Some(0), 10));
+        let mut report = CobaltReport::evaluate(observations(Some(0), 10));
 
-        append_subscription_checks(&provider, &mut report, Some(&ws_url), DenimCheckTarget::Latest)
-            .await;
+        append_subscription_checks(
+            &provider,
+            &mut report,
+            Some(&ws_url),
+            CobaltCheckTarget::Latest,
+        )
+        .await;
 
         for name in [
             "rpc_eth_subscribe_newHeads_timestampMs",
@@ -1976,7 +2047,7 @@ mod tests {
             "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
         ] {
             let check = report.checks.iter().find(|check| check.name == name).unwrap();
-            assert_eq!(check.status, DenimCheckStatus::Pass, "{check:?}");
+            assert_eq!(check.status, CobaltCheckStatus::Pass, "{check:?}");
         }
         http_server.abort();
         ws_server.await.unwrap();

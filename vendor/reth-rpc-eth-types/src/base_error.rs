@@ -76,11 +76,11 @@ pub enum BaseInvalidTransactionError {
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
     /// An EIP-8130 (account-abstraction) transaction was submitted via
-    /// `eth_sendRawTransaction` before the Cobalt fork was active.
+    /// `eth_sendRawTransaction` before the Zenith fork was active.
     ///
     /// The transaction type byte (`0x79`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but RPC admission is rejected until the
-    /// Cobalt fork is active. The txpool validator enforces the same fork gate for
+    /// Zenith fork is active. The txpool validator enforces the same fork gate for
     /// transactions arriving over devp2p.
     #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
     Eip8130NotAccepted,

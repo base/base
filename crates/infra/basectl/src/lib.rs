@@ -21,10 +21,10 @@ pub use commands::{
     TxpoolReadJson, UnsafeHeadSource, UpgradeReadinessCommand, ZkBackendOption,
 };
 
-mod denim;
-pub use denim::{
-    DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,
-    DenimObservations, DenimReport, DenimSchedule,
+mod cobalt;
+pub use cobalt::{
+    CobaltCheck, CobaltCheckCursor, CobaltCheckStatus, CobaltCheckTarget, CobaltChecker,
+    CobaltObservations, CobaltReport, CobaltSchedule,
 };
 
 mod confirm;

@@ -50,6 +50,21 @@ cargo test -p base-load-tests
 cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 ```
 
+## 200ms devnet profile
+
+`examples/cobalt-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
+It keeps the `devnet.yaml` transaction mix and 20M gas/s target: 4M gas per 200ms block instead
+of 40M per 2s block. Configure the devnet separately with Cobalt active and native building;
+use one tenth of the baseline block gas limit to preserve gas/s capacity. The profile does not
+change chain configuration.
+
+```bash
+# Use a funded local-devnet account, never a production key.
+FUNDER_KEY=0x... LOAD_TEST_OUTPUT=cobalt-results.json \
+  cargo run -p base-load-tester-bin --bin base-load-tester -- \
+  crates/infra/load-tests/examples/cobalt-devnet.yaml
+```
+
 ## Configuration
 
 All configuration is done via YAML files. The runner uses a single adaptive open-loop submission

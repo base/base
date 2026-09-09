@@ -4,38 +4,68 @@ x-rust-service-build: &rust-service-build
   args:
     PROFILE: "${CARGO_PROFILE:-dev}"
 
-x-node-healthcheck: &node-healthcheck
-  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+x-healthcheck-defaults: &healthcheck-defaults
   interval: 250ms
   timeout: 1s
   retries: 240
   start_period: 250ms
+  start_interval: 250ms
+
+x-node-healthcheck: &node-healthcheck
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+  <<: *healthcheck-defaults
 
 services:
-  setup-l1:
-    image: devnet-setup:local
+  setup-devnet:
+    image: devnet-setup:local-v2
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
-    container_name: setup-l1
+    container_name: setup-devnet
     env_file: devnet-env
     volumes:
+      - ../../.devnet/l2/configs:/devnet/l2/configs
       - ../../.devnet/l1/configs:/output
       - ../../.devnet/l1/reth:/data/l1-reth
       - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
+      - UPGRADE_SIGNAL_MODE=${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      - UPGRADE_SIGNAL_L1_BLOCK_TAG=${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
+      - UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION=${UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION:-4294967296}
+      - L2_DEPLOYMENT_TARGET=genesis
+      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
+      - BATCHER_ADDR=${BATCHER_ADDR}
+      - PROPOSER_ADDR=${PROPOSER_ADDR}
+      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
+      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
+      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
+      - L2_EL_BOOTNODE_P2P_KEY=${L2_EL_BOOTNODE_P2P_KEY}
+      - L2_EL_BOOTNODE_ENODE_ID=${L2_EL_BOOTNODE_ENODE_ID}
+      - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
+      - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
+      - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
+      - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
+      - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
+      - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
+      - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
+      - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
-    entrypoint: ["/usr/local/bin/setup-l1.sh"]
+    entrypoint: ["/usr/local/bin/op-deployer"]
 
   l1-el:
-    image: ghcr.io/paradigmxyz/reth:v1.11.4
+    image: ghcr.io/paradigmxyz/reth:v2.5.2
     container_name: l1-el
     depends_on:
-      setup-l1:
+      setup-devnet:
         condition: service_completed_successfully
     ports:
       - "${L1_HTTP_PORT}:${L1_HTTP_PORT}"   # HTTP RPC
@@ -70,17 +100,14 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   l1-cl:
-    image: sigp/lighthouse:v8.0.1
+    image: sigp/lighthouse:v8.2.2
     container_name: l1-cl
     depends_on:
-      setup-l1:
+      setup-devnet:
         condition: service_completed_successfully
     ports:
       - "${L1_CL_HTTP_PORT}:${L1_CL_HTTP_PORT}"     # Beacon API
@@ -114,15 +141,22 @@ services:
       - --prepare-payload-lookahead=8000
       - --suggested-fee-recipient=${FEE_RECIPIENT}
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_CL_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      # L2 initialization immediately requests beacon genesis; a listening port
+      # alone does not guarantee that this endpoint is ready.
+      test:
+        - CMD
+        - bash
+        - -ec
+        - |
+          exec 3<>/dev/tcp/localhost/${L1_CL_HTTP_PORT}
+          printf 'GET /eth/v1/beacon/genesis HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          read -r protocol status rest <&3
+          [[ "$$status" == 200 ]]
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   l1-vc:
-    image: sigp/lighthouse:v8.0.1
+    image: sigp/lighthouse:v8.2.2
     container_name: l1-vc
     depends_on:
       l1-cl:
@@ -139,56 +173,19 @@ services:
       - --suggested-fee-recipient=${FEE_RECIPIENT}
     restart: unless-stopped
 
-  setup-l2:
-    image: devnet-setup:local
-    build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.devnet
-    container_name: setup-l2
-    env_file: devnet-env
-    depends_on:
-      l1-el:
-        condition: service_healthy
-    volumes:
-      - ../../.devnet:/devnet
-      - ../../.devnet/l2/builder:/data/l2-builder
-      - ../../.devnet/l2/builder-cl:/data/l2-builder-cl
-      - ../../.devnet/l2/client:/data/l2-client
-      - ../../.devnet/l2/client-cl:/data/l2-client-cl
-    environment:
-      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
-      - L1_CHAIN_ID=${L1_CHAIN_ID}
-      - L2_CHAIN_ID=${L2_CHAIN_ID}
-      - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
-      - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
-      - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
-      - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
-      - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
-      - OUTPUT_DIR=/devnet/l2/configs
-      - L2_DATA_DIR=/data
-      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
-      - DEPLOYER_KEY=${DEPLOYER_KEY}
-      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
-      - BATCHER_ADDR=${BATCHER_ADDR}
-      - PROPOSER_ADDR=${PROPOSER_ADDR}
-      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
-      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
-      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
-      - L2_EL_BOOTNODE_P2P_KEY=${L2_EL_BOOTNODE_P2P_KEY}
-      - L2_EL_BOOTNODE_ENODE_ID=${L2_EL_BOOTNODE_ENODE_ID}
-      - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
-      - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
-      - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
-    entrypoint: ["/usr/local/bin/setup-l2.sh"]
-
   base-bootnode:
     image: base:local
     build:
       <<: *rust-service-build
       target: base
     container_name: base-bootnode
+    # Gate L2 startup on the L1 execution and beacon APIs.
     depends_on:
-      setup-l2:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+      setup-devnet:
         condition: service_completed_successfully
     ports:
       - "${L2_EL_BOOTNODE_P2P_PORT}:${L2_EL_BOOTNODE_P2P_PORT}/udp" # Discovery
@@ -230,10 +227,7 @@ services:
         ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
     healthcheck:
       test: ["CMD", "test", "-s", "${L2_CL_BOOTNODE_ENR_PATH}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-builder:
@@ -243,7 +237,7 @@ services:
       target: base
     container_name: base-builder
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-bootnode:
         condition: service_healthy
@@ -348,39 +342,79 @@ services:
         ipv4_address: ${L2_BUILDER_ADVERTISE_IP}
     restart: unless-stopped
 
-  base-batcher:
-    image: base-batcher:local
+  # Canonical DA: the Go op-batcher posts to the canonical batch inbox from
+  # BATCHER_ADDR. base-client / base-rpc derive from this.
+  op-batcher:
+    image: op-batcher:local
     build:
-      <<: *rust-service-build
-      target: batcher
-    container_name: base-batcher
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.op-batcher
+    container_name: op-batcher
+    # Skip the L1 receipt drain when stopping the disposable devnet batcher.
+    stop_signal: SIGKILL
     depends_on:
       base-builder:
         condition: service_healthy
+    environment:
+      - OP_BATCHER_ROLLUP_RPC=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
+    command:
+      - --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT}
+      - --l2-eth-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --private-key=${BATCHER_KEY}
+      - --batch-type=0
+      - --data-availability-type=blobs
+      - --compression-algo=brotli
+      - --compressor=shadow
+      - --max-channel-duration=2
+      - --poll-interval=1s
+      - --sub-safety-margin=0
+      - --num-confirmations=1
+      - --max-pending-tx=1
+      - --target-num-frames=1
+      # Devnet L1 has Fusaka active at genesis; chain 1337 is not auto-detected.
+      - --txmgr.cell-proof-time=0
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${BATCHER_METRICS_PORT}
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
+    restart: unless-stopped
+
+  # Shadow DA: the Rust base batcher runs in --shadow-mode alongside the
+  # op-batcher, posting to SHADOW_BATCH_INBOX_ADDRESS from SHADOW_BATCHER_ADDR
+  # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
+  # It anchors recovery on base-shadow-validator via --parity-validator-l2-rpc-url.
+  base-batcher:
+    image: base:local
+    build:
+      <<: *rust-service-build
+      target: base
+    container_name: base-batcher
+    entrypoint: /app/base
+    # Skip the L1 receipt drain when stopping the disposable devnet batcher.
+    stop_signal: SIGKILL
+    depends_on:
+      base-builder:
+        condition: service_healthy
+    environment:
+      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
     command:
-      - --l1-rpc-url
-      - http://l1-el:${L1_HTTP_PORT}
-      - --l2-rpc-url
-      - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc-url
-      - http://base-builder:${L2_BUILDER_CL_RPC_PORT}
-      - --private-key
-      - ${BATCHER_KEY}
-      - --max-channel-duration
-      - "2"
-      - --poll-interval
-      - "1"
-      - --sub-safety-margin
-      - "0"
-      - --num-confirmations
-      - "1"
+      - batcher
+      - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
+      - --l2-rpc-url=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --private-key=${SHADOW_BATCHER_KEY}
+      - --shadow-mode
+      - --dangerously-override-batch-inbox-address=${SHADOW_BATCH_INBOX_ADDRESS}
+      - --parity-validator-l2-rpc-url=http://base-shadow-validator:${L2_SHADOW_HTTP_PORT}
+      - --max-channel-duration=2
+      - --poll-interval=1
+      - --sub-safety-margin=0
+      - --num-confirmations=1
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
-      - --metrics.port
-      - "${BATCHER_METRICS_PORT}"
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${SHADOW_BATCHER_METRICS_PORT}
+    ports:
+      - "${SHADOW_BATCHER_METRICS_PORT}:${SHADOW_BATCHER_METRICS_PORT}"   # Metrics
     restart: unless-stopped
 
   base-client:
@@ -390,7 +424,7 @@ services:
       target: base
     container_name: base-client
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-bootnode:
         condition: service_healthy
@@ -503,7 +537,7 @@ services:
       target: base
     container_name: base-rpc
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-bootnode:
         condition: service_healthy
@@ -595,6 +629,113 @@ services:
         ipv4_address: ${L2_BASE_RPC_ADVERTISE_IP}
     restart: unless-stopped
 
+  # Shadow validator: a validator-mode (rpc) node that derives L2 from the shadow
+  # DA on L1 by overriding the batch inbox and batcher sender to match the shadow
+  # base-batcher. Its derived safe head can be compared against the canonical
+  # chain (see etc/scripts/devnet/compare-heads.sh) for batcher parity testing.
+  base-shadow-validator:
+    image: base:local
+    build:
+      <<: *rust-service-build
+      target: base
+    container_name: base-shadow-validator
+    depends_on:
+      setup-devnet:
+        condition: service_completed_successfully
+      base-bootnode:
+        condition: service_healthy
+    ports:
+      - "${L2_SHADOW_HTTP_PORT}:${L2_SHADOW_HTTP_PORT}"         # HTTP RPC
+      - "${L2_SHADOW_WS_PORT}:${L2_SHADOW_WS_PORT}"             # WebSocket
+      - "${L2_SHADOW_AUTH_PORT}:${L2_SHADOW_AUTH_PORT}"         # Auth RPC (Engine API)
+      - "${L2_SHADOW_P2P_PORT}:${L2_SHADOW_P2P_PORT}"           # P2P
+      - "${L2_SHADOW_P2P_PORT}:${L2_SHADOW_P2P_PORT}/udp"       # Discovery
+      - "${L2_SHADOW_METRICS_PORT}:${L2_SHADOW_METRICS_PORT}"   # Metrics
+      - "${L2_SHADOW_CL_RPC_PORT}:${L2_SHADOW_CL_RPC_PORT}"     # Consensus RPC
+      - "${L2_SHADOW_CL_P2P_PORT}:${L2_SHADOW_CL_P2P_PORT}"     # Consensus P2P TCP
+      - "${L2_SHADOW_CL_P2P_PORT}:${L2_SHADOW_CL_P2P_PORT}/udp" # Consensus P2P UDP
+    volumes:
+      - ../../.devnet/l2/shadow-validator:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      - BASE_CHAIN_NAME=dev
+      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
+      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_SHADOW_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SHADOW_CL_RPC_PORT}
+      - OTEL_SERVICE_NAME=base-shadow-validator
+    entrypoint: /app/base-entrypoint.sh
+    command:
+      - --chain
+      - dev
+      - rpc
+      - --execution-chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_SHADOW_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L2_SHADOW_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L2_SHADOW_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --auth-ipc.path=/tmp/base-shadow-validator-engine.ipc
+      - --port=${L2_SHADOW_P2P_PORT}
+      - --discovery.port=${L2_SHADOW_P2P_PORT}
+      - --nat=extip:${L2_SHADOW_ADVERTISE_IP}
+      - --metrics=0.0.0.0:${L2_SHADOW_METRICS_PORT}
+      - --txpool.nolocals
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
+      - --rpc.eth-proof-window=1209600
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
+      - --enable-experimental-validity-transactions
+      # Derive the safe chain from the shadow DA instead of the canonical inbox.
+      - --l1.dangerously-override-da-batch-inbox
+      - "${SHADOW_BATCH_INBOX_ADDRESS}"
+      - --l1.dangerously-override-da-batcher-sender
+      - "${SHADOW_BATCHER_ADDR}"
+      - --l1-eth-rpc
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - ${L1_CONTAINER_BEACON_URL}
+      - --l2-config-file
+      - /genesis/l2/rollup.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
+      - --rpc.port
+      - "${L2_SHADOW_CL_RPC_PORT}"
+      - --rpc.enable-admin
+      - --p2p.listen.tcp
+      - "${L2_SHADOW_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_SHADOW_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-shadow-validator
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
+      - --p2p.scoring
+      - Off
+      - --l1.verifier-confs
+      - "${BASE_NODE_VERIFIER_L1_CONFS}"
+      - -vvv
+    healthcheck:
+      <<: *node-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_SHADOW_ADVERTISE_IP}
+    restart: unless-stopped
+
   jaeger:
     image: jaegertracing/all-in-one:1.56
     container_name: jaeger
@@ -631,6 +772,17 @@ services:
     depends_on:
       - pyroscope
     restart: unless-stopped
+
+  profiling-tools:
+    image: base-profiling-tools:local
+    profiles: ["profiling-tools"]
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.profiling-tools
+    volumes:
+      - ../../profiling-results:/profiles
+    depends_on:
+      - pyroscope
 
   prometheus:
     image: prom/prometheus:v2.51.0

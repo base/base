@@ -154,12 +154,103 @@ impl BlockHandler {
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
+    use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
     use alloy_primitives::{B256, Signature};
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit, proofs::calculate_transaction_root};
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_protocol::BaseTimeUpdateTx;
 
     use super::*;
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
+
+    #[test]
+    fn cobalt_schedules_are_checked_before_gossip_acceptance() {
+        let template = v4_valid_block();
+        let activation = template.header.timestamp;
+        let config = RollupConfig {
+            l2_chain_id: Chain::base_mainnet(),
+            block_time: 2,
+            genesis: ChainGenesis { l2_time: activation - 2, ..Default::default() },
+            upgrades: UpgradeConfig {
+                isthmus_time: Some(0),
+                base: BaseUpgradeConfig { cobalt: Some(activation), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        for (number, timestamp, millis, valid) in [
+            (0, activation - 2, None, true),
+            (1, activation, Some(0), true),
+            (2, activation, Some(200), true),
+            (3, activation, Some(400), true),
+            (4, activation, Some(600), true),
+            (5, activation, Some(800), true),
+            (6, activation + 1, Some(0), true),
+            (2, activation + 1, Some(200), false),
+            (2, activation - 1, Some(200), false),
+            (2, activation, Some(400), false),
+            (1, activation, None, false),
+            (2, activation, None, false),
+        ] {
+            let mut block = template.clone();
+            block.header.number = number;
+            block.header.timestamp = timestamp;
+            block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
+            block.body.transactions = vec![BaseTxEnvelope::from(TxDeposit::default())];
+            if let Some(millis) = millis {
+                block
+                    .body
+                    .transactions
+                    .push(BaseTimeUpdateTx::new(millis).unwrap().into_deposit_tx(number).into());
+            }
+            block.header.transactions_root = calculate_transaction_root(&block.body.transactions);
+
+            let envelope = NetworkPayloadEnvelope {
+                payload: BaseExecutionPayload::V4(
+                    BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+                        ExecutionPayloadV3::from_block_slow(&block),
+                        block.header.withdrawals_root.unwrap(),
+                    ),
+                ),
+                signature: Signature::test_signature(),
+                payload_hash: PayloadHash(B256::ZERO),
+                parent_beacon_block_root: block.header.parent_beacon_block_root,
+            };
+            let encoded = envelope.encode_v4().unwrap();
+            let decoded = NetworkPayloadEnvelope::decode_v4(&encoded).unwrap();
+            let msg = decoded.payload_hash.signature_message(config.l2_chain_id.id());
+            let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
+            let (_, signer_recv) = tokio::sync::watch::channel(signer);
+            let mut handler = BlockHandler::new(config.clone(), signer_recv);
+            let message = Message {
+                source: None,
+                sequence_number: None,
+                topic: handler.blocks_v4_topic.clone().into(),
+                data: encoded,
+            };
+
+            let (acceptance, forwarded) = handler.handle(message.clone());
+            assert!(
+                matches!(
+                    (valid, acceptance),
+                    (true, MessageAcceptance::Accept) | (false, MessageAcceptance::Reject)
+                ),
+                "block {number}, timestamp {timestamp}, millis {millis:?}"
+            );
+            assert_eq!(forwarded.is_some(), valid);
+
+            // Only accepted blocks become seen; invalid schedules must remain rejected on replay.
+            let (acceptance, forwarded) = handler.handle(message);
+            assert!(matches!(
+                (valid, acceptance),
+                (true, MessageAcceptance::Ignore) | (false, MessageAcceptance::Reject)
+            ));
+            assert!(forwarded.is_none());
+        }
+    }
 
     #[test]
     fn test_valid_decode() {

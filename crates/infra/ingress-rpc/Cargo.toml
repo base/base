@@ -41,6 +41,7 @@ clap = { workspace = true, features = ["default", "std", "derive", "env"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 [dev-dependencies]
+alloy-signer = { workspace = true }
 wiremock = { workspace = true }
 base-common-network = { workspace = true }
 base-bundles = { workspace = true, features = ["test-utils"] }

@@ -7,11 +7,11 @@ variable "RUST_VERSION" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher"]
+  default = ["base", "op-batcher"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
+  default = ["base", "ingress-rpc", "audit-archiver", "op-batcher"]
 }
 
 group "default" {
@@ -27,7 +27,6 @@ group "rust-services" {
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
-    "batcher",
     "sidecrush",
     "prover-service",
   ]
@@ -41,12 +40,19 @@ group "ingress" {
   targets = INGRESS_TARGETS
 }
 
+target "profiling-tools" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.profiling-tools"
+  tags = ["base-profiling-tools:local"]
+}
+
 target "_rust-service-common" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.rust-services"
   args = {
     PROFILE = "${PROFILE}"
     RUST_VERSION = "${RUST_VERSION}"
+    RUSTFLAGS = PROFILE == "profiling" ? "-C link-arg=-fuse-ld=lld -Cforce-frame-pointers=yes" : "-C link-arg=-fuse-ld=lld"
   }
 }
 
@@ -59,6 +65,7 @@ target "base" {
   target = "base"
   args = {
     CARGO_CHEF_ARGS = "--package base --package base-snapshotter-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
@@ -124,14 +131,10 @@ target "audit-archiver" {
   tags = ["audit-archiver:local"]
 }
 
-target "batcher" {
-  inherits = ["_rust-service-common"]
-  target = "batcher"
-  args = {
-    CARGO_CHEF_ARGS = "--package base-batcher-bin"
-    SCCACHE_CACHE_ID = "rust-services-batcher-sccache"
-  }
-  tags = ["base-batcher:local"]
+target "op-batcher" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.op-batcher"
+  tags = ["op-batcher:local"]
 }
 
 target "sidecrush" {

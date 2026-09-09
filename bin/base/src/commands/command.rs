@@ -1,5 +1,6 @@
 //! Top-level command dispatch for the unified Base binary.
 
+use base_batcher_cli::BatcherArgs;
 use base_cli_utils::CliRunner;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use clap::Subcommand;
@@ -16,6 +17,9 @@ use crate::{
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
+    /// Submit L2 batch data to L1.
+    #[command(name = "batcher", hide = true)]
+    Batcher(Box<BatcherArgs>),
     /// Run consensus and execution discovery-only bootnodes.
     #[command(name = "bootnode")]
     Bootnode(Box<BootnodeCommand>),
@@ -46,6 +50,10 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            Self::Batcher(batcher) => {
+                chain_resolver.reject_for_reth_command("base batcher")?;
+                CliRunner::try_default_runtime()?.run_until_ctrl_c((*batcher).exec(metrics_enabled))
+            }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Sequencer(sequencer) => {

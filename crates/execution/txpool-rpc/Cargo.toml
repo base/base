@@ -29,6 +29,7 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
+base-test-utils = { workspace = true }
 base-common-network = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }

@@ -21,6 +21,7 @@ tracing = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
+base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 base-test-utils = { workspace = true }
 alloy-primitives = { workspace = true }

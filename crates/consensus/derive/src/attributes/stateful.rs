@@ -169,12 +169,12 @@ where
             ));
         }
 
-        if self.rollup_cfg.is_first_denim_block(target_l2_time, l2_parent.block_info.timestamp) {
+        if self.rollup_cfg.is_first_cobalt_block(target_l2_time, l2_parent.block_info.timestamp) {
             // Preserve gas throughput and base-fee responsiveness per unit of wall-clock time
-            // when Denim increases the number of blocks in each legacy block interval tenfold.
-            sys_config.gas_limit /= u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
+            // when Cobalt increases the number of blocks in each legacy block interval tenfold.
+            sys_config.gas_limit /= u64::from(RollupConfig::COBALT_GAS_PARAMETER_SCALING_FACTOR);
             sys_config.eip1559_denominator = sys_config.eip1559_denominator.map(|denominator| {
-                denominator.saturating_mul(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR)
+                denominator.saturating_mul(RollupConfig::COBALT_GAS_PARAMETER_SCALING_FACTOR)
             });
         }
 
@@ -216,7 +216,7 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_active = self.rollup_cfg.is_denim_active(target_l2_time);
+        let base_time_active = self.rollup_cfg.is_cobalt_active(target_l2_time);
         let mut txs = Vec::with_capacity(
             1 + usize::from(base_time_active)
                 + deposit_transactions.len()
@@ -754,7 +754,7 @@ mod tests {
             l2_chain_id: chain_id.into(),
             upgrades: UpgradeConfig {
                 ecotone_time: Some(102),
-                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(102), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -802,7 +802,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prepare_payload_uses_denim_formula_for_subsequent_block() {
+    async fn test_prepare_payload_uses_cobalt_formula_for_subsequent_block() {
         let block_time = 2_u64;
         let timestamp = 100_u64;
         let chain_id = 9_100_005;
@@ -816,7 +816,7 @@ mod tests {
             upgrades: UpgradeConfig {
                 ecotone_time: Some(102),
                 jovian_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(102), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -873,7 +873,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_denim_gas_transition_applies_after_l1_system_config_updates() {
+    async fn test_cobalt_gas_transition_applies_after_l1_system_config_updates() {
         let timestamp = 100;
         let l2_number = 1;
         let system_config_address = address!("1111111111111111111111111111111111111111");
@@ -884,7 +884,7 @@ mod tests {
             upgrades: UpgradeConfig {
                 ecotone_time: Some(0),
                 jovian_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(102), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()

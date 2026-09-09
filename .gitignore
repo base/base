@@ -16,3 +16,5 @@ eif*.bin
 /.tmp/
 
 crates/infra/load-tests/examples/*.yaml
+
+/profiling-results/

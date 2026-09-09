@@ -38,7 +38,7 @@ pub struct SnapshotManifestCommand {
     /// Blocks per archive file for chunked components.
     ///
     /// If omitted, this is inferred from header static-file ranges in the source datadir.
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     blocks_per_file: Option<u64>,
 
     /// Previous manifest whose uncompressed file hashes may be reused.

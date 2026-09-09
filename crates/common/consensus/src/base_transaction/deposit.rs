@@ -302,9 +302,9 @@ impl Decodable2718 for TxDeposit {
         Ok(tx)
     }
 
-    fn fallback_decode(data: &mut &[u8]) -> Eip2718Result<Self> {
-        let tx = Self::decode(data)?;
-        Ok(tx)
+    fn fallback_decode(_data: &mut &[u8]) -> Eip2718Result<Self> {
+        // Deposits have no untyped form: reaching untyped dispatch means the 0x7E tag was absent.
+        Err(Eip2718Error::UnexpectedType(OpTxType::Deposit as u8))
     }
 }
 
@@ -407,6 +407,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::BaseTxEnvelope;
 
     #[test]
     fn test_deposit_transaction_trait() {
@@ -473,6 +474,15 @@ mod tests {
         let mut buf_a = BytesMut::default();
         tx_a.encode(&mut buf_a);
         assert_eq!(&buf_a[..], &bytes[1..]);
+    }
+
+    #[test]
+    fn bare_deposit_body_is_rejected() {
+        let encoded = TxDeposit::default().encoded_2718();
+
+        assert_eq!(encoded[0], OpTxType::Deposit as u8);
+        assert!(BaseTxEnvelope::decode_2718_exact(&encoded).is_ok());
+        assert!(BaseTxEnvelope::decode_2718_exact(&encoded[1..]).is_err());
     }
 
     #[test]

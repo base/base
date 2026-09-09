@@ -903,7 +903,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
 #[serial]
 async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     // Create a real datadir with mdbx + 4 header chunk ranges.
-    // block=2M, bpf=500k → 4 chunks; only chunk 3 remains mutable.
+    // block=1,999,999, bpf=500k → 4 chunks; only chunk 3 remains mutable.
     let source = tempfile::tempdir()?;
     let db_dir = source.path().join("db");
     std::fs::create_dir_all(&db_dir)?;
@@ -940,7 +940,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         output_dir: baseline.path(),
         chain_id: 8453,
         base_url: None,
-        block: Some(2_000_000),
+        block: Some(1_999_999),
         blocks_per_file: Some(500_000),
         remote_static_files: &HashMap::new(),
         previous_manifest: None,
@@ -968,7 +968,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         output_dir: output.path(),
         chain_id: 8453,
         base_url: None,
-        block: Some(2_000_000),
+        block: Some(1_999_999),
         blocks_per_file: Some(500_000),
         remote_static_files: &remote,
         previous_manifest: Some(&previous_manifest),

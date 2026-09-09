@@ -1,16 +1,12 @@
 [package]
-name = "base-batcher-bin"
-description = "Base Batcher Binary"
+name = "base-batcher-cli"
+description = "Shared Base batcher CLI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-
-[[bin]]
-name = "base-batcher"
-path = "src/main.rs"
 
 [lints]
 workspace = true

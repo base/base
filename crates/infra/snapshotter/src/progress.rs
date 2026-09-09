@@ -13,8 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use human_bytes::human_bytes as format_bytes;
-use humantime::{FormattedDuration, format_duration};
+use base_reth_cli::ProgressDisplay;
 use tracing::{info, warn};
 
 /// Interval between periodic progress logs during snapshot artifact uploads.
@@ -22,27 +21,6 @@ pub(crate) const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(3);
 
 const UPLOAD_STALL_WARNING_AFTER: Duration = Duration::from_secs(5 * 60);
 const MAX_STALLED_UPLOADS_IN_LOG: usize = 5;
-
-/// Formats snapshot upload progress for structured logs.
-#[derive(Debug)]
-pub struct ProgressDisplay;
-
-impl ProgressDisplay {
-    /// Returns the integer completion percentage for a completed and total count.
-    pub fn percent(done: u64, total: u64) -> u64 {
-        done.saturating_mul(100).checked_div(total).unwrap_or(100)
-    }
-
-    /// Formats completed and total byte counts with human-readable binary units.
-    pub fn human_byte_progress(done: u64, total: u64) -> String {
-        format!("{}/{}", format_bytes(done as f64), format_bytes(total as f64))
-    }
-
-    /// Formats a duration at whole-second precision for periodic progress logs.
-    pub fn duration(duration: Duration) -> FormattedDuration {
-        format_duration(Duration::from_secs(duration.as_secs()))
-    }
-}
 
 /// Cumulative upload progress shared across concurrent artifact uploads. A spawned
 /// ticker reads the atomic byte counter and logs throughput once per interval.
@@ -221,8 +199,11 @@ impl UploadProgress {
 
                 info!(
                     files = %format!("{files_done}/{total_files}"),
-                    progress = %format!("{}%", ProgressDisplay::percent(done, total_bytes)),
+                    progress = %ProgressDisplay::precise_percent(done, total_bytes),
                     bytes = %ProgressDisplay::human_byte_progress(done, total_bytes),
+                    speed = %ProgressDisplay::speed(done as f64 / started.elapsed().as_secs_f64()),
+                    eta = %ProgressDisplay::eta(done, total_bytes, started.elapsed())
+                        .map_or_else(|| "unknown".to_string(), |eta| eta.to_string()),
                     elapsed = %ProgressDisplay::duration(started.elapsed()),
                     active_uploads = active_count,
                     "uploading snapshot artifacts (progress)"
@@ -306,12 +287,23 @@ mod tests {
 
     #[test]
     fn formats_byte_progress_with_binary_units() {
-        assert_eq!(ProgressDisplay::human_byte_progress(1536, 2 * 1024 * 1024), "1.5 KiB/2 MiB");
+        assert_eq!(
+            ProgressDisplay::human_byte_progress(1536, 2 * 1024 * 1024),
+            "1.50 KiB/2.00 MiB"
+        );
+        assert_eq!(ProgressDisplay::speed(10.25 * 1024.0 * 1024.0), "10.25 MiB/s");
+        assert_eq!(ProgressDisplay::precise_percent(1, 8), "12.50%");
     }
 
     #[test]
     fn formats_durations_at_whole_second_precision() {
         let duration = Duration::from_secs(5 * 60 + 3) + Duration::from_millis(241);
         assert_eq!(ProgressDisplay::duration(duration).to_string(), "5m 3s");
+        assert_eq!(
+            ProgressDisplay::eta(25, 100, Duration::from_secs(10))
+                .expect("incomplete progress has an ETA")
+                .to_string(),
+            "30s"
+        );
     }
 }

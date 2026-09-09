@@ -28,18 +28,12 @@ up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet"
     compose_cmd=(docker compose {{ _env }} {{ _anvil }})
 
     mkdir -p .devnet/l2/configs
-    "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el
+    "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-devnet l1-el
     until cast block-number --rpc-url "$L1_RPC_URL" >/dev/null 2>&1; do
       sleep 0.25
     done
     cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval "$L1_SLOT_DURATION_OVERRIDE" >/dev/null
     cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining "$L1_SLOT_DURATION_OVERRIDE" >/dev/null
-    "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
-    setup_l2_status="$(docker wait setup-l2)"
-    if [ "$setup_l2_status" != "0" ]; then
-      docker logs setup-l2 >&2 || true
-      exit "$setup_l2_status"
-    fi
 
     UPGRADE_SIGNAL_CONTAINER_L1_RPC="$l1_rpc_url" \
       ./etc/scripts/devnet/anvil-nitro-local.sh bootstrap
@@ -69,9 +63,93 @@ build-anvil-image source='https://github.com/base/base-anvil.git':
       --build-arg RUST_FEATURES=anvil/cli \
       {{ quote(source) }}
 
-# Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
+# Stops devnet, deletes data, and starts a named profiling run (Pyroscope + optimized builds)
+profiling name='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_id={{ quote(name) }}
+    if [ -z "$run_id" ]; then
+      run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    fi
+    [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "ERROR: profiling run name must start with a letter or number and contain only letters, numbers, dot, underscore, and dash" >&2
+      exit 1
+    }
+    case "$run_id" in
+      current-run|diffs) echo "ERROR: reserved profiling run name: $run_id" >&2; exit 1 ;;
+    esac
+    run_dir="profiling-results/$run_id"
+    [ ! -e "$run_dir" ] || {
+      echo "ERROR: profiling run already exists: $run_dir" >&2
+      exit 1
+    }
+
+    just --justfile {{ source_file() }} down
+    just --justfile {{ source_file() }} _build-setup-image
+    just --justfile {{ source_file() }} _build-rust-images "devnet" "profiling"
+    just --justfile {{ source_file() }} _build-profiling-tools-image
     docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
+    mkdir -p "$run_dir"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$run_dir/started-at"
+    git rev-parse HEAD > "$run_dir/git-revision"
+    printf '%s\n' "$run_id" > profiling-results/current-run
+
+    echo "Profiling run '$run_id' started."
+    echo "  Live UI: http://localhost:3000/a/grafana-pyroscope-app/profiles-explorer"
+    echo "  Capture: just devnet profiling-report $run_id"
+
+# Saves CPU and heap pprof, folded stacks, and flame graph SVGs for a profiling run
+profiling-report run='' service='': _build-profiling-tools-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_id={{ quote(run) }}
+    service={{ quote(service) }}
+    if [ -z "$run_id" ]; then
+      [ -s profiling-results/current-run ] || {
+        echo "ERROR: no current profiling run; pass a run name" >&2
+        exit 1
+      }
+      run_id="$(cat profiling-results/current-run)"
+    fi
+    [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "ERROR: invalid profiling run name: $run_id" >&2
+      exit 1
+    }
+    run_dir="profiling-results/$run_id"
+    [ -s "$run_dir/started-at" ] || {
+      echo "ERROR: profiling run not found: $run_dir" >&2
+      exit 1
+    }
+    profile_from="$(cat "$run_dir/started-at")"
+    profile_to="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    docker compose {{ _env }} {{ _ha }} --profile profiling --profile profiling-tools run \
+      --rm --no-deps --user "$(id -u):$(id -g)" \
+      -e PROFILE_RUN_ID="$run_id" \
+      -e PROFILE_FROM="$profile_from" \
+      -e PROFILE_TO="$profile_to" \
+      -e PROFILE_SERVICE="$service" \
+      profiling-tools report
+    printf '%s\n' "$profile_to" > "$run_dir/captured-at"
+    echo "Static profiles written to $run_dir"
+
+# Produces a differential flame graph (red increased, blue decreased) from two runs
+profiling-diff baseline comparison service kind='cpu': _build-profiling-tools-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline={{ quote(baseline) }}
+    comparison={{ quote(comparison) }}
+    service={{ quote(service) }}
+    kind={{ quote(kind) }}
+    for value in "$baseline" "$comparison" "$service"; do
+      [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+        echo "ERROR: invalid profiling name: $value" >&2
+        exit 1
+      }
+    done
+    docker compose {{ _env }} {{ _ha }} --profile profiling --profile profiling-tools run \
+      --rm --no-deps --user "$(id -u):$(id -g)" \
+      profiling-tools diff "$baseline" "$comparison" "$service" "$kind"
 
 # Stops devnet and deletes all data
 down:
@@ -155,9 +233,9 @@ build-image target='base' profile='dev':
 
 # Prepares Docker images needed for system tests
 pull-images:
-    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
-    docker pull ghcr.io/paradigmxyz/reth:v1.11.4
-    docker pull sigp/lighthouse:v8.0.1
+    docker build --load -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+    docker pull ghcr.io/paradigmxyz/reth:v2.5.2
+    docker pull sigp/lighthouse:v8.2.2
 
 # Reth's unoptimized node launch overflows the 2 MiB stack libtest gives each test thread,
 # which SIGSEGVs on Linux. Do not move to nextest.toml `[env]`; nextest silently drops it.
@@ -185,7 +263,11 @@ _install-nextest:
 
 [private]
 _build-setup-image:
-    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+    docker build --load -t devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+
+[private]
+_build-profiling-tools-image:
+    docker buildx bake -f etc/docker/docker-bake.hcl profiling-tools --load
 
 [private]
 _build-rust-images group profile='dev':
@@ -232,28 +314,10 @@ _up-devnet compose_profile mode:
         ;;
     esac
 
-    # Starts L1 + setup, deploys the upgrade-signal contract, then starts the rest.
-    start_devnet_with_upgrade_signal() {
-      local setup_l2_status
-      local compose_cmd=(docker compose {{ _env }} "${compose_files[@]}")
-
-      mkdir -p .devnet/l2/configs
-      "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el l1-cl l1-vc
-      "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
-      setup_l2_status="$(docker wait setup-l2)"
-      if [ "$setup_l2_status" != "0" ]; then
-        docker logs setup-l2 >&2 || true
-        exit "$setup_l2_status"
-      fi
-
-      ./etc/scripts/devnet/upgrade-signal.sh setup
-      "${compose_cmd[@]}" up -d --no-build --remove-orphans
-    }
-
     just --justfile {{ source_file() }} down
     just --justfile {{ source_file() }} _build-setup-image
     just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-    start_devnet_with_upgrade_signal
+    docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
 
 [private]
 _build-contracts:

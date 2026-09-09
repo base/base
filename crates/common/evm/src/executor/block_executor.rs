@@ -174,8 +174,8 @@ where
         )
         .map_err(BlockExecutionError::other)?;
 
-        // Install BaseTime before transactions so the activation block's metadata deposit can
-        // call it.
+        // Install BaseTime before the Cobalt system-account transition and transactions so the
+        // activation block's metadata deposit can call it.
         BaseTime::ensure_predeploy(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
@@ -183,11 +183,11 @@ where
         )
         .map_err(BlockExecutionError::other)?;
 
-        // At the Cobalt (EIP-8130) transition, plant a code stub on the code-less
+        // At the Zenith (EIP-8130) transition, plant a code stub on the code-less
         // enshrined system accounts (the 2D nonce manager) so the persistent state
         // the enshrined path writes to them is not reaped by EIP-161 end-of-block
         // state clearing.
-        crate::cobalt::ensure_eip8130_system_accounts(
+        crate::zenith::ensure_eip8130_system_accounts(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
             self.evm.db_mut(),

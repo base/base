@@ -31,7 +31,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
 
 use crate::{
-    DenimCheck, DenimCheckCursor, DenimCheckStatus, DenimCheckTarget, DenimChecker,
+    CobaltCheck, CobaltCheckCursor, CobaltCheckStatus, CobaltCheckTarget, CobaltChecker,
     app::{Action, Resources, View},
     output::COLOR_BASE_BLUE,
     tui::Keybinding,
@@ -327,8 +327,8 @@ const BERYL_CHECKS: &[(&str, &str)] = &[
     ("B-20 asset feature", "B-20 asset feature"),
 ];
 
-/// Expected Denim checks and visible labels, in report order.
-const DENIM_CHECKS: &[(&str, &str)] = &[
+/// Expected Cobalt checks and visible labels, in report order.
+const COBALT_CHECKS: &[(&str, &str)] = &[
     ("proxy_code_hash", "BaseTime proxy code"),
     ("proxy_admin", "BaseTime proxy admin"),
     ("implementation", "BaseTime implementation"),
@@ -373,7 +373,7 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
 
 fn checks_for(upgrade: &str) -> &'static [(&'static str, &'static str)] {
     match upgrade {
-        "Denim" => DENIM_CHECKS,
+        "Cobalt" => COBALT_CHECKS,
         "Beryl" => BERYL_CHECKS,
         "Azul" => AZUL_CHECKS,
         "Jovian" => JOVIAN_CHECKS,
@@ -435,7 +435,7 @@ enum CheckUpdate {
         name: String,
         result: CheckResult,
     },
-    Cursor(DenimCheckCursor),
+    Cursor(CobaltCheckCursor),
 }
 
 /// State for the checks panel. Tracks streaming results per chain.
@@ -458,7 +458,7 @@ struct ChecksPanel {
     /// auto-refresh so we don't re-issue checks faster than the configured
     /// cadence even if the previous run finished quickly.
     last_run_at: Option<Instant>,
-    cursor: Option<DenimCheckCursor>,
+    cursor: Option<CobaltCheckCursor>,
     scroll: usize,
 }
 
@@ -2098,11 +2098,13 @@ async fn run_checks_streaming(
     endpoints: (String, Option<Url>, Option<Url>),
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
-    cursor: Option<DenimCheckCursor>,
+    cursor: Option<CobaltCheckCursor>,
 ) {
     let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
     match upgrade {
-        "Denim" => run_denim_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await,
+        "Cobalt" => {
+            run_cobalt_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await
+        }
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
@@ -2110,11 +2112,11 @@ async fn run_checks_streaming(
     }
 }
 
-fn denim_check_result(check: DenimCheck) -> CheckResult {
+fn cobalt_check_result(check: CobaltCheck) -> CheckResult {
     let passed = match check.status {
-        DenimCheckStatus::Pass => Some(true),
-        DenimCheckStatus::Fail => Some(false),
-        DenimCheckStatus::Indeterminate => None,
+        CobaltCheckStatus::Pass => Some(true),
+        CobaltCheckStatus::Fail => Some(false),
+        CobaltCheckStatus::Indeterminate => None,
     };
     let shorten = |value: String| {
         if value.starts_with("0x") { truncate_hex(value, 14) } else { value }
@@ -2131,23 +2133,23 @@ fn denim_check_result(check: DenimCheck) -> CheckResult {
     CheckResult {
         passed,
         detail: match check.status {
-            DenimCheckStatus::Pass | DenimCheckStatus::Indeterminate => observed,
-            DenimCheckStatus::Fail => format!("expected {expected}; got {observed}"),
+            CobaltCheckStatus::Pass | CobaltCheckStatus::Indeterminate => observed,
+            CobaltCheckStatus::Fail => format!("expected {expected}; got {observed}"),
         },
     }
 }
 
-async fn run_denim_checks_streaming(
+async fn run_cobalt_checks_streaming(
     rpc_url: String,
     consensus_rpc: Option<Url>,
     el_ws_rpc: Option<Url>,
-    cursor: Option<DenimCheckCursor>,
+    cursor: Option<CobaltCheckCursor>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     let report = match (Url::parse(&rpc_url), consensus_rpc) {
         (Ok(el_rpc), Some(cl_rpc)) => {
-            DenimChecker
-                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), DenimCheckTarget::Latest, cursor)
+            CobaltChecker
+                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), CobaltCheckTarget::Latest, cursor)
                 .await
         }
         (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
@@ -2159,7 +2161,7 @@ async fn run_denim_checks_streaming(
             let cursor = report.cursor;
             let mut checks: HashMap<_, _> =
                 report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
-            for &(name, _) in DENIM_CHECKS {
+            for &(name, _) in COBALT_CHECKS {
                 if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
                     return;
                 }
@@ -2168,20 +2170,20 @@ async fn run_denim_checks_streaming(
                         passed: None,
                         detail: format!("not applicable for {:?} snapshot", report.schedule),
                     },
-                    denim_check_result,
+                    cobalt_check_result,
                 );
                 if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
                 {
                     return;
                 }
             }
-            debug_assert!(checks.is_empty(), "unexpected Denim checks: {checks:?}");
+            debug_assert!(checks.is_empty(), "unexpected Cobalt checks: {checks:?}");
             if let Some(cursor) = cursor {
                 let _ = tx.send(CheckUpdate::Cursor(cursor)).await;
             }
         }
         Err(error) => {
-            for (index, &(name, _)) in DENIM_CHECKS.iter().enumerate() {
+            for (index, &(name, _)) in COBALT_CHECKS.iter().enumerate() {
                 if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
                     return;
                 }
@@ -2889,7 +2891,7 @@ mod tests {
     }
 
     #[test]
-    fn live_rollup_config_schedules_denim() {
+    fn cobalt_checks_remain_selected_across_later_denim_activation() {
         let mut chain = ChainUpgrades {
             display_name: "Devnet",
             chain_id: ChainConfig::devnet().chain_id,
@@ -2898,14 +2900,22 @@ mod tests {
         };
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { denim: Some(30), ..BaseUpgradeConfig::default() },
+            base: BaseUpgradeConfig {
+                cobalt: Some(30),
+                denim: Some(40),
+                ..BaseUpgradeConfig::default()
+            },
             ..UpgradeConfig::default()
         });
 
+        let cobalt = chain.specs.iter().find(|spec| spec.name == "Cobalt").unwrap();
+        assert_eq!(cobalt.timestamp, Some(30));
         let denim = chain.specs.iter().find(|spec| spec.name == "Denim").unwrap();
-        assert_eq!(denim.timestamp, Some(30));
-        assert_eq!(target_upgrade(&chain, 29), Some("Denim"));
-        assert_eq!(target_upgrade(&chain, 30), Some("Denim"));
+        assert_eq!(denim.timestamp, Some(40));
+        assert_eq!(target_upgrade(&chain, 29), Some("Cobalt"));
+        assert_eq!(target_upgrade(&chain, 30), Some("Cobalt"));
+        assert_eq!(target_upgrade(&chain, 40), Some("Cobalt"));
+        assert!(!has_checks("Denim"));
     }
 
     #[test]
@@ -2956,19 +2966,19 @@ mod tests {
         let names: Vec<_> =
             checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
 
-        assert_eq!(names, vec!["Denim", "Beryl", "Azul", "Jovian"]);
+        assert_eq!(names, vec!["Cobalt", "Beryl", "Azul", "Jovian"]);
     }
 
     #[test]
-    fn denim_report_checks_map_to_existing_rows() {
+    fn cobalt_report_checks_map_to_existing_rows() {
         let (tx, rx) = mpsc::channel(2);
-        let check = DenimCheck {
+        let check = CobaltCheck {
             name: "proxy_code_hash".to_string(),
-            status: DenimCheckStatus::Fail,
+            status: CobaltCheckStatus::Fail,
             expected: B256::repeat_byte(0xaa).to_string(),
             observed: B256::repeat_byte(0xbb).to_string(),
         };
-        let result = denim_check_result(check);
+        let result = cobalt_check_result(check);
         tx.try_send(CheckUpdate::Starting("proxy_code_hash".to_string())).unwrap();
         tx.try_send(CheckUpdate::Completed { name: "proxy_code_hash".to_string(), result })
             .unwrap();
@@ -2986,10 +2996,10 @@ mod tests {
     }
 
     #[test]
-    fn denim_initial_implementation_has_operator_friendly_detail() {
-        let result = denim_check_result(DenimCheck {
+    fn cobalt_initial_implementation_has_operator_friendly_detail() {
+        let result = cobalt_check_result(CobaltCheck {
             name: "implementation".to_string(),
-            status: DenimCheckStatus::Pass,
+            status: CobaltCheckStatus::Pass,
             expected: "a linked implementation with deployed code".to_string(),
             observed: "LinkedInitial".to_string(),
         });
@@ -3002,7 +3012,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let panel = ChecksPanel {
             chain_idx: Some(0),
-            upgrade: Some("Denim"),
+            upgrade: Some("Cobalt"),
             mode: Some(mode),
             rpc_url: "http://localhost:7545".to_string(),
             ..ChecksPanel::default()
@@ -3017,12 +3027,12 @@ mod tests {
     }
 
     #[test]
-    fn denim_checks_render_before_and_after_modes() {
+    fn cobalt_checks_render_before_and_after_modes() {
         let before = rendered_checks_panel(CheckMode::Before);
         let after = rendered_checks_panel(CheckMode::After);
 
-        assert!(before.contains("Denim Checks (before)"));
-        assert!(after.contains("Denim Checks (after)"));
+        assert!(before.contains("Cobalt Checks (before)"));
+        assert!(after.contains("Cobalt Checks (after)"));
         assert!(before.contains("BaseTime implementation"));
         assert!(after.contains("BaseTime update tx"));
         assert!(after.contains("BaseTime update receipt"));
@@ -3033,9 +3043,9 @@ mod tests {
     }
 
     #[test]
-    fn denim_rows_keep_basetime_together_and_headers_last() {
+    fn cobalt_rows_keep_basetime_together_and_headers_last() {
         assert_eq!(
-            &checks_for("Denim")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            &checks_for("Cobalt")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             &[
                 "proxy_code_hash",
                 "proxy_admin",
@@ -3049,7 +3059,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            &checks_for("Denim")[DENIM_CHECKS.len() - 4..]
+            &checks_for("Cobalt")[COBALT_CHECKS.len() - 4..]
                 .iter()
                 .map(|(name, _)| *name)
                 .collect::<Vec<_>>(),
@@ -3080,10 +3090,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_denim_checker_marks_all_rows_indeterminate() {
+    async fn unavailable_cobalt_checker_marks_all_rows_indeterminate() {
         let (tx, mut rx) = mpsc::channel(64);
 
-        run_denim_checks_streaming("http://localhost:7545".to_string(), None, None, None, tx).await;
+        run_checks_streaming(
+            "Cobalt",
+            ("http://localhost:7545".to_string(), None, None),
+            CheckMode::After,
+            tx,
+            None,
+        )
+        .await;
 
         let mut started = Vec::new();
         let mut completed = Vec::new();
@@ -3095,8 +3112,8 @@ mod tests {
             }
         }
 
-        assert!(DENIM_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
-        assert_eq!(completed.len(), DENIM_CHECKS.len());
+        assert!(COBALT_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
+        assert_eq!(completed.len(), COBALT_CHECKS.len());
         assert_eq!(completed[0].1.passed, None);
         assert_eq!(completed[0].1.detail, "consensus node RPC is not configured");
         assert!(completed.iter().all(|(_, result)| result.passed.is_none()));

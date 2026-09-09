@@ -15,6 +15,18 @@ pub use utils::unique_name;
 mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
+mod benchmark_cli;
+pub use benchmark_cli::{
+    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs,
+};
+
+mod benchmark_report;
+pub use benchmark_report::{
+    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
+    VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun, VisualizerRunResult,
+    VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+};
+
 mod config;
 pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
@@ -67,6 +79,9 @@ pub use network::{ensure_network_exists, ensure_network_exists_with_name, networ
 mod prover_service;
 pub use prover_service::InProcessProverService;
 
+mod prometheus_metrics;
+pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusSnapshot};
+
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 
@@ -85,7 +100,8 @@ pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 mod system_config;
 pub use system_config::{
     DevnetBlockInterval, DevnetConfig, DevnetL1Mode, DevnetL2State, DevnetPrefund,
-    DevnetSnapshotConfig, DevnetSnapshotHead, StableSystemTestConfig, SystemTestPorts,
+    DevnetSnapshotConfig, DevnetSnapshotHead, ResolvedSnapshotChain, SnapshotChainConfig,
+    StableSystemTestConfig, SystemTestPorts,
 };
 
 #[cfg(feature = "upgrade-signal")]

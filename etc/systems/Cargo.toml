@@ -12,6 +12,10 @@ repository.workspace = true
 name = "base-devnet"
 path = "src/bin/base_devnet.rs"
 
+[[bin]]
+name = "base-bench"
+path = "src/bin/base_bench.rs"
+
 [lints]
 workspace = true
 
@@ -25,6 +29,7 @@ base-runtime = { workspace = true }
 alloy-signer = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
+base-load-tests = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-txpool-rpc = { workspace = true }
 base-tx-manager = { workspace = true }
@@ -47,6 +52,7 @@ url = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 reth-db = { workspace = true, features = ["default"] }
@@ -72,6 +78,7 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
+prometheus-scraper = { version = "0.2.0", default-features = false }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
@@ -89,14 +96,12 @@ tokio = { workspace = true, features = ["default", "full", "rt-multi-thread", "m
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 [dev-dependencies]
 alloy-json-rpc = { workspace = true }
-base-load-tests = { workspace = true }
 base-optimism-rpc = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-common-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 base-common-rpc-types-engine = { workspace = true }
-chrono = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }

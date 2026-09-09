@@ -1,0 +1,27 @@
+# Cobalt load profile for a local devnet already running native 200ms blocks.
+# Same 20M gas/s and transaction mix as devnet.yaml: 4M gas per 200ms block
+# instead of 40M per 2s block. Configure chain capacity separately; this file
+# does not activate Cobalt, select a builder, or change the block gas limit.
+# No Flashblocks endpoint: canonical RPC is the only inclusion source.
+transaction_submission_rpcs:
+  - "http://localhost:7545"
+query_rpc: "http://localhost:8545"
+
+sender_count: 100
+block_time: "200ms"
+target_gps: 20000000
+in_flight_per_sender: 16
+batch_size: 20
+duration: "30s"
+seed: 12345
+funding_amount: "10000000000000000"
+
+transactions:
+  - weight: 70
+    type: transfer
+  - weight: 20
+    type: calldata
+    max_size: 256
+  - weight: 10
+    type: precompile
+    target: sha256

@@ -1787,12 +1787,13 @@ mod tests {
         transaction::{Recovered, SignerRecoverable},
     };
     use base_common_network::PrivateKeySigner;
-    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
         CanonicalStateUpdate, EthTransactionValidatorBuilder, InMemoryBlobStore, PoolConfig,
         PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,
     };
+    use base_test_utils::build_test_genesis_zenith;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -2006,7 +2007,9 @@ mod tests {
     type IntegrationPool = BaseTransactionPool<MockEthProvider, InMemoryBlobStore>;
 
     fn build_integration_pool() -> (IntegrationPool, MockEthProvider) {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let mut genesis = build_test_genesis_zenith();
+        genesis.config.chain_id = test_chain_id();
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::new()
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();

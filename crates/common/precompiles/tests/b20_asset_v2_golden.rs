@@ -3031,6 +3031,36 @@ fn golden_announce_reverts_id_already_used() {
     );
 }
 
+/// Cantina #16 follow-up: the same malformed `announce` (invalid UTF-8 in `id`) short-circuits at
+/// V2/Cobalt with a cheap, calldata-size-independent rejection instead of paying the owned
+/// decoder's O(aliases · `tail_bytes`) diagnostic construction. Contrast with
+/// `golden_announce_malformed_id_stays_on_owned_diagnostic_at_v1` in the V1 suite, which pins the
+/// opposite: the frozen version must never take this path.
+#[test]
+fn golden_announce_malformed_id_short_circuits_at_v2() {
+    let mut s = fresh();
+    let marker = "malformed-id-marker";
+    let mut calldata = IB20Asset::announceCall {
+        internalCalls: vec![],
+        id: marker.into(),
+        description: String::new(),
+        uri: String::new(),
+    }
+    .abi_encode();
+    let at = calldata.windows(marker.len()).position(|w| w == marker.as_bytes()).unwrap();
+    calldata[at..at + marker.len()].fill(0xff);
+
+    let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::AbiDecodeFailed {
+            selector: IB20Asset::announceCall::SELECTOR,
+            error: "announce: malformed bytes[] payload".to_string(),
+        },
+        "V2 must reject with the bounded, calldata-size-independent error",
+    );
+}
+
 #[test]
 fn golden_announce_reverts_nested_announce() {
     let mut s = fresh();

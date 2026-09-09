@@ -2,7 +2,6 @@ use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
 #[cfg(feature = "std")]
-use alloy_eips::Decodable2718;
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
@@ -175,7 +174,9 @@ impl BaseEvmConfig {
     ) -> Result<impl ExecutableTxIterator, EIP1559ParamError> {
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
-            let tx = BaseTxEnvelope::decode_2718_exact(encoded.as_ref()).map_err(AnyError::new)?;
+            let tx =
+                base_common_consensus::decode_2718_canonical::<BaseTxEnvelope>(encoded.as_ref())
+                    .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
         };

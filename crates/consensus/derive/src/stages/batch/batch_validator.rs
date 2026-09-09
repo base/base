@@ -246,7 +246,7 @@ where
 
         let next_timestamp =
             self.cfg.l2_block_timestamp(parent.block_info.number.saturating_add(1));
-        let needs_ancestry_check = self.cfg.is_denim_active(next_timestamp)
+        let needs_ancestry_check = self.cfg.is_cobalt_active(next_timestamp)
             && next_batch.timestamp == next_timestamp
             && next_batch.parent_hash != parent.block_info.hash;
         if needs_ancestry_check {
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pre_denim_validator_rejects_stale_parent_after_past_prefix() {
+    async fn test_pre_cobalt_validator_rejects_stale_parent_after_past_prefix() {
         let epoch = BlockInfo {
             number: 10,
             hash: B256::repeat_byte(0x10),
@@ -676,7 +676,7 @@ mod tests {
             upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         });
-        assert!(!cfg.is_denim_active(601));
+        assert!(!cfg.is_cobalt_active(601));
         let mut bv = BatchValidator::new(cfg, prev, TestL2ChainProvider::default());
         bv.origin = Some(inclusion_block);
         bv.l1_blocks = vec![epoch, inclusion_block];
@@ -689,7 +689,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_denim_validator_retries_then_flushes_unknown_parent() {
+    async fn test_cobalt_validator_retries_then_flushes_unknown_parent() {
         let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
         let parent = L2BlockInfo {
             block_info: BlockInfo {
@@ -712,7 +712,7 @@ mod tests {
             block_time: 2,
             upgrades: UpgradeConfig {
                 holocene_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(0), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(0), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()

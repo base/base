@@ -13,14 +13,6 @@ use crate::{
 
 /// The Ethereum [EIP-2718] Transaction Envelope.
 ///
-/// # Note:
-///
-/// This enum distinguishes between tagged and untagged legacy transactions, as
-/// the in-protocol merkle tree may commit to EITHER 0-prefixed or raw.
-/// Therefore we must ensure that encoding returns the precise byte-array that
-/// was decoded, preserving the presence or absence of the `TransactionType`
-/// flag.
-///
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 pub type TxEnvelope = EthereumTxEnvelope<TxEip4844Variant>;
 

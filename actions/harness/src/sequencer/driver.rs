@@ -301,7 +301,12 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
         // large L2 block times do not wait for wall-clock production slots.
         if self.rollup_config.block_time != 1 {
             let mut config = (*self.rollup_config).clone();
+            let cobalt_activation_block = config.cobalt_activation_block_number();
             config.block_time = 1;
+            if let Some(cobalt_activation_block) = cobalt_activation_block {
+                config.upgrades.base.cobalt =
+                    Some(config.genesis.l2_time.saturating_add(cobalt_activation_block));
+            }
             Arc::new(config)
         } else {
             Arc::clone(&self.rollup_config)
@@ -438,6 +443,46 @@ impl<E: SequencerEngineBackend> Drop for L2Sequencer<E> {
         }
         if let Some(actor_task) = &self.actor_task {
             actor_task.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ActionTestHarness, BatcherConfig, L1MinerConfig, TestRollupConfigBuilder};
+
+    #[test]
+    fn scheduler_preserves_cobalt_activation_height() {
+        for block_time in [1, 2, 12] {
+            for cobalt in [None, Some(0), Some(100), Some(105), Some(124)] {
+                let mut config = TestRollupConfigBuilder::base_mainnet(&BatcherConfig::default())
+                    .all_forks_active()
+                    .with_block_time(block_time)
+                    .build();
+                config.genesis.l2_time = 100;
+                config.genesis.l2.number = 50;
+                config.upgrades.base.cobalt = cobalt;
+                let harness = ActionTestHarness::new(L1MinerConfig::default(), config.clone());
+                let sequencer = harness
+                    .create_l2_sequencer(SharedL1Chain::from_blocks(harness.l1.chain().to_vec()));
+                let scheduler = sequencer.actor_rollup_config();
+
+                assert_eq!(scheduler.block_time, 1);
+                assert_eq!(
+                    scheduler.cobalt_activation_block_number(),
+                    config.cobalt_activation_block_number(),
+                    "block_time={block_time}, cobalt={cobalt:?}"
+                );
+                for number in 50..=80 {
+                    assert_eq!(
+                        scheduler.is_cobalt_active(scheduler.l2_block_timestamp(number)),
+                        config.is_cobalt_active(config.l2_block_timestamp(number)),
+                        "scheduler and attributes disagree at block {number}"
+                    );
+                }
+                assert_eq!(*sequencer.rollup_config, harness.rollup_config);
+            }
         }
     }
 }

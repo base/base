@@ -151,7 +151,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         // nonce/balance/code. Code-less enshrined system accounts that hold
         // persistent storage (e.g. the 2D `NonceManager`) are instead made
         // EIP-161-non-empty out of band by a one-byte code stub planted at the
-        // Cobalt transition (see `ensure_eip8130_system_accounts`), so their
+        // Zenith transition (see `ensure_eip8130_system_accounts`), so their
         // storage survives end-of-block state clearing without a per-write guard.
         self.internals
             .sstore(address, key, value)

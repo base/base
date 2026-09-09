@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# upgrade-signal.env is generated after setup-l2, so Compose cannot load it as a static env_file.
+# Setup generates upgrade-signal.env before nodes start; it is unavailable when Compose parses env_file.
 if [ -f /genesis/l2/upgrade-signal.env ]; then
   set -a
   # shellcheck disable=SC1091

@@ -9,6 +9,9 @@ use auto_impl::auto_impl;
 
 use crate::Signed;
 
+mod canonical;
+pub use canonical::decode_2718_canonical;
+
 mod eip1559;
 pub use eip1559::TxEip1559;
 

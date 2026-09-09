@@ -47,7 +47,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         let (tx, pool_transaction) = tx.split();
 
         if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
-            && !self.is_cobalt_active_at_latest()?
+            && !self.is_zenith_active_at_latest()?
         {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
@@ -215,10 +215,10 @@ where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider,
 {
-    fn is_cobalt_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
+    fn is_zenith_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {
             return Ok(false);
         };
-        Ok(self.provider().chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
+        Ok(self.provider().chain_spec().is_zenith_active_at_timestamp(header.timestamp()))
     }
 }

@@ -17,7 +17,7 @@ use crate::{
 };
 
 const LIGHTHOUSE_IMAGE_NAME: &str = "sigp/lighthouse";
-const LIGHTHOUSE_IMAGE_TAG: &str = "v8.0.1";
+const LIGHTHOUSE_IMAGE_TAG: &str = "v8.2.2";
 const LIGHTHOUSE_TESTNET_DIR: &str = "/genesis/cl";
 const LIGHTHOUSE_JWT_PATH: &str = "/genesis/jwt.hex";
 const LIGHTHOUSE_BEACON_DATA_DIR: &str = "/data/beacon";

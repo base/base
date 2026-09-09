@@ -19,6 +19,7 @@ workspace = true
 tracing = { workspace = true }
 base-cli-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
+base-batcher-cli = { workspace = true }
 base-builder-cli = { workspace = true }
 base-node-runner = { workspace = true }
 reth-cli-commands = { workspace = true }
@@ -28,6 +29,7 @@ base-consensus-providers = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
+reth-cli-util = { workspace = true, optional = true }
 alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 figment = { workspace = true, features = ["env", "toml"] }
@@ -44,3 +46,11 @@ base-execution-consensus = { workspace = true, features = ["default"] }
 url = { workspace = true }
 base-common-genesis = { workspace = true }
 figment = { workspace = true, features = ["test"] }
+
+[features]
+jemalloc-prof = [
+	"base-builder-core/jemalloc-prof",
+	"base-execution-cli/jemalloc-symbols",
+	"dep:reth-cli-util",
+	"reth-cli-util/jemalloc-prof",
+]

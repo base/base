@@ -37,6 +37,7 @@ reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
+moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = false }
 base-observability-events = { workspace = true }
 derive_more = { workspace = true, features = ["full"]}

@@ -97,6 +97,8 @@ impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
                     gas_limit_config: self.payload_builder.gas_limit_config,
                     manifest_precheck_enabled: self.payload_builder.manifest_precheck_enabled,
                     predicate_eval_hard_cutoff: self.payload_builder.predicate_eval_hard_cutoff,
+                    resource_metering: self.payload_builder.resource_metering,
+                    rejection_cache: self.payload_builder.rejection_cache,
                     ..Default::default()
                 }),
             )

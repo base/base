@@ -10,9 +10,11 @@ use std::{
     collections::{BTreeMap, HashMap},
     io::Read,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
+use humantime::{FormattedDuration, format_duration};
 use rayon::prelude::*;
 pub use reth_cli_commands::download::manifest::{
     ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
@@ -26,6 +28,9 @@ const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
 /// At 500k blocks per file, 100k chunks covers 50 billion blocks.
 const MAX_CHUNKS: u64 = 100_000;
 
+/// Interval between progress logs while compressing a database component.
+const COMPRESSION_LOG_INTERVAL: Duration = Duration::from_secs(3);
+
 /// Static file component types that produce chunked archives.
 const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
     ("headers", "headers"),
@@ -35,6 +40,62 @@ const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
     ("account_changesets", "account-change-sets"),
     ("storage_changesets", "storage-change-sets"),
 ];
+
+/// Formats snapshot compression and upload progress for structured logs.
+#[derive(Debug)]
+pub struct ProgressDisplay;
+
+impl ProgressDisplay {
+    /// Returns the integer completion percentage for a completed and total count.
+    pub fn percent(done: u64, total: u64) -> u64 {
+        done.saturating_mul(100).checked_div(total).unwrap_or(100)
+    }
+
+    /// Returns completion percentage with two decimal places.
+    pub fn precise_percent(done: u64, total: u64) -> String {
+        if total == 0 {
+            return "100.00%".to_string();
+        }
+        format!("{:.2}%", done as f64 * 100.0 / total as f64)
+    }
+
+    /// Formats a byte count with two decimal places and human-readable binary units.
+    pub fn bytes(bytes: f64) -> String {
+        const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+
+        let bytes = bytes.max(0.0);
+        let unit = if bytes == 0.0 {
+            0
+        } else {
+            ((bytes.log2() / 10.0).floor() as usize).min(UNITS.len() - 1)
+        };
+        format!("{:.2} {}", bytes / 1024_f64.powi(unit as i32), UNITS[unit])
+    }
+
+    /// Formats completed and total byte counts with human-readable binary units.
+    pub fn human_byte_progress(done: u64, total: u64) -> String {
+        format!("{}/{}", Self::bytes(done as f64), Self::bytes(total as f64))
+    }
+
+    /// Formats bytes per second with human-readable binary units.
+    pub fn speed(bytes_per_second: f64) -> String {
+        format!("{}/s", Self::bytes(bytes_per_second))
+    }
+
+    /// Calculates the ETA from average throughput since an operation started.
+    pub fn eta(done: u64, total: u64, elapsed: Duration) -> Option<FormattedDuration> {
+        if done == 0 || done >= total {
+            return None;
+        }
+        let seconds = total.saturating_sub(done) as f64 / (done as f64 / elapsed.as_secs_f64());
+        Some(Self::duration(Duration::from_secs_f64(seconds)))
+    }
+
+    /// Formats a duration at whole-second precision for periodic progress logs.
+    pub fn duration(duration: Duration) -> FormattedDuration {
+        format_duration(Duration::from_secs(duration.as_secs()))
+    }
+}
 
 /// Convenience helpers for snapshotter-specific manifest lookups.
 pub trait SnapshotManifestExt {
@@ -163,6 +224,7 @@ impl SnapshotGenerator {
             Some(block) => block,
             None => infer_block_from_headers(params.source_datadir)?,
         };
+        let total_blocks = block.checked_add(1).context("snapshot block height exceeds u64")?;
 
         info!(
             source = %params.source_datadir.display(),
@@ -183,7 +245,7 @@ impl SnapshotGenerator {
 
         let mut components = BTreeMap::new();
 
-        let num_chunks = block.div_ceil(blocks_per_file);
+        let num_chunks = total_blocks.div_ceil(blocks_per_file);
         if num_chunks > MAX_CHUNKS {
             bail!(
                 "too many chunks ({num_chunks}) for block {block} with blocks_per_file \
@@ -286,7 +348,7 @@ impl SnapshotGenerator {
                 info!(
                     component = key,
                     compressed_size = total_size,
-                    total_blocks = block,
+                    total_blocks,
                     "packaged chunked component"
                 );
 
@@ -294,7 +356,7 @@ impl SnapshotGenerator {
                     key.to_string(),
                     ComponentManifest::Chunked(ChunkedArchive {
                         blocks_per_file,
-                        total_blocks: block,
+                        total_blocks,
                         chunk_sizes,
                         chunk_decompressed_sizes: chunk_decompressed,
                         chunk_output_files,
@@ -304,53 +366,11 @@ impl SnapshotGenerator {
             }
         }
 
-        let state_files = state_source_files(params.source_datadir)?;
-        let (state_size, state_output_files) =
-            package_single_component(params.output_dir, "state.tar.zst", &state_files)?;
-        let state_decompressed_size: u64 = state_output_files.iter().map(|f| f.size).sum();
-        info!(
-            component = "state",
-            compressed_size = state_size,
-            decompressed_size = state_decompressed_size,
-            file_count = state_files.len(),
-            "packaged mdbx state database"
-        );
-        components.insert(
-            "state".to_string(),
-            ComponentManifest::Single(SingleArchive {
-                file: "state.tar.zst".to_string(),
-                size: state_size,
-                decompressed_size: state_decompressed_size,
-                blake3: None,
-                output_files: state_output_files,
-            }),
-        );
-
+        let mut single_components =
+            vec![("state", "state.tar.zst", state_source_files(params.source_datadir)?)];
         let rocksdb_files = rocksdb_source_files(params.source_datadir)?;
         if !rocksdb_files.is_empty() {
-            let (rocksdb_size, rocksdb_output_files) = package_single_component(
-                params.output_dir,
-                "rocksdb_indices.tar.zst",
-                &rocksdb_files,
-            )?;
-            let rocksdb_decompressed_size: u64 = rocksdb_output_files.iter().map(|f| f.size).sum();
-            info!(
-                component = "rocksdb_indices",
-                compressed_size = rocksdb_size,
-                decompressed_size = rocksdb_decompressed_size,
-                file_count = rocksdb_files.len(),
-                "packaged rocksdb indices"
-            );
-            components.insert(
-                "rocksdb_indices".to_string(),
-                ComponentManifest::Single(SingleArchive {
-                    file: "rocksdb_indices.tar.zst".to_string(),
-                    size: rocksdb_size,
-                    decompressed_size: rocksdb_decompressed_size,
-                    blake3: None,
-                    output_files: rocksdb_output_files,
-                }),
-            );
+            single_components.push(("rocksdb_indices", "rocksdb_indices.tar.zst", rocksdb_files));
         }
 
         let proofs_files = if params.upload_proofs {
@@ -359,24 +379,39 @@ impl SnapshotGenerator {
             Vec::new()
         };
         if !proofs_files.is_empty() {
-            let (proofs_size, proofs_output_files) =
-                package_single_component(params.output_dir, "proofs.tar.zst", &proofs_files)?;
-            let proofs_decompressed_size: u64 = proofs_output_files.iter().map(|f| f.size).sum();
-            info!(
-                component = "proofs",
-                compressed_size = proofs_size,
-                decompressed_size = proofs_decompressed_size,
-                file_count = proofs_files.len(),
-                "packaged proofs database"
-            );
+            single_components.push(("proofs", "proofs.tar.zst", proofs_files));
+        }
+
+        // These source trees and output archives are independent. Package them on the shared
+        // Rayon pool so the snapshotter's `--snapshot-threads` limit applies to this work too.
+        let packaged_single_components = single_components
+            .into_par_iter()
+            .map(|(component, archive_name, files)| {
+                let (size, output_files) =
+                    package_single_component(params.output_dir, component, archive_name, &files)?;
+                let decompressed_size = output_files.iter().map(|file| file.size).sum();
+                info!(
+                    component = %component,
+                    compressed_size = %ProgressDisplay::bytes(size as f64),
+                    raw_size = %ProgressDisplay::bytes(decompressed_size as f64),
+                    file_count = files.len(),
+                    "packaged database component"
+                );
+                Ok((component, archive_name, size, decompressed_size, output_files))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (component, archive_name, size, decompressed_size, output_files) in
+            packaged_single_components
+        {
             components.insert(
-                "proofs".to_string(),
+                component.to_string(),
                 ComponentManifest::Single(SingleArchive {
-                    file: "proofs.tar.zst".to_string(),
-                    size: proofs_size,
-                    decompressed_size: proofs_decompressed_size,
+                    file: archive_name.to_string(),
+                    size,
+                    decompressed_size,
                     blake3: None,
-                    output_files: proofs_output_files,
+                    output_files,
                 }),
             );
         }
@@ -628,6 +663,7 @@ fn collect_files_inner(
 
 fn package_single_component(
     output_dir: &Path,
+    component: &str,
     archive_name: &str,
     files: &[PlannedFile],
 ) -> Result<(u64, Vec<OutputFileChecksum>)> {
@@ -635,7 +671,17 @@ fn package_single_component(
         bail!("cannot package empty archive: {archive_name}");
     }
     let archive_path = output_dir.join(archive_name);
-    let output_files = write_archive_from_planned_files(&archive_path, files)?;
+    let raw_size = files.iter().try_fold(0u64, |total, file| {
+        std::fs::metadata(&file.source_path).map(|metadata| total.saturating_add(metadata.len()))
+    })?;
+    info!(
+        component = %component,
+        raw_size = %ProgressDisplay::bytes(raw_size as f64),
+        file_count = files.len(),
+        "packaging database component"
+    );
+    let mut progress = CompressionProgress::new(component, &archive_path, raw_size);
+    let output_files = write_archive_from_planned_files(&archive_path, files, Some(&mut progress))?;
     let size = std::fs::metadata(&archive_path)?.len();
     Ok((size, output_files))
 }
@@ -653,7 +699,7 @@ fn write_chunk_archive(path: &Path, source_files: &[PathBuf]) -> Result<Vec<Outp
         })
         .collect::<Result<Vec<_>>>()?;
 
-    write_archive_from_planned_files(path, &planned)
+    write_archive_from_planned_files(path, &planned, None)
 }
 
 fn chunk_output_files_for_source_files(
@@ -677,13 +723,15 @@ fn chunk_output_files_for_source_files(
 fn write_archive_from_planned_files(
     path: &Path,
     files: &[PlannedFile],
+    progress: Option<&mut CompressionProgress>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let file = std::fs::File::create(path)?;
     let mut encoder = zstd::Encoder::new(file, 0)?;
     encoder.include_checksum(true)?;
     let mut builder = tar::Builder::new(encoder);
 
-    let output_files = compute_output_files_and_archive(files, Some((&mut builder, path)))?;
+    let output_files =
+        compute_output_files_and_archive(files, Some((&mut builder, path)), progress)?;
 
     let encoder = builder.into_inner()?;
     encoder.finish()?;
@@ -694,19 +742,20 @@ fn write_archive_from_planned_files(
 fn compute_output_files_for_planned_files(
     files: &[PlannedFile],
 ) -> Result<Vec<OutputFileChecksum>> {
-    compute_output_files_and_archive(files, None)
+    compute_output_files_and_archive(files, None, None)
 }
 
 fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
+    mut progress: Option<&mut CompressionProgress>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
         let expected_size = std::fs::metadata(&planned.source_path)?.len();
 
         let source_file = std::fs::File::open(&planned.source_path)?;
-        let mut reader = HashingReader::new(source_file);
+        let mut reader = HashingReader::new(source_file, progress.as_deref_mut());
 
         if let Some((builder, archive_path)) = archive.as_mut() {
             let mut header = tar::Header::new_gnu();
@@ -744,15 +793,65 @@ fn compute_output_files_and_archive(
     Ok(output_files)
 }
 
-struct HashingReader<R> {
+struct CompressionProgress {
+    component: String,
+    archive_path: PathBuf,
+    raw_size: u64,
+    raw_processed: u64,
+    started: Instant,
+    last_log: Instant,
+}
+
+impl CompressionProgress {
+    fn new(component: &str, archive_path: &Path, raw_size: u64) -> Self {
+        let now = Instant::now();
+        Self {
+            component: component.to_string(),
+            archive_path: archive_path.to_path_buf(),
+            raw_size,
+            raw_processed: 0,
+            started: now,
+            last_log: now,
+        }
+    }
+
+    fn add(&mut self, bytes: u64) {
+        self.raw_processed = self.raw_processed.saturating_add(bytes).min(self.raw_size);
+        if self.last_log.elapsed() < COMPRESSION_LOG_INTERVAL {
+            return;
+        }
+
+        let elapsed = self.started.elapsed();
+        let compressed_size =
+            std::fs::metadata(&self.archive_path).map_or(0, |metadata| metadata.len());
+        let speed = self.raw_processed as f64 / elapsed.as_secs_f64();
+        let eta = ProgressDisplay::eta(self.raw_processed, self.raw_size, elapsed)
+            .map_or_else(|| "unknown".to_string(), |eta| eta.to_string());
+        info!(
+            component = %self.component,
+            raw_size = %ProgressDisplay::bytes(self.raw_size as f64),
+            raw_processed = %ProgressDisplay::bytes(self.raw_processed as f64),
+            compressed_size = %ProgressDisplay::bytes(compressed_size as f64),
+            progress = %ProgressDisplay::precise_percent(self.raw_processed, self.raw_size),
+            speed = %ProgressDisplay::speed(speed),
+            eta = %eta,
+            elapsed = %ProgressDisplay::duration(elapsed),
+            "packaging database component (progress)"
+        );
+        self.last_log = Instant::now();
+    }
+}
+
+struct HashingReader<'a, R> {
     inner: R,
     hasher: blake3::Hasher,
     bytes_read: u64,
+    progress: Option<&'a mut CompressionProgress>,
 }
 
-impl<R: Read> HashingReader<R> {
-    fn new(inner: R) -> Self {
-        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0 }
+impl<'a, R: Read> HashingReader<'a, R> {
+    fn new(inner: R, progress: Option<&'a mut CompressionProgress>) -> Self {
+        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0, progress }
     }
 
     fn finalize(self) -> String {
@@ -760,12 +859,15 @@ impl<R: Read> HashingReader<R> {
     }
 }
 
-impl<R: Read> Read for HashingReader<R> {
+impl<R: Read> Read for HashingReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let n = self.inner.read(buf)?;
         if n > 0 {
             self.bytes_read += n as u64;
             self.hasher.update(&buf[..n]);
+            if let Some(progress) = self.progress.as_mut() {
+                progress.add(n as u64);
+            }
         }
         Ok(n)
     }
@@ -936,6 +1038,48 @@ mod tests {
     }
 
     #[test]
+    fn generate_manifest_includes_chunk_containing_exact_block_height() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let static_files_dir = source.path().join("static_files");
+        std::fs::create_dir_all(&static_files_dir).unwrap();
+        std::fs::write(static_files_dir.join("static_file_headers_0_499999"), b"first").unwrap();
+        std::fs::write(static_files_dir.join("static_file_headers_500000_999999"), b"second")
+            .unwrap();
+
+        let remote = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            output.path(),
+            &remote,
+            None,
+            Some(500_000),
+            false,
+        ))
+        .unwrap();
+
+        assert!(files.iter().any(|path| {
+            path.file_name().is_some_and(|name| name == "headers-500000-999999.tar.zst")
+        }));
+
+        let manifest: SnapshotManifest =
+            serde_json::from_slice(&std::fs::read(output.path().join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest.block, 500_000);
+        let ComponentManifest::Chunked(headers) = &manifest.components["headers"] else {
+            panic!("headers component should be chunked");
+        };
+        assert_eq!(headers.total_blocks, 500_001);
+        assert_eq!(headers.chunk_sizes.len(), 2);
+        assert_eq!(headers.chunk_output_files.len(), 2);
+        assert!(!headers.chunk_output_files[1].is_empty());
+    }
+
+    #[test]
     fn generate_manifest_creates_proofs_archive() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
@@ -1096,7 +1240,7 @@ mod tests {
             output.path(),
             &remote,
             Some(&previous_manifest),
-            Some(2_000_000),
+            Some(1_999_999),
             false,
         ))
         .unwrap();
@@ -1158,7 +1302,7 @@ mod tests {
             output_dir: output.path(),
             chain_id: 8453,
             base_url: None,
-            block: Some(2_000_000),
+            block: Some(1_999_999),
             blocks_per_file: Some(500_000),
             remote_static_files: &remote,
             previous_manifest: Some(&previous_manifest),

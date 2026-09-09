@@ -4,7 +4,7 @@
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use base_common_rpc_types_engine::BasePayloadError;
-use base_protocol::FromBlockError;
+use base_protocol::{BaseTimeScheduleError, FromBlockError};
 
 use crate::{
     EngineClientError, EngineTaskError, SynchronizeTaskError,
@@ -31,6 +31,9 @@ pub enum InsertTaskError {
     /// Error converting the payload + chain genesis into an L2 block info.
     #[error(transparent)]
     L2BlockInfoConstruction(#[from] FromBlockError),
+    /// The payload timestamp does not match the absolute rollup schedule.
+    #[error(transparent)]
+    InvalidBaseTimeSchedule(#[from] BaseTimeScheduleError),
     /// The forkchoice update call to consolidate the block into the engine state failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
@@ -44,7 +47,8 @@ impl EngineTaskError for InsertTaskError {
         match self {
             Self::EmptyAuthoritativePayloads
             | Self::FromBlockError(_)
-            | Self::L2BlockInfoConstruction(_) => EngineTaskErrorSeverity::Critical,
+            | Self::L2BlockInfoConstruction(_)
+            | Self::InvalidBaseTimeSchedule(_) => EngineTaskErrorSeverity::Critical,
             Self::InsertFailed(_)
             | Self::UnexpectedPayloadStatus(_)
             | Self::ForkchoiceUpdateDidNotApply => EngineTaskErrorSeverity::Temporary,

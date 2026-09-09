@@ -2,9 +2,9 @@
 
 #[path = "common/balance.rs"]
 mod balance;
-#[path = "common/cobalt.rs"]
-mod cobalt;
 mod common;
+#[path = "common/zenith.rs"]
+mod zenith;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Bytes, U256};
@@ -19,10 +19,10 @@ use eyre::{Result, WrapErr, ensure};
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;
 
-/// Mines a minimal EOA-path EIP-8130 transaction on the Cobalt system-test stack.
+/// Mines a minimal EOA-path EIP-8130 transaction on the Zenith system-test stack.
 #[tokio::test]
 async fn eip8130_transaction_is_mined() -> Result<()> {
-    let (_system, provider) = cobalt::start_cobalt_system().await?;
+    let (_system, provider) = zenith::start_zenith_system().await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
 
     assert!(receipt.status(), "EIP-8130 transaction receipt must report success");

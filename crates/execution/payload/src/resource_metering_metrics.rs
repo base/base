@@ -1,4 +1,4 @@
-//! Metrics for payload resource metering.
+//! Metrics for payload resource metering and the native rejection cache.
 
 use crate::resource_metering::{ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope};
 
@@ -15,6 +15,17 @@ base_metrics::define_metrics! {
     #[label(dimension)]
     #[label(scope)]
     throttled_total: counter,
+}
+
+base_metrics::define_metrics! {
+    base_payload.rejection_cache,
+    struct = RejectionCacheMetrics,
+    #[describe("Transactions inserted into the native payload rejection cache")]
+    insertions: counter,
+    #[describe("Transactions skipped because they were already in the native payload rejection cache")]
+    hits: counter,
+    #[describe("Number of entries in the native payload rejection cache")]
+    size: gauge,
 }
 
 impl ResourceMeteringMetrics {

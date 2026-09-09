@@ -1,4 +1,4 @@
-//! Shared test environment for Base Cobalt action tests.
+//! Shared test environment for Base Zenith action tests.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_signer::SignerSync;
@@ -12,12 +12,12 @@ use base_common_consensus::{
 };
 use base_test_utils::Account;
 
-/// L2 timestamp where the Cobalt fork activates in these tests.
-pub(crate) const COBALT_ACTIVATION_TIMESTAMP: u64 = 4;
+/// L2 timestamp where the Zenith fork activates in these tests.
+pub(crate) const ZENITH_ACTIVATION_TIMESTAMP: u64 = 4;
 
-/// Test environment preconfigured to cross the Base Cobalt activation at L2 block 2.
-pub(crate) struct CobaltTestEnv {
-    /// Sequencer used to build Cobalt test blocks.
+/// Test environment preconfigured to cross the Base Zenith activation at L2 block 2.
+pub(crate) struct ZenithTestEnv {
+    /// Sequencer used to build Zenith test blocks.
     pub(crate) sequencer: L2Sequencer,
     harness: ActionTestHarness,
     batcher_cfg: BatcherConfig,
@@ -26,9 +26,9 @@ pub(crate) struct CobaltTestEnv {
     chain_id: u64,
 }
 
-impl CobaltTestEnv {
+impl ZenithTestEnv {
     /// Creates an environment with all forks through Jovian active at genesis
-    /// and Base Cobalt active at timestamp 4.
+    /// and Base Zenith active at timestamp 4.
     pub(crate) fn new() -> Self {
         let batcher_cfg = BatcherConfig {
             encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
@@ -40,7 +40,8 @@ impl CobaltTestEnv {
             .with_jovian_at(0)
             .with_azul_at(0)
             .with_beryl_at(0)
-            .with_cobalt_at(COBALT_ACTIVATION_TIMESTAMP)
+            .with_cobalt_at(ZENITH_ACTIVATION_TIMESTAMP)
+            .with_zenith_at(ZENITH_ACTIVATION_TIMESTAMP)
             .build();
         let chain_id = rollup_cfg.l2_chain_id.id();
         let harness = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -86,7 +87,7 @@ impl CobaltTestEnv {
         assert_eq!(
             self.node.l2_safe_number(),
             expected_safe_head,
-            "all {expected_safe_head} L2 blocks must derive through the Cobalt boundary"
+            "all {expected_safe_head} L2 blocks must derive through the Zenith boundary"
         );
     }
 
@@ -114,7 +115,7 @@ impl CobaltTestEnv {
     ///
     /// Exposed as an associated function (no `self`) so derivation tests that
     /// build their own harness can reuse it without constructing a full
-    /// [`CobaltTestEnv`].
+    /// [`ZenithTestEnv`].
     pub(crate) fn eip8130_user_tx(chain_id: u64, nonce_sequence: u64) -> BaseTxEnvelope {
         let alice = Account::Alice;
 
@@ -145,7 +146,7 @@ impl CobaltTestEnv {
     }
 }
 
-impl Default for CobaltTestEnv {
+impl Default for ZenithTestEnv {
     fn default() -> Self {
         Self::new()
     }

@@ -14,19 +14,18 @@ use testcontainers::{
     runners::SyncRunner,
 };
 
-use crate::{
-    config::{BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
-    network::{ensure_network_exists, network_name},
-};
+use crate::config::{BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
 
 const SETUP_IMAGE_NAME: &str = "devnet-setup";
-const SETUP_IMAGE_TAG: &str = "local";
-const SETUP_IMAGE_REFERENCE: &str = "devnet-setup:local";
+// Bump this interface version when cached setup images can no longer serve callers.
+// v2 invokes the integrated offline generator as `op-deployer` without a subcommand.
+const SETUP_IMAGE_TAG: &str = "local-v2";
+const SETUP_IMAGE_REFERENCE: &str = "devnet-setup:local-v2";
 const SETUP_IMAGE_BUILD_LOCK_DIR: &str = "base-system-test-setup-image-build.lock";
 const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const SETUP_DOCKERFILE_PATH: &str = "etc/docker/Dockerfile.devnet";
-const DEPLOY_TIMEOUT_SECS: u64 = 300;
+const SETUP_TIMEOUT_SECS: u64 = 300;
 
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
@@ -225,7 +224,7 @@ impl L2DeploymentOutput {
     }
 }
 
-/// A container for running stack setup scripts.
+/// A container for generating both chains with the offline Base op-deployer.
 #[derive(Debug, Clone)]
 pub struct SetupContainer {
     output_dir: PathBuf,
@@ -238,7 +237,6 @@ pub struct SetupContainer {
     base_cobalt_activation_block: Option<u64>,
     base_denim_activation_block: Option<u64>,
     base_zenith_activation_block: Option<u64>,
-    network_name: Option<String>,
 }
 
 impl SetupContainer {
@@ -255,7 +253,6 @@ impl SetupContainer {
             base_cobalt_activation_block: None,
             base_denim_activation_block: None,
             base_zenith_activation_block: None,
-            network_name: None,
         }
     }
 
@@ -313,78 +310,26 @@ impl SetupContainer {
         self
     }
 
-    /// Sets the Docker network name.
-    pub fn with_network_name(mut self, network_name: impl Into<String>) -> Self {
-        self.network_name = Some(network_name.into());
-        self
-    }
-
-    /// Generates the L1 genesis files.
-    pub fn generate_l1_genesis(&self) -> Result<L1GenesisOutput> {
-        std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output dir")?;
-        let shared_dir = self.output_dir.join("shared");
-        std::fs::create_dir_all(&shared_dir).wrap_err("Failed to create shared dir")?;
-
+    /// Generates both chains before starting L1, with deployed contracts in genesis.
+    pub fn generate_genesis(&self) -> Result<(L1GenesisOutput, L2DeploymentOutput)> {
         SetupImage::ensure_built()?;
-
+        fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
         let output_dir =
-            self.output_dir.canonicalize().wrap_err("Failed to canonicalize output dir path")?;
-        let shared_dir =
-            shared_dir.canonicalize().wrap_err("Failed to canonicalize shared dir path")?;
-
+            self.output_dir.canonicalize().wrap_err("Failed to canonicalize output directory")?;
         let output_mount = output_dir.to_string_lossy().to_string();
-        let shared_mount = shared_dir.to_string_lossy().to_string();
 
-        let _container = SetupImage::request()
+        let mut container = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
+            .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
+            .with_network("none")
             .with_env_var("OUTPUT_DIR", "/output")
-            .with_env_var("SHARED_DIR", "/shared")
-            .with_env_var("TEMPLATE_DIR", "/templates")
+            .with_env_var("L2_OUTPUT_DIR", "/output/l2")
+            .with_env_var("SHARED_DIR", "/output/shared")
             .with_env_var("CHAIN_ID", self.chain_id.to_string())
-            .with_env_var("SLOT_DURATION", self.slot_duration.to_string())
-            .with_mount(Mount::bind_mount(output_mount, "/output"))
-            .with_mount(Mount::bind_mount(shared_mount, "/shared"))
-            .with_cmd(["setup-l1.sh"])
-            .start()
-            .wrap_err("Failed to run setup-l1.sh")?;
-
-        ensure!(self.output_dir.join("cl/genesis.ssz").exists(), "genesis.ssz was not generated");
-
-        Ok(L1GenesisOutput { output_dir: self.output_dir.clone() })
-    }
-
-    /// Deploys L2 contracts.
-    pub fn deploy_l2_contracts(&self, l1_internal_rpc_url: &str) -> Result<L2DeploymentOutput> {
-        SetupImage::ensure_built()?;
-
-        let net = self.network_name.as_deref().unwrap_or_else(|| network_name());
-        if self.network_name.is_some() {
-            crate::network::ensure_network_exists_with_name(net)?;
-        } else {
-            ensure_network_exists()?;
-        }
-
-        std::fs::create_dir_all(self.output_dir.join("l2"))
-            .wrap_err("Failed to create l2 output dir")?;
-
-        let shared_mount = self.output_dir.join("shared").to_string_lossy().to_string();
-        let l2_output_mount = self.output_dir.join("l2").to_string_lossy().to_string();
-
-        let deployer_key = format!("0x{}", hex::encode(DEPLOYER.private_key.as_slice()));
-
-        let image = SetupImage::request()
-            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
-
-        let mut container = image
-            .with_network(net)
-            .with_startup_timeout(Duration::from_secs(DEPLOY_TIMEOUT_SECS))
-            .with_env_var("OUTPUT_DIR", "/output/l2")
-            .with_env_var("SHARED_DIR", "/shared")
-            .with_env_var("TEMPLATE_DIR", "/templates")
-            .with_env_var("L1_RPC_URL", l1_internal_rpc_url)
-            .with_env_var("L1_CHAIN_ID", self.chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
-            .with_env_var("DEPLOYER_KEY", &deployer_key)
+            .with_env_var("SLOT_DURATION", self.slot_duration.to_string())
+            // Upgrade-signal tests deploy their own configurable mock after L1 starts.
+            .with_env_var("UPGRADE_SIGNAL_PREINSTALL", "false")
             .with_env_var("DEPLOYER_ADDR", format!("{:#x}", DEPLOYER.address))
             .with_env_var("SEQUENCER_ADDR", format!("{:#x}", SEQUENCER.address))
             .with_env_var("BATCHER_ADDR", format!("{:#x}", BATCHER.address))
@@ -423,17 +368,19 @@ impl SetupContainer {
         }
 
         let _container = container
-            .with_mount(Mount::bind_mount(l2_output_mount, "/output/l2"))
-            .with_mount(Mount::bind_mount(shared_mount, "/shared"))
-            .with_cmd(["setup-l2.sh"])
+            .with_mount(Mount::bind_mount(output_mount, "/output"))
+            .with_cmd(["op-deployer"])
             .start()
-            .wrap_err("Failed to run setup-l2.sh")?;
+            .wrap_err("Failed to generate devnet genesis with op-deployer")?;
 
+        ensure!(self.output_dir.join("cl/genesis.ssz").exists(), "genesis.ssz was not generated");
         ensure!(
             self.output_dir.join("l2/genesis.json").exists(),
             "L2 genesis.json was not generated"
         );
-
-        Ok(L2DeploymentOutput { output_dir: self.output_dir.clone() })
+        Ok((
+            L1GenesisOutput { output_dir: self.output_dir.clone() },
+            L2DeploymentOutput { output_dir: self.output_dir.clone() },
+        ))
     }
 }

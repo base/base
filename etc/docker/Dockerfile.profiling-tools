@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+FROM public.ecr.aws/docker/library/golang:1.24.13-trixie
+
+ARG TARGETARCH
+ARG PROFILECLI_VERSION=1.18.1
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) PROFILECLI_SHA256=22a3e6f8647768276f8d9ad3aeb0b7ba86151e19ce7b24d7f7fbe78f21941c72 ;; \
+      arm64) PROFILECLI_SHA256=d01c90a819acf4ab853e5b92b36d7923989fcaea96f5cdab12cccae66374f680 ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    archive="profilecli_${PROFILECLI_VERSION}_linux_${TARGETARCH}.tar.gz"; \
+    curl -fsSL "https://github.com/grafana/pyroscope/releases/download/v${PROFILECLI_VERSION}/${archive}" -o "/tmp/${archive}"; \
+    echo "${PROFILECLI_SHA256}  /tmp/${archive}" | sha256sum -c -; \
+    tar -xzf "/tmp/${archive}" -C /usr/local/bin profilecli; \
+    rm "/tmp/${archive}"
+
+ADD --checksum=sha256:9eb8d6aaf4f2988ced4178ce802a1905f9cb1052069c339d4053a82906f4a4e3 \
+    https://raw.githubusercontent.com/brendangregg/FlameGraph/41fee1f99f9276008b7cd112fca19dc3ea84ac32/stackcollapse-go.pl \
+    /usr/local/bin/stackcollapse-go.pl
+ADD --checksum=sha256:088f82e6848a4f12a56e1e8e8170ee6761fccf12e5615cd64630f6b087c99ea7 \
+    https://raw.githubusercontent.com/brendangregg/FlameGraph/41fee1f99f9276008b7cd112fca19dc3ea84ac32/flamegraph.pl \
+    /usr/local/bin/flamegraph.pl
+ADD --checksum=sha256:55685edab6a33da695474233ff4978865a3e319e906ff27cdcfad0628ea47f5c \
+    https://raw.githubusercontent.com/brendangregg/FlameGraph/41fee1f99f9276008b7cd112fca19dc3ea84ac32/difffolded.pl \
+    /usr/local/bin/difffolded.pl
+
+COPY etc/scripts/devnet/profiling-tools.sh /usr/local/bin/profiling-tools
+RUN chmod 0755 /usr/local/bin/profiling-tools /usr/local/bin/*.pl
+
+ENV HOME=/tmp
+ENV PPROF_TMPDIR=/tmp
+ENTRYPOINT ["profiling-tools"]
