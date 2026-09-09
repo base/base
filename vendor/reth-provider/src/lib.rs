@@ -47,11 +47,11 @@ pub use history_shards::{
 
 mod bal;
 pub use bal::{BalConfig, InMemoryBalStore, RocksDBBalStore};
+pub use base_execution_state_types::*;
 pub use reth_chain_state::{
     CanonStateNotification, CanonStateNotificationSender, CanonStateNotificationStream,
     CanonStateNotifications, CanonStateSubscriptions,
 };
-pub use reth_execution_types::*;
 // reexport traits to avoid breaking changes
 /// Re-export `OriginalValuesKnown`
 pub use base_execution_evm_runtime::database::OriginalValuesKnown;

@@ -4,7 +4,7 @@ use alloy_primitives::BlockNumber;
 use base_execution_state_types::HashedPostStateSorted;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StoredBlockBodyIndices;
-use reth_execution_types::{Chain, ExecutionOutcome};
+use base_execution_state_types::{Chain, ExecutionOutcome};
 use reth_primitives_traits::{Block, RecoveredBlock};
 
 /// `BlockExecution` Writer

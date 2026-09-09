@@ -2,8 +2,8 @@
 
 // re-export Either
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
 pub use futures_util::future::Either;
-use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
 use reth_primitives_traits::RecoveredBlock;
 
 use crate::{Database, OnStateHook, execute::Executor};

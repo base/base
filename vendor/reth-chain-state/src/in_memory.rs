@@ -8,8 +8,10 @@ use base_common_observability_metrics::{Metrics, metrics::Gauge};
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
+use base_execution_state_types::{
+    BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+};
 use parking_lot::RwLock;
-use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_primitives_traits::{
     BlockBody as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
 };

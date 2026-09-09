@@ -20,10 +20,10 @@ use base_execution_evm_runtime::{
         BalWrites as RevmBalWrites, StorageBal as RevmStorageBal,
     },
 };
+use base_execution_state_types::Chain;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
 use reth_chain_state::CanonStateNotification;
-use reth_execution_types::Chain;
 use reth_primitives_traits::{InMemorySize, RecoveredBlock};
 use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
 use schnellru::{ByLength, Limiter, LruMap};

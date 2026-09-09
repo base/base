@@ -28,6 +28,7 @@ use base_execution_evm_runtime::L1BlockInfo;
 use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{CommitChanges, Evm as AlloyEvm, TxResult};
 use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderError};
+use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_trie::PayloadStateRootHandle;
 use base_execution_txpool::{
@@ -35,7 +36,6 @@ use base_execution_txpool::{
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
-use reth_execution_types::BlockExecutionOutput;
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_storage_api::{BlockReader, ProviderError, StateProvider, StateProviderFactory};

@@ -21,6 +21,7 @@ use base_common_types_chain::{
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
@@ -31,7 +32,6 @@ use reth_db_api::{
     mock::TxMock,
     models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
 };
-use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     Account, Block, BlockBody, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
     SignerRecoverable, StorageEntry,

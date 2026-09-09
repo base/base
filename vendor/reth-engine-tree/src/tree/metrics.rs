@@ -7,9 +7,9 @@ use base_common_observability_metrics::{
 };
 use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
 use base_execution_evm_blocks::ExecutorMetrics;
+use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ProviderError;
 use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
-use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{FastInstant as Instant, constants::gas_units::MEGAGAS};
 use reth_trie::updates::TrieUpdates;
 
@@ -635,8 +635,8 @@ pub(crate) struct BlockBufferMetrics {
 mod tests {
     use alloy_eips::eip7685::Requests;
     use base_execution_evm_runtime::database::BundleState;
+    use base_execution_state_types::BlockExecutionResult;
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
-    use reth_execution_types::BlockExecutionResult;
 
     use super::*;
 

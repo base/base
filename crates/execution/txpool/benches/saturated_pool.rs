@@ -4,13 +4,13 @@
 //! continuously trigger evictions, mimicking a saturated mainnet mempool.
 
 use alloy_primitives::{Address, B256, U256};
+use base_execution_state_types::ChangedAccount;
 use base_execution_txpool::{
     CanonicalStateUpdate, InMemoryBlobStore, MockTransactionValidator, PoolConfig, PoolInner,
     PoolUpdateKind, TransactionOrigin, TransactionValidationOutcome, ValidTransaction,
     test_utils::{MockOrdering, MockTransaction},
 };
 use codspeed_criterion_compat::{BatchSize, Criterion, criterion_group, criterion_main};
-use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::SealedBlock;
 
 type BenchPool = PoolInner<MockTransactionValidator, InMemoryBlobStore>;

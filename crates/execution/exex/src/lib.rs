@@ -12,6 +12,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
+use base_execution_state_types::Chain;
 #[cfg(feature = "metrics")]
 use base_execution_trie::BaseProofsStore;
 use base_execution_trie::{
@@ -20,7 +21,6 @@ use base_execution_trie::{
     metrics::BlockMetrics,
 };
 use futures::TryStreamExt;
-use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_provider::{
     BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
@@ -634,11 +634,11 @@ mod tests {
 
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_common_types_chain::private::alloy_primitives::B256;
+    use base_execution_state_types::{Chain, ExecutionOutcome};
     use base_execution_trie::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;
-    use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
     use reth_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,

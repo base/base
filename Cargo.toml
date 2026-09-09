@@ -152,7 +152,6 @@ members = [
   "vendor/reth-eth-wire-types",
   "vendor/reth-etl",
   "vendor/reth-execution-cache",
-  "vendor/reth-execution-types",
   "vendor/reth-exex",
   "vendor/reth-exex-test-utils",
   "vendor/reth-exex-types",
@@ -524,7 +523,6 @@ reth-codecs-derive = { path = "vendor/reth-codecs-derive", default-features = fa
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
 reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
-reth-execution-types = { path = "vendor/reth-execution-types", default-features = false }
 reth-execution-cache = { path = "vendor/reth-execution-cache", default-features = false }
 reth-storage-overlay = { path = "vendor/reth-storage-overlay", default-features = false }
 reth-rpc-server-types = { path = "vendor/reth-rpc-server-types", default-features = false }

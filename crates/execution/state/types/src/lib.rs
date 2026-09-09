@@ -89,6 +89,7 @@ mod utils;
 /// Read more: <https://github.com/paradigmxyz/reth/issues/11370>
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
+    pub use super::{chain::serde_bincode_compat::*, execution_outcome::serde_bincode_compat::*};
     pub use super::{
         hashed_state::serde_bincode_compat as hashed_state,
         updates::serde_bincode_compat as updates,
@@ -148,4 +149,13 @@ pub use storage_errors::{
     AnyError, ConsistentViewError, DatabaseError, DatabaseErrorInfo, DatabaseWriteError,
     DatabaseWriteOperation, LogLevel, ProviderError, ProviderResult, RootMismatch, StateProofError,
     StateRootError, StaticFileWriterError, StorageLockError, StorageRootError, TrieWitnessError,
+};
+
+mod chain;
+pub use chain::{BlockReceipts, Chain, ChainBlocks, DisplayBlocksChain};
+mod execute;
+pub use execute::BlockExecutionOutput;
+mod execution_outcome;
+pub use execution_outcome::{
+    AccountRevertInit, BundleStateInit, ChangedAccount, ExecutionOutcome, RevertsInit,
 };

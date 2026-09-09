@@ -13,11 +13,11 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor, ExecutorMetrics};
+use base_execution_state_types::Chain;
 use base_execution_state_types::StaticFileSegment;
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
 use reth_db::{static_file::HeaderMask, tables};
-use reth_execution_types::Chain;
 use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
 use reth_primitives_traits::format_gas_throughput;
 use reth_provider::{

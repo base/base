@@ -11,7 +11,7 @@ use base_common_types_chain::{
 };
 use base_execution_evm_machine::Block as _;
 use base_execution_evm_runtime::BlockExecutionError;
-use reth_execution_types::BlockExecutionResult;
+use base_execution_state_types::BlockExecutionResult;
 
 use crate::execute::BlockAssemblerInput;
 

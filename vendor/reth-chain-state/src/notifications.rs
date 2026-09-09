@@ -8,8 +8,8 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_types::{BlockReceipts, Chain};
 use derive_more::{Deref, DerefMut};
-use reth_execution_types::{BlockReceipts, Chain};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use tokio::sync::{broadcast, watch};
 use tokio_stream::{
@@ -250,7 +250,7 @@ mod tests {
     use base_common_types_chain::{
         BaseTxEnvelope as TransactionSigned, BlockBody, SignableTransaction, TxLegacy,
     };
-    use reth_execution_types::ExecutionOutcome;
+    use base_execution_state_types::ExecutionOutcome;
     use reth_primitives_traits::SealedBlock;
 
     use super::*;

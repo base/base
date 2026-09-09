@@ -46,13 +46,13 @@ tokio-stream = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
-reth-execution-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = {workspace = true, features = ["std"]}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
+base-execution-state-types = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
@@ -90,7 +90,7 @@ required-features = ["test-utils"]
 default = ["metrics"]
 metrics = ["base-execution-evm-runtime/metrics", "base-common-observability-metrics/metrics", "base-common-observability-events/metrics"]
 serde = [
-    "reth-execution-types/serde",
+    "base-execution-state-types/serde",
     "reth-eth-wire-types/serde",
     "base-common-types-chain/serde",
     "alloy-eips/serde",

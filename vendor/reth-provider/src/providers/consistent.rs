@@ -11,13 +11,13 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_execution_evm_runtime::database::PlainStorageRevert;
+use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
-use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
@@ -1472,11 +1472,13 @@ mod tests {
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
     use base_execution_evm_runtime::database::BundleState;
+    use base_execution_state_types::{
+        BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome,
+    };
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
     use reth_db_api::models::AccountBeforeTx;
-    use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock};
     use reth_storage_api::{BlockReader, BlockSource, ChangeSetReader};
     use reth_testing_utils::generators::{

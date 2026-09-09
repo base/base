@@ -30,19 +30,19 @@ use base_execution_payload_builder::{
     PayloadConfig,
 };
 use base_execution_state_memory::CachedReads;
+use base_execution_state_types::ExecutionOutcome;
+use base_execution_state_types::HashedStorage;
 use base_execution_txpool::NoopTransactionPool;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_testing_support::build_test_genesis;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
-use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use base_execution_state_types::HashedStorage;
 
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
 

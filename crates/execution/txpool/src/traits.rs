@@ -68,9 +68,9 @@ use alloy_primitives::{
     map::{AddressSet, B256Map},
 };
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
+use base_execution_state_types::ChangedAccount;
 use futures_util::{Stream, ready};
 use reth_eth_wire_types::HandleMempoolData;
-use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::{Block, Recovered, SealedBlock};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;

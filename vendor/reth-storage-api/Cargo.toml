@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
@@ -48,7 +47,6 @@ std = [
     "reth-primitives-traits/std",
     "base-execution-state-types/std",
     "base-execution-evm-runtime/std",
-    "reth-execution-types/std",
     "serde_json?/std",
     "dep:base-common-runtime-tasks",
     "alloy-eip7928/std",
@@ -58,7 +56,6 @@ db-api = ["dep:alloy-hardforks", "dep:reth-db-api", "dep:serde_json"]
 
 serde = [
     "base-execution-state-types/serde",
-    "reth-execution-types/serde",
     "reth-primitives-traits/serde",
     "base-execution-evm-runtime/serde",
     "alloy-eips/serde",
@@ -68,9 +65,4 @@ serde = [
     "alloy-eip7928/serde",
 ]
 
-serde-bincode-compat = [
-    "reth-execution-types/serde-bincode-compat",
-    "base-execution-state-types/serde-bincode-compat",
-    "alloy-eips/serde-bincode-compat",
-    "base-common-types-chain/serde-bincode-compat",
-]
+serde-bincode-compat = ["base-execution-state-types/serde-bincode-compat", "alloy-eips/serde-bincode-compat", "base-common-types-chain/serde-bincode-compat"]

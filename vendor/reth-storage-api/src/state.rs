@@ -5,9 +5,9 @@ use alloy_primitives::{Address, B256, BlockHash, BlockNumber, StorageKey, Storag
 use auto_impl::auto_impl;
 use base_common_types_chain::constants::KECCAK_EMPTY;
 use base_execution_evm_runtime::database::BundleState;
+use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::HashedPostState;
 use base_execution_state_types::ProviderResult;
-use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::Bytecode;
 
 use super::{

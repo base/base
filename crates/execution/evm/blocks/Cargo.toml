@@ -30,7 +30,6 @@ fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 reth-storage-api = {features = ["default"], workspace = true}
 base-common-types-chain = {features = ["reth"], workspace = true}
-reth-execution-types = {features = ["default"], workspace = true}
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-execution-evm-runtime = {features = ["std"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
@@ -81,10 +80,9 @@ std = [
     "derive_more/std",
     "fixed-cache/std",
     "futures-util/std",
-    "reth-execution-types/std",
+    "base-execution-state-types/std",
     "reth-primitives-traits/std",
     "reth-storage-api/std",
-    "base-execution-state-types/std",
     "thiserror/std",
     "tracing/std",
 ]

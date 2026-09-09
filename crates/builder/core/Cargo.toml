@@ -85,7 +85,6 @@ alloy-sol-types = { workspace = true, features = ["json", "std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-execution-evm-runtime = {features = ["std"], workspace = true}
-reth-execution-types = { workspace = true, features = ["default"] }
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
@@ -94,6 +93,7 @@ base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-execution-payload-types = {features = ["default"], workspace = true}
+base-execution-state-types = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
@@ -122,8 +122,8 @@ rstest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 hyper-util = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
-base-execution-state-types = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
+base-execution-state-types = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "txpool-api"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }

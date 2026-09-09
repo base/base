@@ -63,7 +63,6 @@ alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
-reth-execution-types = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
@@ -79,8 +78,8 @@ base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"]}
-base-execution-state-types = {features = ["default", "eip1186"], workspace = true}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
+base-execution-state-types = {features = ["default", "eip1186", "serde"], workspace = true}
 base-execution-evm-runtime = { workspace = true, features = ["overrides", "call-util", "optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
 
 [dev-dependencies]

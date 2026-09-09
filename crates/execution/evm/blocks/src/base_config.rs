@@ -403,7 +403,7 @@ mod tests {
         primitives::Log,
         state::AccountInfo,
     };
-    use reth_execution_types::{
+    use base_execution_state_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
     use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};

@@ -18,7 +18,6 @@ workspace = true
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-blocks = { workspace = true}
 base-execution-evm-runtime = {workspace = true}
@@ -38,9 +37,8 @@ default = ["std"]
 trie-debug = []
 std = [
     "base-execution-evm-runtime/std",
-    "reth-execution-types/std",
-    "reth-primitives-traits/std",
     "base-execution-state-types/std",
+    "reth-primitives-traits/std",
     "alloy-primitives/std",
     "base-common-types-payload/std",
     "alloy-eips/std",

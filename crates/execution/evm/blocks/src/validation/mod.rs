@@ -18,8 +18,8 @@ use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt,
 };
+use base_execution_state_types::BlockExecutionResult;
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
 use tracing::debug;
 

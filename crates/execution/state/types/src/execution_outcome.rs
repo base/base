@@ -1,16 +1,16 @@
 use alloc::{vec, vec::Vec};
 
+use crate::HashedPostState;
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{
     Address, B256, BlockNumber, Bloom, Log, U256, logs_bloom,
     map::{AddressMap, B256Map, HashMap},
 };
 use base_common_types_chain::{BaseReceipt, TxReceipt};
+use base_execution_state_memory::AccountInfo;
 use base_execution_state_memory::BundleAccount;
 use base_execution_state_memory::BundleState;
-use base_execution_state_memory::AccountInfo;
 use reth_primitives_traits::{Account, Bytecode, StorageEntry};
-use base_execution_state_types::HashedPostState;
 
 use crate::{BlockExecutionOutput, BlockExecutionResult};
 
@@ -423,7 +423,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_execution_types::{serde_bincode_compat, ExecutionOutcome};
+    /// use base_execution_state_types::{serde_bincode_compat, ExecutionOutcome};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///

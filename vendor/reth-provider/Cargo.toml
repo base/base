@@ -27,7 +27,6 @@ alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-execution-types = { workspace = true }
 reth-storage-overlay = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }

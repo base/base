@@ -19,7 +19,6 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-transport = { workspace = true }
 base-tx-manager = { workspace = true }
@@ -34,6 +33,7 @@ base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
@@ -43,15 +43,14 @@ tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-execution-state-types = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 base-batcher-core = { workspace = true, features = ["test-utils"] }
-reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
+base-execution-state-types = {features = ["default"], workspace = true}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}

@@ -21,7 +21,6 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-storage-api = { workspace = true }
-reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true}
@@ -56,7 +55,7 @@ serde = [
     "alloy-primitives/serde",
     "parking_lot/serde",
     "rand?/serde",
-    "reth-execution-types/serde",
+    "base-execution-state-types/serde",
     "reth-primitives-traits/serde",
     "reth-trie/serde",
     "base-execution-evm-runtime/serde",

@@ -14,12 +14,12 @@ use alloy_primitives::{
 use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BlockHeader, transaction::TxHashRef};
+use base_execution_state_types::ChangedAccount;
 use futures_util::{
     FutureExt, Stream, StreamExt,
     future::{BoxFuture, Fuse, FusedFuture},
 };
 use reth_chain_state::CanonStateNotification;
-use reth_execution_types::ChangedAccount;
 use reth_fs_util::FsPathError;
 use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
 use reth_storage_api::{BlockReaderIdExt, ProviderError, StateProviderFactory};

@@ -7,7 +7,7 @@ use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
-use reth_execution_types::BlockExecutionResult;
+use base_execution_state_types::BlockExecutionResult;
 use reth_primitives_traits::{GotExpected, RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::{

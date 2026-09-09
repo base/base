@@ -3,6 +3,7 @@
 use alloc::{borrow::Cow, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{fmt, ops::RangeInclusive};
 
+use crate::LazyTrieData;
 use alloy_eips::{BlockNumHash, eip1898::ForkBlock};
 use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSet};
 use base_common_types_chain::{
@@ -11,7 +12,6 @@ use base_common_types_chain::{
 use reth_primitives_traits::{
     BlockBody, IndexedTx, RecoveredBlock, SealedHeader, transaction::signed::SignedTransaction,
 };
-use base_execution_state_types::LazyTrieData;
 
 use crate::ExecutionOutcome;
 
@@ -502,11 +502,11 @@ pub struct BlockReceipts<T = base_common_types_chain::EthereumReceipt> {
 pub(super) mod serde_bincode_compat {
     use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
+    use crate::ComputedTrieData;
     use alloy_primitives::{Address, BlockNumber, Bytes};
     use alloy_rlp::Decodable;
     use base_common_types_chain::BaseBlock;
     use reth_primitives_traits::SealedBlock;
-    use base_execution_state_types::ComputedTrieData;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -516,7 +516,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_execution_types::{serde_bincode_compat, Chain};
+    /// use base_execution_state_types::{serde_bincode_compat, Chain};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
@@ -533,14 +533,12 @@ pub(super) mod serde_bincode_compat {
         blocks: BTreeMap<BlockNumber, RecoveredBlockRepr>,
         execution_outcome: serde_bincode_compat::ExecutionOutcome<'a>,
         #[serde(default)]
-        trie_updates: BTreeMap<
-            BlockNumber,
-            base_execution_state_types::serde_bincode_compat::updates::TrieUpdatesSorted<'a>,
-        >,
+        trie_updates:
+            BTreeMap<BlockNumber, crate::serde_bincode_compat::updates::TrieUpdatesSorted<'a>>,
         #[serde(default)]
         hashed_state: BTreeMap<
             BlockNumber,
-            base_execution_state_types::serde_bincode_compat::hashed_state::HashedPostStateSorted<'a>,
+            crate::serde_bincode_compat::hashed_state::HashedPostStateSorted<'a>,
         >,
     }
 
@@ -579,8 +577,8 @@ pub(super) mod serde_bincode_compat {
 
     impl<'a> From<Chain<'a>> for super::Chain {
         fn from(value: Chain<'a>) -> Self {
+            use crate::LazyTrieData;
             use reth_primitives_traits::RecoveredBlock;
-            use base_execution_state_types::LazyTrieData;
 
             let hashed_state_map: BTreeMap<_, _> =
                 value.hashed_state.into_iter().map(|(k, v)| (k, Arc::new(v.into()))).collect();
@@ -681,8 +679,8 @@ pub(super) mod serde_bincode_compat {
 mod tests {
     use alloy_primitives::{Address, B256, map::HashMap};
     use base_common_types_chain::BaseReceipt;
-    use base_execution_state_memory::BundleState;
     use base_execution_state_memory::AccountInfo;
+    use base_execution_state_memory::BundleState;
 
     use super::*;
 

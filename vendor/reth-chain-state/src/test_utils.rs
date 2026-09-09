@@ -15,8 +15,10 @@ use base_common_types_chain::{
     TxReceipt,
 };
 use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+use base_execution_state_types::{
+    BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+};
 use rand::Rng;
-use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_primitives_traits::{
     Account, Recovered, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction,
     proofs::{calculate_receipt_root, calculate_transaction_root, calculate_withdrawals_root},

@@ -20,6 +20,7 @@ use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::NoopPayloadBuilderService;
+use base_execution_state_types::Chain;
 use base_execution_txpool::Pool;
 use base_node_context::BaseNodeContext;
 use futures_util::FutureExt;
@@ -30,7 +31,6 @@ use reth_db::{
     },
 };
 use reth_db_common::init::init_genesis;
-use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
 use reth_node_core::node_config::NodeConfig;

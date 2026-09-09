@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use base_execution_state_types::Chain;
 use reth_chain_state::CanonStateNotification;
-use reth_execution_types::Chain;
 
 /// Notifications sent to an `ExEx`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +74,7 @@ impl From<CanonStateNotification> for ExExNotification {
 pub(super) mod serde_bincode_compat {
     use std::sync::Arc;
 
-    use reth_execution_types::serde_bincode_compat::Chain;
+    use base_execution_state_types::serde_bincode_compat::Chain;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -180,8 +180,8 @@ pub(super) mod serde_bincode_compat {
         use std::{collections::BTreeMap, sync::Arc};
 
         use arbitrary::Arbitrary;
+        use base_execution_state_types::Chain;
         use rand::Rng;
-        use reth_execution_types::Chain;
         use reth_primitives_traits::RecoveredBlock;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;

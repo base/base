@@ -10,7 +10,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, TxReceipt, proofs::calculate_receipt_root,
 };
-use reth_execution_types::BlockExecutionResult;
+use base_execution_state_types::BlockExecutionResult;
 use reth_primitives_traits::{
     GotExpected, RecoveredBlock, SealedBlock, SealedHeader, receipt::gas_spent_by_transactions,
 };

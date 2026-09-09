@@ -19,6 +19,9 @@ use base_common_types_chain::{
 };
 use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::{
+    BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+};
 use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
@@ -39,7 +42,6 @@ use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
     SealedHeader, StorageEntry,
@@ -3523,11 +3525,11 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+    use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_api::models::StorageSettings;
-    use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
     use reth_storage_api::{MetadataProvider, StateReadProvider};
     use reth_testing_utils::generators::{self, BlockParams};

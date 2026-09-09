@@ -1,9 +1,9 @@
 use alloc::{boxed::Box, fmt, vec::Vec};
 
 use alloy_primitives::B256;
-use reth_execution_types::BlockExecutionOutput;
-use reth_primitives_traits::{RecoveredBlock, SealedHeader};
+use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::updates::TrieUpdates;
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 
 /// An invalid block hook.
 pub trait InvalidBlockHook: Send + Sync {

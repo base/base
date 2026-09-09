@@ -5,13 +5,13 @@ use std::sync::Arc;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
 use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore,
     EthTransactionValidatorBuilder, Pool,
 };
 use base_node_context::BaseNodePool;
 use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
-use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
 use reth_network::NetworkHandle;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{

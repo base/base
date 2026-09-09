@@ -17,10 +17,10 @@ use base_execution_evm_runtime::{
     database::{BundleRetention, BundleState, State},
     state::bal::Bal,
 };
+use base_execution_state_types::BlockExecutionResult;
 pub use base_execution_state_types::ProviderError;
+pub use base_execution_state_types::{BlockExecutionOutput, ExecutionOutcome};
 use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
-use reth_execution_types::BlockExecutionResult;
-pub use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_storage_api::StateProvider;
 

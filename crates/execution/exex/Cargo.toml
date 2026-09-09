@@ -21,7 +21,7 @@ base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-reth-execution-types = { workspace = true, features = ["default"] }
+base-execution-state-types = { workspace = true, features = ["default"] }
 base-execution-trie = { workspace = true, features = ["serde-bincode-compat"] }
 
 [dev-dependencies]

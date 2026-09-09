@@ -8,6 +8,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use base_common_types_chain::Transaction;
+use base_execution_state_types::ChangedAccount;
 use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, AllPoolTransactions, AllTransactionsEvents,
     BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
@@ -20,7 +21,6 @@ use base_execution_txpool::{
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
-use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
 use tokio::{spawn, sync::mpsc};
 use tracing::debug;

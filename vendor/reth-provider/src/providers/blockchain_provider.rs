@@ -12,6 +12,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_types_payload::ForkchoiceState;
+use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
@@ -21,7 +22,6 @@ use reth_chain_state::{
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
-use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
@@ -1010,6 +1010,9 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
     use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
+    use base_execution_state_types::{
+        BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+    };
     use base_execution_state_types::{StageCheckpoint, StageId};
     use itertools::Itertools;
     use rand::Rng;
@@ -1018,9 +1021,6 @@ mod tests {
         test_utils::TestBlockBuilder,
     };
     use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
-    use reth_execution_types::{
-        BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
-    };
     use reth_primitives_traits::{
         Account, Block as _, RecoveredBlock, SealedBlock, SignerRecoverable, StorageEntry,
     };

@@ -1,10 +1,10 @@
 use alloy_eips::BlockNumHash;
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_types::Chain;
 use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
-use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_network_api::NetworkInfo;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
@@ -258,10 +258,10 @@ mod tests {
     use alloy_primitives::B256;
     use base_common_types_chain::Receipt;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_types::{Chain, ExecutionOutcome};
     use futures::TryStreamExt;
     use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;
-    use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use reth_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};
     use tokio::{

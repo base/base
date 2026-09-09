@@ -1308,8 +1308,8 @@ mod tests {
 
         use alloy_primitives::keccak256;
         use base_execution_evm_runtime::database::BundleState;
+        use base_execution_state_types::ExecutionOutcome;
         use reth_db_api::models::StorageSettings;
-        use reth_execution_types::ExecutionOutcome;
         use reth_testing_utils::generators::{self, BlockRangeParams};
 
         use crate::BlockWriter;
@@ -1458,8 +1458,8 @@ mod tests {
             database::{AccountStatus, BundleAccount, BundleState},
             state::AccountInfo,
         };
+        use base_execution_state_types::ExecutionOutcome;
         use base_execution_state_types::{StageCheckpoint, StageId};
-        use reth_execution_types::ExecutionOutcome;
         use reth_storage_api::HashedPostStateProvider;
         use reth_testing_utils::generators::{self, BlockRangeParams};
 
