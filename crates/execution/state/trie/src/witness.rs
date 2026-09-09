@@ -9,7 +9,7 @@ use base_execution_state_types::{
     SparseStateTrieErrorKind, TrieNodeV2,
 };
 use base_execution_state_types::{StateProofError, TrieWitnessError};
-use reth_trie_sparse::{LeafUpdate, SparseStateTrie, SparseTrie as _, TrieNodeEpoch};
+use reth_trie_sparse::{LeafUpdate, SparseStateTrie, TrieNodeEpoch};
 
 use crate::{
     TRIE_ACCOUNT_RLP_MAX_SIZE,

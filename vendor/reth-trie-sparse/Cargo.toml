@@ -23,7 +23,6 @@ metrics = { workspace = true, optional = true }
 smallvec = { workspace = true, optional = true }
 base-execution-state-types = { workspace = true }
 reth-primitives-traits = { workspace = true, optional = true }
-base-execution-state-memory = {workspace = true, optional = true}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 strum = { workspace = true, features = ["derive"], optional = true }
@@ -68,8 +67,6 @@ std = [
     "strum/std",
     "base-common-observability-tracing/std",
     "either/std",
-    "dep:base-execution-state-memory",
-    "base-execution-state-memory/std",
 ]
 metrics = ["dep:base-common-observability-metrics", "dep:metrics", "std"]
 trie-debug = [

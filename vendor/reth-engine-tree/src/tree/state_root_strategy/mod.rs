@@ -79,14 +79,14 @@ pub use base_execution_state_tasks::{
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
 };
 use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
+use base_execution_state_trie::{
+    HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
+    updates::TrieUpdates,
+};
 use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
-};
-use base_execution_state_trie::{
-    HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
-    updates::TrieUpdates,
 };
 #[cfg(feature = "trie-debug")]
 use reth_trie_sparse::debug_recorder::TrieDebugRecorder;
@@ -1313,11 +1313,11 @@ mod tests {
         test_utils::create_test_provider_factory_with_chain_spec,
     };
     use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
+    use base_execution_state_trie::test_utils::state_root;
     use base_execution_state_types::StorageEntry;
     use rand::Rng;
     use reth_db_common::init::init_genesis;
     use reth_testing_utils::generators;
-    use base_execution_state_trie::test_utils::state_root;
 
     use super::*;
 

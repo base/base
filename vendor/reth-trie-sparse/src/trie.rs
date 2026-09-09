@@ -6,10 +6,7 @@ use base_execution_state_types::{
     SparseTrieResult, TrieMask, TrieNodeV2,
 };
 
-use crate::{
-    ArenaParallelSparseTrie, LeafUpdate, SparseTrie as SparseTrieTrait, SparseTrieUpdates,
-    TrieNodeEpoch,
-};
+use crate::{ArenaParallelSparseTrie, LeafUpdate, SparseTrieUpdates, TrieNodeEpoch};
 
 /// A sparse trie that is either in a "blind" state (no nodes are revealed, root node hash is
 /// unknown) or in a "revealed" state (root node has been revealed and the trie can be updated).
@@ -23,8 +20,8 @@ use crate::{
 /// 2. Update tracking - changes to the trie structure can be tracked and selectively persisted
 /// 3. Incremental operations - nodes can be revealed as needed without loading the entire trie.
 ///    This is what gives rise to the notion of a "sparse" trie.
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum RevealableSparseTrie<T = ArenaParallelSparseTrie> {
+#[derive(Debug, Clone)]
+pub enum RevealableSparseTrie {
     /// The trie is blind -- no nodes have been revealed
     ///
     /// This is the default state. In this state, the trie cannot be directly queried or modified
@@ -32,22 +29,22 @@ pub enum RevealableSparseTrie<T = ArenaParallelSparseTrie> {
     ///
     /// In this state the `RevealableSparseTrie` can optionally carry with it a cleared
     /// sparse trie. This allows for reusing the trie's allocations between payload executions.
-    Blind(Option<Box<T>>),
+    Blind(Option<Box<ArenaParallelSparseTrie>>),
     /// Some nodes in the Trie have been revealed.
     ///
     /// In this state, the trie can be queried and modified for the parts
     /// that have been revealed. Other parts remain blind and require revealing
     /// before they can be accessed.
-    Revealed(Box<T>),
+    Revealed(Box<ArenaParallelSparseTrie>),
 }
 
-impl<T: Default> Default for RevealableSparseTrie<T> {
+impl Default for RevealableSparseTrie {
     fn default() -> Self {
         Self::Blind(None)
     }
 }
 
-impl<T: SparseTrieTrait + Default> RevealableSparseTrie<T> {
+impl RevealableSparseTrie {
     /// Creates a new revealed but empty sparse trie.
     pub fn revealed_empty() -> Self {
         Self::Revealed(Box::default())
@@ -62,13 +59,13 @@ impl<T: SparseTrieTrait + Default> RevealableSparseTrie<T> {
     ///
     /// # Returns
     ///
-    /// A mutable reference to the underlying [`RevealableSparseTrie`](SparseTrieTrait).
+    /// A mutable reference to the underlying [`ArenaParallelSparseTrie`].
     pub fn reveal_root(
         &mut self,
         root: TrieNodeV2,
         masks: Option<BranchNodeMasks>,
         retain_updates: bool,
-    ) -> SparseTrieResult<&mut T> {
+    ) -> SparseTrieResult<&mut ArenaParallelSparseTrie> {
         // if `Blind`, we initialize the revealed trie with the given root node, using a
         // pre-allocated trie if available.
         if self.is_blind() {
@@ -105,7 +102,7 @@ impl<T: SparseTrieTrait + Default> RevealableSparseTrie<T> {
     }
 }
 
-impl<T: SparseTrieTrait> RevealableSparseTrie<T> {
+impl RevealableSparseTrie {
     /// Creates a new blind sparse trie.
     ///
     /// # Examples
@@ -123,8 +120,8 @@ impl<T: SparseTrieTrait> RevealableSparseTrie<T> {
     }
 
     /// Creates a new blind sparse trie, clearing and later reusing the given
-    /// [`RevealableSparseTrie`](SparseTrieTrait).
-    pub fn blind_from(mut trie: T) -> Self {
+    /// [`ArenaParallelSparseTrie`].
+    pub fn blind_from(mut trie: ArenaParallelSparseTrie) -> Self {
         trie.clear();
         Self::Blind(Some(Box::new(trie)))
     }
@@ -142,14 +139,14 @@ impl<T: SparseTrieTrait> RevealableSparseTrie<T> {
     /// Returns an immutable reference to the underlying revealed sparse trie.
     ///
     /// Returns `None` if the trie is blinded.
-    pub const fn as_revealed_ref(&self) -> Option<&T> {
+    pub const fn as_revealed_ref(&self) -> Option<&ArenaParallelSparseTrie> {
         if let Self::Revealed(revealed) = self { Some(revealed) } else { None }
     }
 
     /// Returns a mutable reference to the underlying revealed sparse trie.
     ///
     /// Returns `None` if the trie is blinded.
-    pub fn as_revealed_mut(&mut self) -> Option<&mut T> {
+    pub fn as_revealed_mut(&mut self) -> Option<&mut ArenaParallelSparseTrie> {
         if let Self::Revealed(revealed) = self { Some(revealed) } else { None }
     }
 
@@ -205,8 +202,8 @@ impl<T: SparseTrieTrait> RevealableSparseTrie<T> {
     /// Clears this trie, setting it to a blind state.
     ///
     /// If this instance was revealed, or was itself a `Blind` with a pre-allocated
-    /// [`RevealableSparseTrie`](SparseTrieTrait), this will set to `Blind` carrying a cleared
-    /// pre-allocated [`RevealableSparseTrie`](SparseTrieTrait).
+    /// [`ArenaParallelSparseTrie`], this will set to `Blind` carrying a cleared
+    /// pre-allocated [`ArenaParallelSparseTrie`].
     #[inline]
     pub fn clear(&mut self) {
         *self = match core::mem::replace(self, Self::blind()) {
@@ -219,7 +216,7 @@ impl<T: SparseTrieTrait> RevealableSparseTrie<T> {
     }
 }
 
-impl<T: SparseTrieTrait + Default> RevealableSparseTrie<T> {
+impl RevealableSparseTrie {
     /// Applies batch leaf updates to the sparse trie.
     ///
     /// For blind tries, all updates are kept in the map and proof targets are emitted

@@ -1,9 +1,9 @@
-//! Generic `SparseTrie` test suite.
+//! Sparse trie integration suite for normal and forced-parallel operation.
 //!
-//! Tests are written as generic functions `test_foo<T: SparseTrie>(new_trie: fn() -> T)` and
-//! stamped out for every concrete implementation via the [`sparse_trie_tests`] macro.
+//! Each test runs with normal and forced-parallel construction settings through
+//! the [`sparse_trie_tests`] macro.
 //!
-//! Tests are organized into modules by which `SparseTrie` method is the most likely root cause
+//! Tests are organized into modules by which sparse trie operation is the most likely root cause
 //! of failure for each test case:
 //!
 //! - [`set_root`]: Tests for `set_root`
@@ -24,7 +24,9 @@ use alloy_rlp::{Decodable, encode_fixed_size};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_execution_state_trie::test_utils::TrieTestHarness;
 use base_execution_state_types::{Nibbles, ProofV2Target, TrieNodeV2};
-use reth_trie_sparse::{LeafLookup, LeafLookupError, LeafUpdate, SparseTrie, TrieNodeEpoch};
+use reth_trie_sparse::{
+    ArenaParallelSparseTrie, LeafLookup, LeafLookupError, LeafUpdate, TrieNodeEpoch,
+};
 
 mod find_leaf;
 mod get_leaf_value;
@@ -92,9 +94,9 @@ impl SuiteTestHarness {
     /// Runs the reveal-update loop on the given trie: repeatedly calls `update_leaves`,
     /// collects proof targets from the callback, fetches proofs, and reveals them until
     /// no more proofs are needed.
-    fn reveal_and_update<T: SparseTrie>(
+    fn reveal_and_update(
         &self,
-        trie: &mut T,
+        trie: &mut ArenaParallelSparseTrie,
         leaf_updates: &mut B256Map<LeafUpdate>,
     ) {
         loop {
@@ -115,12 +117,12 @@ impl SuiteTestHarness {
 
     /// Initializes a trie with the harness root node and reveals all proof nodes for the
     /// given target keys. Returns the initialized trie.
-    fn init_trie_with_targets<T: SparseTrie>(
+    fn init_trie_with_targets(
         &self,
         target_keys: &[B256],
         retain_updates: bool,
-        new_trie: fn() -> T,
-    ) -> T {
+        new_trie: fn() -> ArenaParallelSparseTrie,
+    ) -> ArenaParallelSparseTrie {
         let root_node = self.root_node();
         let mut trie = (new_trie)();
         trie.set_root(root_node.node, root_node.masks, retain_updates)
@@ -137,18 +139,18 @@ impl SuiteTestHarness {
     }
 
     /// Initializes a trie and reveals proofs for all keys in the base storage.
-    fn init_trie_fully_revealed<T: SparseTrie>(
+    fn init_trie_fully_revealed(
         &self,
         retain_updates: bool,
-        new_trie: fn() -> T,
-    ) -> T {
+        new_trie: fn() -> ArenaParallelSparseTrie,
+    ) -> ArenaParallelSparseTrie {
         let keys: Vec<B256> = self.storage().keys().copied().collect();
         self.init_trie_with_targets(&keys, retain_updates, new_trie)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Macro: stamp out tests for every SparseTrie impl
+// Macro: run each test with normal and forced-parallel settings
 // ---------------------------------------------------------------------------
 
 /// Stamps out `#[test]` functions for each generic test function listed, instantiated
@@ -156,7 +158,7 @@ impl SuiteTestHarness {
 macro_rules! sparse_trie_tests {
     ( $( $test_fn:ident ),* $(,)? ) => {
         mod arena_parallel_sparse_trie {
-            use reth_trie_sparse::ArenaParallelSparseTrie;
+            use reth_trie_sparse::{ArenaParallelSparseTrie};
 
             $(
                 #[test]
@@ -167,7 +169,7 @@ macro_rules! sparse_trie_tests {
         }
 
         mod arena_parallel_sparse_trie_always_parallel {
-            use reth_trie_sparse::{ArenaParallelSparseTrie, ArenaParallelismThresholds};
+            use reth_trie_sparse::{ArenaParallelSparseTrie,ArenaParallelismThresholds};
 
             $(
                 #[test]

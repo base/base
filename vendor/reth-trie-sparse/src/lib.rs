@@ -15,8 +15,8 @@ mod trie;
 #[cfg(feature = "std")]
 pub use trie::*;
 
-mod traits;
-pub use traits::*;
+mod types;
+pub use types::*;
 
 #[cfg(feature = "std")]
 mod arena;

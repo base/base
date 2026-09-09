@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn test_prune_retains_recent_leaves<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_retains_recent_leaves(new_trie: fn() -> ArenaParallelSparseTrie) {
     let mut key_a = B256::ZERO;
     key_a.0[0] = 0x10;
     let mut key_b = B256::ZERO;
@@ -21,7 +21,7 @@ pub(super) fn test_prune_retains_recent_leaves<T: SparseTrie>(new_trie: fn() -> 
     ]);
 
     let harness = SuiteTestHarness::new(storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let initial_root = trie.root(epoch(0));
     assert_eq!(trie.prune(epoch(0)), 0, "the epoch cutoff must be strict");
@@ -53,7 +53,9 @@ pub(super) fn test_prune_retains_recent_leaves<T: SparseTrie>(new_trie: fn() -> 
     );
 }
 
-pub(super) fn test_prune_retains_structurally_modified_branch<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_retains_structurally_modified_branch(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     let key = |first_byte, second_byte| {
         let mut key = B256::ZERO;
         key.0[0] = first_byte;
@@ -104,7 +106,7 @@ pub(super) fn test_prune_retains_structurally_modified_branch<T: SparseTrie>(new
 ///
 /// Build a trie with several root children that each contain grandchildren, fully reveal,
 /// compute the root, and prune all nodes older than epoch 1.
-pub(super) fn test_prune_reduces_node_count<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_reduces_node_count(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Create 16 pairs with different first nibbles so pruning exercises nested branches.
     let keys: Vec<B256> = (0u8..16)
         .flat_map(|i| {
@@ -120,7 +122,7 @@ pub(super) fn test_prune_reduces_node_count<T: SparseTrie>(new_trie: fn() -> T) 
         keys.iter().enumerate().map(|(i, k)| (*k, U256::from(i + 1))).collect();
 
     let harness = SuiteTestHarness::new(storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Compute root to cache hashes (required for pruning).
     let root_before = trie.root(epoch(0));
@@ -131,7 +133,7 @@ pub(super) fn test_prune_reduces_node_count<T: SparseTrie>(new_trie: fn() -> T) 
     assert!(pruned_count > 0, "prune should convert at least one node to a stub");
 }
 
-pub(super) fn test_prune_then_update_and_recompute_root<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_then_update_and_recompute_root(new_trie: fn() -> ArenaParallelSparseTrie) {
     let keys: Vec<B256> = (0u8..5)
         .map(|i| {
             let mut k = B256::ZERO;
@@ -144,7 +146,7 @@ pub(super) fn test_prune_then_update_and_recompute_root<T: SparseTrie>(new_trie:
         keys.iter().enumerate().map(|(i, k)| (*k, U256::from(i + 1))).collect();
 
     let harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     trie.root(epoch(0));
 
@@ -181,7 +183,7 @@ pub(super) fn test_prune_then_update_and_recompute_root<T: SparseTrie>(new_trie:
     assert_eq!(root_after, expected_root, "root after prune + update should match reference trie");
 }
 
-pub(super) fn test_prune_then_reveal_pruned_subtree<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_then_reveal_pruned_subtree(new_trie: fn() -> ArenaParallelSparseTrie) {
     let keys: Vec<B256> = (0u8..5)
         .map(|i| {
             let mut k = B256::ZERO;
@@ -194,7 +196,7 @@ pub(super) fn test_prune_then_reveal_pruned_subtree<T: SparseTrie>(new_trie: fn(
         keys.iter().enumerate().map(|(i, k)| (*k, U256::from(i + 1))).collect();
 
     let harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     trie.root(epoch(0));
     trie.prune(epoch(1));
@@ -219,7 +221,9 @@ pub(super) fn test_prune_then_reveal_pruned_subtree<T: SparseTrie>(new_trie: fn(
 
 /// Pruning a trie with both large (hashed) and small (embedded) node values
 /// should preserve the root hash.
-pub(super) fn test_prune_mixed_embedded_and_hashed_nodes<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_mixed_embedded_and_hashed_nodes(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     let mut storage = BTreeMap::new();
 
     // 4 keys with large values (produce hashed nodes: RLP ≥ 32 bytes)
@@ -251,7 +255,7 @@ pub(super) fn test_prune_mixed_embedded_and_hashed_nodes<T: SparseTrie>(new_trie
 
 /// After pruning, inserting a new leaf at a
 /// previously-unrevealed path should not panic.
-pub(super) fn test_prune_then_update_no_panic<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_then_update_no_panic(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Build a trie with 64 leaves (16 keys × 4 first-nibble groups).
     let mut storage = BTreeMap::new();
     for group in 0..4u8 {
@@ -263,7 +267,7 @@ pub(super) fn test_prune_then_update_no_panic<T: SparseTrie>(new_trie: fn() -> T
     }
 
     let harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let root_before_prune = trie.root(epoch(0));
 
@@ -289,12 +293,12 @@ pub(super) fn test_prune_then_update_no_panic<T: SparseTrie>(new_trie: fn() -> T
 
 /// When the root is not a branch (e.g., a single
 /// leaf or empty root), `prune` should immediately return 0 without walking.
-pub(super) fn test_prune_only_descends_into_branch_root<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_only_descends_into_branch_root(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Single-leaf trie: root is a leaf node, not a branch.
     let storage: BTreeMap<B256, U256> =
         BTreeMap::from([(B256::with_last_byte(0x10), U256::from(1))]);
     let harness = SuiteTestHarness::new(storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let _root = trie.root(epoch(0));
     let pruned = trie.prune(epoch(1));
@@ -310,7 +314,9 @@ pub(super) fn test_prune_only_descends_into_branch_root<T: SparseTrie>(new_trie:
 /// Small subtrie root nodes (RLP < 32 bytes) are
 /// handled correctly during prune. After `root()` + `prune()`, a subsequent `root()`
 /// still returns the same hash.
-pub(super) fn test_prune_handles_small_subtrie_root_nodes<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_handles_small_subtrie_root_nodes(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Build a trie with two groups of leaves to create a branch root with mixed
     // subtrie sizes:
     // - Group A (nibble 0x1): 16 leaves with large values → hashable subtrie root (RLP ≥ 32 bytes)
@@ -330,7 +336,7 @@ pub(super) fn test_prune_handles_small_subtrie_root_nodes<T: SparseTrie>(new_tri
     storage.insert(small_key, U256::from(1));
 
     let harness = SuiteTestHarness::new(storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     trie.root(epoch(0));
     let mut update = B256Map::from_iter([(

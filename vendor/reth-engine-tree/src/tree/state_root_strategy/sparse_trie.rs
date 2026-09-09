@@ -14,26 +14,25 @@ use base_execution_state_tasks::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
     ProofWorkerHandle, StateRootTaskError,
 };
+use base_execution_state_trie::{
+    DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,
+    updates::TrieUpdates,
+};
 use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use reth_primitives_traits::FastInstant as Instant;
-use base_execution_state_trie::{
-    DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,
-    updates::TrieUpdates,
-};
 use reth_trie_sparse::{
-    ArenaParallelSparseTrie, DeferredDrops, LeafUpdate, RevealableSparseTrie, SparseStateTrie,
-    SparseTrie, TrieNodeEpoch,
-    errors::{SparseStateTrieErrorKind, SparseTrieErrorKind, SparseTrieResult},
+    DeferredDrops, LeafUpdate, RevealableSparseTrie, SparseStateTrie, TrieNodeEpoch,
+    errors::SparseStateTrieErrorKind, errors::SparseTrieErrorKind, errors::SparseTrieResult,
 };
 use tracing::{debug, debug_span, error, instrument, trace_span};
 
 use super::{StateRootComputeOutcome, StateRootMessage, evm_state_to_hashed_post_state};
 
 /// Sparse trie task implementation that uses in-memory sparse trie data to schedule proof fetching.
-pub(super) struct SparseTrieCacheTask<A = ArenaParallelSparseTrie, S = ArenaParallelSparseTrie> {
+pub(super) struct SparseTrieCacheTask {
     /// Sender for proof results.
     proof_result_tx: ProofResultSender,
     /// Receiver for proof results directly from workers.
@@ -47,7 +46,7 @@ pub(super) struct SparseTrieCacheTask<A = ArenaParallelSparseTrie, S = ArenaPara
     /// Sender half for the channel to send final hashed state to.
     final_hashed_state_tx: Option<std::sync::mpsc::Sender<Arc<HashedPostState>>>,
     /// `SparseStateTrie` used for computing the state root.
-    trie: SparseStateTrie<A, S>,
+    trie: SparseStateTrie,
     /// The parent block's state root.
     parent_state_root: B256,
     /// The new epoch assigned to nodes modified by this task.
@@ -123,11 +122,7 @@ pub(super) struct SparseTrieCacheTask<A = ArenaParallelSparseTrie, S = ArenaPara
     metrics: SparseTrieTaskMetrics,
 }
 
-impl<A, S> SparseTrieCacheTask<A, S>
-where
-    A: SparseTrie + Default,
-    S: SparseTrie + Default + Clone,
-{
+impl SparseTrieCacheTask {
     /// Creates a new sparse trie, pre-populating with an existing [`SparseStateTrie`].
     #[expect(clippy::too_many_arguments)]
     pub(super) fn new_with_trie(
@@ -139,7 +134,7 @@ where
         proof_result_tx: ProofResultSender,
         proof_result_rx: CrossbeamReceiver<ProofResultMessage>,
         metrics: SparseTrieTaskMetrics,
-        trie: SparseStateTrie<A, S>,
+        trie: SparseStateTrie,
         parent_state_root: B256,
         new_epoch: TrieNodeEpoch,
         chunk_size: usize,
@@ -228,7 +223,7 @@ where
     /// Returns the trie for reuse in the next payload built on top of this one.
     ///
     /// Should be called after the state root result has been sent.
-    pub(super) fn into_trie_for_reuse(self) -> (SparseStateTrie<A, S>, DeferredDrops) {
+    pub(super) fn into_trie_for_reuse(self) -> (SparseStateTrie, DeferredDrops) {
         let Self { mut trie, .. } = self;
         let deferred = trie.take_deferred_drops();
         (trie, deferred)
@@ -238,7 +233,7 @@ where
     ///
     /// Use this when the payload was invalid or cancelled - we don't want to preserve
     /// potentially invalid trie state, but we keep the allocations for reuse.
-    pub(super) fn into_cleared_trie(self) -> (SparseStateTrie<A, S>, DeferredDrops) {
+    pub(super) fn into_cleared_trie(self) -> (SparseStateTrie, DeferredDrops) {
         let Self { mut trie, .. } = self;
         trie.clear();
         let deferred = trie.take_deferred_drops();
@@ -723,12 +718,12 @@ where
             .filter_map(|(address, updates)| updates.is_empty().then_some(*address))
             .collect();
 
-        struct SendStorageTriePtr<S>(*mut RevealableSparseTrie<S>);
+        struct SendStorageTriePtr(*mut RevealableSparseTrie);
         // SAFETY: this wrapper only forwards the pointer across rayon; deref invariants are
         // documented at the use site below.
-        unsafe impl<S: Send> Send for SendStorageTriePtr<S> {}
+        unsafe impl Send for SendStorageTriePtr {}
 
-        let mut tries_to_compute_roots: Vec<(B256, SendStorageTriePtr<S>)> =
+        let mut tries_to_compute_roots: Vec<(B256, SendStorageTriePtr)> =
             Vec::with_capacity(addresses_to_compute_roots.len());
         for address in addresses_to_compute_roots {
             if let Some(trie) = self.trie.storage_tries_mut().get_mut(&address)
@@ -1153,7 +1148,7 @@ mod tests {
         let expected_state = hashed_state.clone();
 
         let handle = std::thread::spawn(move || {
-            SparseTrieCacheTask::<ArenaParallelSparseTrie, ArenaParallelSparseTrie>::run_hashing_task(
+            SparseTrieCacheTask::run_hashing_task(
                 updates_rx,
                 hashed_state_tx,
                 SparseTrieTaskMetrics::default(),

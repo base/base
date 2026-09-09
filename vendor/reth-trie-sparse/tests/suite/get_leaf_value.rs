@@ -2,7 +2,7 @@ use super::*;
 
 /// After inserting or updating a leaf via `update_leaves`, `get_leaf_value`
 /// should return the new value.
-pub(super) fn test_get_leaf_value_after_update<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_get_leaf_value_after_update(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -11,7 +11,7 @@ pub(super) fn test_get_leaf_value_after_update<T: SparseTrie>(new_trie: fn() -> 
         [(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))].into_iter().collect();
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Insert a new leaf (key4) with value 42.
     let key4 = B256::with_last_byte(0x40);
@@ -42,7 +42,7 @@ pub(super) fn test_get_leaf_value_after_update<T: SparseTrie>(new_trie: fn() -> 
 }
 
 /// After removing a leaf via `update_leaves`, `get_leaf_value` should return `None`.
-pub(super) fn test_get_leaf_value_after_removal<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_get_leaf_value_after_removal(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -51,7 +51,7 @@ pub(super) fn test_get_leaf_value_after_removal<T: SparseTrie>(new_trie: fn() ->
         [(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))].into_iter().collect();
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let key2_nibbles = Nibbles::unpack(key2);
     let expected_value_rlp = encode_fixed_size(&U256::from(2)).to_vec();

@@ -7,14 +7,14 @@ use core::{cmp::Reverse, mem};
 
 use alloy_primitives::{B256, keccak256, map::B256Map};
 use alloy_trie::TrieMask;
+use base_execution_state_types::{
+    BranchNodeMasks, BranchNodeRef, EMPTY_ROOT_HASH, ExtensionNodeRef, LeafNodeRef, Nibbles,
+    ProofTrieNodeV2, ProofV2TargetParent, RlpNode, SparseTrieResult, TrieNodeV2,
+};
 use branch_child_idx::{BranchChildIdx, BranchChildIter};
 use cursor::{ArenaCursor, NextResult, SeekResult};
 use nodes::{
     ArenaSparseNode, ArenaSparseNodeBranch, ArenaSparseNodeBranchChild, ArenaSparseNodeState,
-};
-use base_execution_state_types::{
-    BranchNodeMasks, BranchNodeRef, EMPTY_ROOT_HASH, ExtensionNodeRef, LeafNodeRef, Nibbles,
-    ProofTrieNodeV2, ProofV2TargetParent, RlpNode, SparseTrieResult, TrieNodeV2,
 };
 use slotmap::{DefaultKey, SlotMap};
 use smallvec::SmallVec;
@@ -22,9 +22,7 @@ use tracing::{instrument, trace};
 
 #[cfg(feature = "trie-debug")]
 use crate::debug_recorder::{LeafUpdateRecord, ProofTrieNodeRecord, RecordedOp, TrieDebugRecorder};
-use crate::{
-    LeafLookup, LeafLookupError, LeafUpdate, SparseTrie, SparseTrieUpdates, TrieNodeEpoch,
-};
+use crate::{LeafLookup, LeafLookupError, LeafUpdate, SparseTrieUpdates, TrieNodeEpoch};
 
 /// Alias for the slotmap key type used as node references throughout the arena trie.
 type Index = DefaultKey;
@@ -2255,9 +2253,24 @@ impl ArenaParallelSparseTrie {
     }
 }
 
-impl SparseTrie for ArenaParallelSparseTrie {
+impl ArenaParallelSparseTrie {
     #[instrument(level = "trace", target = TRACE_TARGET, skip_all)]
-    fn set_root(
+    /// Configures the trie to have the given root node revealed.
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - The root node to reveal
+    /// * `masks` - Trie masks for root branch node
+    /// * `retain_updates` - Whether to track updates
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if successful, or an error if revealing fails.
+    ///
+    /// # Panics
+    ///
+    /// May panic if the trie is not new/cleared, and has already revealed nodes.
+    pub fn set_root(
         &mut self,
         root: TrieNodeV2,
         masks: Option<BranchNodeMasks>,
@@ -2319,7 +2332,16 @@ impl SparseTrie for ArenaParallelSparseTrie {
         Ok(())
     }
 
-    fn set_updates(&mut self, retain_updates: bool) {
+    /// Configures the trie to retain information about updates.
+    ///
+    /// If `retain_updates` is true, the trie will record branch node updates
+    /// and deletions. This information can be used to efficiently update
+    /// an external database.
+    ///
+    /// # Arguments
+    ///
+    /// * `retain_updates` - Whether to track updates
+    pub fn set_updates(&mut self, retain_updates: bool) {
         if retain_updates {
             self.buffers.updates.get_or_insert_with(SparseTrieUpdates::default).clear();
         } else {
@@ -2328,7 +2350,26 @@ impl SparseTrie for ArenaParallelSparseTrie {
     }
 
     #[instrument(level = "trace", target = TRACE_TARGET, skip_all, fields(num_nodes = nodes.len()))]
-    fn reveal_nodes(&mut self, nodes: &mut [ProofTrieNodeV2]) -> SparseTrieResult<()> {
+    /// Reveals one or more trie nodes if they have not been revealed before.
+    ///
+    /// This function decodes trie nodes and inserts them into the trie structure. It handles
+    /// different node types (leaf, extension, branch) by appropriately adding them to the trie and
+    /// recursively revealing their children.
+    ///
+    /// # Arguments
+    ///
+    /// * `nodes` - The nodes to be revealed, each having a path and optional set of branch node
+    ///   masks. The nodes will be unsorted.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if successful, or an error if any of the nodes was not revealed.
+    ///
+    /// # Note
+    ///
+    /// The implementation may modify the input nodes. A common thing to do is [`std::mem::replace`]
+    /// each node with [`TrieNodeV2::EmptyRoot`] to avoid cloning.
+    pub fn reveal_nodes(&mut self, nodes: &mut [ProofTrieNodeV2]) -> SparseTrieResult<()> {
         if nodes.is_empty() {
             return Ok(());
         }
@@ -2472,7 +2513,15 @@ impl SparseTrie for ArenaParallelSparseTrie {
     }
 
     #[instrument(level = "trace", target = TRACE_TARGET, skip_all, ret)]
-    fn root(&mut self, new_epoch: TrieNodeEpoch) -> B256 {
+    /// Calculates and returns the root hash of the trie at the provided epoch.
+    ///
+    /// This processes dirty nodes by updating their RLP encodings and caching their newest
+    /// modification at `new_epoch`, then returns the root hash.
+    ///
+    /// # Returns
+    ///
+    /// The root hash of the trie.
+    pub fn root(&mut self, new_epoch: TrieNodeEpoch) -> B256 {
         #[cfg(feature = "trie-debug")]
         self.debug_recorder.record(RecordedOp::Root);
 
@@ -2489,11 +2538,13 @@ impl SparseTrie for ArenaParallelSparseTrie {
         rlp_node.as_hash().expect("root RlpNode must be a hash")
     }
 
-    fn is_root_cached(&self) -> bool {
+    /// Returns true if the root node is cached and does not need any recomputation.
+    pub fn is_root_cached(&self) -> bool {
         self.upper_arena[self.root].is_cached()
     }
 
-    fn root_epoch(&self) -> Option<TrieNodeEpoch> {
+    /// Returns the root's modification epoch when it is clean, or `None` when it is dirty.
+    pub fn root_epoch(&self) -> Option<TrieNodeEpoch> {
         match self.upper_arena[self.root].state_ref()? {
             ArenaSparseNodeState::Revealed => Some(TrieNodeEpoch::UNMODIFIED),
             ArenaSparseNodeState::Cached { epoch, .. } => Some(*epoch),
@@ -2502,7 +2553,12 @@ impl SparseTrie for ArenaParallelSparseTrie {
     }
 
     #[instrument(level = "trace", target = TRACE_TARGET, skip_all)]
-    fn update_subtrie_hashes(&mut self, new_epoch: TrieNodeEpoch) {
+    /// Recalculates and updates the RLP hashes of subtries deeper than a certain level. The level
+    /// is defined in the implementation.
+    ///
+    /// The root node is considered to be at level 0. This method is useful for optimizing
+    /// hash recalculations after localized changes to the trie structure.
+    pub fn update_subtrie_hashes(&mut self, new_epoch: TrieNodeEpoch) {
         #[cfg(feature = "trie-debug")]
         self.debug_recorder.record(RecordedOp::UpdateSubtrieHashes);
 
@@ -2595,11 +2651,46 @@ impl SparseTrie for ArenaParallelSparseTrie {
         }
     }
 
-    fn get_leaf_value(&self, full_path: &Nibbles) -> Option<&Vec<u8>> {
+    /// Retrieves a reference to the leaf value at the specified path.
+    ///
+    /// # Arguments
+    ///
+    /// * `full_path` - The full path to the leaf value
+    ///
+    /// # Returns
+    ///
+    /// A reference to the leaf value stored at the given full path, if it is revealed.
+    ///
+    /// Note: a value can exist in the full trie and this function still returns `None`
+    /// because the value has not been revealed.
+    ///
+    /// Hence a `None` indicates two possibilities:
+    /// - The value does not exists in the trie, so it cannot be revealed
+    /// - The value has not yet been revealed. In order to determine which is true, one would need
+    ///   an exclusion proof.
+    pub fn get_leaf_value(&self, full_path: &Nibbles) -> Option<&Vec<u8>> {
         Self::get_leaf_value_in_arena(&self.upper_arena, self.root, full_path, 0)
     }
 
-    fn find_leaf(
+    /// Attempts to find a leaf node at the specified path.
+    ///
+    /// This method traverses the trie from the root down to the given path, checking
+    /// if a leaf exists at that path. It can be used to verify the existence of a leaf
+    /// or to generate an exclusion proof (proof that a leaf does not exist).
+    ///
+    /// # Parameters
+    ///
+    /// - `full_path`: The path to search for.
+    /// - `expected_value`: Optional expected value. If provided, will verify the leaf value
+    ///   matches.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(LeafLookup::Exists)` if the leaf exists with the expected value.
+    /// - `Ok(LeafLookup::NonExistent)` if the leaf definitely does not exist (exclusion proof).
+    /// - `Err(LeafLookupError)` if the search encountered a blinded node or found a different
+    ///   value.
+    pub fn find_leaf(
         &self,
         full_path: &Nibbles,
         expected_value: Option<&Vec<u8>>,
@@ -2607,14 +2698,25 @@ impl SparseTrie for ArenaParallelSparseTrie {
         Self::find_leaf_in_arena(&self.upper_arena, self.root, full_path, 0, expected_value)
     }
 
-    fn updates_ref(&self) -> Cow<'_, SparseTrieUpdates> {
+    /// Returns a reference to the current sparse trie updates.
+    ///
+    /// If no updates have been made/recorded, returns an empty update set.
+    pub fn updates_ref(&self) -> Cow<'_, SparseTrieUpdates> {
         self.buffers
             .updates
             .as_ref()
             .map_or(Cow::Owned(SparseTrieUpdates::default()), Cow::Borrowed)
     }
 
-    fn take_updates(&mut self) -> SparseTrieUpdates {
+    /// Consumes and returns the currently accumulated trie updates.
+    ///
+    /// This is useful when you want to apply the updates to an external database
+    /// and then start tracking a new set of updates.
+    ///
+    /// # Returns
+    ///
+    /// The accumulated updates, or an empty set if updates weren't being tracked.
+    pub fn take_updates(&mut self) -> SparseTrieUpdates {
         match self.buffers.updates.take() {
             Some(updates) => {
                 self.buffers.updates = Some(SparseTrieUpdates::with_capacity(
@@ -2628,7 +2730,14 @@ impl SparseTrie for ArenaParallelSparseTrie {
     }
 
     #[instrument(level = "trace", target = TRACE_TARGET, skip_all)]
-    fn wipe(&mut self) {
+    /// Removes all nodes and values from the trie, resetting it to a blank state
+    /// with only an empty root node. This is used when a storage root is deleted.
+    ///
+    /// This should not be used when intending to reuse the trie for a fresh account/storage root;
+    /// use `clear` for that.
+    ///
+    /// Note: All previously tracked changes to the trie are also removed.
+    pub fn wipe(&mut self) {
         trace!(target: TRACE_TARGET, "Wiping arena trie");
         self.clear();
         *self.upper_arena[self.root].state_mut() = ArenaSparseNodeState::Dirty;
@@ -2636,7 +2745,11 @@ impl SparseTrie for ArenaParallelSparseTrie {
     }
 
     #[instrument(level = "trace", target = TRACE_TARGET, skip_all)]
-    fn clear(&mut self) {
+    /// This clears all data structures in the sparse trie, keeping the backing data structures
+    /// allocated. An empty root node is inserted at the root.
+    ///
+    /// This is useful for reusing the trie without needing to reallocate memory.
+    pub fn clear(&mut self) {
         #[cfg(feature = "trie-debug")]
         self.debug_recorder.reset();
 
@@ -2653,7 +2766,17 @@ impl SparseTrie for ArenaParallelSparseTrie {
         skip_all,
         fields(prune_before = prune_before.get()),
     )]
-    fn prune(&mut self, prune_before: TrieNodeEpoch) -> usize {
+    /// Collapses nodes last modified before `prune_before` into hash stubs.
+    ///
+    /// # Preconditions
+    ///
+    /// The trie must not be dirty. An unmodified revealed root may be pruned because
+    /// proof-revealed descendants carry cached RLP nodes.
+    ///
+    /// # Returns
+    ///
+    /// The number of nodes converted to hash stubs.
+    pub fn prune(&mut self, prune_before: TrieNodeEpoch) -> usize {
         assert!(self.root_epoch().is_some(), "prune cannot run on a dirty trie");
 
         // Only descend if the root is a branch; otherwise there are no subtries.
@@ -2802,7 +2925,25 @@ impl SparseTrie for ArenaParallelSparseTrie {
         skip_all,
         fields(num_updates = updates.len()),
     )]
-    fn update_leaves(
+    /// Applies leaf updates to the sparse trie.
+    ///
+    /// When a [`LeafUpdate::Changed`] is successfully applied, it is removed from the
+    /// given [`B256Map`]. If it could not be applied due to blinded nodes, it remains
+    /// in the map and the callback is invoked with the required proof target.
+    ///
+    /// Once that proof is calculated and revealed via [`ArenaParallelSparseTrie::reveal_nodes`], the same
+    /// `updates` map can be reused to retry the update.
+    ///
+    /// The callback receives `(key, parent)` where `key` is the full 32-byte hashed key
+    /// (right-padded with zeros from the blinded path) and `parent` identifies the revealed logical
+    /// parent branch. No known parent indicates that the trie is entirely blind and the proof
+    /// must include the root.
+    ///
+    /// The callback may be invoked multiple times for the same target across retry loops.
+    /// Callers should deduplicate if needed.
+    ///
+    /// [`LeafUpdate::Touched`] behaves identically except it does not modify the leaf value.
+    pub fn update_leaves(
         &mut self,
         updates: &mut B256Map<LeafUpdate>,
         mut proof_required_fn: impl FnMut(B256, ProofV2TargetParent),
@@ -3120,7 +3261,11 @@ impl SparseTrie for ArenaParallelSparseTrie {
     }
 
     #[cfg(feature = "trie-debug")]
-    fn take_debug_recorder(&mut self) -> TrieDebugRecorder {
+    /// Takes the debug recorder out of this trie, replacing it with an empty one.
+    ///
+    /// Returns the recorder containing all recorded mutations since the last reset.
+    /// The default implementation returns an empty recorder.
+    pub fn take_debug_recorder(&mut self) -> TrieDebugRecorder {
         core::mem::take(&mut self.debug_recorder)
     }
 }
@@ -3130,15 +3275,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_primitives::{B256, U256, map::B256Map};
-    use rand::{Rng, SeedableRng, seq::SliceRandom};
     use base_execution_state_trie::test_utils::TrieTestHarness;
     use base_execution_state_types::ProofV2Target;
+    use rand::{Rng, SeedableRng, seq::SliceRandom};
     use tracing::{info, trace};
 
     use super::TRACE_TARGET;
-    use crate::{
-        ArenaParallelSparseTrie, ArenaParallelismThresholds, LeafUpdate, SparseTrie, TrieNodeEpoch,
-    };
+    use crate::{ArenaParallelSparseTrie, ArenaParallelismThresholds, LeafUpdate, TrieNodeEpoch};
 
     const fn epoch(value: u64) -> TrieNodeEpoch {
         TrieNodeEpoch::new(value)

@@ -5,7 +5,9 @@ use super::*;
 /// Build a trie with enough leaves to produce hashed branch children (≥16 per subtrie),
 /// insert 1 new leaf + modify 1 existing, compute root, take updates, then verify root is
 /// unchanged and updates are non-empty.
-pub(super) fn test_full_lifecycle_update_root_take_updates<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_full_lifecycle_update_root_take_updates(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // 16 leaves sharing prefix [1,0] to produce hashed branch children.
     let mut storage: BTreeMap<B256, U256> = BTreeMap::new();
     for i in 0u8..16 {
@@ -20,7 +22,7 @@ pub(super) fn test_full_lifecycle_update_root_take_updates<T: SparseTrie>(new_tr
     storage.insert(key_extra, U256::from(100));
 
     let harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(true, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(true, new_trie);
 
     // Cache initial hashes.
     let _ = trie.root(epoch(0));
@@ -65,7 +67,7 @@ pub(super) fn test_full_lifecycle_update_root_take_updates<T: SparseTrie>(new_tr
 ///
 /// Build a 5-leaf trie, reveal all proofs, apply 2 modifications + 1 removal,
 /// and verify root matches the reference trie with the same mutations.
-pub(super) fn test_reveal_update_root_basic_lifecycle<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_reveal_update_root_basic_lifecycle(new_trie: fn() -> ArenaParallelSparseTrie) {
     let mut keys = Vec::new();
     let mut storage: BTreeMap<B256, U256> = BTreeMap::new();
     for i in 0u8..5 {
@@ -76,7 +78,7 @@ pub(super) fn test_reveal_update_root_basic_lifecycle<T: SparseTrie>(new_trie: f
     }
 
     let harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(true, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(true, new_trie);
 
     // Apply 2 modifications and 1 removal.
     let mut changeset: BTreeMap<B256, U256> = BTreeMap::new();
@@ -104,7 +106,9 @@ pub(super) fn test_reveal_update_root_basic_lifecycle<T: SparseTrie>(new_trie: f
 
 /// Incremental reveal and update with retry loop.
 /// Partial proof → `update_leaves` hits blinded nodes → reveal more → retry succeeds.
-pub(super) fn test_incremental_reveal_and_update_with_retry<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_incremental_reveal_and_update_with_retry(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Build 10 leaves across multiple subtries so partial reveal leaves some blinded.
     // Use 16 keys per group so branch children become hash nodes (>32 bytes RLP).
     let mut base_storage = BTreeMap::new();
@@ -130,7 +134,8 @@ pub(super) fn test_incremental_reveal_and_update_with_retry<T: SparseTrie>(new_t
     let harness = SuiteTestHarness::new(base_storage.clone());
 
     // Reveal only group A keys, leaving group B's subtrie blinded.
-    let mut trie: T = harness.init_trie_with_targets(&group_a_keys, true, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&group_a_keys, true, new_trie);
 
     // Prepare updates for 5 keys: 3 from group A (covered) + 2 from group B (blinded).
     let mut changeset: BTreeMap<B256, U256> = BTreeMap::new();
@@ -187,7 +192,7 @@ pub(super) fn test_incremental_reveal_and_update_with_retry<T: SparseTrie>(new_t
 ///
 /// Simulates a complete block processing cycle: receive state updates → apply to storage
 /// tries → compute storage roots → promote to account trie → compute state root → take updates.
-pub(super) fn test_full_block_processing_lifecycle<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_full_block_processing_lifecycle(new_trie: fn() -> ArenaParallelSparseTrie) {
     // --- Setup: Build account trie with 5 accounts ---
     // A1 storage: 5 slots, A2 storage: 3 slots, A3-A5: empty storage.
     // Account trie leaf values = RLP-encoded storage roots.
@@ -236,9 +241,10 @@ pub(super) fn test_full_block_processing_lifecycle<T: SparseTrie>(new_trie: fn()
     let mut acct_harness = SuiteTestHarness::new(acct_storage.clone());
 
     // Initialize all tries fully revealed with update tracking.
-    let mut a1_trie: T = a1_harness.init_trie_fully_revealed(true, new_trie);
-    let mut a2_trie: T = a2_harness.init_trie_fully_revealed(true, new_trie);
-    let mut acct_trie: T = acct_harness.init_trie_fully_revealed(true, new_trie);
+    let mut a1_trie: ArenaParallelSparseTrie = a1_harness.init_trie_fully_revealed(true, new_trie);
+    let mut a2_trie: ArenaParallelSparseTrie = a2_harness.init_trie_fully_revealed(true, new_trie);
+    let mut acct_trie: ArenaParallelSparseTrie =
+        acct_harness.init_trie_fully_revealed(true, new_trie);
 
     // Cache initial hashes for all tries.
     let _ = a1_trie.root(epoch(0));
@@ -307,7 +313,7 @@ pub(super) fn test_full_block_processing_lifecycle<T: SparseTrie>(new_trie: fn()
 /// `Touched` is used to prewarm accounts/slots before actual state changes arrive.
 /// When the real `Changed` update arrives, it overwrites the `Touched` entry.
 /// This test verifies that prewarming followed by mutation works correctly.
-pub(super) fn test_touched_prewarm_then_changed_update<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_touched_prewarm_then_changed_update(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -325,7 +331,7 @@ pub(super) fn test_touched_prewarm_then_changed_update<T: SparseTrie>(new_trie: 
     .collect();
 
     let mut harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Step 1: Prewarm 3 keys with Touched — all should be drained (paths are revealed).
     let mut leaf_updates: B256Map<LeafUpdate> =
@@ -369,8 +375,8 @@ pub(super) fn test_touched_prewarm_then_changed_update<T: SparseTrie>(new_trie: 
 /// A `Touched` update hits a blinded node, triggering a proof request. After the proof is
 /// revealed, a `Changed` update for the same key succeeds. This is the prewarm-miss →
 /// reveal → update sequence.
-pub(super) fn test_touched_on_blinded_triggers_proof_then_changed_succeeds<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_touched_on_blinded_triggers_proof_then_changed_succeeds(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Two groups of 16 keys each to create blinded subtries.
     let mut base_storage = BTreeMap::new();
@@ -394,7 +400,8 @@ pub(super) fn test_touched_on_blinded_triggers_proof_then_changed_succeeds<T: Sp
     let mut harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only group A — group B's subtrie is blinded.
-    let mut trie: T = harness.init_trie_with_targets(&group_a_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&group_a_keys, false, new_trie);
 
     // Step 1: Touched on a key in group B's blinded subtrie → callback fires.
     let target_key = group_b_keys[0];
@@ -441,7 +448,9 @@ pub(super) fn test_touched_on_blinded_triggers_proof_then_changed_succeeds<T: Sp
 /// Simulates the `SparseStateTrie::update_account` pattern: read existing leaf via
 /// `get_leaf_value`, decode, modify (change one field while preserving another), re-encode,
 /// and update. Verifies that root matches reference.
-pub(super) fn test_get_leaf_value_for_storage_root_lookup<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_get_leaf_value_for_storage_root_lookup(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -452,7 +461,7 @@ pub(super) fn test_get_leaf_value_for_storage_root_lookup<T: SparseTrie>(new_tri
             .collect();
 
     let mut harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Step 1: Read existing leaf value via get_leaf_value.
     let key1_nibbles = Nibbles::unpack(key1);
@@ -490,7 +499,9 @@ pub(super) fn test_get_leaf_value_for_storage_root_lookup<T: SparseTrie>(new_tri
 
 /// Before updating, check existence via `find_leaf`, then
 /// insert/modify, and verify `find_leaf` reflects the new state.
-pub(super) fn test_find_leaf_before_update_to_check_existence<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_find_leaf_before_update_to_check_existence(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -500,7 +511,7 @@ pub(super) fn test_find_leaf_before_update_to_check_existence<T: SparseTrie>(new
         [(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))].into_iter().collect();
 
     let mut harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let key2_nibbles = Nibbles::unpack(key2);
     let nonexistent_nibbles = Nibbles::unpack(nonexistent_key);
@@ -551,7 +562,7 @@ pub(super) fn test_find_leaf_before_update_to_check_existence<T: SparseTrie>(new
 ///
 /// Build a trie at epoch 0, update K1,K2,K3 at epoch 1, prune before epoch 1, then update
 /// K1 without a proof and K5 after re-revealing it.
-pub(super) fn test_prune_then_reuse_for_next_block<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_prune_then_reuse_for_next_block(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Build a trie with 10 leaves.
     let mut storage: BTreeMap<B256, U256> = BTreeMap::new();
     let mut keys = Vec::new();
@@ -563,7 +574,7 @@ pub(super) fn test_prune_then_reuse_for_next_block<T: SparseTrie>(new_trie: fn()
     }
 
     let mut harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(true, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(true, new_trie);
 
     // Cache initial hashes.
     let _ = trie.root(epoch(0));

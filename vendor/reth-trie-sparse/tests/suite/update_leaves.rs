@@ -4,7 +4,7 @@ use super::*;
 ///
 /// Starting from a 3-leaf trie, inserting a 4th key via `update_leaves` should produce
 /// a root hash matching a reference trie containing all 4 leaves.
-pub(super) fn test_update_leaves_insert_new_leaf<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_insert_new_leaf(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -17,7 +17,8 @@ pub(super) fn test_update_leaves_insert_new_leaf<T: SparseTrie>(new_trie: fn() -
 
     // Initialize trie with all 3 existing keys revealed, plus the new key target.
     let all_targets = vec![key1, key2, key3, new_key];
-    let mut trie: T = harness.init_trie_with_targets(&all_targets, true, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&all_targets, true, new_trie);
 
     // Insert the new leaf.
     let new_value = U256::from(4);
@@ -48,7 +49,7 @@ pub(super) fn test_update_leaves_insert_new_leaf<T: SparseTrie>(new_trie: fn() -
 ///
 /// Starting from a 3-leaf trie, changing one leaf's value via `update_leaves` should
 /// produce a root hash matching a reference trie with the updated value.
-pub(super) fn test_update_leaves_modify_existing_leaf<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_modify_existing_leaf(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -57,7 +58,7 @@ pub(super) fn test_update_leaves_modify_existing_leaf<T: SparseTrie>(new_trie: f
         BTreeMap::from([(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))]);
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(true, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(true, new_trie);
 
     // Modify an existing leaf with a new value.
     let new_value = U256::from(999);
@@ -83,7 +84,7 @@ pub(super) fn test_update_leaves_modify_existing_leaf<T: SparseTrie>(new_trie: f
 ///
 /// Calling `update_leaves` with one key on a default (empty) trie should produce a root
 /// hash matching a reference trie with that single leaf.
-pub(super) fn test_insert_single_leaf_into_empty_trie<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_insert_single_leaf_into_empty_trie(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key = B256::with_last_byte(42);
     let value = U256::from(1);
 
@@ -112,7 +113,9 @@ pub(super) fn test_insert_single_leaf_into_empty_trie<T: SparseTrie>(new_trie: f
 ///
 /// All 256 keys are inserted in a single `update_leaves` call. The root must match
 /// a reference trie and `take_updates()` must return non-empty results.
-pub(super) fn test_insert_multiple_leaves_into_empty_trie<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_insert_multiple_leaves_into_empty_trie(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Build 256 keys with alternating prefix patterns (matching original test).
     let storage: BTreeMap<B256, U256> = (0..=255u8)
         .map(|b| {
@@ -151,7 +154,7 @@ pub(super) fn test_insert_multiple_leaves_into_empty_trie<T: SparseTrie>(new_tri
 /// Insert 256 keys with old values, compute root (hash1). Then update all 256 keys with
 /// new values, compute root (hash2). Both must match their respective reference tries,
 /// and hash1 ≠ hash2.
-pub(super) fn test_update_all_leaves_with_new_values<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_all_leaves_with_new_values(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Build 256 keys with alternating prefix patterns.
     let keys: Vec<B256> = (0..=255u8)
         .map(|b| if b % 2 == 0 { B256::repeat_byte(b) } else { B256::with_last_byte(b) })
@@ -194,8 +197,8 @@ pub(super) fn test_update_all_leaves_with_new_values<T: SparseTrie>(new_trie: fn
 /// Insert key `0x50..` then key `0x51..` (adjacent first-byte keys that share first nibble `5`),
 /// computing root after each. The final root must match the reference trie with both keys.
 /// `take_updates()` should return empty since no branch masks were set.
-pub(super) fn test_two_leaves_at_adjacent_keys_root_correctness<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_two_leaves_at_adjacent_keys_root_correctness(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     let mut key_50 = B256::ZERO;
     key_50.0[0] = 0x50;
@@ -236,7 +239,7 @@ pub(super) fn test_two_leaves_at_adjacent_keys_root_correctness<T: SparseTrie>(
 ///
 /// Starting from a 3-leaf trie, removing one key should produce a root hash
 /// matching a reference trie containing only the remaining 2 leaves.
-pub(super) fn test_update_leaves_remove_leaf<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_remove_leaf(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -245,7 +248,7 @@ pub(super) fn test_update_leaves_remove_leaf<T: SparseTrie>(new_trie: fn() -> T)
         BTreeMap::from([(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))]);
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(true, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(true, new_trie);
 
     // Remove key2 by setting its value to U256::ZERO (produces LeafUpdate::Changed(vec![])).
     let mut leaf_updates = SuiteTestHarness::leaf_updates(&BTreeMap::from([(key2, U256::ZERO)]));
@@ -269,7 +272,9 @@ pub(super) fn test_update_leaves_remove_leaf<T: SparseTrie>(new_trie: fn() -> T)
 /// extension. Three leaves sharing prefix `0x5` create a branch at nibble 5; removing one
 /// child should collapse the structure. The root hash must match a reference trie with the
 /// remaining two leaves.
-pub(super) fn test_remove_leaf_branch_collapses_to_extension<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_remove_leaf_branch_collapses_to_extension(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Keys sharing prefix 0x5: two share 0x50 (children at 0x502..) and one at 0x53.
     // This creates a branch at nibble 5 with children at nibbles 0 and 3.
     let mut key_50231 = B256::ZERO;
@@ -293,7 +298,7 @@ pub(super) fn test_remove_leaf_branch_collapses_to_extension<T: SparseTrie>(new_
     ]);
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Remove the leaf at key_537 — this collapses the branch at 0x5.
     let mut leaf_updates = SuiteTestHarness::leaf_updates(&BTreeMap::from([(key_537, U256::ZERO)]));
@@ -314,7 +319,7 @@ pub(super) fn test_remove_leaf_branch_collapses_to_extension<T: SparseTrie>(new_
 /// Removing one of two leaves from a branch should collapse the
 /// branch into a leaf. Update tracking should report the root branch as removed and NOT as
 /// updated.
-pub(super) fn test_remove_leaf_branch_collapses_to_leaf<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_remove_leaf_branch_collapses_to_leaf(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Two leaves with different first nibbles → branch root.
     let key_a = B256::with_last_byte(0x10); // first nibble = 1
     let key_b = B256::with_last_byte(0x20); // first nibble = 2
@@ -323,7 +328,7 @@ pub(super) fn test_remove_leaf_branch_collapses_to_leaf<T: SparseTrie>(new_trie:
         BTreeMap::from([(key_a, U256::from(100)), (key_b, U256::from(200))]);
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(true, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(true, new_trie);
 
     // Compute root to cache hashes and drain initial updates.
     let _ = trie.root(epoch(0));
@@ -358,12 +363,12 @@ pub(super) fn test_remove_leaf_branch_collapses_to_leaf<T: SparseTrie>(new_trie:
 
 /// Removing the only leaf in a trie should produce
 /// `EMPTY_ROOT_HASH`.
-pub(super) fn test_remove_last_leaf_produces_empty_root<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_remove_last_leaf_produces_empty_root(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key = B256::with_last_byte(0x12);
     let base_storage: BTreeMap<B256, U256> = BTreeMap::from([(key, U256::from(1))]);
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Remove the only leaf.
     let mut leaf_updates = SuiteTestHarness::leaf_updates(&BTreeMap::from([(key, U256::ZERO)]));
@@ -375,7 +380,7 @@ pub(super) fn test_remove_last_leaf_produces_empty_root<T: SparseTrie>(new_trie:
 
 /// Build 6 leaves then remove one-by-one, verifying root at each
 /// step against a reference trie. Final removal produces `EMPTY_ROOT_HASH`.
-pub(super) fn test_insert_then_remove_sequence<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_insert_then_remove_sequence(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Helper: build a B256 key from a nibble prefix, zero-padded.
     let key_from_nibbles = |nibbles: &[u8]| -> B256 {
         let mut bytes = [0u8; 32];
@@ -437,7 +442,9 @@ pub(super) fn test_insert_then_remove_sequence<T: SparseTrie>(new_trie: fn() -> 
 /// After computing `root()` (which caches hashes on all nodes), attempting to remove a key
 /// that doesn't exist should leave the cache intact so the next `root()` call returns the
 /// same hash without recomputation.
-pub(super) fn test_remove_nonexistent_leaf_preserves_hashes<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_remove_nonexistent_leaf_preserves_hashes(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     let key_a = B256::with_last_byte(0x10);
     let key_b = B256::with_last_byte(0x20);
     let key_c = B256::with_last_byte(0x30);
@@ -446,7 +453,7 @@ pub(super) fn test_remove_nonexistent_leaf_preserves_hashes<T: SparseTrie>(new_t
         BTreeMap::from([(key_a, U256::from(1)), (key_b, U256::from(2)), (key_c, U256::from(3))]);
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Compute root to cache hashes on all nodes.
     let root_before = trie.root(epoch(0));
@@ -469,7 +476,9 @@ pub(super) fn test_remove_nonexistent_leaf_preserves_hashes<T: SparseTrie>(new_t
 /// When `update_leaves` encounters a blinded node (insufficient
 /// proof data), it should invoke the `proof_required_fn` callback with the correct target key
 /// and revealed parent path length, and leave the key in the updates map for retry.
-pub(super) fn test_update_leaves_blinded_node_requests_proof<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_blinded_node_requests_proof(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Use enough keys under two different first nibbles so that branch children become
     // hash nodes (>32 bytes RLP). This ensures partial reveal leaves blinded subtries.
     let mut base_storage = BTreeMap::new();
@@ -495,7 +504,8 @@ pub(super) fn test_update_leaves_blinded_node_requests_proof<T: SparseTrie>(new_
     let harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only group_a keys, leaving group_b's subtrie blinded.
-    let mut trie: T = harness.init_trie_with_targets(&group_a_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&group_a_keys, false, new_trie);
 
     // Try to modify a key in group_b's blinded subtrie.
     let target_key = group_b_keys[0];
@@ -519,7 +529,7 @@ pub(super) fn test_update_leaves_blinded_node_requests_proof<T: SparseTrie>(new_
     );
 }
 
-pub(super) fn test_update_leaves_retry_after_reveal<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_retry_after_reveal(new_trie: fn() -> ArenaParallelSparseTrie) {
     // Same setup as blinded_node_requests_proof: two groups of 16 keys each under
     // different first nibbles, so branch children become hash nodes.
     let mut base_storage = BTreeMap::new();
@@ -543,7 +553,8 @@ pub(super) fn test_update_leaves_retry_after_reveal<T: SparseTrie>(new_trie: fn(
     let harness = SuiteTestHarness::new(base_storage.clone());
 
     // Reveal only group_a keys, leaving group_b's subtrie blinded.
-    let mut trie: T = harness.init_trie_with_targets(&group_a_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&group_a_keys, false, new_trie);
 
     // Modify a key in group_b's blinded subtrie.
     let target_key = group_b_keys[0];
@@ -586,7 +597,9 @@ pub(super) fn test_update_leaves_retry_after_reveal<T: SparseTrie>(new_trie: fn(
     );
 }
 
-pub(super) fn test_remove_leaf_blinded_sibling_requires_reveal<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_remove_leaf_blinded_sibling_requires_reveal(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Build a branch with two children: one revealed leaf at nibble 0x1, and a blinded
     // subtrie at nibble 0x2 (16 keys so it becomes a hash node > 32 bytes).
     let mut base_storage = BTreeMap::new();
@@ -609,7 +622,8 @@ pub(super) fn test_remove_leaf_blinded_sibling_requires_reveal<T: SparseTrie>(ne
     let harness = SuiteTestHarness::new(base_storage.clone());
 
     // Reveal only the single key at nibble 0x1, leaving nibble 0x2's subtrie blinded.
-    let mut trie: T = harness.init_trie_with_targets(&[revealed_key], false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&[revealed_key], false, new_trie);
 
     // Try to remove the revealed leaf. Branch collapse requires the blinded sibling.
     let mut leaf_updates =
@@ -648,8 +662,8 @@ pub(super) fn test_remove_leaf_blinded_sibling_requires_reveal<T: SparseTrie>(ne
 /// Atomic rollback preserves a revealed leaf when its sibling is blinded.
 ///
 /// The update remains pending until the sibling can be revealed.
-pub(super) fn test_update_leaves_removal_branch_collapse_blinded_sibling<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_update_leaves_removal_branch_collapse_blinded_sibling(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Branch: nibble 0x1 = one revealed leaf, nibble 0x2 = 16 blinded keys (hash node).
     let mut base_storage = BTreeMap::new();
@@ -670,7 +684,8 @@ pub(super) fn test_update_leaves_removal_branch_collapse_blinded_sibling<T: Spar
     let harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only the leaf at nibble 0x1, leaving nibble 0x2 blinded.
-    let mut trie: T = harness.init_trie_with_targets(&[revealed_key], false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&[revealed_key], false, new_trie);
 
     // Snapshot state before the removal attempt.
     let revealed_path = Nibbles::unpack(revealed_key);
@@ -707,8 +722,8 @@ pub(super) fn test_update_leaves_removal_branch_collapse_blinded_sibling<T: Spar
 /// When removals in a subtrie would empty it and collapse the parent branch onto
 /// a blinded sibling, `update_leaves` should detect this and request a proof for
 /// the blinded sibling via the callback, deferring the updates.
-pub(super) fn test_update_leaves_subtrie_collapse_requests_proof<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_update_leaves_subtrie_collapse_requests_proof(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Build a branch with two children:
     //   nibble 0x1 → a subtrie with 2 revealed leaves
@@ -739,7 +754,7 @@ pub(super) fn test_update_leaves_subtrie_collapse_requests_proof<T: SparseTrie>(
     let harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only the two subtrie keys at nibble 0x1, leaving nibble 0x2 blinded.
-    let mut trie: T =
+    let mut trie: ArenaParallelSparseTrie =
         harness.init_trie_with_targets(&[subtrie_key_a, subtrie_key_b], false, new_trie);
 
     // Remove both leaves in the subtrie — this would empty the subtrie and
@@ -768,8 +783,8 @@ pub(super) fn test_update_leaves_subtrie_collapse_requests_proof<T: SparseTrie>(
 ///
 /// When multiple keys in the update map all route through the same blinded node,
 /// the callback should be invoked once per key (not deduplicated).
-pub(super) fn test_update_leaves_multiple_keys_same_blinded_node<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_update_leaves_multiple_keys_same_blinded_node(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Branch: nibble 0x1 = 16 revealed keys (hash node), nibble 0x2 = 16 blinded keys.
     let mut base_storage = BTreeMap::new();
@@ -791,7 +806,8 @@ pub(super) fn test_update_leaves_multiple_keys_same_blinded_node<T: SparseTrie>(
     let harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only group_a, leaving nibble 0x2 blinded.
-    let mut trie: T = harness.init_trie_with_targets(&group_a_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&group_a_keys, false, new_trie);
 
     // Submit 3 keys that all start with nibble 0x2 — they all hit the same blinded node.
     let blinded_keys: BTreeMap<B256, U256> = (0u8..3)
@@ -816,7 +832,7 @@ pub(super) fn test_update_leaves_multiple_keys_same_blinded_node<T: SparseTrie>(
 }
 
 /// `LeafUpdate::Touched` on a fully revealed path should be a no-op.
-pub(super) fn test_update_leaves_touched_fully_revealed<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_touched_fully_revealed(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
     let key3 = B256::with_last_byte(0x30);
@@ -825,7 +841,7 @@ pub(super) fn test_update_leaves_touched_fully_revealed<T: SparseTrie>(new_trie:
         [(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))].into_iter().collect();
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let root_before = trie.root(epoch(0));
 
@@ -848,8 +864,8 @@ pub(super) fn test_update_leaves_touched_fully_revealed<T: SparseTrie>(new_trie:
 
 /// `LeafUpdate::Touched` on a path with a blinded node should
 /// invoke the callback and keep the key in the updates map. No trie mutation should occur.
-pub(super) fn test_update_leaves_touched_blinded_requests_proof<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_update_leaves_touched_blinded_requests_proof(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Two groups of 16 keys each under different first nibbles so that branch children
     // become hash nodes (>32 bytes RLP). Partial reveal leaves one subtrie blinded.
@@ -872,7 +888,8 @@ pub(super) fn test_update_leaves_touched_blinded_requests_proof<T: SparseTrie>(
     let harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only group_a keys, leaving group_b's subtrie blinded.
-    let mut trie: T = harness.init_trie_with_targets(&group_a_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&group_a_keys, false, new_trie);
 
     let root_before = trie.root(epoch(0));
 
@@ -907,7 +924,9 @@ pub(super) fn test_update_leaves_touched_blinded_requests_proof<T: SparseTrie>(
 /// An empty (default) trie has an Empty root — all paths are accessible (no blinded nodes).
 /// `Touched` on a key that doesn't exist should be drained from the map without any
 /// callback invocation or mutation.
-pub(super) fn test_update_leaves_touched_nonexistent_key<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_touched_nonexistent_key(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     let mut trie = (new_trie)();
 
     let target_key = B256::with_last_byte(42);
@@ -930,8 +949,8 @@ pub(super) fn test_update_leaves_touched_nonexistent_key<T: SparseTrie>(new_trie
 
 /// `LeafUpdate::Touched` on a nonexistent key in a fully
 /// revealed, populated trie should be a no-op — no callback, key drained, trie unchanged.
-pub(super) fn test_update_leaves_touched_nonexistent_in_populated_trie<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_update_leaves_touched_nonexistent_in_populated_trie(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     let key1 = B256::with_last_byte(0x10);
     let key2 = B256::with_last_byte(0x20);
@@ -941,7 +960,7 @@ pub(super) fn test_update_leaves_touched_nonexistent_in_populated_trie<T: Sparse
         [(key1, U256::from(1)), (key2, U256::from(2)), (key3, U256::from(3))].into_iter().collect();
 
     let harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     let root_before = trie.root(epoch(0));
 
@@ -968,7 +987,7 @@ pub(super) fn test_update_leaves_touched_nonexistent_in_populated_trie<T: Sparse
 
 /// A single `update_leaves` call with a mix of inserts,
 /// modifications, removals, and touched entries should process all correctly.
-pub(super) fn test_update_leaves_multiple_mixed_updates<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_update_leaves_multiple_mixed_updates(new_trie: fn() -> ArenaParallelSparseTrie) {
     let key_a = B256::with_last_byte(0x10); // will be inserted (new key)
     let key_b = B256::with_last_byte(0x20); // will be modified
     let key_c = B256::with_last_byte(0x30); // will be removed
@@ -988,7 +1007,8 @@ pub(super) fn test_update_leaves_multiple_mixed_updates<T: SparseTrie>(new_trie:
 
     // Fully reveal existing trie, plus proof for key_a (new key to be inserted).
     let all_keys = vec![key_a, key_b, key_c, key_d, key_e];
-    let mut trie: T = harness.init_trie_with_targets(&all_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&all_keys, false, new_trie);
 
     // Build mixed leaf updates.
     let new_value_a = U256::from(100);
@@ -1035,8 +1055,8 @@ pub(super) fn test_update_leaves_multiple_mixed_updates<T: SparseTrie>(new_trie:
 /// not just those that previously had a cached hash. This test inserts leaves without
 /// calling `root()` (so no hashes are cached), then removes a leaf and verifies
 /// `root()` returns the correct hash.
-pub(super) fn test_remove_leaf_marks_ancestors_dirty_unconditionally<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_remove_leaf_marks_ancestors_dirty_unconditionally(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Create a trie with 5 leaves.
     let mut keys = Vec::new();
@@ -1092,8 +1112,8 @@ pub(super) fn test_remove_leaf_marks_ancestors_dirty_unconditionally<T: SparseTr
 /// every key with a value must remain findable via `find_leaf` and updatable
 /// via `update_leaves`. This verifies the invariant that structural consistency
 /// is maintained even when branch collapses could orphan value entries.
-pub(super) fn test_orphaned_value_update_falls_through_to_full_insertion<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_orphaned_value_update_falls_through_to_full_insertion(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Create a trie with 3 leaves sharing a branch prefix, plus 2 additional leaves
     // in different subtries. Keys chosen so removal of key_c collapses the branch
@@ -1138,7 +1158,7 @@ pub(super) fn test_orphaned_value_update_falls_through_to_full_insertion<T: Spar
     .collect();
 
     let mut harness = SuiteTestHarness::new(initial_storage.clone());
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Insert all leaves.
     let mut insert_updates = SuiteTestHarness::leaf_updates(&initial_storage);
@@ -1195,8 +1215,8 @@ pub(super) fn test_orphaned_value_update_falls_through_to_full_insertion<T: Spar
 /// When removing a leaf causes a branch to collapse at a subtrie
 /// boundary, the remaining sibling leaf's `key_len` metadata must be updated. After the
 /// collapse the remaining leaf must be findable, updatable, and contribute to the correct root.
-pub(super) fn test_branch_collapse_updates_leaf_key_len_across_subtries<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_branch_collapse_updates_leaf_key_len_across_subtries(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Create two leaves that share a branch at a subtrie boundary.
     // Keys share the same first nibble (0x1) so they form a branch one level down,
@@ -1208,7 +1228,7 @@ pub(super) fn test_branch_collapse_updates_leaf_key_len_across_subtries<T: Spars
         BTreeMap::from([(key_a, U256::from(100)), (key_b, U256::from(200))]);
 
     let mut harness = SuiteTestHarness::new(base_storage);
-    let mut trie: T = harness.init_trie_fully_revealed(false, new_trie);
+    let mut trie: ArenaParallelSparseTrie = harness.init_trie_fully_revealed(false, new_trie);
 
     // Step 1: Remove key_a → branch collapses, key_b becomes the sole child.
     let removal: BTreeMap<B256, U256> = once((key_a, U256::ZERO)).collect();
@@ -1251,7 +1271,9 @@ pub(super) fn test_branch_collapse_updates_leaf_key_len_across_subtries<T: Spars
 /// When a branch collapses during leaf removal and the remaining child's value needs to be
 /// moved between subtries, the operation must not reveal (initialize) blind/unloaded subtries.
 /// Either the removal succeeds cleanly or it requests proofs for the blinded area.
-pub(super) fn test_remove_leaf_does_not_reveal_blind_subtries<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_remove_leaf_does_not_reveal_blind_subtries(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Create a trie with 10 leaves across different first-nibble subtries.
     let mut storage: BTreeMap<B256, U256> = BTreeMap::new();
     let mut keys = Vec::new();
@@ -1263,7 +1285,8 @@ pub(super) fn test_remove_leaf_does_not_reveal_blind_subtries<T: SparseTrie>(new
     }
 
     let mut harness = SuiteTestHarness::new(storage.clone());
-    let mut trie: T = harness.init_trie_with_targets(&keys[..2], true, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&keys[..2], true, new_trie);
 
     // Compute initial root and drain initial updates.
     let _ = trie.root(epoch(0));
@@ -1326,8 +1349,8 @@ pub(super) fn test_remove_leaf_does_not_reveal_blind_subtries<T: SparseTrie>(new
 ///   0xd branch has single child (0xd8), must collapse,
 ///   but 0xd8 is blinded → needs proof
 /// ```
-pub(super) fn test_branch_collapse_multi_empty_subtries_blinded_remaining<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_branch_collapse_multi_empty_subtries_blinded_remaining(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Three keys sharing first nibble 0xd, differing at second nibble.
     let key_d7 = {
@@ -1352,7 +1375,8 @@ pub(super) fn test_branch_collapse_multi_empty_subtries_blinded_remaining<T: Spa
     let harness = SuiteTestHarness::new(base_storage);
 
     // Reveal only 0xd7 and 0xdd, leaving 0xd8's subtrie blinded.
-    let mut trie: T = harness.init_trie_with_targets(&[key_d7, key_dd], false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&[key_d7, key_dd], false, new_trie);
 
     // Remove both revealed leaves — their subtries empty, branch collapses to
     // single child (0xd8) which is blinded.
@@ -1399,8 +1423,8 @@ pub(super) fn test_branch_collapse_multi_empty_subtries_blinded_remaining<T: Spa
 /// the proof request for the blinded sibling. The subtrie was then emptied inline
 /// via `might_empty_subtrie`, and `maybe_collapse_or_remove_branch` hit the
 /// blinded sibling and panicked.
-pub(super) fn test_subtrie_collapse_touched_with_blinded_sibling<T: SparseTrie>(
-    new_trie: fn() -> T,
+pub(super) fn test_subtrie_collapse_touched_with_blinded_sibling(
+    new_trie: fn() -> ArenaParallelSparseTrie,
 ) {
     // Trie shape: root branch has children at nibbles 0xa and 0xc.
     // Under 0xa there is a branch with children at 0xab (subtrie, 2 leaves) and
@@ -1435,7 +1459,8 @@ pub(super) fn test_subtrie_collapse_touched_with_blinded_sibling<T: SparseTrie>(
     let harness = SuiteTestHarness::new(base_storage.clone());
     // Reveal only the 0xAB keys and 0xCD — leave 0xAC blinded.
     let revealed_keys = vec![key_ab1, key_ab2, key_cd1];
-    let mut trie: T = harness.init_trie_with_targets(&revealed_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&revealed_keys, false, new_trie);
 
     // Verify initial root matches.
     let root = trie.root(epoch(0));
@@ -1469,7 +1494,9 @@ pub(super) fn test_subtrie_collapse_touched_with_blinded_sibling<T: SparseTrie>(
 /// When all `Changed` updates in a subtrie are removals and they would empty the subtrie,
 /// the `might_empty_subtrie` guard must still trigger even if `Touched` entries are present.
 /// `Touched` is a no-op that doesn't prevent the subtrie from being emptied.
-pub(super) fn test_subtrie_emptied_by_deletes_with_touched<T: SparseTrie>(new_trie: fn() -> T) {
+pub(super) fn test_subtrie_emptied_by_deletes_with_touched(
+    new_trie: fn() -> ArenaParallelSparseTrie,
+) {
     // Two leaves under prefix 0xAB (the target subtrie), one under 0xAC (sibling at
     // depth 1 to force the 0xAB child into a subtrie at depth 2), one under 0xCD
     // (sibling at depth 0 to force a branch at the root).
@@ -1498,7 +1525,8 @@ pub(super) fn test_subtrie_emptied_by_deletes_with_touched<T: SparseTrie>(new_tr
 
     let harness = SuiteTestHarness::new(base_storage.clone());
     let all_keys = vec![key_ab1, key_ab2, key_ac1, key_cd1];
-    let mut trie: T = harness.init_trie_with_targets(&all_keys, false, new_trie);
+    let mut trie: ArenaParallelSparseTrie =
+        harness.init_trie_with_targets(&all_keys, false, new_trie);
 
     // Verify initial root matches.
     let root = trie.root(epoch(0));

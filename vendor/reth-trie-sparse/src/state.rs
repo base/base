@@ -13,10 +13,7 @@ use tracing::instrument;
 
 #[cfg(feature = "trie-debug")]
 use crate::debug_recorder::TrieDebugRecorder;
-use crate::{
-    ArenaParallelSparseTrie, RevealableSparseTrie, TrieNodeEpoch,
-    traits::SparseTrie as SparseTrieTrait,
-};
+use crate::{ArenaParallelSparseTrie, RevealableSparseTrie, TrieNodeEpoch};
 
 /// Holds data that should be dropped after any locks are released.
 ///
@@ -30,14 +27,11 @@ pub struct DeferredDrops {
 
 #[derive(Debug)]
 /// Sparse state trie representing lazy-loaded Ethereum state trie.
-pub struct SparseStateTrie<
-    A = ArenaParallelSparseTrie, // Account trie implementation
-    S = ArenaParallelSparseTrie, // Storage trie implementation
-> {
+pub struct SparseStateTrie {
     /// Sparse account trie.
-    state: RevealableSparseTrie<A>,
+    state: RevealableSparseTrie,
     /// State related to storage tries.
-    storage: StorageTries<S>,
+    storage: StorageTries,
     /// Flag indicating whether trie updates should be retained.
     retain_updates: bool,
     /// Holds data that should be dropped after final state root is calculated.
@@ -47,11 +41,7 @@ pub struct SparseStateTrie<
     metrics: crate::metrics::SparseStateTrieMetrics,
 }
 
-impl<A, S> Default for SparseStateTrie<A, S>
-where
-    A: Default,
-    S: Default,
-{
+impl Default for SparseStateTrie {
     fn default() -> Self {
         Self {
             state: Default::default(),
@@ -72,7 +62,7 @@ impl SparseStateTrie {
     }
 }
 
-impl<A, S> SparseStateTrie<A, S> {
+impl SparseStateTrie {
     /// Set the retention of branch node updates and deletions.
     pub const fn set_updates(&mut self, retain_updates: bool) {
         self.retain_updates = retain_updates;
@@ -85,25 +75,25 @@ impl<A, S> SparseStateTrie<A, S> {
     }
 
     /// Set the accounts trie to the given `RevealableSparseTrie`.
-    pub fn set_accounts_trie(&mut self, trie: RevealableSparseTrie<A>) {
+    pub fn set_accounts_trie(&mut self, trie: RevealableSparseTrie) {
         self.state = trie;
     }
 
     /// Set the accounts trie to the given `RevealableSparseTrie`.
-    pub fn with_accounts_trie(mut self, trie: RevealableSparseTrie<A>) -> Self {
+    pub fn with_accounts_trie(mut self, trie: RevealableSparseTrie) -> Self {
         self.set_accounts_trie(trie);
         self
     }
 
     /// Set the default trie which will be cloned when creating new storage
     /// [`RevealableSparseTrie`]s.
-    pub fn set_default_storage_trie(&mut self, trie: RevealableSparseTrie<S>) {
+    pub fn set_default_storage_trie(&mut self, trie: RevealableSparseTrie) {
         self.storage.default_trie = trie;
     }
 
     /// Set the default trie which will be cloned when creating new storage
     /// [`RevealableSparseTrie`]s.
-    pub fn with_default_storage_trie(mut self, trie: RevealableSparseTrie<S>) -> Self {
+    pub fn with_default_storage_trie(mut self, trie: RevealableSparseTrie) -> Self {
         self.set_default_storage_trie(trie);
         self
     }
@@ -124,7 +114,7 @@ impl SparseStateTrie {
     }
 }
 
-impl<A: SparseTrieTrait, S: SparseTrieTrait> SparseStateTrie<A, S> {
+impl SparseStateTrie {
     /// Takes all debug recorders from the account trie and all revealed storage tries.
     ///
     /// Returns a vec of `(Option<B256>, TrieDebugRecorder)` where `None` is the account trie
@@ -144,13 +134,9 @@ impl<A: SparseTrieTrait, S: SparseTrieTrait> SparseStateTrie<A, S> {
     }
 }
 
-impl<A, S> SparseStateTrie<A, S>
-where
-    A: SparseTrieTrait + Default,
-    S: SparseTrieTrait + Default + Clone,
-{
+impl SparseStateTrie {
     /// Returns mutable reference to account trie.
-    pub const fn trie_mut(&mut self) -> &mut RevealableSparseTrie<A> {
+    pub const fn trie_mut(&mut self) -> &mut RevealableSparseTrie {
         &mut self.state
     }
 
@@ -187,47 +173,44 @@ where
     }
 
     /// Returns reference to state trie if it was revealed.
-    pub const fn state_trie_ref(&self) -> Option<&A> {
+    pub const fn state_trie_ref(&self) -> Option<&ArenaParallelSparseTrie> {
         self.state.as_revealed_ref()
     }
 
     /// Returns reference to storage trie if it was revealed.
-    pub fn storage_trie_ref(&self, address: &B256) -> Option<&S> {
+    pub fn storage_trie_ref(&self, address: &B256) -> Option<&ArenaParallelSparseTrie> {
         self.storage.tries.get(address).and_then(|e| e.as_revealed_ref())
     }
 
     /// Returns mutable reference to storage sparse trie if it was revealed.
-    pub fn storage_trie_mut(&mut self, address: &B256) -> Option<&mut S> {
+    pub fn storage_trie_mut(&mut self, address: &B256) -> Option<&mut ArenaParallelSparseTrie> {
         self.storage.tries.get_mut(address).and_then(|e| e.as_revealed_mut())
     }
 
     /// Returns mutable reference to storage tries.
-    pub const fn storage_tries_mut(&mut self) -> &mut B256Map<RevealableSparseTrie<S>> {
+    pub const fn storage_tries_mut(&mut self) -> &mut B256Map<RevealableSparseTrie> {
         &mut self.storage.tries
     }
 
     /// Takes the storage trie for the provided address.
-    pub fn take_storage_trie(&mut self, address: &B256) -> Option<RevealableSparseTrie<S>> {
+    pub fn take_storage_trie(&mut self, address: &B256) -> Option<RevealableSparseTrie> {
         self.storage.tries.remove(address)
     }
 
     /// Takes the storage trie for the provided address, creating a blind one if it doesn't exist.
-    pub fn take_or_create_storage_trie(&mut self, address: &B256) -> RevealableSparseTrie<S> {
+    pub fn take_or_create_storage_trie(&mut self, address: &B256) -> RevealableSparseTrie {
         self.storage.tries.remove(address).unwrap_or_else(|| {
             self.storage.cleared_tries.pop().unwrap_or_else(|| self.storage.default_trie.clone())
         })
     }
 
     /// Inserts storage trie for the provided address.
-    pub fn insert_storage_trie(&mut self, address: B256, storage_trie: RevealableSparseTrie<S>) {
+    pub fn insert_storage_trie(&mut self, address: B256, storage_trie: RevealableSparseTrie) {
         self.storage.tries.insert(address, storage_trie);
     }
 
     /// Returns mutable reference to storage sparse trie, creating a blind one if it doesn't exist.
-    pub fn get_or_create_storage_trie_mut(
-        &mut self,
-        address: B256,
-    ) -> &mut RevealableSparseTrie<S> {
+    pub fn get_or_create_storage_trie_mut(&mut self, address: B256) -> &mut RevealableSparseTrie {
         self.storage.get_or_create_trie_mut(address)
     }
 
@@ -370,7 +353,7 @@ where
     }
 
     /// Returns mutable reference to the revealed account sparse trie.
-    fn revealed_trie_mut(&mut self) -> SparseStateTrieResult<&mut A> {
+    fn revealed_trie_mut(&mut self) -> SparseStateTrieResult<&mut ArenaParallelSparseTrie> {
         self.state.as_revealed_mut().ok_or_else(|| SparseTrieErrorKind::Blind.into())
     }
 
@@ -444,11 +427,7 @@ where
     }
 }
 
-impl<A, S> SparseStateTrie<A, S>
-where
-    A: SparseTrieTrait + Default,
-    S: SparseTrieTrait + Default + Clone,
-{
+impl SparseStateTrie {
     /// Clears all trie data while preserving allocations for reuse.
     ///
     /// This resets the trie to an empty state but keeps the underlying memory allocations,
@@ -516,17 +495,17 @@ where
 /// The fields of [`SparseStateTrie`] related to storage tries. This is kept separate from the rest
 /// of [`SparseStateTrie`] to help enforce allocation re-use.
 #[derive(Debug, Default)]
-struct StorageTries<S = ArenaParallelSparseTrie> {
+struct StorageTries {
     /// Sparse storage tries.
-    tries: B256Map<RevealableSparseTrie<S>>,
+    tries: B256Map<RevealableSparseTrie>,
     /// Cleared storage tries, kept for re-use.
-    cleared_tries: Vec<RevealableSparseTrie<S>>,
+    cleared_tries: Vec<RevealableSparseTrie>,
     /// A default cleared trie instance, which will be cloned when creating new tries.
-    default_trie: RevealableSparseTrie<S>,
+    default_trie: RevealableSparseTrie,
 }
 
 #[cfg(feature = "std")]
-impl<S: SparseTrieTrait> StorageTries<S> {
+impl StorageTries {
     /// Prunes storage tries by epoch, returning fully old tries to the reuse pool.
     fn prune(&mut self, prune_before: TrieNodeEpoch, parent_span: &tracing::Span) -> usize {
         use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
@@ -573,7 +552,7 @@ impl<S: SparseTrieTrait> StorageTries<S> {
     }
 }
 
-impl<S: SparseTrieTrait> StorageTries<S> {
+impl StorageTries {
     /// Returns all fields to a cleared state, equivalent to the default state, keeping cleared
     /// collections for re-use later when possible.
     fn clear(&mut self) {
@@ -584,9 +563,9 @@ impl<S: SparseTrieTrait> StorageTries<S> {
     }
 }
 
-impl<S: SparseTrieTrait + Clone> StorageTries<S> {
+impl StorageTries {
     // Returns mutable reference to storage sparse trie, creating a blind one if it doesn't exist.
-    fn get_or_create_trie_mut(&mut self, address: B256) -> &mut RevealableSparseTrie<S> {
+    fn get_or_create_trie_mut(&mut self, address: B256) -> &mut RevealableSparseTrie {
         self.tries.entry(address).or_insert_with(|| {
             self.cleared_tries.pop().unwrap_or_else(|| self.default_trie.clone())
         })
@@ -601,6 +580,9 @@ mod tests {
     };
     use arbitrary::Arbitrary;
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_trie::{
+        EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates,
+    };
     use base_execution_state_types::{
         BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode,
         SparseStateTrieErrorKind, SparseTrieErrorKind, StorageMultiProof, TrieAccount, TrieMask,
@@ -608,10 +590,9 @@ mod tests {
         proof::{ProofNodes, ProofRetainer},
     };
     use rand::{Rng, SeedableRng, rngs::StdRng};
-    use base_execution_state_trie::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
 
     use super::*;
-    use crate::{ArenaParallelSparseTrie, LeafLookup, LeafUpdate};
+    use crate::{LeafLookup, LeafUpdate};
 
     const fn epoch(value: u64) -> TrieNodeEpoch {
         TrieNodeEpoch::new(value)
@@ -633,7 +614,7 @@ mod tests {
 
     #[test]
     fn reveal_account_path_twice() {
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default();
+        let mut sparse = SparseStateTrie::default();
 
         // Full 64-nibble paths
         let full_path_0 = leaf_key([0x0], 64);
@@ -691,7 +672,7 @@ mod tests {
 
     #[test]
     fn reveal_storage_path_twice() {
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default();
+        let mut sparse = SparseStateTrie::default();
 
         // Full 64-nibble path
         let full_path_0 = leaf_key([0x0], 64);
@@ -762,7 +743,7 @@ mod tests {
 
     #[test]
     fn prune_uses_epochs_for_account_and_storage_tries() {
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default();
+        let mut sparse = SparseStateTrie::default();
 
         let account = B256::ZERO;
         let old_account =
@@ -887,7 +868,7 @@ mod tests {
 
     #[test]
     fn reveal_v2_proof_nodes() {
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default();
+        let mut sparse = SparseStateTrie::default();
 
         // Full 64-nibble path
         let full_path_0 = leaf_key([0x0], 64);
@@ -945,7 +926,7 @@ mod tests {
 
     #[test]
     fn reveal_storage_v2_proof_nodes() {
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default();
+        let mut sparse = SparseStateTrie::default();
 
         // Full 64-nibble path
         let full_path_0 = leaf_key([0x0], 64);
@@ -1003,7 +984,7 @@ mod tests {
 
     #[test]
     fn root_on_blind_trie_returns_blind_error() {
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default();
+        let mut sparse = SparseStateTrie::default();
 
         let err = sparse.root(epoch(0)).unwrap_err();
 
@@ -1063,7 +1044,7 @@ mod tests {
 
         let root = hash_builder.root();
         let proof_nodes = hash_builder.take_proof_nodes();
-        let mut sparse = SparseStateTrie::<ArenaParallelSparseTrie>::default().with_updates(true);
+        let mut sparse = SparseStateTrie::default().with_updates(true);
         sparse
             .reveal_decoded_multiproof(
                 MultiProof {
