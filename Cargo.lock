@@ -7088,26 +7088,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
-name = "context_deserialize"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c523eea4af094b5970c321f4604abc42c5549d3cbae332e98325403fbbdbf70"
-dependencies = [
- "context_deserialize_derive",
- "serde",
-]
-
-[[package]]
-name = "context_deserialize_derive"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b7bf98c48ffa511b14bb3c76202c24a8742cea1efa9570391c5d41373419a09"
-dependencies = [
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8239,7 +8219,9 @@ dependencies = [
 
 [[package]]
 name = "ethereum_serde_utils"
-version = "0.0.0"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38df44a7a271ab43835678f9215b53cc2523e4714a215da6643d83dc110245da"
 dependencies = [
  "alloy-primitives",
  "hex",
@@ -8250,17 +8232,15 @@ dependencies = [
 
 [[package]]
 name = "ethereum_ssz"
-version = "0.0.0"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e462875ad8693755ea8913d6e905715c76ea4836e2254e18c9cf0f7a8f8c2a13"
 dependencies = [
  "alloy-primitives",
- "arbitrary",
- "context_deserialize",
  "ethereum_serde_utils",
- "ethereum_ssz_derive",
  "itertools 0.14.0",
  "serde",
  "serde_derive",
- "serde_json",
  "smallvec",
  "typenum",
 ]
@@ -19180,15 +19160,14 @@ dependencies = [
 
 [[package]]
 name = "tree_hash"
-version = "0.0.0"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7fd51aa83d2eb83b04570808430808b5d24fdbf479a4d5ac5dee4a2e2dd2be4"
 dependencies = [
  "alloy-primitives",
  "ethereum_hashing",
  "ethereum_ssz",
- "ethereum_ssz_derive",
- "rand 0.9.5",
  "smallvec",
- "tree_hash_derive",
  "typenum",
 ]
 
