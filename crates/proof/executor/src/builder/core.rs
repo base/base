@@ -12,7 +12,7 @@ use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTransaction,
 };
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
 use base_evm_handler::database::{BundleRetention, State};
 use base_evm_handler::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory, EvmFactory};

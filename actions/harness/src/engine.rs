@@ -15,7 +15,7 @@ use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Prede
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{Block, BlockTransactions, Transaction as EthTransaction};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
@@ -542,7 +542,7 @@ impl ActionEngineClient {
 
         // Convert ExecutionPayloadV1 into BasePayloadAttributes for the builder.
         let attrs = BasePayloadAttributes {
-            payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
+            payload_attributes: base_common_types_payload::PayloadAttributes {
                 timestamp: payload.timestamp,
                 prev_randao: payload.prev_randao,
                 suggested_fee_recipient: payload.fee_recipient,

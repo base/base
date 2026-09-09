@@ -13,7 +13,7 @@ use base_common_types_chain::{
     BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
 use base_common_evm::L1BlockInfo;
-use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadId};
+use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_evm_context::{Block, BlockEnv};
 use base_evm_handler::database::State;
 use base_evm_handler::{CommitChanges, Evm as AlloyEvm, TxResult};
@@ -1366,7 +1366,7 @@ mod tests {
         BaseTxEnvelope, Header, Predeploys, SignableTransaction, TxEip1559,
     };
     use base_common_evm::BaseTime;
-    use base_common_rpc_types_engine::PayloadId;
+    use base_common_types_payload::PayloadId;
     use base_evm_handler::{database::State, state::EvmState};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::{

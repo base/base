@@ -6,7 +6,7 @@ use alloy_provider::{Provider, RootProvider};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransaction as Transaction, Block};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BasePayloadAttributes, ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum,
 };
 use base_execution_payload_builder::BasePayloadBuilderAttributes;

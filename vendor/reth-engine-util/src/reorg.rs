@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::Bytes;
 use base_common_types_chain::{BaseBlock, BlockHeader, Transaction};
-use base_common_rpc_types_engine::{ForkchoiceState, PayloadStatus};
+use base_common_types_payload::{ForkchoiceState, PayloadStatus};
 use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};
 use base_execution_chainspec::ChainSpecProvider;
@@ -221,7 +221,7 @@ fn create_reorg_head<Provider>(
     evm_config: &BaseEvmConfig,
     payload_validator: &BaseEngineValidator,
     mut depth: usize,
-    next_payload: base_common_rpc_types_engine::ExecutionData,
+    next_payload: base_common_types_payload::ExecutionData,
 ) -> Result<(SealedBlock, Option<Bytes>), reth_engine_primitives::EngineRequestError>
 where
     Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,

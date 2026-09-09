@@ -158,7 +158,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use base_common_rpc_types_engine::{Claims, JwtError, JwtSecret};
+    use base_common_types_payload::{Claims, JwtError, JwtSecret};
     use jsonrpsee::{
         RpcModule,
         server::{RandomStringIdProvider, ServerBuilder, ServerConfig, ServerHandle},

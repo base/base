@@ -1,7 +1,7 @@
 //! Engine API specific actions for testing.
 
 use alloy_primitives::B256;
-use base_common_rpc_types_engine::{ExecutionPayloadV3, PayloadStatusEnum};
+use base_common_types_payload::{ExecutionPayloadV3, PayloadStatusEnum};
 use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
@@ -112,7 +112,7 @@ impl Action for SendNewPayload {
             let target_engine = env.node_clients[self.node_idx].engine.clone();
             let result = target_engine
                 .driver
-                .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                .new_payload(base_common_types_payload::ExecutionData::v3(
                     payload,
                     vec![],
                     B256::ZERO,

@@ -64,7 +64,7 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
-base-common-rpc-types-engine = {workspace = true, features = ["std", "jwt", "serde"]}
+base-common-types-payload = {workspace = true, features = ["std", "jwt", "serde"]}
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "time"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
@@ -88,7 +88,7 @@ base-common-rpc-types = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
+base-common-types-payload = { workspace = true, features = ["arbitrary", "std"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
 [features]

@@ -7,7 +7,7 @@ use alloy_provider::{
 };
 use alloy_transport::TransportResult;
 use base_common_types_chain::BlockHeader;
-use base_common_rpc_types_engine::PayloadExtras;
+use base_common_types_payload::PayloadExtras;
 use base_execution_payload_types::ExecutionPayload;
 use futures::{Stream, StreamExt};
 use reth_tracing::tracing::{debug, warn};

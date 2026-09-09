@@ -14,7 +14,7 @@ workspace = true
 thiserror = { workspace = true }
 alloy-rlp = { workspace = true }
 alloy-trie = { workspace = true }
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }
 [dev-dependencies]
@@ -37,13 +37,13 @@ std = [
     "alloy-primitives/std",
     "alloy-rlp/std",
     "alloy-trie/std",
-    "base-common-rpc-types-engine/std",
+    "base-common-types-payload/std",
     "serde?/std",
     "thiserror/std",
 ]
 serde = [
 	"alloy-primitives/serde",
 	"alloy-trie/serde",
-	"base-common-rpc-types-engine/serde",
+	"base-common-types-payload/serde",
 	"dep:serde",
 ]

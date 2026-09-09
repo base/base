@@ -11,7 +11,7 @@ use std::{
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
 use base_evm_handler::interpreter::debug_unreachable;
@@ -808,8 +808,8 @@ where
 
     /// When the Consensus layer receives a new block via the consensus gossip protocol,
     /// the transactions in the block are sent to the execution layer in the form of a
-    /// [`base_common_rpc_types_engine::ExecutionData`], for example
-    /// [`ExecutionData`](base_common_rpc_types_engine::ExecutionData). The
+    /// [`base_common_types_payload::ExecutionData`], for example
+    /// [`ExecutionData`](base_common_types_payload::ExecutionData). The
     /// Execution layer executes the transactions and validates the state in the block header,
     /// then passes validation data back to Consensus layer, that adds the block to the head of
     /// its own blockchain and attests to it. The block is then broadcast over the consensus p2p
@@ -828,7 +828,7 @@ where
     )]
     fn on_new_payload(
         &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     ) -> Result<TreeOutcome<PayloadStatus>, InsertBlockFatalError> {
         let _thread_resource_usage =
             self.metrics.engine.new_payload.measure_thread_resource_usage();
@@ -904,7 +904,7 @@ where
     #[instrument(level = "debug", target = "engine::tree", skip_all)]
     fn try_insert_payload(
         &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     ) -> Result<TryInsertPayloadResult, InsertBlockFatalError> {
         let block_hash = payload.block_hash();
         let num_hash = payload.num_hash();
@@ -960,7 +960,7 @@ where
     /// - Error status: Payload is malformed or invalid
     fn try_buffer_payload(
         &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     ) -> Result<PayloadStatus, InsertBlockFatalError> {
         let parent_hash = payload.parent_hash();
         let num_hash = payload.num_hash();
@@ -2504,7 +2504,7 @@ where
     /// Returns the invalid ancestor block info if found, or None if no invalid ancestor exists.
     fn find_invalid_ancestor(
         &mut self,
-        payload: &base_common_rpc_types_engine::ExecutionData,
+        payload: &base_common_types_payload::ExecutionData,
     ) -> Option<BlockWithParent> {
         let parent_hash = payload.parent_hash();
         let block_hash = payload.block_hash();
@@ -2533,7 +2533,7 @@ where
     ///    validated due to its own structural issues
     fn handle_invalid_ancestor_payload(
         &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
         invalid: BlockWithParent,
     ) -> Result<PayloadStatus, InsertBlockFatalError> {
         let parent_hash = payload.parent_hash();
@@ -3007,7 +3007,7 @@ where
     /// or `InsertPayloadError` if validation or execution failed.
     fn insert_payload(
         &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     ) -> Result<InsertPayloadOk, InsertPayloadError> {
         self.insert_block_or_payload(
             payload.block_with_parent(),

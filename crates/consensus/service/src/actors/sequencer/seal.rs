@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
 use tracing::Instrument;
 

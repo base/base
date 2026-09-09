@@ -5,7 +5,7 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::ForkchoiceState;
+use base_common_types_payload::ForkchoiceState;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
     PipelineErrorKind, PolledAttributesQueueStage, ResetSignal, SignalReceiver,
@@ -608,7 +608,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// advanced if the block is the next sequential block. Gaps and duplicates
     /// are silently ignored.
     ///
-    /// [`NetworkPayloadEnvelope`]: base_common_rpc_types_engine::NetworkPayloadEnvelope
+    /// [`NetworkPayloadEnvelope`]: base_common_types_payload::NetworkPayloadEnvelope
     fn drain_gossip(&mut self) {
         while let Some(envelope) = self.p2p.try_next_unsafe_block() {
             let payload = &envelope.payload;

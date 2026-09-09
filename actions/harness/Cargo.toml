@@ -53,7 +53,7 @@ reth-execution-types = { workspace = true, features = ["default"] }
 base-batcher-core = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
-base-common-rpc-types-engine = {workspace = true, features = ["std"]}
+base-common-types-payload = {workspace = true, features = ["std"]}
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }

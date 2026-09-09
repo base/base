@@ -56,7 +56,7 @@ reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
-base-common-rpc-types-engine = {workspace = true, features = ["serde", "std"]}
+base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 metrics-exporter-prometheus = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt"] }

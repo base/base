@@ -95,7 +95,7 @@ alloy-transport-http = { workspace = true, features = ["default"] }
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
-base-common-rpc-types-engine = {workspace = true, features = ["std"]}
+base-common-types-payload = {workspace = true, features = ["std"]}
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }

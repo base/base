@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use base_common_rpc_types_engine::JwtSecret;
+use base_common_types_payload::JwtSecret;
 use clap::{
     Args,
     builder::{RangedU64ValueParser, Resettable},

@@ -5,7 +5,7 @@ use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_common_types_chain::BaseTxEnvelope;
 use base_common_genesis::SystemConfig;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_consensus_derive::{
     AttributesBuilder, PipelineError, PipelineResult, StatefulAttributesBuilder,
 };

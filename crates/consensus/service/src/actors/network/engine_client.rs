@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use tokio::sync::mpsc;
 
 use crate::{EngineActorRequest, EngineClientError, EngineClientResult};
@@ -63,7 +63,7 @@ impl NetworkEngineClient for QueuedNetworkEngineClient {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
     };
     use tokio::sync::mpsc;

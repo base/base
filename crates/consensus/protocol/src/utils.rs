@@ -5,7 +5,7 @@ use alloc::string::ToString;
 use alloy_primitives::{B256, Bytes, U256};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, JovianExtraData, Transaction, Typed2718};
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_common_rpc_types_engine::BaseExecutionPayload;
+use base_common_types_payload::BaseExecutionPayload;
 
 use crate::{
     BaseBlockConversionError, L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _,

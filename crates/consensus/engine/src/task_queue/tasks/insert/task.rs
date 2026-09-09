@@ -6,7 +6,7 @@ use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use async_trait::async_trait;
 use base_common_types_chain::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields,
 };
@@ -367,7 +367,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ForkchoiceUpdated, PayloadStatus,
         PayloadStatusEnum,
     };
@@ -414,7 +414,7 @@ mod tests {
     }
 
     fn bedrock_payload_with_parent(block_number: u64, parent_hash: B256) -> BaseExecutionPayload {
-        BaseExecutionPayload::V1(base_common_rpc_types_engine::ExecutionPayloadV1 {
+        BaseExecutionPayload::V1(base_common_types_payload::ExecutionPayloadV1 {
             parent_hash,
             fee_recipient: Address::ZERO,
             state_root: B256::ZERO,
@@ -467,8 +467,8 @@ mod tests {
     }
 
     fn canyon_payload(block_number: u64) -> BaseExecutionPayload {
-        BaseExecutionPayload::V2(base_common_rpc_types_engine::ExecutionPayloadV2 {
-            payload_inner: base_common_rpc_types_engine::ExecutionPayloadV1 {
+        BaseExecutionPayload::V2(base_common_types_payload::ExecutionPayloadV2 {
+            payload_inner: base_common_types_payload::ExecutionPayloadV1 {
                 parent_hash: B256::ZERO,
                 fee_recipient: Address::ZERO,
                 state_root: B256::ZERO,

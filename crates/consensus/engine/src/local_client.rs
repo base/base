@@ -6,7 +6,7 @@ use alloy_provider::{EthGetBlock, Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     BasePayloadAttributes, CancunPayloadFields, ExecutionData, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus, PraguePayloadFields,

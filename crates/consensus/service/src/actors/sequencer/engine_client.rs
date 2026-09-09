@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, PayloadId};
+use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_engine::EngineState;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
@@ -321,7 +321,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
     };
     use base_consensus_engine::EngineState;

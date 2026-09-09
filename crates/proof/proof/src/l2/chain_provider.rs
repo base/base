@@ -266,7 +266,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     fn hint_execution_witness(
         &self,
         parent_hash: B256,
-        base_payload_attributes: &base_common_rpc_types_engine::BasePayloadAttributes,
+        base_payload_attributes: &base_common_types_payload::BasePayloadAttributes,
     ) -> Result<(), Self::Error> {
         crate::block_on(async move {
             let encoded_attributes =

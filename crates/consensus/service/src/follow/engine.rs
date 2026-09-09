@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
     EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
     SynchronizeTask,
@@ -100,7 +100,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
         PayloadStatus, PayloadStatusEnum,
     };

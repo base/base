@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes, FixedBytes, b256};
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::{BaseTransaction, Block as RpcBlock, BlockTransactions};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};

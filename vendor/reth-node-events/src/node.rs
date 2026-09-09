@@ -13,7 +13,7 @@ use base_common_types_chain::{
     BlockHeader,
     constants::{GWEI_TO_WEI, MGAS_TO_GAS},
 };
-use base_common_rpc_types_engine::ForkchoiceState;
+use base_common_types_payload::ForkchoiceState;
 use futures::Stream;
 use reth_engine_primitives::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
 use reth_network_api::PeersInfo;

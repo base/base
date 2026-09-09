@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::PayloadStatusEnum;
+use base_common_types_payload::PayloadStatusEnum;
 use base_protocol::L2BlockInfo;
 use tokio::time::Instant;
 

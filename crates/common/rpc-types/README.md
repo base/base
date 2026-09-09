@@ -11,7 +11,7 @@ providers. Shared `Header` and `Log` responses carry optional millisecond timest
 
 The Base network marker and transaction builders live in `base-common-network`. RPC-to-EVM
 conversion lives in `base-common-evm`, keeping these schemas independent of providers and execution.
-Engine payload and fork-choice types live in `base-common-rpc-types-engine`.
+Engine payload and fork-choice types live in `base-common-types-payload`.
 
 ## Usage
 

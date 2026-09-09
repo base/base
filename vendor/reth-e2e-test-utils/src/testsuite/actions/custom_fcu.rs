@@ -1,7 +1,7 @@
 //! Custom forkchoice update actions for testing specific FCU scenarios.
 
 use alloy_primitives::B256;
-use base_common_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
+use base_common_types_payload::{ForkchoiceState, PayloadStatusEnum};
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;

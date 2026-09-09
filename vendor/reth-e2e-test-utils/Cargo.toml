@@ -52,7 +52,7 @@ tokio-stream = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-common-rpc-types-engine = {workspace = true, features = ["serde"]}
+base-common-types-payload = {workspace = true, features = ["serde"]}
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }

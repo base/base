@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
 use base_common_rpc_types::{BaseTransaction, Block as RpcBlock, BlockTransactions};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, PayloadStatus,
     PayloadStatusEnum,
 };
@@ -280,8 +280,8 @@ fn block_info_from_rpc_block(block: &RpcBlock<BaseTransaction>) -> L2BlockInfo {
     }
 }
 
-const fn valid_fcu() -> base_common_rpc_types_engine::ForkchoiceUpdated {
-    base_common_rpc_types_engine::ForkchoiceUpdated {
+const fn valid_fcu() -> base_common_types_payload::ForkchoiceUpdated {
+    base_common_types_payload::ForkchoiceUpdated {
         payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None },
         payload_id: None,
     }

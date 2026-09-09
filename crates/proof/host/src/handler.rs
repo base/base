@@ -16,7 +16,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use ark_ff::{BigInteger, PrimeField};
 use base_common_types_chain::{Header, HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_network::{Base, Network};
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};

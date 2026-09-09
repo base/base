@@ -41,7 +41,7 @@ base-proof-preimage = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }
 base-evm-handler = { workspace = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"], optional = true }
 [dev-dependencies]

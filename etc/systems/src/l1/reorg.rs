@@ -6,7 +6,7 @@ use alloy_eips::eip1898::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use base_common_network::Ethereum;
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     ExecutionPayloadEnvelopeV5, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadAttributes,
     PayloadStatus, PayloadStatusEnum,
 };

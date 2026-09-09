@@ -9,7 +9,7 @@ use base_common_types_chain::{
     BaseReceipt, EMPTY_OMMER_ROOT_HASH, Header, Predeploys, Sealed, TxReceipt,
 };
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
 use base_evm_handler::database::BundleState;
 use base_evm_handler::{BlockExecutionResult, EvmFactory};

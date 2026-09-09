@@ -79,7 +79,7 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true, features = ["std"] }
+base-common-types-payload = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 base-common-rpc-types = {workspace = true, features = ["default", "std"]}
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
@@ -98,7 +98,7 @@ base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }

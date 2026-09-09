@@ -9,7 +9,7 @@ use alloy_rlp::Encodable;
 use async_trait::async_trait;
 use base_common_types_chain::{Eip658Value, Predeploys, Receipt};
 use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
-use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 

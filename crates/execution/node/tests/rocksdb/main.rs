@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, TxDeposit};
-use base_common_rpc_types_engine::PayloadAttributes;
+use base_common_types_payload::PayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_protocol::L1BlockInfoEcotone;
 use reth_e2e_test_utils::BaseNodeTestUtils;

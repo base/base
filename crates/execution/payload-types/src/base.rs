@@ -9,8 +9,8 @@ use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
 /// Re-export for use in downstream arguments.
-pub use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_common_rpc_types_engine::{
+pub use base_common_types_payload::BasePayloadAttributes;
+use base_common_types_payload::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2,
     ExecutionPayloadFieldV2, ExecutionPayloadV1, ExecutionPayloadV3,
@@ -271,8 +271,8 @@ impl BaseBuiltPayload {
     pub fn block_to_payload(
         block: SealedBlock,
         bal: Option<Bytes>,
-    ) -> base_common_rpc_types_engine::ExecutionData {
-        base_common_rpc_types_engine::ExecutionData::from_block_unchecked_with_extras(
+    ) -> base_common_types_payload::ExecutionData {
+        base_common_types_payload::ExecutionData::from_block_unchecked_with_extras(
             block.hash(),
             &block.into_block().into_ethereum_block(),
             bal,
@@ -328,7 +328,7 @@ impl BaseBuiltPayload {
     }
 }
 
-impl From<BaseBuiltPayload> for base_common_rpc_types_engine::ExecutionData {
+impl From<BaseBuiltPayload> for base_common_types_payload::ExecutionData {
     fn from(value: BaseBuiltPayload) -> Self {
         let BaseBuiltPayload { block, block_access_list, .. } = value;
         let block_hash = block.hash();
@@ -467,7 +467,7 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_primitives::{FixedBytes, address, b256, bytes};
-    use base_common_rpc_types_engine::PayloadAttributes;
+    use base_common_types_payload::PayloadAttributes;
 
     use super::*;
     #[test]

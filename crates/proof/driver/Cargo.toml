@@ -22,7 +22,7 @@ base-proof-executor = { workspace = true }
 base-common-genesis = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 
 [features]
@@ -32,7 +32,7 @@ std = [
     "alloy-primitives/std",
     "alloy-rlp/std",
     "base-common-genesis/std",
-    "base-common-rpc-types-engine/std",
+    "base-common-types-payload/std",
     "base-proof-executor/std",
     "base-protocol/std",
     "spin/std",

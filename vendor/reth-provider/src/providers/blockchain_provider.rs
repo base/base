@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxN
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
-use base_common_rpc_types_engine::ForkchoiceState;
+use base_common_types_payload::ForkchoiceState;
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,

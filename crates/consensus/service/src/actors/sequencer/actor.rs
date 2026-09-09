@@ -783,7 +783,7 @@ mod tests {
     use alloy_primitives::{B256, Sealed};
     use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{RollupConfig, SystemConfig};
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock};
 
     use super::*;

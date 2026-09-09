@@ -36,7 +36,7 @@ rand = { workspace = true, optional = true, features = ["default"] }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"], optional = true }
-base-common-rpc-types-engine = {workspace = true, features = ["serde", "k256"]}
+base-common-types-payload = {workspace = true, features = ["serde", "k256"]}
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 base-common-chains = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
@@ -49,7 +49,7 @@ std = [
     "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
-    "base-common-rpc-types-engine/std",
+    "base-common-types-payload/std",
     "alloy-trie/std",
     "base-common-chains?/std",
     "base-common-evm/std",

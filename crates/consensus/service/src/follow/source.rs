@@ -5,7 +5,7 @@ use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_types_chain::{BaseTxEnvelope, Block};
 use base_common_network::Base;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::BlockInfo;
 use thiserror::Error;
 use url::Url;

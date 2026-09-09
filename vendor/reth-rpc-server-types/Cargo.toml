@@ -23,6 +23,6 @@ reth-storage-errors = {workspace = true}
 base-execution-consensus = {workspace = true}
 strum = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

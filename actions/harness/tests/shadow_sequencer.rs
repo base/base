@@ -5,7 +5,7 @@ use base_action_harness::{
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_consensus_node::CanonicalUnsafeCatchup;
 
 /// A late sequencer retains future unsafe gossip while deriving safe blocks, then applies the

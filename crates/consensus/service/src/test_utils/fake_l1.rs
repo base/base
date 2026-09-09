@@ -151,7 +151,7 @@ impl FakeL1 {
             .expect("engine actor request channel closed while dispatching safe l2 signal");
 
         if let Some(engine_handle) = &self.engine_handle {
-            engine_handle.inject_forkchoice_call(base_common_rpc_types_engine::ForkchoiceState {
+            engine_handle.inject_forkchoice_call(base_common_types_payload::ForkchoiceState {
                 head_block_hash: safe_l2.block_info.hash,
                 safe_block_hash: safe_l2.block_info.hash,
                 finalized_block_hash: safe_l2.block_info.hash,

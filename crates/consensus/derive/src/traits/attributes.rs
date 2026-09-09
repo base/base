@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_genesis::SystemConfig;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_protocol::{AttributesWithParent, L2BlockInfo, SingleBatch};
 
 use crate::PipelineResult;

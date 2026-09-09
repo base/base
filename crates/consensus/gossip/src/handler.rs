@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::NetworkPayloadEnvelope;
+use base_common_types_payload::NetworkPayloadEnvelope;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
 use tracing::instrument;
@@ -150,7 +150,7 @@ mod tests {
     use alloy_primitives::{B256, Signature};
     use base_common_types_chain::{BaseTxEnvelope, TxDeposit, proofs::calculate_transaction_root};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadV4, ExecutionPayloadV2, ExecutionPayloadV3,
         PayloadHash,
     };

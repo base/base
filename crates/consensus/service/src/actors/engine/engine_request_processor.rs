@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use base_common_types_chain::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
@@ -689,7 +689,7 @@ mod tests {
     use base_common_rpc_types::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
         PayloadId, PayloadStatus, PayloadStatusEnum,
     };

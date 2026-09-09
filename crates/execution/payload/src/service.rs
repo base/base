@@ -11,7 +11,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, BlockTimestamp};
-use base_common_rpc_types_engine::PayloadId;
+use base_common_types_payload::PayloadId;
 use base_common_types_chain::BlockHeader;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadBuilderError, PayloadEvents,
@@ -677,7 +677,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use alloy_primitives::Address;
-    use base_common_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
+    use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
     use base_common_types_chain::{BaseBlock, Header};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;

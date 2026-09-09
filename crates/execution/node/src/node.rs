@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_types_chain::BlockHeader;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
@@ -84,7 +84,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes> for BaseLocalPayload
         let eip_1559_params = Some(B64::from(eip1559_bytes));
 
         let attributes = BasePayloadAttributes {
-            payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
+            payload_attributes: base_common_types_payload::PayloadAttributes {
                 timestamp,
                 prev_randao: B256::random(),
                 suggested_fee_recipient: Address::random(),

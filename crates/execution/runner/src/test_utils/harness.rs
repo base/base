@@ -11,7 +11,7 @@ use base_common_chains::Upgrades;
 use base_common_types_chain::Predeploys;
 use base_common_evm::BaseTime;
 use base_common_network::Base;
-use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_protocol::BaseTimeUpdateTx;

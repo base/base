@@ -34,7 +34,7 @@
 //! - Peer protection mechanisms
 //! - Automatic connection pruning
 //!
-//! [`NetworkPayloadEnvelope`]: base_common_rpc_types_engine::NetworkPayloadEnvelope
+//! [`NetworkPayloadEnvelope`]: base_common_types_payload::NetworkPayloadEnvelope
 
 mod behaviour;
 pub use behaviour::{Behaviour, BehaviourError};

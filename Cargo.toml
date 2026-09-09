@@ -55,7 +55,7 @@ members = [
   "crates/common/precompile-storage",
   "crates/common/precompiles",
   "crates/common/rpc-types",
-  "crates/common/rpc-types-engine",
+  "crates/common/types/payload",
   "crates/common/state",
   "crates/consensus/cli",
   "crates/consensus/derive",
@@ -357,7 +357,7 @@ base-common-types-chain = { path = "crates/common/types/chain", default-features
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-precompile-macros = { path = "crates/common/precompile-macros", default-features = false }
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
-base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
+base-common-types-payload = { path = "crates/common/types/payload", default-features = false }
 base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
 # Builder

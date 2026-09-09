@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256, utils::parse_ether};
 use alloy_transport::TransportErrorKind;
 use base_common_types_chain::BaseTxEnvelope;
 use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};

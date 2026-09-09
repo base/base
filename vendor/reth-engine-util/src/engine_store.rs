@@ -8,7 +8,7 @@ use std::{
     time::SystemTime,
 };
 
-use base_common_rpc_types_engine::ForkchoiceState;
+use base_common_types_payload::ForkchoiceState;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::BeaconEngineMessage;
@@ -29,9 +29,9 @@ pub enum StoredEngineApiMessage {
     },
     /// The on-disk representation of an `engine_newPayload` method call.
     NewPayload {
-        /// The [`base_common_rpc_types_engine::ExecutionData`] sent in the persisted call.
+        /// The [`base_common_types_payload::ExecutionData`] sent in the persisted call.
         #[serde(flatten)]
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     },
 }
 

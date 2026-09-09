@@ -5,7 +5,7 @@ use alloy_primitives::Bytes;
 use alloy_rlp::Decodable;
 use assert_matches::assert_matches;
 use base_common_types_chain::{BaseBlock as Block, BaseTxEnvelope as TransactionSigned};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     ExecutionPayload, ExecutionPayloadBodyV1, ExecutionPayloadSidecar, ExecutionPayloadV1,
     PayloadError,
 };

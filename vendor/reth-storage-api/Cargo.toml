@@ -28,7 +28,7 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-chainspec = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 alloy-hardforks = { workspace = true, optional = true }
 reth-tokio-util = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -47,7 +47,7 @@ std = [
     "base-common-types-chain/std",
     "alloy-eips/std",
     "alloy-primitives/std",
-    "base-common-rpc-types-engine/std",
+    "base-common-types-payload/std",
     "reth-primitives-traits/std",
     "reth-stages-types/std",
     "base-evm-handler/std",
@@ -78,7 +78,7 @@ serde = [
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-types-chain/serde",
-    "base-common-rpc-types-engine/serde",
+    "base-common-types-payload/serde",
     "alloy-eip7928/serde",
 ]
 

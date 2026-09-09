@@ -3,7 +3,7 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use alloy_primitives::B256;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
+use base_common_types_payload::BaseExecutionPayloadEnvelopeV3;
 use base_execution_payload_builder::PayloadId;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::Result;
@@ -15,7 +15,7 @@ pub mod setup;
 use std::sync::Arc;
 
 use alloy_provider::{Provider, ProviderBuilder};
-use base_common_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use base_common_types_payload::{ForkchoiceState, PayloadAttributes};
 use base_execution_payload_builder::BaseExecutionHandle;
 use reth_engine_primitives::ConsensusEngineHandle;
 use url::Url;

@@ -35,7 +35,7 @@ base-consensus-derive = { workspace = true }
 base-common-types-chain = { workspace = true }
 c-kzg = { workspace = true, optional = true }
 lru = { workspace = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 spin = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
 ark-bls12-381 = { workspace = true, features = ["scalar_field"] }
@@ -64,7 +64,7 @@ std = [
     "base-common-chains/std",
     "base-common-evm/std",
     "base-common-genesis/std",
-    "base-common-rpc-types-engine/std",
+    "base-common-types-payload/std",
     "base-proof-driver/std",
     "base-proof-executor/std",
     "base-proof-mpt/std",

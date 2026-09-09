@@ -3,7 +3,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use alloy_primitives::{B256, Bytes};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     ExecutionPayloadEnvelopeV3, ForkchoiceState, PayloadAttributes, PayloadStatusEnum,
 };
 use base_execution_payload_types::BasePayloadBuilderAttributes;
@@ -258,7 +258,7 @@ impl Action for GenerateNextPayload {
             sleep(Duration::from_secs(1)).await;
 
             let built_payload_envelope =
-                base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3::from(
+                base_common_types_payload::BaseExecutionPayloadEnvelopeV3::from(
                     env.node_clients[producer_idx]
                         .engine
                         .clone()
@@ -477,7 +477,7 @@ impl Action for CheckPayloadAccepted {
                     .ok_or_else(|| eyre::eyre!("No next built payload found"))?;
 
                 let built_payload =
-                    base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3::from(
+                    base_common_types_payload::BaseExecutionPayloadEnvelopeV3::from(
                         client.engine.clone().resolve_payload(payload_id).await?,
                     );
 
@@ -591,7 +591,7 @@ impl Action for BroadcastNextNewPayload {
 
                 let result = engine
                     .driver
-                    .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                    .new_payload(base_common_types_payload::ExecutionData::v3(
                         execution_payload.clone(),
                         vec![],
                         parent_beacon_block_root,
@@ -624,7 +624,7 @@ impl Action for BroadcastNextNewPayload {
                     // Broadcast the execution payload
                     let result = engine
                         .driver
-                        .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                        .new_payload(base_common_types_payload::ExecutionData::v3(
                             execution_payload.clone(),
                             vec![],
                             parent_beacon_block_root,
@@ -957,7 +957,7 @@ impl Action for ProduceInvalidBlocks {
 
                     let new_payload_response = engine_client
                         .driver
-                        .new_payload(base_common_rpc_types_engine::ExecutionData::v3(
+                        .new_payload(base_common_types_payload::ExecutionData::v3(
                             corrupted_payload.clone(),
                             versioned_hashes,
                             parent_beacon_block_root,

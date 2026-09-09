@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::NetworkAdminQuery;
 use base_consensus_sources::BlockSignerError;
@@ -234,7 +234,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use arbitrary::Arbitrary;
     use base_common_network::PrivateKeySigner;
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV3,
     };
     use rand::Rng;
@@ -259,7 +259,7 @@ mod tests {
 
         let payload_hash = block.payload_hash();
         let signature = pubkey.sign_hash_sync(&payload_hash.signature_message(CHAIN_ID)).unwrap();
-        let payload = base_common_rpc_types_engine::NetworkPayloadEnvelope {
+        let payload = base_common_types_payload::NetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -268,7 +268,7 @@ mod tests {
         let encoded_payload = payload.encode_v1().unwrap();
 
         let decoded_payload =
-            base_common_rpc_types_engine::NetworkPayloadEnvelope::decode_v1(&encoded_payload)
+            base_common_types_payload::NetworkPayloadEnvelope::decode_v1(&encoded_payload)
                 .unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);
@@ -295,7 +295,7 @@ mod tests {
 
         let payload_hash = block.payload_hash();
         let signature = pubkey.sign_hash_sync(&payload_hash.signature_message(CHAIN_ID)).unwrap();
-        let payload = base_common_rpc_types_engine::NetworkPayloadEnvelope {
+        let payload = base_common_types_payload::NetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -304,7 +304,7 @@ mod tests {
         let encoded_payload = payload.encode_v3().unwrap();
 
         let decoded_payload =
-            base_common_rpc_types_engine::NetworkPayloadEnvelope::decode_v3(&encoded_payload)
+            base_common_types_payload::NetworkPayloadEnvelope::decode_v3(&encoded_payload)
                 .unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);

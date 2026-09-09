@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_types_chain::BlockHeader;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_evm_handler::database::State;
 use base_execution_evm::{BaseEvmConfig, ExecutionWitnessRecord, Executor};
 use base_execution_payload_builder::{

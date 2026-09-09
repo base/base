@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, Bytes};
-use base_common_rpc_types_engine::ExecutionData;
+use base_common_types_payload::ExecutionData;
 
 use crate::ExecutionPayload;
 

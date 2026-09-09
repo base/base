@@ -104,7 +104,7 @@ mod tests {
     //! Unit tests for [`L2Finalizer`] queue management.
 
     use alloy_eips::BlockNumHash;
-    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_common_types_payload::BasePayloadAttributes;
     use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::L2Finalizer;

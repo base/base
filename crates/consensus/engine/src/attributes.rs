@@ -359,7 +359,7 @@ mod tests {
     use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_network::TransactionResponse;
     use base_common_rpc_types::{BaseTransaction as Transaction, Block, BlockTransactions};
-    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_common_types_payload::BasePayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;
@@ -398,7 +398,7 @@ mod tests {
     fn default_attributes() -> AttributesWithParent {
         AttributesWithParent {
             attributes: BasePayloadAttributes {
-                payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
+                payload_attributes: base_common_types_payload::PayloadAttributes {
                     withdrawals: Some(vec![]),
                     ..Default::default()
                 },

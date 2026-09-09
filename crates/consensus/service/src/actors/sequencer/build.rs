@@ -8,7 +8,7 @@
 use std::{sync::Arc, time::Instant};
 
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::PayloadId;
+use base_common_types_payload::PayloadId;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;

@@ -14,7 +14,7 @@ use std::{
     cell::Cell,
 };
 
-use base_common_rpc_types_engine::{MAX_DECOMPRESSED_ENVELOPE_BYTES, NetworkPayloadEnvelope};
+use base_common_types_payload::{MAX_DECOMPRESSED_ENVELOPE_BYTES, NetworkPayloadEnvelope};
 
 // Running total of bytes allocated on the current thread. Const-initialized so
 // reading it never allocates (which would recurse through the allocator).

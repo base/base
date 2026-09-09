@@ -29,7 +29,7 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }

@@ -73,7 +73,7 @@ impl<P: PayloadProvider> DebugConsensusClient<P> {
 
 impl<P> DebugConsensusClient<P>
 where
-    P: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
+    P: PayloadProvider<ExecutionData = base_common_types_payload::ExecutionData> + Clone,
 {
     /// Spawn the client to start sending FCUs and new payloads by periodically fetching recent
     /// payloads.
@@ -123,7 +123,7 @@ where
                     continue;
                 }
             };
-            let state = base_common_rpc_types_engine::ForkchoiceState {
+            let state = base_common_types_payload::ForkchoiceState {
                 head_block_hash: block_hash,
                 safe_block_hash,
                 finalized_block_hash,

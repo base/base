@@ -1,6 +1,6 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_protocol::FromBlockError;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -31,7 +31,7 @@ pub enum SealTaskError {
     HoloceneInvalidFlush,
     /// Failed to convert a [`BaseExecutionPayload`] to a [`L2BlockInfo`].
     ///
-    /// [`BaseExecutionPayload`]: base_common_rpc_types_engine::BaseExecutionPayload
+    /// [`BaseExecutionPayload`]: base_common_types_payload::BaseExecutionPayload
     /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
@@ -114,7 +114,7 @@ impl EngineTaskError for SealTaskError {
 #[cfg(test)]
 mod tests {
     use alloy_transport::RpcError;
-    use base_common_rpc_types_engine::PayloadStatusEnum;
+    use base_common_types_payload::PayloadStatusEnum;
     use base_protocol::{BaseTimeScheduleError, FromBlockError};
     use rstest::rstest;
 

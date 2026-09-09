@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use async_trait::async_trait;
 use base_common_types_chain::{Predeploys, TxDeposit};
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_consensus_derive::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
 };
@@ -210,7 +210,7 @@ pub struct StandaloneUnsafePayloadGossipClient;
 impl UnsafePayloadGossipClient for StandaloneUnsafePayloadGossipClient {
     async fn schedule_execution_payload_gossip(
         &self,
-        _payload: base_common_rpc_types_engine::BaseExecutionPayloadEnvelope,
+        _payload: base_common_types_payload::BaseExecutionPayloadEnvelope,
     ) -> Result<(), UnsafePayloadGossipClientError> {
         Ok(())
     }

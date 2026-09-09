@@ -10,7 +10,7 @@ use alloy_transport_http::{Client, Http};
 use base_common_types_chain::Header;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_proof_mpt::{NoopTrieHinter, TrieNode, TrieProvider};
 use rocksdb::{DB, Options};
 use serde::{Deserialize, Serialize};

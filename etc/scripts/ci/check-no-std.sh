@@ -10,7 +10,7 @@ no_std_packages=(
   base-common-evm
   base-common-chains
   base-common-rpc-types
-  base-common-rpc-types-engine
+  base-common-types-payload
 
   # consensus protocol crates
   base-metrics

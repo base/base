@@ -1,7 +1,7 @@
 //! Base Payload attributes that reference the parent L2 block.
 
 use base_common_types_chain::OpTxType;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 
 use crate::{BlockInfo, L2BlockInfo};
 

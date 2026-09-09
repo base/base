@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::BaseBlockResponse;
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,
 };
@@ -195,7 +195,7 @@ impl EngineClient for FakeEngineClient {
         state.calls.push(EngineClientCall::SubmitPayload(Box::new(payload)));
         Ok(state.scripted_payload.pop_front().or_else(|| state.single_payload.clone()).unwrap_or(
             PayloadStatus {
-                status: base_common_rpc_types_engine::PayloadStatusEnum::Valid,
+                status: base_common_types_payload::PayloadStatusEnum::Valid,
                 latest_valid_hash: None,
             },
         ))

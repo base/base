@@ -1,6 +1,6 @@
 //! Base payload attributes used by migrated engine, networking, and storage scenarios.
 
-use base_common_rpc_types_engine::PayloadAttributes;
+use base_common_types_payload::PayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 
 /// Creates attributes for the Base execution implementation.

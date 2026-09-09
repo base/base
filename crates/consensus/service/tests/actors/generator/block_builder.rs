@@ -4,7 +4,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::Bytes;
 use arbitrary::{Arbitrary, Unstructured};
 use base_common_types_chain::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use libp2p::bytes::BufMut;
 
 use crate::actors::generator::seed::SeedGenerator;

@@ -5,7 +5,7 @@ use core::{
     task::{Context, Poll, ready},
 };
 
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     ForkChoiceUpdateResult, ForkchoiceState, ForkchoiceUpdateError, ForkchoiceUpdated, PayloadId,
     PayloadStatus, PayloadStatusEnum,
 };
@@ -152,7 +152,7 @@ pub enum BeaconEngineMessage {
     /// Message with new payload.
     NewPayload {
         /// The execution payload received by Engine API.
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
         /// The sender for returning payload status result.
         tx: oneshot::Sender<Result<PayloadStatus, BeaconOnNewPayloadError>>,
     },
@@ -211,7 +211,7 @@ impl ConsensusEngineHandle {
     /// See also <https://github.com/ethereum/execution-apis/blob/3d627c95a4d3510a8187dd02e0250ecb4331d27e/src/engine/shanghai.md#engine_newpayloadv2>
     pub async fn new_payload(
         &self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     ) -> Result<PayloadStatus, BeaconOnNewPayloadError> {
         let (tx, rx) = oneshot::channel();
         let _ = self.to_engine.send(BeaconEngineMessage::NewPayload { payload, tx });

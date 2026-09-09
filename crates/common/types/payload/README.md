@@ -1,4 +1,4 @@
-# `base-common-rpc-types-engine`
+# `base-common-types-payload`
 
 Shared execution payload and fork-choice types.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-common-rpc-types-engine = { workspace = true }
+base-common-types-payload = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
+use base_common_types_payload::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
 
 let attrs: BasePayloadAttributes = todo!();
 let envelope: BaseExecutionPayloadEnvelope = todo!();

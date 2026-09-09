@@ -4,7 +4,7 @@ use alloy_primitives::{B256, keccak256};
 use base_common_chains::Upgrades;
 use base_common_types_chain::{BlockHeader, Predeploys};
 use base_common_evm::BaseTime;
-use base_common_rpc_types_engine::ExecutionData;
+use base_common_types_payload::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
 use base_execution_payload_types::{
@@ -268,7 +268,7 @@ mod tests {
     use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, EMPTY_ROOT_HASH, Header, Sealable, TxDeposit,
     };
-    use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+    use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;

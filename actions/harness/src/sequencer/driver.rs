@@ -141,7 +141,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
         *self.conductor.lock().expect("conductor lock poisoned") = Some(conductor);
     }
 
-    /// Broadcast `block` as a [`base_common_rpc_types_engine::NetworkPayloadEnvelope`] to the wired [`SupervisedP2P`] handle.
+    /// Broadcast `block` as a [`base_common_types_payload::NetworkPayloadEnvelope`] to the wired [`SupervisedP2P`] handle.
     pub fn broadcast_unsafe_block(&self, block: &BaseBlock) {
         let Some(p2p) = &self.supervised_p2p else { return };
         p2p.send(ExecutionPayloadConverter::network_envelope(

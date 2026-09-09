@@ -7,7 +7,7 @@ use core::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_rpc_types_engine::ForkchoiceState;
+use base_common_types_payload::ForkchoiceState;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 

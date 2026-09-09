@@ -259,7 +259,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, address};
     use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
-    use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+    use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
     use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::*;

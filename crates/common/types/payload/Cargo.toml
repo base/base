@@ -1,5 +1,5 @@
 [package]
-name = "base-common-rpc-types-engine"
+name = "base-common-types-payload"
 description = "Base RPC types for the `engine` namespace"
 
 version.workspace = true

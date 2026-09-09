@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_protocol::BlockInfo;
 
 use crate::Metrics;

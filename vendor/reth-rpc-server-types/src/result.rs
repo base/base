@@ -3,7 +3,7 @@
 use std::fmt;
 
 use alloy_eips::BlockId;
-use base_common_rpc_types_engine::PayloadError;
+use base_common_types_payload::PayloadError;
 use base_execution_consensus::ConsensusError;
 use jsonrpsee_core::RpcResult;
 

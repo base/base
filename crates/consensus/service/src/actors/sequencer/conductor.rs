@@ -1,7 +1,7 @@
 use std::{fmt::Debug, time::Duration};
 
 use async_trait::async_trait;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_rpc::ConductorApiClient;
 use jsonrpsee::{
     core::ClientError,

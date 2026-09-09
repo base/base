@@ -13,7 +13,7 @@ use base_common_network::{Base, Ethereum, Network};
 use base_common_rpc_types::{
     BaseTransaction, Block, EIP1186AccountProofResponse, Transaction as EthTransaction,
 };
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,
 };
@@ -92,7 +92,7 @@ pub struct MockEngineStorage {
 /// ```rust
 /// use base_consensus_engine::test_utils::{MockEngineClient};
 /// use base_common_genesis::RollupConfig;
-/// use base_common_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
+/// use base_common_types_payload::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 /// use alloy_primitives::B256;
 /// use std::sync::Arc;
 ///

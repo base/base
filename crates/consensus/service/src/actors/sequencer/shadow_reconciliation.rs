@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use alloy_primitives::B256;
-use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
 use tracing::debug;
@@ -324,7 +324,7 @@ impl ShadowReconciliationGate {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
-    use base_common_rpc_types_engine::{
+    use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
     };
     use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};

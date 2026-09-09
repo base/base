@@ -1656,7 +1656,7 @@ where
     /// engine-API specification.
     pub fn convert_payload_to_block(
         &self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
     ) -> Result<SealedBlock, NewPayloadError> {
         let block = self.validator.convert_payload_to_block(payload)?;
         Ok(block)
@@ -1665,7 +1665,7 @@ where
     /// Validates a payload received from engine API.
     pub fn validate_payload(
         &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
+        payload: base_common_types_payload::ExecutionData,
         ctx: TreeCtx<'_>,
     ) -> ValidationOutcome {
         self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
@@ -1782,7 +1782,7 @@ where
 #[derive(Debug, Clone)]
 pub enum BlockOrPayload {
     /// Payload.
-    Payload(base_common_rpc_types_engine::ExecutionData),
+    Payload(base_common_types_payload::ExecutionData),
     /// Block.
     Block(SealedBlock),
 }

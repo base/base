@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use eyre::Result;
@@ -35,7 +35,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
-                payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
+                payload_attributes: base_common_types_payload::PayloadAttributes {
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -85,7 +85,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
-                payload_attributes: base_common_rpc_types_engine::PayloadAttributes {
+                payload_attributes: base_common_types_payload::PayloadAttributes {
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()

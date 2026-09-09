@@ -6,7 +6,7 @@ use base_common_types_chain::{
     BlockHeader, EIP1559ParamError, Header, HoloceneExtraData, JovianExtraData,
 };
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 
 use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 
@@ -103,7 +103,7 @@ mod test {
     use alloy_primitives::{B64, b64, bytes};
     use base_common_types_chain::Header;
     use base_common_genesis::{FeeConfig, RollupConfig};
-    use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadAttributes};
+    use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 
     use super::decode_holocene_eip_1559_params_block_header;
     use crate::util::{

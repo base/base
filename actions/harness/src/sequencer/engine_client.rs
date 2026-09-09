@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_common_types_chain::BaseBlock;
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, PayloadId};
+use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId};
 use base_consensus_node::{ResetReason, SequencerEngineClient};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use tokio::sync::mpsc;

@@ -1,4 +1,4 @@
-use base_common_rpc_types_engine::ForkchoiceState;
+use base_common_types_payload::ForkchoiceState;
 use reth_primitives_traits::SealedHeader;
 
 /// A type that can track updates related to fork choice updates.

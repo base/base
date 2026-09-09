@@ -63,7 +63,7 @@ async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
                 BlockReference::Tag("block_7".to_string()),
                 BlockReference::Tag("block_8".to_string()),
             )
-            .with_expected_status(base_common_rpc_types_engine::PayloadStatusEnum::Valid),
+            .with_expected_status(base_common_types_payload::PayloadStatusEnum::Valid),
         )
         .with_action(UpdateBlockInfo::default())
         .with_action(AssertChainTip::new(10))

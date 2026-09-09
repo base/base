@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, Block, Transaction};
 use base_common_genesis::ChainGenesis;
 use base_common_rpc_types::Block as RpcBlock;
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError, CancunPayloadFields,
     PraguePayloadFields,
 };

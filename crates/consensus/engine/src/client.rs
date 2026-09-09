@@ -7,7 +7,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
-use base_common_rpc_types_engine::{
+use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus,
 };
@@ -44,7 +44,7 @@ impl EngineClientError {
         match self {
             Self::Execution(base_execution_payload_builder::ExecutionCommandError::Forkchoice(
                 reth_engine_primitives::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
-                    base_common_rpc_types_engine::ForkchoiceUpdateError::InvalidState,
+                    base_common_types_payload::ForkchoiceUpdateError::InvalidState,
                 ),
             )) => true,
             _ => false,

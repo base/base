@@ -4,7 +4,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_types_payload::BasePayloadAttributes;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::BasePayloadBuilder;
 use base_execution_txpool::TransactionPool;

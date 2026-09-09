@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadId};
+use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_consensus_engine::EngineQueries;
 use base_consensus_node::{
     BuildRequest, EngineActor, EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor,

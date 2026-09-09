@@ -28,7 +28,7 @@ notify = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
+base-common-types-payload = { workspace = true, features = ["std", "serde"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["default"] }
