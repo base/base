@@ -815,10 +815,11 @@ dependencies = [
 
 [[package]]
 name = "alloy-transport"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06f4ca8484d6295d5165f67de8fdb00ae630ba585efb606f003171286b56441c"
 dependencies = [
  "alloy-json-rpc",
- "alloy-primitives",
  "auto_impl",
  "base64 0.22.1",
  "derive_more",
@@ -833,7 +834,6 @@ dependencies = [
  "tower",
  "tracing",
  "url",
- "wasm-bindgen-futures",
  "wasmtimer",
 ]
 
