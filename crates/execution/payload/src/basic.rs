@@ -32,7 +32,7 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     BasePayloadBuilder, BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderLease, PayloadId,
-    PayloadJob, builder::BasePayloadTransactions, job_metrics::PayloadBuilderMetrics,
+    PayloadJob, job_metrics::PayloadBuilderMetrics,
 };
 
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
@@ -42,7 +42,7 @@ pub type HeaderForPayload = base_common_consensus::Header;
 
 /// Creates and schedules Base payload construction jobs.
 #[derive(Debug)]
-pub struct BasicPayloadJobGenerator<Client, Pool, Txs> {
+pub struct BasicPayloadJobGenerator<Client, Pool> {
     /// The client that can interact with the chain.
     client: Client,
     /// The task executor to spawn payload building tasks on.
@@ -54,7 +54,7 @@ pub struct BasicPayloadJobGenerator<Client, Pool, Txs> {
     /// The type responsible for building payloads.
     ///
     /// See [`BasePayloadBuilder`]
-    builder: BasePayloadBuilder<Pool, Client, Txs>,
+    builder: BasePayloadBuilder<Pool, Client>,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
     /// Stored parent block information for new payload jobs.
@@ -63,14 +63,14 @@ pub struct BasicPayloadJobGenerator<Client, Pool, Txs> {
 
 // === impl BasicPayloadJobGenerator ===
 
-impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs> {
+impl<Client, Pool> BasicPayloadJobGenerator<Client, Pool> {
     /// Creates a new [`BasicPayloadJobGenerator`] with the given config and custom
     /// [`BasePayloadBuilder`]
     pub fn with_builder(
         client: Client,
         executor: Runtime,
         config: BasicPayloadJobGeneratorConfig,
-        builder: BasePayloadBuilder<Pool, Client, Txs>,
+        builder: BasePayloadBuilder<Pool, Client>,
     ) -> Self {
         Self {
             client,
@@ -134,18 +134,18 @@ impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs> {
 
 // === impl BasicPayloadJobGenerator ===
 
-impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs>
+impl<Client, Pool> BasicPayloadJobGenerator<Client, Pool>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     /// Starts building a payload against its requested parent.
     pub fn new_payload_job(
         &self,
         input: BuildNewPayload,
         id: PayloadId,
-    ) -> Result<BasicPayloadJob<Pool, Client, Txs>, PayloadBuilderError> {
+    ) -> Result<BasicPayloadJob<Pool, Client>, PayloadBuilderError> {
         let BuildNewPayload { attributes, parent_hash, mut resources } = input;
         let parent_header = if parent_hash.is_zero() {
             // Use latest header for genesis block case
@@ -347,7 +347,7 @@ impl Default for BasicPayloadJobGeneratorConfig {
 /// built and this future will wait to be resolved: [`PayloadJob::resolve`] or terminated if the
 /// deadline is reached.
 #[derive(Debug)]
-pub struct BasicPayloadJob<Pool, Client, Txs> {
+pub struct BasicPayloadJob<Pool, Client> {
     /// The configuration for how the payload will be created.
     config: PayloadConfig,
     /// How to spawn building tasks
@@ -381,14 +381,14 @@ pub struct BasicPayloadJob<Pool, Client, Txs> {
     /// The type responsible for building payloads.
     ///
     /// See [`BasePayloadBuilder`]
-    builder: BasePayloadBuilder<Pool, Client, Txs>,
+    builder: BasePayloadBuilder<Pool, Client>,
 }
 
-impl<Pool, Client, Txs> BasicPayloadJob<Pool, Client, Txs>
+impl<Pool, Client> BasicPayloadJob<Pool, Client>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     /// Spawns a new payload build task.
     fn spawn_build_job(&mut self) {
@@ -429,11 +429,11 @@ where
     }
 }
 
-impl<Pool, Client, Txs> Future for BasicPayloadJob<Pool, Client, Txs>
+impl<Pool, Client> Future for BasicPayloadJob<Pool, Client>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     type Output = Result<(), PayloadBuilderError>;
 
@@ -499,11 +499,11 @@ where
     }
 }
 
-impl<Pool, Client, Txs> PayloadJob for BasicPayloadJob<Pool, Client, Txs>
+impl<Pool, Client> PayloadJob for BasicPayloadJob<Pool, Client>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     type ResolvePayloadFuture = ResolveBestPayload;
 

@@ -42,7 +42,7 @@ impl<Pool, Provider> BaseDebugWitnessApi<Pool, Provider> {
     pub fn new(
         provider: Provider,
         task_spawner: Runtime,
-        builder: BasePayloadBuilder<Pool, Provider, ()>,
+        builder: BasePayloadBuilder<Pool, Provider>,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(3));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
@@ -105,7 +105,7 @@ impl<Pool, Provider> Debug for BaseDebugWitnessApi<Pool, Provider> {
 
 struct BaseDebugWitnessApiInner<Pool, Provider> {
     provider: Provider,
-    builder: BasePayloadBuilder<Pool, Provider, ()>,
+    builder: BasePayloadBuilder<Pool, Provider>,
     task_spawner: Runtime,
     semaphore: Arc<Semaphore>,
 }

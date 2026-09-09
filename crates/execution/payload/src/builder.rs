@@ -85,7 +85,7 @@ macro_rules! emit_native_validity_event {
 
 /// Base payload builder
 #[derive(Debug)]
-pub struct BasePayloadBuilder<Pool, Client, Txs = ()> {
+pub struct BasePayloadBuilder<Pool, Client> {
     /// The type responsible for creating the evm.
     pub evm_config: BaseEvmConfig,
     /// Transaction pool.
@@ -94,16 +94,12 @@ pub struct BasePayloadBuilder<Pool, Client, Txs = ()> {
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
     pub config: BaseBuilderConfig,
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
 }
 
-impl<Pool, Client, Txs> Clone for BasePayloadBuilder<Pool, Client, Txs>
+impl<Pool, Client> Clone for BasePayloadBuilder<Pool, Client>
 where
     Pool: Clone,
     Client: Clone,
-    Txs: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -111,12 +107,11 @@ where
             pool: self.pool.clone(),
             client: self.client.clone(),
             config: self.config.clone(),
-            best_transactions: self.best_transactions.clone(),
         }
     }
 }
 
-impl<Pool, Client> BasePayloadBuilder<Pool, Client, ()> {
+impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     /// `BasePayloadBuilder` constructor.
     ///
     /// Configures the builder with the default settings.
@@ -131,25 +126,11 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client, ()> {
         evm_config: BaseEvmConfig,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self { pool, client, evm_config, config, best_transactions: () }
+        Self { pool, client, evm_config, config }
     }
 }
 
-impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs> {
-    /// Configures the type responsible for yielding the transactions that should be included in the
-    /// payload.
-    pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<Pool, Client, T> {
-        BasePayloadBuilder {
-            pool: self.pool,
-            client: self.client,
-            evm_config: self.evm_config,
-            best_transactions,
-            config: self.config,
-        }
-    }
-}
-
-impl<Pool, Client, T> BasePayloadBuilder<Pool, Client, T>
+impl<Pool, Client> BasePayloadBuilder<Pool, Client>
 where
     Pool: TransactionPool + Clone,
     Client: StateProviderFactory + ChainSpecProvider + BlockReader,
@@ -253,15 +234,15 @@ where
 }
 
 /// Base payload construction entry points.
-impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs>
+impl<Pool, Client> BasePayloadBuilder<Pool, Client>
 where
     Client: StateProviderFactory + ChainSpecProvider + BlockReader + Clone,
     Pool: TransactionPool,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: ParkableTransactionPool,
 {
     pub fn try_build(&self, args: BuildArguments) -> Result<BuildOutcome, PayloadBuilderError> {
         let pool = self.pool.clone();
-        self.build_payload(args, |attrs| self.best_transactions.best_transactions(pool, attrs))
+        self.build_payload(args, |attrs| ParkableBestPayloadTransactions::new(pool.best_transactions_with_attributes_and_parking(attrs)))
     }
 
     /// Builds a payload with the sequencer transactions and no pool transactions.
@@ -499,58 +480,6 @@ impl<Txs> Builder<'_, Txs> {
             mode,
         )?;
         Ok(witness)
-    }
-}
-
-/// A type that returns the [`PayloadTransactions`] that should be included in the payload.
-pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
-where
-    Pool: TransactionPool,
-    Pool: base_execution_txpool::TransactionPool,
-{
-    /// Returns an iterator that yields the transaction in the order they should get included in the
-    /// new payload.
-    ///
-    /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`].
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>;
-}
-
-impl<Pool> BasePayloadTransactions<Pool> for ()
-where
-    Pool: ParkableTransactionPool,
-    Pool: base_execution_txpool::TransactionPool,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>
-    {
-        ParkableBestPayloadTransactions::new(
-            pool.best_transactions_with_attributes_and_parking(attr),
-        )
-    }
-}
-
-impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
-where
-    Pool: TransactionPool,
-    Pool: base_execution_txpool::TransactionPool,
-    F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
-    Transactions:
-        ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>
-    {
-        self(pool, attr)
     }
 }
 

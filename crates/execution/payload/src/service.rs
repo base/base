@@ -32,7 +32,7 @@ use tracing::{Span, debug, debug_span, info, trace, warn};
 
 use crate::{
     BasicPayloadJob, BasicPayloadJobGenerator, KeepPayloadJobAlive, PayloadBuilderServiceMetrics,
-    PayloadJob, builder::BasePayloadTransactions,
+    PayloadJob,
 };
 
 pub type PayloadFuture =
@@ -207,7 +207,7 @@ impl Clone for PayloadBuilderHandle {
 /// does know nothing about how to build them, it just drives their jobs to completion.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct PayloadBuilderService<Client, Pool, Txs, St>
+pub struct PayloadBuilderService<Client, Pool, St>
 where
     Client: reth_storage_api::StateProviderFactory
         + reth_storage_api::BlockReaderIdExt
@@ -216,14 +216,14 @@ where
         + Unpin
         + 'static,
     Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     /// The type that knows how to create new payloads.
-    generator: BasicPayloadJobGenerator<Client, Pool, Txs>,
+    generator: BasicPayloadJobGenerator<Client, Pool>,
     /// All active payload jobs, each accompanied by its id and the caller's tracing span
     /// propagated across the channel so that poll and resolve work appears as children of the
     /// original Engine API request.
-    payload_jobs: Vec<PayloadJobEntry<BasicPayloadJob<Pool, Client, Txs>>>,
+    payload_jobs: Vec<PayloadJobEntry<BasicPayloadJob<Pool, Client>>>,
     /// Copy of the sender half, so new [`PayloadBuilderHandle`] can be created on demand.
     service_tx: mpsc::UnboundedSender<PayloadServiceCommand>,
     /// Receiver half of the command channel.
@@ -245,7 +245,7 @@ const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 
 // === impl PayloadBuilderService ===
 
-impl<Client, Pool, Txs, St> PayloadBuilderService<Client, Pool, Txs, St>
+impl<Client, Pool, St> PayloadBuilderService<Client, Pool, St>
 where
     Client: reth_storage_api::StateProviderFactory
         + reth_storage_api::BlockReaderIdExt
@@ -254,7 +254,7 @@ where
         + Unpin
         + 'static,
     Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
 {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
     /// with it.
@@ -263,7 +263,7 @@ where
     /// additional logic when new state is committed. See also
     /// [`BasicPayloadJobGenerator::on_new_state`].
     pub fn new(
-        generator: BasicPayloadJobGenerator<Client, Pool, Txs>,
+        generator: BasicPayloadJobGenerator<Client, Pool>,
         chain_events: St,
     ) -> (Self, PayloadBuilderHandle) {
         let (service_tx, command_rx) = mpsc::unbounded_channel();
@@ -325,7 +325,7 @@ where
         &mut self,
         id: PayloadId,
         kind: PayloadKind,
-    ) -> ResolvePayloadResult<BasicPayloadJob<Pool, Client, Txs>> {
+    ) -> ResolvePayloadResult<BasicPayloadJob<Pool, Client>> {
         let start = Instant::now();
         debug!(target: "payload_builder", %id, "resolving payload job");
 
@@ -399,7 +399,7 @@ where
     }
 }
 
-impl<Client, Pool, Txs, St> Future for PayloadBuilderService<Client, Pool, Txs, St>
+impl<Client, Pool, St> Future for PayloadBuilderService<Client, Pool, St>
 where
     Client: reth_storage_api::StateProviderFactory
         + reth_storage_api::BlockReaderIdExt
@@ -408,7 +408,7 @@ where
         + Unpin
         + 'static,
     Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: base_execution_txpool::ParkableTransactionPool,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     type Output = ();
@@ -682,7 +682,7 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{
-        BaseOrdering, BasePooledTransaction, InMemoryBlobStore, MockTransactionValidator, Pool,
+        BaseOrdering, BaseTransactionPool, BaseTransactionValidator, EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
     };
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::Runtime;
@@ -709,17 +709,17 @@ mod tests {
                     parent.hash_slow(),
                     BaseBlock { header: parent, body: Default::default() },
                 );
+                let validator = EthTransactionValidatorBuilder::new(provider.clone(), BaseEvmConfig::new(chain_spec.clone()))
+                    .build_with_tasks(Runtime::test())
+                    .map(BaseTransactionValidator::new);
                 let pool = Pool::new(
-                    MockTransactionValidator::default(),
+                    validator,
                     BaseOrdering::default(),
                     InMemoryBlobStore::default(),
                     Default::default(),
                 );
-                let builder =
-                    BasePayloadBuilder::new(pool, provider.clone(), BaseEvmConfig::new(chain_spec))
-                        .with_transactions(|_, _| {
-                            crate::NoopPayloadTransactions::<BasePooledTransaction>::default()
-                        });
+                let pool = BaseTransactionPool::new(pool, BaseOrdering::default());
+                let builder = BasePayloadBuilder::new(pool, provider.clone(), BaseEvmConfig::new(chain_spec));
                 let generator = BasicPayloadJobGenerator::with_builder(
                     provider,
                     Runtime::test(),
