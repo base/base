@@ -5274,7 +5274,6 @@ dependencies = [
  "bollard",
  "clap",
  "futures",
- "human_bytes",
  "serde_json",
  "serial_test",
  "tempfile",

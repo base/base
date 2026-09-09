@@ -20,7 +20,6 @@ url = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 bollard = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-human_bytes = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
 tokio = { workspace = true, features = ["default", "rt", "fs", "time"] }
