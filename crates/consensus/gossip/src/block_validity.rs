@@ -128,10 +128,10 @@ impl BlockHandler {
         };
         Metrics::block_version(version).increment(1);
 
-        let validation_result =
-            base_metrics::time!(Metrics::block_validation_duration_seconds(), {
-                self.validate_block_internal(envelope)
-            });
+        let validation_result = base_common_observability_metrics::time!(
+            Metrics::block_validation_duration_seconds(),
+            { self.validate_block_internal(envelope) }
+        );
 
         // Record success/failure metrics
         match &validation_result {

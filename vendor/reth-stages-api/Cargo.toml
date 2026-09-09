@@ -22,7 +22,6 @@ alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 reth-prune = { workspace = true }
 futures-util = { workspace = true }
-reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 reth-static-file = { workspace = true }
 reth-stages-types = { workspace = true }
@@ -37,6 +36,7 @@ tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [dev-dependencies]
 reth-db-api = { workspace = true }

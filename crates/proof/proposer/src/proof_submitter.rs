@@ -212,7 +212,8 @@ impl ProofSubmitter {
             "Proposing output (creating dispute game)"
         );
 
-        let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
+        let mut propose_timer =
+            base_common_observability_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
         let propose_result = self
             .output_proposer
             .propose_output(aggregate_proposal, parent_address, &intermediate_roots)
@@ -336,7 +337,8 @@ impl ProofSubmitter {
             "Attaching TEE proof to existing dispute game"
         );
 
-        let mut attach_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
+        let mut attach_timer =
+            base_common_observability_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
         match self.output_proposer.verify_proposal_proof(game_address, aggregate_proposal).await {
             Ok(()) => {
                 drop(attach_timer);

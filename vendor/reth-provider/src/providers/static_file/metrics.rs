@@ -1,8 +1,8 @@
 use std::{collections::HashMap, time::Duration};
 
+use base_common_observability_metrics::Metrics;
 use itertools::Itertools;
 use metrics::{Counter, Gauge, Histogram};
-use reth_metrics::Metrics;
 use reth_static_file_types::{StaticFileMap, StaticFileSegment};
 use strum::{EnumIter, IntoEnumIterator};
 

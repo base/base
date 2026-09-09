@@ -119,7 +119,8 @@ where
 
         loop {
             {
-                let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
+                let _tick_timer =
+                    base_common_observability_metrics::timed!(Metrics::tick_duration_seconds());
 
                 if let Some((recovered, finalized_head)) =
                     self.proof_recovery.try_recover_and_plan(&mut cache).await
@@ -156,7 +157,9 @@ where
 
         loop {
             let restart = {
-                let _tick_timer = base_metrics::timed!(Metrics::collector_tick_duration_seconds());
+                let _tick_timer = base_common_observability_metrics::timed!(
+                    Metrics::collector_tick_duration_seconds()
+                );
 
                 if let Some((recovered, finalized_head)) =
                     self.proof_recovery.try_recover_and_plan(&mut cache).await

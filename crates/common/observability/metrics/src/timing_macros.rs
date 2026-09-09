@@ -1,4 +1,4 @@
-//! Timing helper macros built on top of the `base-metrics` timer types.
+//! Timing helper macros built on top of the `base-common-observability-metrics` timer types.
 
 /// Creates a [`DropTimer`] (or [`NoopDropTimer`]) that records elapsed duration
 /// to a histogram metric on drop.
@@ -6,9 +6,9 @@
 /// # Examples
 ///
 /// ```ignore
-/// let _timer = base_metrics::timed!(Metrics::proof_duration_seconds());
+/// let _timer = base_common_observability_metrics::timed!(Metrics::proof_duration_seconds());
 ///
-/// let mut timer = base_metrics::timed!(Metrics::witness_build_duration_seconds("nitro"));
+/// let mut timer = base_common_observability_metrics::timed!(Metrics::witness_build_duration_seconds("nitro"));
 /// timer.stop();
 /// ```
 #[macro_export]
@@ -33,7 +33,7 @@ macro_rules! timed {
 /// # Examples
 ///
 /// ```ignore
-/// let result = base_metrics::time!(Metrics::request_duration(), {
+/// let result = base_common_observability_metrics::time!(Metrics::request_duration(), {
 ///     do_work().await
 /// });
 /// ```

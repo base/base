@@ -1,6 +1,6 @@
 //! Transaction pool metrics.
 
-use reth_metrics::{
+use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };

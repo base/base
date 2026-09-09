@@ -43,3 +43,8 @@ impl Drop for NoopDropTimer {
     #[inline(always)]
     fn drop(&mut self) {}
 }
+
+#[cfg(not(feature = "metrics"))]
+#[inline(always)]
+/// Initializes all registered metrics. No-op when the `metrics` feature is disabled.
+pub const fn initialize_registered_metrics() {}

@@ -1,6 +1,6 @@
 //! Metrics for audit operations including event reads, S3 writes, and event processing.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     tips_audit
     #[describe("Duration of archive_event")]
     archive_event_duration: histogram,

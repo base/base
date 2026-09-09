@@ -16,7 +16,6 @@ workspace = true
 sha2 = { workspace = true }
 snap = { workspace = true }
 serde_repr = { workspace = true }
-base-metrics = { workspace = true }
 base-protocol = { workspace = true }
 libp2p-stream = { workspace = true }
 base-consensus-disc = { workspace = true }
@@ -31,6 +30,7 @@ thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 ipnet = { workspace = true, features = ["default", "serde"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
@@ -53,8 +53,8 @@ base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "
 [features]
 default = []
 metrics = [
-	"base-consensus-disc/metrics",
-	"base-metrics/metrics",
-	"dep:metrics",
-	"libp2p/metrics",
+    "base-consensus-disc/metrics",
+    "base-common-observability-metrics/metrics",
+    "dep:metrics",
+    "libp2p/metrics",
 ]

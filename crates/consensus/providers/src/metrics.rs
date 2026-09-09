@@ -1,6 +1,6 @@
 //! Metrics for the Alloy providers.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_providers
     #[describe("Number of cache hits in chain provider")]
     #[label(name = "cache", default = ["header_by_hash", "receipts_by_hash", "block_info_and_tx", "block_by_number"])]

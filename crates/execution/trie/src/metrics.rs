@@ -89,7 +89,7 @@ impl StorageOperation {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_trie.storage.operation,
     struct = OperationMetrics,
     #[describe("Duration of storage operations in seconds")]
@@ -97,7 +97,7 @@ base_metrics::define_metrics! {
     duration_seconds: histogram,
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_trie.block,
     struct = BlockMetrics,
     #[describe("Total time to process a block (end-to-end) in seconds")]
@@ -149,7 +149,10 @@ pub struct StorageMetrics;
 impl StorageMetrics {
     /// Record a storage operation with timing.
     pub fn record_operation<R>(&self, operation: StorageOperation, f: impl FnOnce() -> R) -> R {
-        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f() })
+        base_common_observability_metrics::time!(
+            OperationMetrics::duration_seconds(operation.as_str()),
+            { f() }
+        )
     }
 
     /// Record a storage operation with timing (async version).
@@ -157,7 +160,10 @@ impl StorageMetrics {
     where
         F: Future<Output = R>,
     {
-        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f.await })
+        base_common_observability_metrics::time!(
+            OperationMetrics::duration_seconds(operation.as_str()),
+            { f.await }
+        )
     }
 
     /// Record a pre-measured duration for an operation.

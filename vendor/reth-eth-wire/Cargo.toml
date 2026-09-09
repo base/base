@@ -22,12 +22,11 @@ thiserror = { workspace = true }
 reth-ecies = { workspace = true }
 pin-project = { workspace = true }
 alloy-chains = { workspace = true }
-reth-metrics = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-network-peers = { workspace = true }
-base-common-types-chain = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -35,9 +34,11 @@ tokio-stream = { workspace = true, features = ["default"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-tokio-util = { workspace = true, features = ["default", "codec", "io"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+tokio-util = { workspace = true, features = ["default", "codec", "io"] }
 tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
+
 [dev-dependencies]
 serde = { workspace = true }
 test-fuzz = { workspace = true }
@@ -47,13 +48,14 @@ base-common-types-chain = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 reth-eth-wire-types = { workspace = true, features = ["default", "arbitrary"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+
 [[test]]
 name = "fuzz_roundtrip"
 path = "tests/fuzz_roundtrip.rs"
@@ -68,7 +70,6 @@ arbitrary = [
     "base-common-types-chain/arbitrary",
     "alloy-chains/arbitrary",
     "reth-primitives-traits/arbitrary",
-    "base-common-types-chain/arbitrary",
 ]
 serde = [
     "dep:serde",
@@ -81,6 +82,5 @@ serde = [
     "base-common-types-chain/serde",
     "alloy-chains/serde",
     "reth-primitives-traits/serde",
-    "base-common-types-chain/serde",
     "rand_08/serde",
 ]

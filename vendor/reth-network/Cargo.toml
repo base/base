@@ -51,7 +51,6 @@ schnellru = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
-reth-metrics = { workspace = true, features = ["common"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["net"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
@@ -63,6 +62,7 @@ alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
 
 [dev-dependencies]

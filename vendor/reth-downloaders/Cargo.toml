@@ -23,7 +23,6 @@ alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-config = { workspace = true }
 futures-util = { workspace = true }
-reth-metrics = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -42,6 +41,7 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
 
 [dev-dependencies]

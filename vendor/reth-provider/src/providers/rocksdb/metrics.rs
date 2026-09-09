@@ -1,9 +1,9 @@
 use std::{collections::HashMap, time::Duration};
 
+use base_common_observability_metrics::Metrics;
 use itertools::Itertools;
 use metrics::{Counter, Histogram};
 use reth_db::Tables;
-use reth_metrics::Metrics;
 use strum::{EnumIter, IntoEnumIterator};
 
 pub(super) const ROCKSDB_TABLES: &[&str] = &[

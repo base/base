@@ -1,6 +1,6 @@
 //! Collected metrics for the websocket proxy.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     websocket_proxy
     #[describe("Messages sent to clients")]
     sent_messages: counter,

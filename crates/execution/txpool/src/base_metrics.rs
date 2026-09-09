@@ -4,7 +4,7 @@
 //! All labels are low-cardinality static categories; addresses and transaction
 //! hashes are never used as label values.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     txpool.guard,
     struct = GuardMetrics,
     #[describe("EIP-8130 transactions rejected at admission by signature/payment limits")]
@@ -94,7 +94,7 @@ impl GuardMetrics {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     txpool.validity,
     struct = ValidityPoolMetrics,
     #[describe("Validity transactions admitted to the pool, labeled by whether the admission replaced an existing same-sender/nonce transaction or added a new pool entry")]
@@ -113,7 +113,7 @@ impl ValidityPoolMetrics {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]

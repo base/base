@@ -116,12 +116,15 @@ impl AlloyL2ChainProvider {
 
         Metrics::l2_chain_requests(method_name).increment(1);
 
-        let raw_block = base_metrics::time!(Metrics::request_duration(method_name), {
-            match &id {
-                BlockId::Number(num) => self.inner.get_block_by_number(*num).full().await,
-                BlockId::Hash(hash) => self.inner.get_block_by_hash(hash.block_hash).full().await,
-            }
-        });
+        let raw_block =
+            base_common_observability_metrics::time!(Metrics::request_duration(method_name), {
+                match &id {
+                    BlockId::Number(num) => self.inner.get_block_by_number(*num).full().await,
+                    BlockId::Hash(hash) => {
+                        self.inner.get_block_by_hash(hash.block_hash).full().await
+                    }
+                }
+            });
 
         let result = async {
             let block = match id {
@@ -241,14 +244,14 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
         for attempt in 1..=L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
             Metrics::l2_chain_requests(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
 
-            let block =
-                base_metrics::time!(Metrics::request_duration(L2_BLOCK_REF_BY_NUMBER_METHOD), {
-                    self.inner.get_block_by_number(number.into()).full().await
-                })
-                .map_err(|e| {
-                    Metrics::l2_chain_errors(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
-                    AlloyL2ChainProviderError::Transport(e)
-                })?;
+            let block = base_common_observability_metrics::time!(
+                Metrics::request_duration(L2_BLOCK_REF_BY_NUMBER_METHOD),
+                { self.inner.get_block_by_number(number.into()).full().await }
+            )
+            .map_err(|e| {
+                Metrics::l2_chain_errors(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
+                AlloyL2ChainProviderError::Transport(e)
+            })?;
 
             if let Some(block) = block {
                 let block = block.into_consensus().map_transactions(|t| t.inner.inner.into_inner());

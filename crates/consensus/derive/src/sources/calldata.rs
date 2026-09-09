@@ -43,7 +43,7 @@ impl<CP: ChainProvider + Send> CalldataSource<CP> {
             return Ok(());
         }
 
-        let (_, txs) = base_metrics::time!(
+        let (_, txs) = base_common_observability_metrics::time!(
             Metrics::pipeline_data_availability_l1_fetch_duration_seconds("calldata"),
             { self.chain_provider.block_info_and_transactions_by_hash(block_ref.hash).await }
         )?;

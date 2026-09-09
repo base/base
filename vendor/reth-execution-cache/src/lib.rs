@@ -21,9 +21,9 @@ mod txpool;
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Histogram};
 use parking_lot::Mutex;
-use reth_metrics::Metrics;
 use reth_primitives_traits::FastInstant as Instant;
 use tracing::{debug, instrument, warn};
 pub use txpool::*;

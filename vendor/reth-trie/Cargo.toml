@@ -25,7 +25,6 @@ reth-storage-errors = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
-reth-metrics = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-trie-sparse = { workspace = true, features = ["std"] }
@@ -35,6 +34,7 @@ reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -64,7 +64,7 @@ required-features = ["test-utils"]
 harness = false
 
 [features]
-metrics = ["reth-metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics", "dep:metrics"]
 serde = [
     "alloy-primitives/serde",
     "base-common-types-chain/serde",

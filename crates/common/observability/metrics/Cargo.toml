@@ -1,0 +1,54 @@
+[package]
+name = "base-common-observability-metrics"
+version.workspace = true
+description = "Utility macros and types for recording metrics in base crates"
+
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+metrics = {optional = true, workspace = true}
+metrics-derive = { workspace = true, optional = true}
+base-common-types-chain = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["full"], optional = true }
+ctor = { workspace = true, optional = true, features = ["default"] }
+futures = { workspace = true, optional = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default", "codec"], optional = true }
+
+[dev-dependencies]
+metrics = { workspace = true }
+ordered-float = { workspace = true, features = ["default"] }
+metrics-util = { workspace = true, features = ["debugging"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true, features = ["default"], optional = true}
+
+[[test]]
+name = "metrics"
+required-features = ["metrics"]
+
+[[test]]
+name = "registry_init"
+required-features = ["metrics"]
+
+[features]
+std = ["dep:libc"]
+metrics = [
+    "dep:ctor",
+    "dep:metrics",
+    "std",
+    "dep:metrics-derive",
+]
+common = [
+    "tokio",
+    "futures",
+    "tokio-util",
+    "base-common-types-chain",
+    "metrics",
+]

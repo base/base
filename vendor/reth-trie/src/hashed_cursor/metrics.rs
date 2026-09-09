@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 #[cfg(feature = "metrics")]
-use reth_metrics::metrics::{self, Histogram};
+use base_common_observability_metrics::metrics::{self, Histogram};
 use reth_primitives_traits::FastInstant as Instant;
 use reth_storage_errors::db::DatabaseError;
 use tracing::trace_span;

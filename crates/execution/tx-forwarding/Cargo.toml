@@ -17,13 +17,13 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-base-metrics = { workspace = true }
 alloy-primitives = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true }
 base-observability-events = { workspace = true }
 url = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -46,4 +46,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] 
 
 [features]
 default = ["metrics"]
-metrics = ["base-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]

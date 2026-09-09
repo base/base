@@ -13,7 +13,7 @@ no_std_packages=(
   base-common-types-payload
 
   # consensus protocol crates
-  base-metrics
+  base-common-observability-metrics
   base-common-chain-config
   base-consensus-derive
   base-protocol

@@ -26,7 +26,7 @@ pub trait MinerApiExt {
     async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool>;
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_rpc.miner,
     struct = BaseMinerMetrics,
     #[describe("Max DA tx size set on the miner")]

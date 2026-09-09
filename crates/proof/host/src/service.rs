@@ -45,7 +45,8 @@ impl<B: ProverBackend> ProverService<B> {
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
         Metrics::requests_total(Metrics::MODE_ONLINE).increment(1);
         let mut guard = proof_guard!();
-        let _proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
+        let _proof_timer =
+            base_common_observability_metrics::timed!(Metrics::proof_duration_seconds());
 
         let l2_block = request.claimed_l2_block_number;
         let result = Box::pin(
@@ -72,18 +73,19 @@ impl<B: ProverBackend> ProverService<B> {
         let l1_header_cache = self.l1_header_cache.get_or_init(L1HeaderCache::new).clone();
         let oracle = self.backend.create_oracle();
 
-        let witness_timer = base_metrics::timed!(Metrics::witness_build_duration_seconds(
-            self.backend.prover_label()
-        ));
+        let witness_timer = base_common_observability_metrics::timed!(
+            Metrics::witness_build_duration_seconds(self.backend.prover_label())
+        );
         let oracle = host
             .build_witness_with_l1_header_cache(oracle, l1_header_cache)
             .await
             .map_err(ProverError::Host)?;
         drop(witness_timer);
 
-        let result = base_metrics::time!(Metrics::prover_duration_seconds(), {
-            self.backend.prove(oracle).await.map_err(ProverError::Backend)?
-        });
+        let result =
+            base_common_observability_metrics::time!(Metrics::prover_duration_seconds(), {
+                self.backend.prove(oracle).await.map_err(ProverError::Backend)?
+            });
 
         Ok(result)
     }

@@ -1,9 +1,9 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{B256, BlockHash};
+use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Histogram};
 use reth_db_api::{DatabaseError, transaction::DbTx};
-use reth_metrics::Metrics;
 use reth_primitives_traits::dashmap::{self, DashMap};
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,

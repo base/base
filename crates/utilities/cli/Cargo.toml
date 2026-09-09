@@ -23,11 +23,11 @@ eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
-base-metrics = { workspace = true, features = ["metrics"] }
 opentelemetry = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 metrics-process = { workspace = true, features = ["metrics-rs"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 reth-tracing-otlp = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full", "macros", "rt-multi-thread", "signal"] }

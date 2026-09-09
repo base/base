@@ -13,12 +13,12 @@ workspace = true
 
 [dependencies]
 alloy-rlp = { workspace = true }
-base-metrics = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
+base-common-observability-metrics = { workspace = true }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 alloy-primitives = { workspace = true, features = ["std"] }
@@ -32,5 +32,5 @@ rstest = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 
 [features]
-clap = [ "dep:clap" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+clap = ["dep:clap"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]

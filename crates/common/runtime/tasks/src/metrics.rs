@@ -3,7 +3,7 @@
 use core::fmt;
 use std::time::Duration;
 
-use reth_metrics::{
+use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Histogram},
 };

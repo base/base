@@ -1,6 +1,6 @@
 //! Metrics for the proof host.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_proof_host
 
     #[describe("Total proof requests received")]
@@ -91,7 +91,7 @@ impl Metrics {
 /// Prefer the [`proof_guard!`] macro to construct this type.
 #[cfg(feature = "metrics")]
 pub struct ProofGuard {
-    _inflight: base_metrics::InflightCounter,
+    _inflight: base_common_observability_metrics::InflightCounter,
     outcome: &'static str,
 }
 
@@ -108,7 +108,9 @@ impl ProofGuard {
     #[inline]
     pub(crate) fn track_inflight() -> Self {
         Self {
-            _inflight: base_metrics::InflightCounter::new(Metrics::in_flight_proofs()),
+            _inflight: base_common_observability_metrics::InflightCounter::new(
+                Metrics::in_flight_proofs(),
+            ),
             outcome: Metrics::OUTCOME_DROPPED,
         }
     }

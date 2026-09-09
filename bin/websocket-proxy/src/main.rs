@@ -197,7 +197,7 @@ async fn main() {
         }
 
         builder.install().expect("failed to setup Prometheus endpoint");
-        base_metrics::initialize_registered_metrics();
+        base_common_observability_metrics::initialize_registered_metrics();
     }
 
     // Validate that we have at least one upstream URI

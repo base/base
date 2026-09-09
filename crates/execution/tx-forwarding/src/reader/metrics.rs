@@ -1,6 +1,6 @@
 //! Metrics for transaction pool readers.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     txpool.reader
     #[describe("Total reader loop iterations")]
     #[label(builder_url)]

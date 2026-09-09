@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
-base-metrics = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
@@ -23,12 +22,13 @@ tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
+base-common-observability-metrics = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "sync", "time"] }
+base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
 
 [dev-dependencies]
 rayon = { workspace = true }
@@ -40,9 +40,9 @@ alloy-json-rpc = { workspace = true }
 alloy-node-bindings = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
-base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "macros", "net", "rt", "rt-multi-thread"] }
 
 [features]
-metrics = ["base-metrics/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]

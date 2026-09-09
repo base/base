@@ -1,4 +1,4 @@
-# `base-metrics`
+# `base-common-observability-metrics`
 
 Utility macros and types for recording metrics in base crates.
 
@@ -10,17 +10,25 @@ standardized way, with optional `struct = ...` naming for custom accessor types,
 `timed!` for automatic duration recording, and `inflight!` for tracking in-flight
 operations.
 
+The crate also owns the `Metrics` derive re-export, thread resource measurements, and instrumented
+channel wrappers. The `metrics` feature enables recording and metric registration; `common` adds
+the asynchronous channel wrappers. With both disabled, instrumentation compiles to no-op handles
+and supports `no_std`.
+
+Run recording and channel tests with `cargo test -p base-common-observability-metrics --features common`.
+The recording integration suites explicitly require `metrics`.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-metrics = { workspace = true }
+base-common-observability-metrics = { workspace = true }
 ```
 
 ```rust,ignore
-use base_metrics::define_metrics;
+use base_common_observability_metrics::define_metrics;
 
 define_metrics! {
     my.app

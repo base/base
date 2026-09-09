@@ -4,12 +4,12 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, TxHash, map::B256Map};
+use base_common_observability_metrics::{Metrics, metrics::Gauge};
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use parking_lot::RwLock;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
-use reth_metrics::{Metrics, metrics::Gauge};
 use reth_primitives_traits::{
     BlockBody as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
 };

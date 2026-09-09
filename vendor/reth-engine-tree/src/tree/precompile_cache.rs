@@ -227,7 +227,7 @@ where
 }
 
 /// Metrics for the cached precompile.
-#[derive(reth_metrics::Metrics, Clone)]
+#[derive(base_common_observability_metrics::Metrics, Clone)]
 #[metrics(scope = "sync.caching")]
 pub struct CachedPrecompileMetrics {
     /// Precompile cache hits

@@ -362,8 +362,9 @@ impl PayloadWitnessPrefetcher {
             }
         };
 
-        let execute_payload_response =
-            match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
+        let execute_payload_response = match base_common_observability_metrics::time!(
+            Metrics::l2_proof_node_rpc_latency_seconds(),
+            {
                 self.inner
                     .providers
                     .l2
@@ -373,19 +374,20 @@ impl PayloadWitnessPrefetcher {
                         (parent_block_hash, payload_attributes),
                     )
                     .await
-            }) {
-                Ok(response) => response,
-                Err(err) => {
-                    error!(
-                        target: HOST_SERVER_TARGET,
-                        block_number,
-                        ?parent_block_hash,
-                        error = %err,
-                        "payload witness prefetch failed: debug_executePayload failed"
-                    );
-                    return false;
-                }
-            };
+            }
+        ) {
+            Ok(response) => response,
+            Err(err) => {
+                error!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    ?parent_block_hash,
+                    error = %err,
+                    "payload witness prefetch failed: debug_executePayload failed"
+                );
+                return false;
+            }
+        };
 
         if let Err(err) =
             insert_execution_witness_preimages_batched(Arc::clone(&kv), execute_payload_response)
@@ -896,7 +898,8 @@ pub(crate) async fn handle_hint_with_prefetchers(
     let hint_type_label: &str = hint.ty.into();
 
     Metrics::hint_requests_total(hint_type_label).increment(1);
-    let _timer = base_metrics::timed!(Metrics::hint_duration_seconds(hint_type_label));
+    let _timer =
+        base_common_observability_metrics::timed!(Metrics::hint_duration_seconds(hint_type_label));
 
     let result = Box::pin(handle_hint_inner(
         hint,
@@ -1273,8 +1276,9 @@ async fn handle_hint_inner(
             let payload_attributes: BasePayloadAttributes =
                 serde_json::from_slice(encoded_payload_attributes)?;
 
-            let execute_payload_response =
-                match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
+            let execute_payload_response = match base_common_observability_metrics::time!(
+                Metrics::l2_proof_node_rpc_latency_seconds(),
+                {
                     providers
                         .l2
                         .client()
@@ -1283,13 +1287,14 @@ async fn handle_hint_inner(
                             (parent_block_hash, payload_attributes),
                         )
                         .await
-                }) {
-                    Ok(response) => response,
-                    Err(e) => {
-                        error!(error = %e, "debug_executePayload failed");
-                        return Ok(());
-                    }
-                };
+                }
+            ) {
+                Ok(response) => response,
+                Err(e) => {
+                    error!(error = %e, "debug_executePayload failed");
+                    return Ok(());
+                }
+            };
 
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
 

@@ -275,7 +275,8 @@ where
         // not read `proof` after it has been borrowed for submission below.
         let tee_signer = proof.tee_signer;
 
-        let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
+        let mut submit_timer =
+            base_common_observability_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
                 let submit = self.submitter.submit(

@@ -25,10 +25,10 @@ base-execution-evm-runtime = { workspace = true }
 base-execution-state-memory = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
-reth-metrics = { workspace = true, features = ["common"] }
 fixed-cache = { workspace = true, features = ["alloc", "stats"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 
 [dev-dependencies]
 base-execution-evm-runtime = { workspace = true }

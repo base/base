@@ -13,11 +13,11 @@ use alloy_primitives::{
     Address, B256, StorageKey, StorageValue,
     map::{DefaultHashBuilder, FbBuildHasher},
 };
+use base_common_observability_metrics::Metrics;
 use base_execution_evm_runtime::database::BundleState;
 use fixed_cache::{AnyRef, CacheConfig, Stats, StatsHandler};
 use metrics::{Counter, Gauge, Histogram};
 use parking_lot::Once;
-use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,

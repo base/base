@@ -22,7 +22,6 @@ thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["std", "derive"] }
-base-metrics = { workspace = true, features = ["metrics"] }
 moka = { workspace = true, features = ["default", "sync"] }
 anyhow = { workspace = true, features = ["default", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }
@@ -32,6 +31,7 @@ base-common-types-chain = { workspace = true, features = ["std"] }
 uuid = { workspace = true, features = ["default", "v5", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 jsonrpsee = { workspace = true, features = ["server", "macros", "http-client"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
@@ -45,7 +45,7 @@ aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"]
 [features]
 default = ["metrics"]
 metrics = [
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "base-observability-events/metrics",
     "dep:metrics",
     "tower-http/metrics",

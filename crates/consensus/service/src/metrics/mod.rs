@@ -6,7 +6,7 @@ use base_protocol::L2BlockInfo;
 
 use crate::{ResetOrigin, ResetReason, ResetRequestOutcome};
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_node
     #[describe("L1 reorg count")]
     l1_reorg_count: counter,

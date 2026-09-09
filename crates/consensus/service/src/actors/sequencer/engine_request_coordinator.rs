@@ -229,12 +229,13 @@ where
                 // Full processor iteration window: drain + recv wait + request handling.
                 // Bounds the worst-case channel wait — any request arriving during this
                 // iteration waits at most this long before the next recv picks it up.
-                let _iter_timer =
-                    base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
+                let _iter_timer = base_common_observability_metrics::timed!(
+                    EngineMetrics::engine_processor_iteration_duration()
+                );
 
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
-                let drain_outcome = base_metrics::time!(
+                let drain_outcome = base_common_observability_metrics::time!(
                     EngineMetrics::engine_processor_drain_duration_seconds(),
                     {
                         self.processor.drain().await.inspect_err(
@@ -264,7 +265,7 @@ where
                 });
 
                 // Wait for the next processing request.
-                let recv_result = base_metrics::time!(
+                let recv_result = base_common_observability_metrics::time!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds(),
                     { request_channel.recv().await }
                 );

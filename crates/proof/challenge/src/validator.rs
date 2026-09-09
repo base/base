@@ -250,7 +250,9 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
         game_address: Address,
         checkpoints: impl IntoIterator<Item = (u64, B256)>,
     ) -> Result<Option<(usize, B256)>, ValidatorError> {
-        let _latency = base_metrics::timed!(ChallengerMetrics::validation_latency_seconds());
+        let _latency = base_common_observability_metrics::timed!(
+            ChallengerMetrics::validation_latency_seconds()
+        );
 
         let mut stream = stream::iter(checkpoints.into_iter().enumerate())
             .map(|(idx, (block, claimed_root))| async move {

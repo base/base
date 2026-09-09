@@ -20,7 +20,6 @@ jsonrpsee = { workspace = true }
 reth-trie = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-base-metrics = { workspace = true }
 reth-cli-util = { workspace = true }
 reth-provider = { workspace = true }
 alloy-contract = { workspace = true }
@@ -66,6 +65,7 @@ alloy-serde = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default"] }
 testcontainers = { workspace = true, optional = true }
+base-common-observability-metrics = { workspace = true }
 base-node-runner = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"] }
 secp256k1 = { workspace = true, features = ["default"] }
@@ -134,7 +134,7 @@ metrics = [
     "base-txpool-rpc/metrics",
     "base-execution-evm-runtime/metrics",
     "base-execution-payload-builder/metrics",
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "base-observability-events/metrics",
     "dep:metrics",
     "base-execution-evm-blocks/metrics",

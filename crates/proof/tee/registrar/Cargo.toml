@@ -15,22 +15,22 @@ sha2 = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 aws-sdk-ec2 = { workspace = true }
-base-metrics = { workspace = true }
 alloy-signer = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-contracts = { workspace = true }
 base-balance-monitor = { workspace = true }
+base-proof-contracts = { workspace = true }
 metrics = { workspace = true, optional = true }
-url = { workspace = true, features = ["default"] }
 hex = { workspace = true, features = ["default"] }
+url = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-verifier = { workspace = true }
 aws-sdk-elasticloadbalancingv2 = { workspace = true }
-reqwest = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default"] }
 ciborium = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 x509-parser = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
@@ -42,13 +42,14 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "net", "time", "macros"] }
+
 [dev-dependencies]
-hex-literal = { workspace = true }
 async-trait = { workspace = true }
-base-common-types-chain = { workspace = true }
+hex-literal = { workspace = true }
 base-common-types-rpc = { workspace = true }
+base-common-types-chain = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["default", "rt", "macros", "test-util"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
+metrics = ["base-common-observability-metrics/metrics", "base-tx-manager/metrics", "dep:metrics"]

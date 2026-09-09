@@ -1,10 +1,10 @@
-use base_common_types_chain::TxType;
-use metrics::Histogram;
-use reth_eth_wire::DisconnectReason;
-use reth_metrics::{
+use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };
+use base_common_types_chain::TxType;
+use metrics::Histogram;
+use reth_eth_wire::DisconnectReason;
 
 /// Scope for monitoring transactions sent from the manager to the tx manager
 pub(crate) const NETWORK_POOL_TRANSACTIONS_SCOPE: &str = "network.pool.transactions";

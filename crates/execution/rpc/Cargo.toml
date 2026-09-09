@@ -21,7 +21,6 @@ alloy-serde = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
 alloy-signer = { workspace = true }
-base-metrics = { workspace = true }
 reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-genesis = { workspace = true }
@@ -54,6 +53,7 @@ futures = { workspace = true, features = ["default"] }
 reth-db-common = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
+base-common-observability-metrics = { workspace = true }
 tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
@@ -111,7 +111,7 @@ metrics = [
     "dep:metrics",
     "base-execution-payload-builder/metrics",
     "base-execution-trie/metrics",
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "base-observability-events/metrics",
     "base-execution-evm-blocks/metrics",
 ]

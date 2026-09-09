@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-base-metrics = { workspace = true }
 base-tx-manager = { workspace = true }
 base-batcher-core = { workspace = true }
 base-common-network = {workspace = true}
@@ -27,6 +26,7 @@ url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 tokio-util = { workspace = true, features = ["default"] }
@@ -49,7 +49,7 @@ metrics = [
     "base-batcher-core/metrics",
     "base-batcher-encoder/metrics",
     "base-consensus-rpc/metrics",
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "base-tx-manager/metrics",
     "dep:metrics",
 ]

@@ -193,7 +193,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
         // CL retry/yield overhead. Records on drop regardless of outcome
         // (success / critical / reset / flush).
         let label = self.task_metrics_label();
-        let _task_timer = base_metrics::timed!(Metrics::engine_task_duration(label));
+        let _task_timer =
+            base_common_observability_metrics::timed!(Metrics::engine_task_duration(label));
 
         // Retry the task until it succeeds or a critical error occurs.
         while let Err(e) = self.execute_inner(state).await {

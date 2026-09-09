@@ -1,8 +1,8 @@
 use std::{array, sync::Arc, time::Duration};
 
+use base_common_observability_metrics::{Metrics, metrics::Counter};
 use metrics::Histogram;
 use quanta::Instant;
-use reth_metrics::{Metrics, metrics::Counter};
 use rustc_hash::FxHashMap;
 use strum::{EnumCount, EnumIter, IntoEnumIterator};
 

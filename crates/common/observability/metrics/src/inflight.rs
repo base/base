@@ -64,7 +64,7 @@ impl Drop for InflightCounter {
 /// # Examples
 ///
 /// ```ignore
-/// let _guard = base_metrics::inflight!(Metrics::in_flight_proofs());
+/// let _guard = base_common_observability_metrics::inflight!(Metrics::in_flight_proofs());
 /// // gauge decremented when _guard is dropped
 /// ```
 #[macro_export]

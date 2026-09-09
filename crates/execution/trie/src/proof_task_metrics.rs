@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reth_metrics::{Metrics, metrics::Histogram};
+use base_common_observability_metrics::{Metrics, metrics::Histogram};
 use reth_trie::{TrieType, hashed_cursor::HashedCursorMetrics, trie_cursor::TrieCursorMetrics};
 
 use crate::{ProofTaskCursorMetricsCache, ValueEncoderStats};

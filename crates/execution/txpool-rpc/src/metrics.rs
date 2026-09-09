@@ -1,6 +1,6 @@
 //! Sequencer ingress metrics.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_builder,
     struct = ValidityMetrics,
     #[describe("Shadow validity injection decisions")]

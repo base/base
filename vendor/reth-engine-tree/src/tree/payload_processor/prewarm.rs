@@ -20,13 +20,13 @@ use std::sync::{
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
+use base_common_observability_metrics::Metrics;
 use base_common_runtime_tasks::{Runtime, pool::WorkerPool};
 use base_execution_evm_blocks::{
     BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor,
 };
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
-use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, FastInstant as Instant};
 use reth_provider::{
     AccountReader, BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory,

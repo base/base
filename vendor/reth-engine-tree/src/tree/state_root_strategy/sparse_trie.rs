@@ -7,6 +7,7 @@ use alloy_primitives::{
     map::{B256Map, hash_map::Entry},
 };
 use alloy_rlp::{Decodable, Encodable};
+use base_common_observability_metrics::Metrics;
 use base_common_runtime_tasks::Runtime;
 use base_execution_trie::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
@@ -15,7 +16,6 @@ use base_execution_trie::{
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, FastInstant as Instant};
 use reth_trie::{
     DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,

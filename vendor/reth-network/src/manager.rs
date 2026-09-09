@@ -28,6 +28,7 @@ use std::{
 };
 
 use alloy_eip2124::EnrForkIdEntry;
+use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::shutdown::GracefulShutdown;
 use base_common_types_chain::BaseBlock;
@@ -35,7 +36,6 @@ use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use reth_eth_wire::DisconnectReason;
 use reth_fs_util::{self as fs, FsPathError};
-use reth_metrics::common::mpsc::MemoryBoundedSender;
 use reth_network_api::{
     EthProtocolInfo, NetworkEvent, NetworkStatus, PeerInfo, PeerRequest,
     events::{PeerEvent, SessionInfo},

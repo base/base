@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
-use reth_metrics::{
+use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };

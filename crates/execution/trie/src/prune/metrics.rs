@@ -2,7 +2,7 @@
 
 use crate::PrunerOutput;
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_trie.pruner
     #[describe("Pruning duration")]
     total_duration_seconds: histogram,

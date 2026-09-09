@@ -33,8 +33,9 @@ impl ShadowIndexerExEx {
             let is_syncing = ctx.network().is_syncing();
             let kind = Self::notification_kind(&notification);
             let fully_processed = {
-                let _timer =
-                    base_metrics::timed!(ShadowExExMetrics::notification_duration_seconds(kind));
+                let _timer = base_common_observability_metrics::timed!(
+                    ShadowExExMetrics::notification_duration_seconds(kind)
+                );
                 match &notification {
                     ExExNotification::ChainCommitted { new } => {
                         debug!(
@@ -146,7 +147,9 @@ impl ShadowIndexerExEx {
         receipts: &[BaseReceipt],
         canonical_hash: Option<Vec<u8>>,
     ) -> Result<ShadowBlockRow> {
-        let _timer = base_metrics::timed!(ShadowExExMetrics::build_row_duration_seconds());
+        let _timer = base_common_observability_metrics::timed!(
+            ShadowExExMetrics::build_row_duration_seconds()
+        );
 
         let number = i64::try_from(block.header().number()).map_err(|error| {
             eyre::eyre!("block number overflow for shadow indexer row: {error}")
@@ -231,7 +234,8 @@ impl ShadowIndexerExEx {
     }
 
     async fn send_write(&self, write: ShadowWrite) -> Result<bool> {
-        let _timer = base_metrics::timed!(ShadowExExMetrics::send_blocked_seconds());
+        let _timer =
+            base_common_observability_metrics::timed!(ShadowExExMetrics::send_blocked_seconds());
 
         match self.tx.send(write).await {
             Ok(()) => Ok(true),

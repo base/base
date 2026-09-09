@@ -1,5 +1,6 @@
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
+use base_common_observability_metrics::metrics::Unit;
 use base_common_runtime_tasks::TaskExecutor;
 use bytes::Bytes;
 use eyre::WrapErr;
@@ -8,7 +9,6 @@ use http_body_util::Full;
 use metrics::describe_gauge;
 use metrics_process::Collector;
 use reqwest::Client;
-use reth_metrics::metrics::Unit;
 
 use crate::{
     chain::ChainSpecInfo,

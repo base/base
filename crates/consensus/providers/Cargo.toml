@@ -18,7 +18,6 @@ tower = { workspace = true }
 reth-db = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
-base-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 reth-provider = { workspace = true }
@@ -36,6 +35,7 @@ url = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 base-common-types-rpc = { workspace = true, features = []}
 alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
@@ -56,4 +56,4 @@ tokio = { workspace = true, features = ["default", "macros", "test-util"] }
 
 [features]
 default = []
-metrics = ["base-consensus-derive/metrics", "base-metrics/metrics", "dep:metrics"]
+metrics = ["base-consensus-derive/metrics", "base-common-observability-metrics/metrics", "dep:metrics"]

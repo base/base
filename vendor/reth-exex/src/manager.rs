@@ -12,13 +12,13 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
+use base_common_observability_metrics::{Metrics, metrics::Counter};
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
 use futures::StreamExt;
 use itertools::Itertools;
 use metrics::Gauge;
 use reth_chain_state::ForkChoiceStream;
-use reth_metrics::{Metrics, metrics::Counter};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::HeaderProvider;
 use reth_tracing::tracing::{debug, warn};

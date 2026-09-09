@@ -15,7 +15,6 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
-base-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -23,6 +22,7 @@ base-common-types-payload = {workspace = true}
 base-common-chain-config = { workspace = true }
 metrics = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["derive"] }
+base-common-observability-metrics = { workspace = true }
 base-common-types-chain = { workspace = true, features = ["k256"] }
 spin = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map"] }
@@ -41,7 +41,7 @@ alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitr
 
 [features]
 default = []
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]
 serde = [
     "base-common-types-chain/serde",
     "alloy-eips/serde",
@@ -53,8 +53,8 @@ serde = [
     "tracing-subscriber?/serde",
 ]
 test-utils = [
-	"base-common-chain-config/test-utils",
-	"base-protocol/test-utils",
-	"dep:spin",
-	"dep:tracing-subscriber",
+    "base-common-chain-config/test-utils",
+    "base-protocol/test-utils",
+    "dep:spin",
+    "dep:tracing-subscriber",
 ]

@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-base-metrics = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
@@ -33,6 +32,7 @@ tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-payload-builder = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+base-common-observability-metrics = { workspace = true }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
@@ -49,5 +49,5 @@ base-common-chain-config = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default", "arbitrary", "k256"] }
 
 [features]
-metrics = ["base-consensus-providers/metrics", "base-metrics/metrics", "dep:metrics"]
+metrics = ["base-consensus-providers/metrics", "base-common-observability-metrics/metrics", "dep:metrics"]
 test-utils = ["base-common-chain-config/test-utils", "base-protocol/test-utils"]

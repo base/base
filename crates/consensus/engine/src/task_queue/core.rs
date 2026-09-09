@@ -85,8 +85,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         config: Arc<RollupConfig>,
         attributes: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
-        let _task_timer =
-            base_metrics::timed!(Metrics::engine_task_duration(Metrics::BUILD_TASK_LABEL));
+        let _task_timer = base_common_observability_metrics::timed!(Metrics::engine_task_duration(
+            Metrics::BUILD_TASK_LABEL
+        ));
 
         match Self::build_with_state(&self.state, client.as_ref(), config.as_ref(), attributes)
             .await
@@ -162,8 +163,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        let _task_timer =
-            base_metrics::timed!(Metrics::engine_task_duration(Metrics::GET_PAYLOAD_TASK_LABEL));
+        let _task_timer = base_common_observability_metrics::timed!(Metrics::engine_task_duration(
+            Metrics::GET_PAYLOAD_TASK_LABEL
+        ));
 
         let result = Self::get_payload_with_state(
             &self.state,

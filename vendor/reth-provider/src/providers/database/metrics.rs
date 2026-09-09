@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use base_common_observability_metrics::Metrics;
 use metrics::{Gauge, Histogram};
-use reth_metrics::Metrics;
 use reth_primitives_traits::FastInstant as Instant;
 
 #[derive(Debug)]

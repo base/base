@@ -17,7 +17,6 @@ tokio = { workspace = true }
 tower = { workspace = true }
 metrics = { workspace = true }
 metrics-util = { workspace = true }
-reth-metrics = { workspace = true }
 jsonrpsee-server = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
@@ -27,6 +26,7 @@ tracing = { workspace = true, features = ["attributes"] }
 http-body-util = { workspace = true, features = ["default"] }
 metrics-process = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [target.'cfg(unix)'.dependencies]
 mappings = { workspace = true, optional = true }

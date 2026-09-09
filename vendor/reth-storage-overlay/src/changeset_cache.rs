@@ -15,11 +15,11 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber, map::B256Map};
-use parking_lot::RwLock;
-use reth_metrics::{
+use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };
+use parking_lot::RwLock;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,

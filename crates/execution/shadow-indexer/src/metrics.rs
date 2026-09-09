@@ -1,6 +1,6 @@
 //! Backpressure and throughput metrics for the shadow indexer writer and `ExEx`.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     shadow_indexer.writer, struct = ShadowWriterMetrics,
     #[describe("Rows currently queued in the writer channel awaiting processing")]
     channel_depth: gauge,
@@ -19,7 +19,7 @@ base_metrics::define_metrics! {
     flushes: counter,
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     shadow_indexer.exex, struct = ShadowExExMetrics,
     #[describe("Duration in seconds to handle one ExEx notification, labeled by kind")]
     #[label(kind)]

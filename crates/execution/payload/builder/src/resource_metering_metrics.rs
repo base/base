@@ -2,7 +2,7 @@
 
 use crate::resource_metering::{ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope};
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_payload.resource_metering,
     struct = ResourceMeteringMetrics,
     #[describe("Transactions whose resource-metering usage could not be calculated")]
@@ -17,7 +17,7 @@ base_metrics::define_metrics! {
     throttled_total: counter,
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_payload.rejection_cache,
     struct = RejectionCacheMetrics,
     #[describe("Transactions inserted into the native payload rejection cache")]

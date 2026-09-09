@@ -12,7 +12,7 @@ use base_execution_evm_precompiles::{
 use metrics::SharedString;
 
 #[cfg(feature = "metrics")]
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base.beryl.precompile,
     struct = BerylPrecompileMetrics,
     #[describe("Total Beryl native precompile calls")]

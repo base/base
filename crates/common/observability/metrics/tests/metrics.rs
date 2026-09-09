@@ -1,4 +1,4 @@
-//! Integration tests for the base-metrics macros and types.
+//! Integration tests for the base-common-observability-metrics macros and types.
 
 use metrics_util::{
     CompositeKey, MetricKind,
@@ -57,7 +57,7 @@ fn assert_single_histogram(snap: &[SnapEntry], name: &str, min: f64) {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     test_app,
     struct = AppMetrics,
     #[describe("Total requests")]
@@ -136,7 +136,7 @@ fn describe_registers_descriptions() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     my_service,
     struct = CustomMetrics,
     #[describe("Events processed")]
@@ -156,7 +156,7 @@ fn named_struct() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     labeled_app,
     struct = LabeledMetrics,
 
@@ -237,7 +237,7 @@ fn single_label_gauge() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     multi_label,
     struct = TwoLabelMetrics,
 
@@ -275,7 +275,7 @@ fn two_label_counter() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     beryl_label,
     struct = BerylLabelMetrics,
 
@@ -348,7 +348,7 @@ fn three_and_four_label_metrics_record_and_zero() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     timer_test,
     struct = TimerMetrics,
     #[describe("Duration")]
@@ -359,7 +359,7 @@ base_metrics::define_metrics! {
 fn timed_records_on_drop() {
     with_recorder(|snap| {
         {
-            let _timer = base_metrics::timed!(TimerMetrics::duration());
+            let _timer = base_common_observability_metrics::timed!(TimerMetrics::duration());
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_single_histogram(&snap.snapshot().into_vec(), "timer_test.duration", 0.01);
@@ -369,7 +369,7 @@ fn timed_records_on_drop() {
 #[test]
 fn timed_stop_records_early() {
     with_recorder(|snap| {
-        let mut timer = base_metrics::timed!(TimerMetrics::duration());
+        let mut timer = base_common_observability_metrics::timed!(TimerMetrics::duration());
         std::thread::sleep(std::time::Duration::from_millis(10));
         timer.stop();
 
@@ -381,7 +381,7 @@ fn timed_stop_records_early() {
 fn timed_stop_is_idempotent() {
     with_recorder(|snap| {
         {
-            let mut timer = base_metrics::timed!(TimerMetrics::duration());
+            let mut timer = base_common_observability_metrics::timed!(TimerMetrics::duration());
             timer.stop();
             timer.stop();
         }
@@ -396,7 +396,7 @@ fn timed_stop_is_idempotent() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     time_block,
     struct = TimeBlockMetrics,
     #[describe("Duration")]
@@ -406,7 +406,7 @@ base_metrics::define_metrics! {
 #[test]
 fn time_block_records_and_returns_value() {
     with_recorder(|snap| {
-        let result = base_metrics::time!(TimeBlockMetrics::duration(), {
+        let result = base_common_observability_metrics::time!(TimeBlockMetrics::duration(), {
             std::thread::sleep(std::time::Duration::from_millis(10));
             42
         });
@@ -416,7 +416,7 @@ fn time_block_records_and_returns_value() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     inflight_test,
     struct = InflightMetrics,
     #[describe("In-flight operations")]
@@ -427,7 +427,7 @@ base_metrics::define_metrics! {
 fn inflight_increments_and_decrements_gauge() {
     with_recorder(|snap| {
         {
-            let _guard = base_metrics::inflight!(InflightMetrics::in_flight());
+            let _guard = base_common_observability_metrics::inflight!(InflightMetrics::in_flight());
 
             let snapshot = snap.snapshot().into_vec();
             assert_eq!(
@@ -447,7 +447,7 @@ fn inflight_increments_and_decrements_gauge() {
 
 #[test]
 fn metric_names_use_dot_separator() {
-    base_metrics::define_metrics! {
+    base_common_observability_metrics::define_metrics! {
         scope_test
         #[describe("A counter")]
         my_counter: counter,
@@ -470,7 +470,7 @@ fn metric_names_use_dot_separator() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     param_test,
     struct = ParamMetrics,
 
@@ -507,7 +507,7 @@ fn label_accepts_string() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     named_label_test,
     struct = NamedLabelMetrics,
 
@@ -535,7 +535,7 @@ fn explicit_label_name_without_defaults_works() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     zero_test,
     struct = ZeroMetrics,
 
@@ -656,7 +656,7 @@ fn zero_initializes_unlabeled_and_labeled_metrics() {
     });
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     no_zero_test,
     struct = NoZeroMetrics,
 

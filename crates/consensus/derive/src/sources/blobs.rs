@@ -113,7 +113,7 @@ where
             return Ok(());
         }
 
-        let info = base_metrics::time!(
+        let info = base_common_observability_metrics::time!(
             Metrics::pipeline_data_availability_l1_fetch_duration_seconds("blobs"),
             { self.chain_provider.block_info_and_transactions_by_hash(block_ref.hash).await }
         )
@@ -132,9 +132,10 @@ where
         //   BlobNotFound  -> PipelineErrorKind::Reset   (missed/orphaned slot)
         //   Backend       -> PipelineErrorKind::Temporary (transient, retry)
         //   others        -> PipelineErrorKind::Critical
-        let blobs = base_metrics::time!(Metrics::pipeline_blob_fetch_duration_seconds(), {
-            self.blob_fetcher.get_and_validate_blobs(block_ref, &blob_hashes).await
-        })
+        let blobs = base_common_observability_metrics::time!(
+            Metrics::pipeline_blob_fetch_duration_seconds(),
+            { self.blob_fetcher.get_and_validate_blobs(block_ref, &blob_hashes).await }
+        )
         .map_err(Into::<PipelineErrorKind>::into)
         .inspect_err(|kind| match kind {
             PipelineErrorKind::Reset(_) => {

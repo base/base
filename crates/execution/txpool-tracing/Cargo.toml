@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 serde_json = { workspace = true }
-base-metrics = { workspace = true }
 reth-provider = { workspace = true }
 alloy-primitives = { workspace = true }
 base-execution-txpool = { workspace = true }
@@ -23,6 +22,7 @@ lru = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 derive_more = { workspace = true, features = ["display"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
@@ -39,4 +39,4 @@ base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 
 [features]
 default = ["metrics"]
-metrics = ["base-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "base-observability-events/metrics", "dep:metrics"]

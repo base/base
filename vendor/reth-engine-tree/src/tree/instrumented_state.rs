@@ -8,8 +8,8 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, StorageKey, StorageValue};
+use base_common_observability_metrics::Metrics;
 use metrics::{Gauge, Histogram};
-use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, Bytecode, FastInstant as Instant};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,

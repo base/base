@@ -13,14 +13,14 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber};
+use base_common_observability_metrics::{
+    Metrics,
+    metrics::{Counter, Histogram},
+};
 #[cfg(feature = "rayon")]
 use base_common_runtime_tasks::WorkerPool;
 use parking_lot::Mutex;
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
-use reth_metrics::{
-    Metrics,
-    metrics::{Counter, Histogram},
-};
 use reth_primitives_traits::{
     AlloyBlockHeader,
     dashmap::{DashMap, mapref::entry::Entry},

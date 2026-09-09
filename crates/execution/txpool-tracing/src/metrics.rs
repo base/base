@@ -1,6 +1,6 @@
 //! Metrics for transaction tracing.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     reth_transaction_tracing
     #[describe("Time spent in the mempool before a transaction event")]
     #[label(event)]

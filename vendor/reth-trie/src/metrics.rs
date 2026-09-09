@@ -1,5 +1,5 @@
+use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Histogram};
-use reth_metrics::Metrics;
 
 use crate::{stats::TrieStats, trie::TrieType};
 

@@ -22,17 +22,18 @@ rayon = { workspace = true, optional = true }
 either = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 smallvec = { workspace = true, optional = true }
-reth-metrics = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
-strum = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde = { workspace = true, features = ["derive"], optional = true }
+strum = { workspace = true, features = ["derive"], optional = true }
 slotmap = { workspace = true, optional = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 tracing = { workspace = true, features = ["attributes"], optional = true }
+base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
+
 [dev-dependencies]
-itertools = { workspace = true }
 arbitrary = { workspace = true }
+itertools = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
@@ -66,9 +67,20 @@ std = [
     "reth-tracing/std",
     "either/std",
 ]
-metrics = ["dep:reth-metrics", "dep:metrics", "std"]
-trie-debug = ["std", "dep:serde", "dep:serde_json", "alloy-primitives/serde", "alloy-trie/serde"]
-test-utils = ["std", "reth-primitives-traits/test-utils", "reth-trie-common/test-utils", "reth-trie/test-utils"]
+metrics = ["dep:base-common-observability-metrics", "dep:metrics", "std"]
+trie-debug = [
+    "std",
+    "dep:serde",
+    "dep:serde_json",
+    "alloy-primitives/serde",
+    "alloy-trie/serde",
+]
+test-utils = [
+    "std",
+    "reth-primitives-traits/test-utils",
+    "reth-trie-common/test-utils",
+    "reth-trie/test-utils",
+]
 arbitrary = [
     "std",
     "alloy-primitives/arbitrary",

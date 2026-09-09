@@ -21,10 +21,8 @@ thiserror = { workspace = true }
 rustc-hash = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
-base-metrics = { workspace = true }
 futures-util = { workspace = true }
 reth-fs-util = { workspace = true }
-reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -56,6 +54,7 @@ base-execution-evm-precompiles = {workspace = true, features = ["std"]}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
+base-common-observability-metrics = {features = ["metrics"], workspace = true}
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 base-common-types-chain = { workspace = true, features = ["reth", "kzg", "serde"] }
 
@@ -89,7 +88,7 @@ required-features = ["test-utils"]
 
 [features]
 default = ["metrics"]
-metrics = ["base-execution-evm-runtime/metrics", "base-metrics/metrics", "base-observability-events/metrics"]
+metrics = ["base-execution-evm-runtime/metrics", "base-common-observability-metrics/metrics", "base-observability-events/metrics"]
 serde = [
     "reth-execution-types/serde",
     "reth-eth-wire-types/serde",

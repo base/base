@@ -1,6 +1,6 @@
 //! Metrics for the discovery service.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_node_disc
 
     #[describe("Events received by the discv5 service")]

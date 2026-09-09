@@ -6,7 +6,7 @@ use crate::{
     FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
 };
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_builder,
     struct = ValidityMetrics,
     #[describe("Duration of rescanning parked transaction validity predicates in seconds")]
@@ -60,7 +60,7 @@ base_metrics::define_metrics! {
     validity_predicate_evaluations_total: counter,
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_builder,
     struct = BuilderMetrics,
     #[describe("Time between unmetered payload inclusion and metering data arrival (milliseconds)")]

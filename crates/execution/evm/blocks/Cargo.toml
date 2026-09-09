@@ -25,7 +25,6 @@ metrics = { workspace = true, optional = true }
 base-execution-evm-machine = { workspace = true }
 reth-trie = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true }
-reth-metrics = { workspace = true, optional = true }
 alloy-eip7928 = {features = ["rlp"], workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
@@ -39,6 +38,7 @@ base-execution-evm-runtime = {features = ["std"], workspace = true}
 base-common-types-payload = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
+base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
 
 [dev-dependencies]
 reth-trie = {workspace = true}
@@ -64,7 +64,7 @@ metrics = [
     "base-execution-evm-runtime/metrics",
     "std",
     "dep:metrics",
-    "dep:reth-metrics",
+    "dep:base-common-observability-metrics",
 ]
 std = [
     "alloy-chains/std",

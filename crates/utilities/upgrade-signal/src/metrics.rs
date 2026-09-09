@@ -24,7 +24,7 @@ impl UpgradeSignalMetricLayer {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base.upgrade_signal, struct = UpgradeSignalMetrics,
     #[describe("Configured activation timestamp read from L1")]
     #[label(layer)]

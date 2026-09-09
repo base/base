@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use reth_metrics::{
+use base_common_observability_metrics::{
     Metrics,
     metrics::{Gauge, Histogram},
 };

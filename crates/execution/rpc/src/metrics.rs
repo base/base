@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_rpc.sequencer,
     struct = SequencerMetrics,
     #[describe("How long it takes to forward a transaction to the sequencer")]
@@ -17,7 +17,7 @@ impl SequencerMetrics {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_rpc.eth_api_ext,
     struct = EthApiExtMetrics,
     #[describe("How long it takes to handle a eth_getProof request successfully")]
@@ -49,7 +49,7 @@ impl DebugApis {
     }
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_rpc.debug_api_ext,
     struct = DebugApiExtRpcMetrics,
     #[describe("End-to-end time to handle this API call")]

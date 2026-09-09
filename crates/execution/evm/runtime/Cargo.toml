@@ -28,11 +28,11 @@ base-execution-evm-crypto = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-evm-primitives = {workspace = true}
 base-execution-evm-precompiles = {workspace = true }
-base-metrics = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 base-common-types-chain = {features = ["k256"], workspace = true}
 base-common-chain-config = {workspace = true, features = ["default"]}
 serde = {features = ["derive", "rc"], optional = true, workspace = true}
+base-common-observability-metrics = { workspace = true, optional = true }
 serde_json = { workspace = true, features = [
     "alloc",
     "preserve_order",
@@ -69,7 +69,7 @@ std = [
     "base-common-types-chain/std",
     "base-common-types-rpc/std",
     "base-execution-evm-machine/std",
-    "base-metrics?/std",
+    "base-common-observability-metrics?/std",
     "base-execution-state-memory/std",
     "derive_more/std",
     "either/std",
@@ -93,8 +93,8 @@ serde = [
     "base-execution-evm-primitives/serde",
 ]
 metrics = [
-    "base-metrics/metrics",
-    "dep:base-metrics",
+    "base-common-observability-metrics/metrics",
+    "dep:base-common-observability-metrics",
     "dep:metrics",
     "std",
 ]

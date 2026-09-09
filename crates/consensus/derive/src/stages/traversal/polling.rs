@@ -101,7 +101,8 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
     /// This function fetches the next L1 [`BlockInfo`] from the data source and updates the
     /// [`SystemConfig`] with the receipts from the block.
     async fn advance_origin(&mut self) -> PipelineResult<()> {
-        let mut timer = base_metrics::timed!(Metrics::pipeline_origin_advance());
+        let mut timer =
+            base_common_observability_metrics::timed!(Metrics::pipeline_origin_advance());
 
         // Pull the next block or return EOF.
         // PipelineError::EOF has special handling further up the pipeline.

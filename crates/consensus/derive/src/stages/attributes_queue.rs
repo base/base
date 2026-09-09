@@ -80,7 +80,9 @@ where
         };
 
         // Construct the payload attributes from the loaded batch.
-        let mut timer = base_metrics::timed!(Metrics::pipeline_attributes_build_duration());
+        let mut timer = base_common_observability_metrics::timed!(
+            Metrics::pipeline_attributes_build_duration()
+        );
         let attributes = match self.create_next_attributes(batch, parent).await {
             Ok(attributes) => attributes,
             Err(e) => {

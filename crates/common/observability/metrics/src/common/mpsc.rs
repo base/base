@@ -10,9 +10,9 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use base_common_types_chain::InMemorySize;
 use futures::Stream;
 use metrics::Counter;
-use base_common_types_chain::InMemorySize;
 use tokio::sync::mpsc::{
     self,
     error::{SendError, TryRecvError, TrySendError},

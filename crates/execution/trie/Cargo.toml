@@ -17,7 +17,6 @@ auto_impl = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 derive_more = { workspace = true }
-base-metrics = { workspace = true }
 reth-provider = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
@@ -26,7 +25,6 @@ metrics = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 bytes = { workspace = true, features = ["default"] }
-reth-metrics = { workspace = true, optional = true }
 reth-trie = { workspace = true, features = ["serde"] }
 tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
@@ -42,6 +40,7 @@ base-common-types-chain = { workspace = true, features = ["alloy"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-runtime-tasks = { workspace = true, features = ["rayon"]}
+base-common-observability-metrics = { features = [], workspace = true}
 reth-trie-common = { workspace = true, features = ["default", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["dashmap", "std"]}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
@@ -89,12 +88,11 @@ serde-bincode-compat = [
     "reth-trie/serde-bincode-compat",
 ]
 metrics = [
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "dep:eyre",
     "dep:metrics",
     "base-execution-evm-blocks/metrics",
     "reth-trie/metrics",
-    "reth-metrics",
 ]
 default = ["metrics"]
 trie-debug = ["dep:rand", "dep:reth-trie-sparse", "reth-trie-sparse?/trie-debug"]

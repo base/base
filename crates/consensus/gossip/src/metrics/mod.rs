@@ -1,6 +1,6 @@
 //! Metrics for the Gossip stack.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_node
 
     #[describe("Events received by the gossip protocol")]

@@ -15,6 +15,7 @@ use std::{
 };
 
 use alloy_eips::merge::EPOCH_SLOTS;
+use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
 use reth_eth_wire::{
@@ -26,7 +27,6 @@ use reth_eth_wire_types::{
     NewPooledTransactionHashes, RawCapabilityMessage, message::RequestPair,
     snap::SnapProtocolMessage,
 };
-use reth_metrics::common::mpsc::MeteredPollSender;
 use reth_network_api::{PeerRequest, RequestMessage};
 use reth_network_p2p::{error::RequestError, snap::client::SnapResponse};
 use reth_network_peers::PeerId;

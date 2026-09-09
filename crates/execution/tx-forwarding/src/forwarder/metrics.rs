@@ -2,7 +2,7 @@
 
 use jsonrpsee::core::ClientError;
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     txpool.forwarder,
     struct = ForwarderMetrics,
     #[describe("Total RPC batches sent successfully")]

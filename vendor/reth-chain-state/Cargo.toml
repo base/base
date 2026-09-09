@@ -20,7 +20,6 @@ metrics = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }
-reth-metrics = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
@@ -40,6 +39,7 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "std"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [dev-dependencies]
 alloy-signer = { workspace = true }

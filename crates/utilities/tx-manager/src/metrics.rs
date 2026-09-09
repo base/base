@@ -2,7 +2,7 @@
 
 use std::fmt::Debug;
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_tx_manager,
     struct = TxManagerMetrics,
     #[describe("Maximum possible transaction fee in gwei")]

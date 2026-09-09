@@ -15,7 +15,6 @@ workspace = true
 dashmap = { workspace = true }
 metrics = { workspace = true }
 thiserror = {workspace = true}
-reth-metrics = { workspace = true }
 thread-priority = { workspace = true }
 rayon = { workspace = true, optional = true }
 pin-project = { workspace = true, optional = true }
@@ -28,6 +27,7 @@ tracing-futures = { workspace = true, features = ["default"] }
 tokio-stream = {workspace = true,  features = ["default", "sync"]}
 rand = { workspace = true, optional = true, features = ["default"] }
 tokio-util = { workspace = true, optional = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 crossbeam-utils = { workspace = true, optional = true, features = ["default"] }
 tokio = {workspace = true, features = ["default", "rt", "rt-multi-thread", "sync"]}
 

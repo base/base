@@ -32,7 +32,7 @@ fn find_metric_labeled<'a>(
         .map(|(_, _, _, v)| v)
 }
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     registry_test,
     struct = RegistryMetrics,
 
@@ -50,10 +50,10 @@ fn initialize_registered_metrics_runs_generated_initializers() {
     let snapshotter = recorder.snapshotter();
 
     // `initialize_registered_metrics()` is process-global and only runs once.
-    // Keep this as the only test in `base-metrics` that invokes it so the
+    // Keep this as the only test in `base-common-observability-metrics` that invokes it so the
     // assertions below are not order-dependent on another recorder scope.
     metrics::with_local_recorder(&recorder, || {
-        base_metrics::initialize_registered_metrics();
+        base_common_observability_metrics::initialize_registered_metrics();
     });
 
     let snapshot = snapshotter.snapshot().into_vec();

@@ -109,7 +109,9 @@ impl ShadowWriter {
 
         let batch_size = batch.len();
         ShadowWriterMetrics::flushes(trigger).increment(1);
-        let _flush_timer = base_metrics::timed!(ShadowWriterMetrics::flush_duration_seconds());
+        let _flush_timer = base_common_observability_metrics::timed!(
+            ShadowWriterMetrics::flush_duration_seconds()
+        );
 
         for attempt in 1..=MAX_FLUSH_ATTEMPTS {
             match repo.flush(batch).await {

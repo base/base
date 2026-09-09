@@ -109,10 +109,10 @@ where
         let batcher_address =
             self.da_batcher_sender_override.unwrap_or_else(|| self.prev.batcher_addr());
 
-        let provider_result =
-            base_metrics::time!(Metrics::pipeline_l1_retrieval_provider_next_duration_seconds(), {
-                self.provider.next(next, batcher_address).await
-            });
+        let provider_result = base_common_observability_metrics::time!(
+            Metrics::pipeline_l1_retrieval_provider_next_duration_seconds(),
+            { self.provider.next(next, batcher_address).await }
+        );
         match provider_result {
             Ok(data) => Ok(data),
             Err(e) => {

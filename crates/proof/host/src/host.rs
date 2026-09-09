@@ -177,7 +177,7 @@ impl Host {
         H: base_proof_preimage::HintWriterClient + Send + Sync + Clone + std::fmt::Debug + 'static,
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
-        let _timer = base_metrics::timed!(Metrics::replay_duration_seconds());
+        let _timer = base_common_observability_metrics::timed!(Metrics::replay_duration_seconds());
         let driver =
             Prologue::new(recording.clone(), recording, BaseEvmFactory::default()).load().await?;
         let epilogue = driver.execute().await?;

@@ -24,7 +24,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-serde = { workspace = true }
 alloy-chains = { workspace = true }
-reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
@@ -60,6 +59,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 base-execution-evm-runtime = {features = ["call-util", "overrides"], workspace = true}
 
 [dev-dependencies]

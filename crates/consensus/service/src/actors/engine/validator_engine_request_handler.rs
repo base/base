@@ -57,15 +57,19 @@ where
             self.processor.bootstrap_validator(reth_head.ok().flatten()).await;
 
             loop {
-                let _iter_timer =
-                    base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
-                base_metrics::time!(EngineMetrics::engine_processor_drain_duration_seconds(), {
-                    self.processor.drain().await.inspect_err(
+                let _iter_timer = base_common_observability_metrics::timed!(
+                    EngineMetrics::engine_processor_iteration_duration()
+                );
+                base_common_observability_metrics::time!(
+                    EngineMetrics::engine_processor_drain_duration_seconds(),
+                    {
+                        self.processor.drain().await.inspect_err(
                         |error| error!(target: "engine", ?error, "Failed to drain engine tasks"),
                     )
-                })?;
+                    }
+                )?;
 
-                let request = base_metrics::time!(
+                let request = base_common_observability_metrics::time!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds(),
                     { request_channel.recv().await }
                 );

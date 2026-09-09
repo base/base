@@ -1,6 +1,6 @@
 //! Challenger metrics constants.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     base_challenger,
     struct = ChallengerMetrics,
 

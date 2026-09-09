@@ -23,7 +23,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-config = { workspace = true }
 reth-fs-util = { workspace = true }
-reth-metrics = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
@@ -44,6 +43,7 @@ reth-tracing = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
 
 [dev-dependencies]

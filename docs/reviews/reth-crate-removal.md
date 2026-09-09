@@ -132,7 +132,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-ipc](../../vendor/reth-ipc/Cargo.toml) | Retain shared infrastructure |
 | [reth-libmdbx](../../vendor/reth-libmdbx/Cargo.toml) | Retain shared infrastructure |
 | [reth-mdbx-sys](../../vendor/reth-mdbx-sys/Cargo.toml) | Retain shared infrastructure |
-| [reth-metrics](../../vendor/reth-metrics/Cargo.toml) | Retain shared infrastructure |
+| [base-common-observability-metrics](../../crates/common/observability/metrics/Cargo.toml) | Retain shared infrastructure |
 | [reth-net-banlist](../../vendor/reth-net-banlist/Cargo.toml) | Retain shared infrastructure |
 | [reth-net-nat](../../vendor/reth-net-nat/Cargo.toml) | Retain shared infrastructure |
 | [reth-network](../../vendor/reth-network/Cargo.toml) | Retain shared infrastructure |

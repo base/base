@@ -18,9 +18,7 @@ alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-base-metrics = { workspace = true }
 futures-util = { workspace = true }
-reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -51,6 +49,7 @@ base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 base-execution-payload-types = {features = ["default"], workspace = true}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
+base-common-observability-metrics = {features = ["metrics"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace = true}
 
 [dev-dependencies]
@@ -65,7 +64,7 @@ base-execution-evm-blocks = { workspace = true, features = ["default", "test-uti
 default = ["metrics"]
 metrics = [
     "base-execution-evm-runtime/metrics",
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "base-observability-events/metrics",
     "base-execution-evm-blocks/metrics",
 ]

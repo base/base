@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-base-metrics = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -25,6 +24,7 @@ thiserror = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
@@ -42,4 +42,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
 
 [features]
 default = []
-metrics = ["base-metrics/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]

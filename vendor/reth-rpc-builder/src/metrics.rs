@@ -6,15 +6,15 @@ use std::{
     task::{Context, Poll},
 };
 
+use base_common_observability_metrics::{
+    Metrics,
+    metrics::{Counter, Histogram},
+};
 use jsonrpsee::{
     MethodResponse, RpcModule,
     core::middleware::{Batch, Notification},
     server::middleware::rpc::RpcServiceT,
     types::Request,
-};
-use reth_metrics::{
-    Metrics,
-    metrics::{Counter, Histogram},
 };
 use reth_primitives_traits::FastInstant as Instant;
 use tower::Layer;

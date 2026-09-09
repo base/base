@@ -1,6 +1,6 @@
 //! Tracks peer discovery for [`Discv5`](crate::Discv5).
+use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Gauge};
-use reth_metrics::Metrics;
 
 use crate::NetworkStackId;
 

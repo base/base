@@ -1,7 +1,7 @@
 //! Executor metrics.
+use base_common_observability_metrics::Metrics;
 use base_common_types_chain::BlockHeader;
 use metrics::{Counter, Gauge, Histogram};
-use reth_metrics::Metrics;
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock};
 
 /// Executor metrics.

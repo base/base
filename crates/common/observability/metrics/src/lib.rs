@@ -22,17 +22,27 @@ mod registry;
 #[cfg(feature = "metrics")]
 #[doc(hidden)]
 pub use ctor as __private_ctor;
+#[cfg(not(feature = "metrics"))]
+pub use noop::initialize_registered_metrics;
 #[cfg(feature = "metrics")]
 pub use registry::initialize_registered_metrics;
 #[cfg(feature = "metrics")]
 #[doc(hidden)]
 pub use registry::register_initializer;
-#[cfg(not(feature = "metrics"))]
-#[inline(always)]
-/// Initializes all registered metrics. No-op when the `metrics` feature is disabled.
-pub const fn initialize_registered_metrics() {}
 
 #[cfg(feature = "metrics")]
 mod timer;
 #[cfg(feature = "metrics")]
 pub use timer::DropTimer;
+
+#[cfg(feature = "metrics")]
+pub use metrics;
+/// Derive named metric handles.
+#[cfg(feature = "metrics")]
+pub use metrics_derive::Metrics;
+
+#[cfg(feature = "common")]
+pub mod common;
+
+#[cfg(feature = "std")]
+pub mod thread;

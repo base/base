@@ -14,20 +14,22 @@ workspace = true
 [dependencies]
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-base-metrics = { workspace = true }
 tracing-appender = { workspace = true }
 metrics = { workspace = true, optional = true }
-tracing = { workspace = true, features = ["std"] }
 hex = { workspace = true, features = ["default"] }
-strum = { workspace = true, features = ["derive"] }
+tracing = { workspace = true, features = ["std"] }
 eyre = { workspace = true, features = ["default"] }
+strum = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
+base-common-observability-metrics = { workspace = true }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 chrono = { workspace = true, features = ["default", "serde"] }
+
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }
+
 [features]
-default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+default = ["metrics"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]
 test-utils = []

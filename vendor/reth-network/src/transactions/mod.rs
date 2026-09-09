@@ -30,6 +30,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set, FbBuildHasher, HashMap, HashSet, hash_map::Entry},
 };
 use alloy_rlp::Encodable;
+use base_common_observability_metrics::common::mpsc::MemoryBoundedReceiver;
 use base_common_runtime_tasks::EventStream;
 use base_common_types_chain::TxType;
 use base_execution_evm_blocks::SenderRecoveryCache;
@@ -52,7 +53,6 @@ use reth_eth_wire::{
     NewPooledTransactionHashes66, NewPooledTransactionHashes68, NewPooledTransactionHashes72,
     PooledTransactions, RequestTxHashes, Transactions, ValidAnnouncementData,
 };
-use reth_metrics::common::mpsc::MemoryBoundedReceiver;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerKind, PeerRequest, PeerRequestSender, Peers,
     events::{PeerEvent, SessionInfo},
@@ -3382,7 +3382,7 @@ mod tests {
 
         let mut network_manager = NetworkManager::new(network_config).await.unwrap();
         let (to_tx_manager_tx, from_network_rx) =
-            reth_metrics::common::mpsc::memory_bounded_channel::<NetworkTransactionEvent>(
+            base_common_observability_metrics::common::mpsc::memory_bounded_channel::<NetworkTransactionEvent>(
                 crate::transactions::constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
                 "test_tx_channel",
             );

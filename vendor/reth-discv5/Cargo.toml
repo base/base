@@ -21,7 +21,6 @@ tokio = { workspace = true }
 metrics = { workspace = true }
 itertools = { workspace = true }
 thiserror = { workspace = true }
-reth-metrics = { workspace = true }
 alloy-eip2124 = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
@@ -32,6 +31,7 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [dev-dependencies]
 alloy-hardforks = { workspace = true }

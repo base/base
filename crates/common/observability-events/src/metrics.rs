@@ -1,6 +1,6 @@
 //! Metrics emitted by the transaction event journal writer.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     transaction_events
     #[describe("Transaction event journal entries submitted to the writer")]
     submitted_events: counter,

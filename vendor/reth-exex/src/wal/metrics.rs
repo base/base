@@ -1,5 +1,5 @@
+use base_common_observability_metrics::Metrics;
 use metrics::Gauge;
-use reth_metrics::Metrics;
 
 /// Metrics for the [WAL](`super::Wal`)
 #[derive(Metrics)]

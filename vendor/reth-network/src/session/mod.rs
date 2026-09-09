@@ -18,6 +18,7 @@ use std::{
 use active::QueuedOutgoingMessages;
 use alloy_eip2124::{ForkFilter, ForkId, ForkTransition, Head};
 use alloy_primitives::map::{FbBuildHasher, HashMap};
+use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_common_runtime_tasks::Runtime;
 pub use conn::EthRlpxConnection;
 use counter::SessionCounter;
@@ -33,7 +34,6 @@ use reth_eth_wire::{
     HANDSHAKE_TIMEOUT, HelloMessageWithProtocols, UnauthedP2PStream, UnifiedStatus,
     errors::EthStreamError, handshake::EthRlpxHandshake,
 };
-use reth_metrics::common::mpsc::MeteredPollSender;
 pub use reth_network_api::{Direction, PeerInfo};
 use reth_network_api::{PeerRequest, PeerRequestSender};
 use reth_network_peers::PeerId;

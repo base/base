@@ -9,6 +9,7 @@ use std::{
 };
 
 use base_common_chain_config::ChainSpecProvider;
+use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
 use base_common_runtime_tasks::EventStream;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
@@ -19,7 +20,6 @@ use base_execution_txpool::{
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
 use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
-use reth_metrics::common::mpsc::memory_bounded_channel;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, NetworkInfo, Peers,
     events::{PeerEvent, SessionInfo},

@@ -19,7 +19,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
-base-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
@@ -33,6 +32,7 @@ metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["default"] }
 base-proof = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
 base-common-types-rpc = { workspace = true, features = []}
 base-proof-client = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
@@ -52,7 +52,7 @@ disk = ["dep:rocksdb"]
 metrics = [
     "base-execution-evm-runtime/metrics",
     "base-consensus-providers/metrics",
-    "base-metrics/metrics",
+    "base-common-observability-metrics/metrics",
     "dep:metrics",
 ]
 precompiles = []

@@ -1,6 +1,6 @@
 //! Batcher service metric definitions.
 
-base_metrics::define_metrics! {
+base_common_observability_metrics::define_metrics! {
     batcher.l2_block_parity, struct = L2BlockParityMetrics,
     #[describe("Whether derived L2 block parity monitoring is running")]
     enabled: gauge,
