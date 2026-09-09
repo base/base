@@ -88,7 +88,7 @@ keccak-cache-global = [
 	"reth-node-core/keccak-cache-global",
 ]
 
-# Jemalloc feature for vergen to generate correct env vars
+# Jemalloc allocator support
 jemalloc = [ "reth-node-core/jemalloc", "reth-node-metrics/jemalloc" ]
 jemalloc-prof = [ "jemalloc", "reth-node-metrics/jemalloc-prof" ]
 jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]

@@ -669,14 +669,7 @@ impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
                 };
             let config = MetricServerConfig::new(
                 addr,
-                VersionInfo {
-                    version: version_metadata().cargo_pkg_version.as_ref(),
-                    build_timestamp: version_metadata().vergen_build_timestamp.as_ref(),
-                    cargo_features: version_metadata().vergen_cargo_features.as_ref(),
-                    git_sha: version_metadata().vergen_git_sha.as_ref(),
-                    target_triple: version_metadata().vergen_cargo_target_triple.as_ref(),
-                    build_profile: version_metadata().build_profile_name.as_ref(),
-                },
+                VersionInfo { version: version_metadata().cargo_pkg_version.as_ref() },
                 ChainSpecInfo { name: self.chain_id().to_string() },
                 self.task_executor().clone(),
                 metrics_hooks(self.provider_factory()),

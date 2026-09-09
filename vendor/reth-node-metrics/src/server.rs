@@ -525,14 +525,7 @@ mod tests {
             pruning_mode: "archive",
             prune_config: r#"{"block_interval":5}"#.to_string(),
         };
-        let version_info = VersionInfo {
-            version: "test",
-            build_timestamp: "test",
-            cargo_features: "test",
-            git_sha: "test",
-            target_triple: "test",
-            build_profile: "test",
-        };
+        let version_info = VersionInfo { version: "test" };
 
         let runtime = Runtime::test();
 
