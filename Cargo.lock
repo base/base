@@ -5116,10 +5116,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-ring-buffer"
-version = "0.0.0"
-
-[[package]]
 name = "base-runtime"
 version = "0.0.0"
 dependencies = [
