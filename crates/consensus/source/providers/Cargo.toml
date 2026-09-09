@@ -1,5 +1,5 @@
 [package]
-name = "base-consensus-providers"
+name = "base-consensus-source-providers"
 version.workspace = true
 description = "Alloy Backed Providers"
 

@@ -32,7 +32,7 @@ pub enum EngineClientError {
     InvalidAttributes(String),
     /// Reading local execution state failed.
     #[error(transparent)]
-    Local(#[from] base_consensus_providers::LocalL2Error),
+    Local(#[from] base_consensus_source_providers::LocalL2Error),
 
     /// An error occurred while decoding the payload
     #[error("An error occurred while decoding the payload: {0}")]

@@ -23,7 +23,7 @@ use base_consensus_gossip::{
 };
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
-use base_consensus_providers::{AlloyChainProvider, L1RpcProvider};
+use base_consensus_source_providers::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;
 use eyre::{Result, WrapErr};
@@ -810,7 +810,7 @@ mod tests {
     use alloy_primitives::{Address, b256};
     use base_common_chain_config::RollupConfig;
     use base_consensus_peers::NodeRecord;
-    use base_consensus_providers::L1_RPC_TIMEOUT;
+    use base_consensus_source_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
     use rstest::rstest;

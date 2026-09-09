@@ -236,10 +236,10 @@ impl InProcessClient {
             .ok_or_else(|| eyre!("Failed to get websocket api address"))?;
 
         let execution = base_consensus_engine::LocalEngineClient {
-            l1: base_consensus_providers::L1RpcProvider::new_http(Url::parse(
+            l1: base_consensus_source_providers::L1RpcProvider::new_http(Url::parse(
                 "http://127.0.0.1:1",
             )?),
-            l2: base_consensus_providers::LocalL2Provider {
+            l2: base_consensus_source_providers::LocalL2Provider {
                 provider: node_handle.provider().clone(),
                 rollup_config: Arc::new(node_handle.config.chain.config.rollup_config()),
             },

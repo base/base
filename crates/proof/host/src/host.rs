@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Network, RootProvider};
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_execution_evm_runtime::BaseEvmFactory;
 use base_common_client_rollup::OptimismRollupProviderExt;
 use base_proof::HintType;

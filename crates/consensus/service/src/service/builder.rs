@@ -6,7 +6,7 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_chain_config::RollupConfig;
-use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
+use base_consensus_source_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_common_chain_activation::UpgradeSignalConfig;
 use url::Url;
@@ -281,7 +281,7 @@ mod tests {
     use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
     use base_consensus_disc::LocalNode as DiscoveryNode;
     use base_consensus_engine::{EngineClient, LocalEngineClient};
-    use base_consensus_providers::LocalL2Provider;
+    use base_consensus_source_providers::LocalL2Provider;
     use base_node_runner::test_utils::LocalNode;
     use discv5::enr::k256::ecdsa::SigningKey;
     use libp2p::Multiaddr;
@@ -296,7 +296,7 @@ mod tests {
             trust_rpc: true,
             beacon: Url::parse("http://127.0.0.1:5052").unwrap(),
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
-            rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
+            rpc_timeout: base_consensus_source_providers::L1_RPC_TIMEOUT,
             slot_duration_override: None,
             verifier_l1_confs: 0,
             da_batcher_sender_override: None,

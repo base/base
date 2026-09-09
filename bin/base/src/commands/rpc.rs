@@ -10,7 +10,7 @@ use base_consensus_cli::{
     EmbeddedFollowArgs,
 };
 use base_consensus_engine::LocalEngineClient;
-use base_consensus_providers::{L1RpcProvider, LocalL2Provider};
+use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use clap::Args;

@@ -14,7 +14,7 @@ use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
-use base_consensus_providers::{
+use base_consensus_source_providers::{
     AlloyChainProvider, LocalL2Provider, OnlineBeaconClient, OnlineBlobProvider, OnlinePipeline,
 };
 use base_consensus_rpc::{BaseRpc, RpcBuilder};
@@ -219,7 +219,7 @@ impl RollupNode {
 
     async fn create_pipeline(
         &self,
-        l1_head_number: base_consensus_providers::L1HeadNumber,
+        l1_head_number: base_consensus_source_providers::L1HeadNumber,
     ) -> OnlinePipeline {
         // Create the caching L1/L2 EL providers for derivation.
         let l1_derivation_provider = AlloyChainProvider::new_with_trust(
@@ -329,7 +329,7 @@ impl RollupNode {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_source_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         let engine_client = Arc::new(self.engine_config.client.clone());
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
@@ -345,7 +345,7 @@ impl RollupNode {
     /// [`OnlinePipeline`] automatically.
     ///
     /// **Note:** `verifier_l1_confs` has no effect when using this method. The
-    /// [`ConfDepthProvider`](base_consensus_providers::ConfDepthProvider) is only wired into
+    /// [`ConfDepthProvider`](base_consensus_source_providers::ConfDepthProvider) is only wired into
     /// pipelines constructed by [`Self::start`]. If the caller's pipeline needs confirmation
     /// depth gating, it must enforce that in its own chain provider.
     pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
@@ -354,7 +354,7 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_source_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let engine_client = Arc::new(self.engine_config.client.clone());
         self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
@@ -368,7 +368,7 @@ impl RollupNode {
         &self,
         engine_client: Arc<E>,
     ) -> Result<(), String> {
-        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_source_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
@@ -377,7 +377,7 @@ impl RollupNode {
         &self,
         engine_client: Arc<E>,
         pipeline: P,
-        l1_head_number: base_consensus_providers::L1HeadNumber,
+        l1_head_number: base_consensus_source_providers::L1HeadNumber,
         cancellation: CancellationToken,
     ) -> Result<(), String>
     where

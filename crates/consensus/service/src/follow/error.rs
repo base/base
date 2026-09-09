@@ -19,7 +19,7 @@ pub enum FollowError {
         /// Requested local block tag.
         tag: BlockNumberOrTag,
         /// Underlying transport error.
-        source: base_consensus_providers::LocalL2Error,
+        source: base_consensus_source_providers::LocalL2Error,
     },
 
     /// Converting a local L2 block into block info failed.

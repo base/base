@@ -26,7 +26,7 @@ use base_consensus_node::{
     DerivationClientResult, L1BlockFetcher, L1WatcherActor, L1WatcherDerivationClient,
     L1WatcherQueryExecutor, NodeActor,
 };
-use base_consensus_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
+use base_consensus_source_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
 use base_consensus_rpc::L1WatcherQueries;
 use base_protocol::BlockInfo;
 use futures::Stream;
@@ -167,7 +167,7 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
 
     // Use a dummy inner provider — the conf depth check happens BEFORE the
     // inner call, so it won't be reached for gated blocks.
-    let dummy_inner = base_consensus_providers::AlloyChainProvider::new(
+    let dummy_inner = base_consensus_source_providers::AlloyChainProvider::new(
         base_common_client_ethereum::RootProvider::new_http("http://localhost:1".parse().unwrap()),
         1,
     );
@@ -200,7 +200,7 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
 async fn zero_conf_depth_does_not_gate_any_blocks() {
     let l1_head_number: L1HeadNumber = Arc::new(AtomicU64::new(100));
 
-    let dummy_inner = base_consensus_providers::AlloyChainProvider::new(
+    let dummy_inner = base_consensus_source_providers::AlloyChainProvider::new(
         base_common_client_ethereum::RootProvider::new_http("http://localhost:1".parse().unwrap()),
         1,
     );

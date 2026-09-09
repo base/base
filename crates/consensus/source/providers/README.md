@@ -1,6 +1,6 @@
-# `base-consensus-providers`
+# `base-consensus-source-providers`
 
-<a href="https://crates.io/crates/base-consensus-providers"><img src="https://img.shields.io/crates/v/base-consensus-providers.svg?label=base-consensus-providers&labelColor=2a2f35" alt="base-consensus-providers"></a>
+<a href="https://crates.io/crates/base-consensus-source-providers"><img src="https://img.shields.io/crates/v/base-consensus-source-providers.svg?label=base-consensus-source-providers&labelColor=2a2f35" alt="base-consensus-source-providers"></a>
 
 Alloy-backed providers for the Base consensus node.
 
@@ -18,11 +18,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-consensus-providers = { workspace = true }
+base-consensus-source-providers = { workspace = true }
 ```
 
 ```rust,ignore
-use base_consensus_providers::{AlloyChainProvider, AlloyL2ChainProvider};
+use base_consensus_source_providers::{AlloyChainProvider, AlloyL2ChainProvider};
 
 let l1_provider = AlloyChainProvider::new(l1_rpc_url);
 let l2_provider = AlloyL2ChainProvider::new(l2_rpc_url, rollup_config);

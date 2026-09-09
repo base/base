@@ -43,7 +43,7 @@ impl InProcessStandaloneSequencer {
     pub async fn start(config: InProcessStandaloneSequencerConfig) -> Result<Self> {
         let rollup_config = Arc::new(config.rollup_config);
         let mut engine_client = config.execution;
-        engine_client.l1 = base_consensus_providers::L1RpcProvider::new_http(
+        engine_client.l1 = base_consensus_source_providers::L1RpcProvider::new_http(
             Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),
         );
         engine_client.l2.rollup_config = Arc::clone(&rollup_config);

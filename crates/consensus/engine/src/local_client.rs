@@ -11,7 +11,7 @@ use base_common_types_payload::{
     BasePayloadAttributes, CancunPayloadFields, ExecutionData, ForkchoiceState, ForkchoiceUpdated,
     PayloadId, PayloadStatus, PraguePayloadFields,
 };
-use base_consensus_providers::LocalL2Provider;
+use base_consensus_source_providers::LocalL2Provider;
 use base_execution_payload_builder::{BaseExecutionHandle, BasePayloadBuilderAttributes};
 use base_protocol::L2BlockInfo;
 use reth_network::NetworkHandle;

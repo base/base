@@ -195,7 +195,7 @@ impl InProcessConsensus {
             trust_rpc: true,
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
-            rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
+            rpc_timeout: base_consensus_source_providers::L1_RPC_TIMEOUT,
             slot_duration_override: config.l1_slot_duration_override,
             verifier_l1_confs: config.verifier_l1_confs,
             da_batcher_sender_override: None,
@@ -203,7 +203,7 @@ impl InProcessConsensus {
 
         let mut engine_client = config.execution;
         engine_client.l1 =
-            base_consensus_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
+            base_consensus_source_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
         engine_client.l2.rollup_config = Arc::new(rollup_config.clone());
 
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
@@ -241,7 +241,7 @@ impl InProcessConsensus {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
                 shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
-                l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
+                l1_rpc_timeout: base_consensus_source_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });
         }

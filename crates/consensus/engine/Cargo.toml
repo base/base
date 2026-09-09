@@ -22,7 +22,6 @@ base-execution-trie = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -31,6 +30,7 @@ tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-execution-payload-builder = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+base-consensus-source-providers = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
@@ -48,5 +48,5 @@ base-common-chain-config = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default", "arbitrary", "k256"] }
 
 [features]
-metrics = ["base-consensus-providers/metrics", "base-common-observability-metrics/metrics", "dep:metrics"]
+metrics = ["base-consensus-source-providers/metrics", "base-common-observability-metrics/metrics", "dep:metrics"]
 test-utils = ["base-common-chain-config/test-utils", "base-protocol/test-utils"]

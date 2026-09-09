@@ -205,7 +205,7 @@ mod tests {
     use alloy_genesis::ChainConfig;
     use base_common_client_ethereum::RootProvider;
     use base_common_chain_config::RollupConfig;
-    use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+    use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof::{Hint, HintType};
     use base_proof_preimage::{
         HintRouter, PreimageFetcher, PreimageKey, errors::PreimageOracleError,

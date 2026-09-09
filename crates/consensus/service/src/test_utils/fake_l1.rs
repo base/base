@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_consensus_derive::{L1RetrievalProvider, PipelineError, PipelineResult};
 use base_consensus_engine::ConsolidateInput;
-use base_consensus_providers::{APIConfigResponse, APIGenesisResponse, BeaconClient, BoxedBlob};
+use base_consensus_source_providers::{APIConfigResponse, APIGenesisResponse, BeaconClient, BoxedBlob};
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::{Mutex, mpsc};
 

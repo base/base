@@ -23,11 +23,11 @@ base-batcher-cli = { workspace = true }
 base-builder-cli = { workspace = true }
 reth-cli-commands = { workspace = true }
 base-consensus-engine = { workspace = true }
-base-consensus-providers = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["default"] }
 reth-cli-util = { workspace = true, optional = true }
+base-consensus-source-providers = { workspace = true }
 alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "env"] }

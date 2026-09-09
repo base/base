@@ -53,7 +53,7 @@ members = [
   "crates/consensus/gossip",
   "crates/consensus/peers",
   "crates/consensus/protocol",
-  "crates/consensus/providers",
+  "crates/consensus/source/providers",
   "crates/consensus/rpc",
   "crates/consensus/safedb",
   "crates/consensus/service",
@@ -334,7 +334,7 @@ base-consensus-derive = { path = "crates/consensus/derive", default-features = f
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
 base-consensus-gossip = { path = "crates/consensus/gossip", default-features = false }
 base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
-base-consensus-providers = { path = "crates/consensus/providers", default-features = false }
+base-consensus-source-providers = { path = "crates/consensus/source/providers", default-features = false }
 
 # Execution
 base-node-core = { path = "crates/execution/node", default-features = false }

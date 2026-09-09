@@ -34,7 +34,6 @@ base-consensus-gossip = { workspace = true }
 base-consensus-safedb = { workspace = true }
 base-consensus-sources = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
@@ -44,6 +43,7 @@ bytes = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
+base-consensus-source-providers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
@@ -96,7 +96,7 @@ metrics = [
     "base-consensus-disc/metrics",
     "base-consensus-engine/metrics",
     "base-consensus-gossip/metrics",
-    "base-consensus-providers/metrics",
+    "base-consensus-source-providers/metrics",
     "base-consensus-rpc/metrics",
     "base-common-observability-metrics/metrics",
     "base-common-chain-activation/metrics",

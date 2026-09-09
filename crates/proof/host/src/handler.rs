@@ -17,7 +17,7 @@ use base_common_client_ethereum::{Base, Network};
 use base_common_types_chain::{Header, HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_types_payload::BasePayloadAttributes;
 use base_common_types_rpc::Block;
-use base_consensus_providers::BlobWithCommitmentAndProof;
+use base_consensus_source_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
@@ -1316,7 +1316,7 @@ mod tests {
     use base_common_chain_config::RollupConfig;
     use base_common_client_ethereum::Base;
     use base_common_client_ethereum::{RootProvider, builder as provider_builder, mock::Asserter};
-    use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+    use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
 

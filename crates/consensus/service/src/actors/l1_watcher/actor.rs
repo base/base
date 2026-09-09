@@ -132,7 +132,7 @@ where
     /// Updated on every new L1 head so the [`ConfDepthProvider`] in the derivation pipeline
     /// can enforce the confirmation depth cutoff at the chain-provider level.
     ///
-    /// [`ConfDepthProvider`]: base_consensus_providers::ConfDepthProvider
+    /// [`ConfDepthProvider`]: base_consensus_source_providers::ConfDepthProvider
     l1_head_number: Arc<AtomicU64>,
 }
 impl<BlockStream, L1Provider, L1WatcherDerivationClient_>

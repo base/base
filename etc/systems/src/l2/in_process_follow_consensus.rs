@@ -10,7 +10,7 @@ use std::{
 use base_builder_core::test_utils::get_available_port;
 use base_common_chain_config::RollupConfig;
 use base_consensus_node::{FollowNode, FollowNodeConfig, RemoteL2Client};
-use base_consensus_providers::L1RpcProvider;
+use base_consensus_source_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_common_chain_activation::{
     UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
@@ -100,7 +100,7 @@ impl InProcessFollowConsensus {
 
         let mut engine_client = config.execution;
         engine_client.l1 =
-            base_consensus_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
+            base_consensus_source_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
         engine_client.l2.rollup_config = Arc::clone(&rollup_config);
 
         let engine_client = Arc::new(engine_client);

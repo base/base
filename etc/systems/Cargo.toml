@@ -38,7 +38,6 @@ base-consensus-gossip = { workspace = true }
 base-consensus-sources = { workspace = true }
 base-prover-service-db = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
-base-consensus-providers = { workspace = true }
 base-batcher-service-driver = { workspace = true }
 base-common-l1-transactions = { workspace = true }
 hex = { workspace = true, features = ["default"] }
@@ -52,6 +51,7 @@ alloy-eips = { workspace = true, features = ["std"] }
 base-execution-evm-precompiles = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
+base-consensus-source-providers = { workspace = true }
 reqwest = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
@@ -90,11 +90,11 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "
 [dev-dependencies]
 alloy-json-rpc = { workspace = true }
 base-txpool-rpc = { workspace = true }
-base-common-client-rollup = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-common-client-rollup = { workspace = true }
 base-common-types-payload = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
