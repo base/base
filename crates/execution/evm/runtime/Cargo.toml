@@ -129,9 +129,7 @@ asm-keccak = ["alloy-primitives/asm-keccak", "revm-primitives/asm-keccak"]
 call-util = ["overrides"]
 gmp = ["revm-precompile/gmp"]
 overrides = []
-alloydb = ["base-state/alloydb"]
 arbitrary = ["revm-primitives/arbitrary"]
-asyncdb = ["base-state/asyncdb"]
 dev = [
     "memory_limit",
     "optional_balance_check",

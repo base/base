@@ -4836,11 +4836,8 @@ dependencies = [
 name = "base-state"
 version = "0.0.0"
 dependencies = [
- "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
- "alloy-provider",
- "alloy-transport",
  "alloy-trie",
  "arbitrary",
  "auto_impl",
@@ -4858,7 +4855,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
- "tokio",
 ]
 
 [[package]]

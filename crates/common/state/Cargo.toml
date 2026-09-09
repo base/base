@@ -21,13 +21,9 @@ rustdoc-args = [
 ]
 
 [dependencies]
-alloy-eips = { workspace = true, optional = true }
-alloy-provider = { workspace = true, optional = true }
-alloy-transport = { workspace = true, optional = true }
-
 either = { workspace = true }
-thiserror = { workspace = true }
 auto_impl = { workspace = true }
+thiserror = { workspace = true }
 alloy-trie = { workspace = true }
 revm-state = { workspace = true }
 alloy-genesis = { workspace = true }
@@ -35,28 +31,25 @@ revm-bytecode = { workspace = true }
 revm-primitives = { workspace = true }
 alloy-primitives = { workspace = true }
 bytes = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true }
 modular-bitfield = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref", "debug"] }
-base-common-types-chain = { workspace = true }
 arbitrary = { workspace = true, optional = true, features = ["derive"]}
 serde = { workspace = true, optional = true, features = ["derive", "rc"] }
-tokio = { workspace = true, optional = true, features = ["default", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
-serde_json = { workspace = true, features = ["alloc"] }
-
 mockall = { workspace = true }
 proptest = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 serde = { workspace = true, features = ["derive"]}
 arbitrary = { workspace = true, features = ["derive"]}
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [lints]
 workspace = true
 
 [features]
-asyncdb = ["dep:tokio", "tokio/rt-multi-thread"]
 default = ["std"]
 serde = [
     "dep:serde",
@@ -65,7 +58,6 @@ serde = [
     "either/serde",
     "alloy-primitives/serde",
     "revm-bytecode/serde",
-    "alloy-eips?/serde",
 ]
 std = [
     "serde?/std",
@@ -79,11 +71,9 @@ std = [
     "alloy-trie/std",
     "revm-bytecode/std",
     "derive_more/std",
-    "alloy-eips?/std",
     "serde_json/std",
 ]
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
 reth-codec = ["dep:bytes", "dep:modular-bitfield", "base-common-types-chain/alloy"]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils"]
-alloydb = ["std", "asyncdb", "dep:tokio", "dep:alloy-provider", "dep:alloy-eips", "dep:alloy-transport"]
 map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]
