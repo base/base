@@ -16,7 +16,6 @@ use reth_node_core::{
     node_config::NodeConfig,
     version,
 };
-use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 use tracing::info;
 
 use crate::{MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs};
@@ -204,15 +203,6 @@ impl ExecutionNodeRuntimeConfig {
 
     /// Opens the database and resolves the Base launch resources.
     pub fn into_launch(mut self, ctx: CliContext) -> eyre::Result<NodeLaunch> {
-        if let Some(http_api) = &self.node_config.rpc.http_api {
-            LenientRpcModuleValidator::validate_selection(http_api, "http.api")
-                .map_err(|e| eyre::eyre!("{e}"))?;
-        }
-        if let Some(ws_api) = &self.node_config.rpc.ws_api {
-            LenientRpcModuleValidator::validate_selection(ws_api, "ws.api")
-                .map_err(|e| eyre::eyre!("{e}"))?;
-        }
-
         info!(
             target: "reth::cli",
             version = ?version::version_metadata().short_version,

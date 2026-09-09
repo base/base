@@ -20,8 +20,7 @@ pub use reth_engine_tree::tree::BasicEngineValidator;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_builder::{
-    RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
-    RpcConfig,
+    RpcConfig, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
 };
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use reth_storage_overlay::OverlayManager;
@@ -260,10 +259,7 @@ impl BaseRpcServer {
             node.provider().clone(),
             node.evm_config().clone(),
         );
-        ctx.modules.merge_if_module_configured(
-            reth_rpc_server_types::RethRpcModule::Eth,
-            eth_config.into_rpc(),
-        )?;
+        ctx.modules.merge_configured(eth_config.into_rpc())?;
         let payload = base_execution_payload_builder::BasePayloadBuilder::new(
             node.pool().clone(),
             node.provider().clone(),
@@ -274,18 +270,12 @@ impl BaseRpcServer {
             node.task_executor().clone(),
             payload,
         );
-        ctx.modules.merge_if_module_configured(
-            reth_rpc_server_types::RethRpcModule::Debug,
-            witness.into_rpc(),
-        )?;
+        ctx.modules.merge_configured(witness.into_rpc())?;
         let miner = base_execution_rpc::BaseMinerExtApi::new(
             base.da_config.clone(),
             base.gas_limit_config.clone(),
         );
-        ctx.modules.add_or_replace_if_module_configured(
-            reth_rpc_server_types::RethRpcModule::Miner,
-            miner.into_rpc(),
-        )?;
+        ctx.modules.add_or_replace_configured(miner.into_rpc())?;
         node_services.register_rpc(&mut ctx)?;
 
         Ok(RpcSetupContext { node, config, modules, registry, server_config: rpc_config.server })

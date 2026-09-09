@@ -11,7 +11,6 @@ use base_node_core::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use tracing::{Instrument, Level, span};
 
@@ -121,12 +120,7 @@ where
                 let base_config = NodeConfig::new(self.chain_spec.clone())
                     .with_network(network_config.clone())
                     .with_unused_ports()
-                    .with_rpc(
-                        RpcServerArgs::default()
-                            .with_unused_ports()
-                            .with_http()
-                            .with_http_api(RpcModuleSelection::All),
-                    );
+                    .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
                 // Apply node config modifier if present
                 let node_config = if let Some(modifier) = &self.node_config_modifier {

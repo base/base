@@ -15,7 +15,6 @@ use reth_discv5::NetworkStackId;
 use reth_network::NetworkHandle;
 use reth_network_p2p::sync::NetworkSyncUpdater;
 use reth_provider::{BlockNumReader, HeaderProvider};
-use reth_rpc_server_types::RethRpcModule;
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;
@@ -281,7 +280,7 @@ impl ExecutionUpgradeSignal {
                 }
             })
             .map_err(|error| eyre::eyre!(error))?;
-        ctx.modules.merge_if_module_configured(RethRpcModule::Admin, module)?;
+        ctx.modules.merge_configured(module)?;
 
         Ok(())
     }

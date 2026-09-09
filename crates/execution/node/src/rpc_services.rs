@@ -12,7 +12,6 @@ use base_txpool_rpc::{
     SendRawTransactionValidityApiServer, ShadowValidityBuilderApi, TransactionStatusApiImpl,
     TransactionStatusApiServer,
 };
-use reth_rpc_server_types::RethRpcModule;
 
 use crate::RpcContext;
 
@@ -37,10 +36,7 @@ impl BaseRpcServices {
         let status = TransactionStatusApiImpl::new(self.sequencer, ctx.pool().clone())
             .map_err(|error| eyre::eyre!("failed to create transaction status API: {error}"))?;
         ctx.modules.merge_configured(status.into_rpc())?;
-        ctx.modules.merge_if_module_configured(
-            RethRpcModule::Admin,
-            AdminTxPoolApiImpl::new(ctx.pool().clone()).into_rpc(),
-        )?;
+        ctx.modules.merge_configured(AdminTxPoolApiImpl::new(ctx.pool().clone()).into_rpc())?;
         if let Some(config) = self.builder {
             ctx.modules.merge_configured(
                 ShadowValidityBuilderApi::new(ctx.pool().clone(), config).into_rpc(),

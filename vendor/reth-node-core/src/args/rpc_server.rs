@@ -1,7 +1,6 @@
 //! clap [Args](clap::Args) for RPC related arguments.
 
 use std::{
-    ffi::OsStr,
     net::{IpAddr, Ipv4Addr},
     sync::OnceLock,
     time::Duration,
@@ -9,12 +8,12 @@ use std::{
 
 use base_common_rpc_types_engine::JwtSecret;
 use clap::{
-    Arg, Args, Command,
-    builder::{PossibleValue, RangedU64ValueParser, Resettable, TypedValueParser},
+    Args,
+    builder::{RangedU64ValueParser, Resettable},
 };
 use reth_cli_util::{parse_duration_from_secs_or_ms, parse_ether_value};
 use reth_rpc_eth_types::builder::config::PendingBlockKind;
-use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
+use reth_rpc_server_types::constants;
 use url::Url;
 
 use super::types::MaxOr;
@@ -52,13 +51,11 @@ pub struct DefaultRpcServerArgs {
     http_addr: IpAddr,
     http_port: u16,
     http_disable_compression: bool,
-    http_api: Option<RpcModuleSelection>,
     http_corsdomain: Option<String>,
     ws: bool,
     ws_addr: IpAddr,
     ws_port: u16,
     ws_allowed_origins: Option<String>,
-    ws_api: Option<RpcModuleSelection>,
 
     rpc_jwtsecret: Option<JwtSecret>,
     rpc_disable_metrics: bool,
@@ -120,12 +117,6 @@ impl DefaultRpcServerArgs {
         self
     }
 
-    /// Set the default HTTP API modules
-    pub fn with_http_api(mut self, v: Option<RpcModuleSelection>) -> Self {
-        self.http_api = v;
-        self
-    }
-
     /// Set the default HTTP CORS domain
     pub fn with_http_corsdomain(mut self, v: Option<String>) -> Self {
         self.http_corsdomain = v;
@@ -153,12 +144,6 @@ impl DefaultRpcServerArgs {
     /// Set the default WS allowed origins
     pub fn with_ws_allowed_origins(mut self, v: Option<String>) -> Self {
         self.ws_allowed_origins = v;
-        self
-    }
-
-    /// Set the default WS API modules
-    pub fn with_ws_api(mut self, v: Option<RpcModuleSelection>) -> Self {
-        self.ws_api = v;
         self
     }
 
@@ -308,13 +293,11 @@ impl Default for DefaultRpcServerArgs {
             http_addr: Ipv4Addr::LOCALHOST.into(),
             http_port: constants::DEFAULT_HTTP_RPC_PORT,
             http_disable_compression: false,
-            http_api: None,
             http_corsdomain: None,
             ws: false,
             ws_addr: Ipv4Addr::LOCALHOST.into(),
             ws_port: constants::DEFAULT_WS_RPC_PORT,
             ws_allowed_origins: None,
-            ws_api: None,
 
             rpc_jwtsecret: None,
             rpc_disable_metrics: false,
@@ -364,10 +347,6 @@ pub struct RpcServerArgs {
     #[arg(long = "http.disable-compression", default_value_t = DefaultRpcServerArgs::get_global().http_disable_compression)]
     pub http_disable_compression: bool,
 
-    /// Rpc Modules to be configured for the HTTP server
-    #[arg(long = "http.api", value_parser = RpcModuleSelectionValueParser::default(), default_value = Resettable::from(DefaultRpcServerArgs::get_global().http_api.as_ref().map(|v| v.to_string().into())))]
-    pub http_api: Option<RpcModuleSelection>,
-
     /// Http Corsdomain to allow request from
     #[arg(long = "http.corsdomain", default_value = Resettable::from(DefaultRpcServerArgs::get_global().http_corsdomain.as_ref().map(|v| v.to_string().into())))]
     pub http_corsdomain: Option<String>,
@@ -388,12 +367,7 @@ pub struct RpcServerArgs {
     #[arg(id = "ws.origins", long = "ws.origins", alias = "ws.corsdomain", default_value = Resettable::from(DefaultRpcServerArgs::get_global().ws_allowed_origins.as_ref().map(|v| v.to_string().into())))]
     pub ws_allowed_origins: Option<String>,
 
-    /// Rpc Modules to be configured for the WS server
-    #[arg(long = "ws.api", value_parser = RpcModuleSelectionValueParser::default(), default_value = Resettable::from(DefaultRpcServerArgs::get_global().ws_api.as_ref().map(|v| v.to_string().into())))]
-    pub ws_api: Option<RpcModuleSelection>,
-
-    /// Hex encoded JWT secret to authenticate the regular RPC server(s), see `--http.api` and
-    /// `--ws.api`.
+    /// Hex encoded JWT secret to authenticate the regular RPC server(s), for HTTP and WebSocket.
     ///
     #[arg(long = "rpc.jwtsecret", value_name = "HEX", global = true, required = false, default_value = Resettable::from(DefaultRpcServerArgs::get_global().rpc_jwtsecret.as_ref().map(|v| format!("{:?}", v).into())))]
     pub rpc_jwtsecret: Option<JwtSecret>,
@@ -553,29 +527,10 @@ impl RpcServerArgs {
         self
     }
 
-    /// Configures modules for the HTTP-RPC server.
-    pub fn with_http_api(mut self, http_api: RpcModuleSelection) -> Self {
-        self.http_api = Some(http_api);
-        self
-    }
-
     /// Enables the WS-RPC server.
     pub const fn with_ws(mut self) -> Self {
         self.ws = true;
         self
-    }
-
-    /// Configures modules for WS-RPC server.
-    pub fn with_ws_api(mut self, ws_api: RpcModuleSelection) -> Self {
-        self.ws_api = Some(ws_api);
-        self
-    }
-
-    /// Configures modules for both the HTTP-RPC server and WS-RPC server.
-    ///
-    /// This is the same as calling both [`Self::with_http_api`] and [`Self::with_ws_api`].
-    pub fn with_api(self, api: RpcModuleSelection) -> Self {
-        self.with_http_api(api.clone()).with_ws_api(api)
     }
 
     /// Change rpc port numbers based on the instance number, if provided.
@@ -636,27 +591,6 @@ impl RpcServerArgs {
         self
     }
 
-    /// Returns `true` if the given RPC namespace is enabled on any transport.
-    pub fn is_namespace_enabled(&self, ns: RethRpcModule) -> bool {
-        if self.http
-            && self.http_api.as_ref().map_or_else(
-                || RpcModuleSelection::standard_modules().contains(&ns),
-                |api| api.contains(&ns),
-            )
-        {
-            return true;
-        }
-        if self.ws
-            && self.ws_api.as_ref().map_or_else(
-                || RpcModuleSelection::standard_modules().contains(&ns),
-                |api| api.contains(&ns),
-            )
-        {
-            return true;
-        }
-        false
-    }
-
     /// Enables forced blob sidecar upcasting from EIP-4844 to EIP-7594 format.
     pub const fn with_force_blob_sidecar_upcasting(mut self) -> Self {
         self.rpc_force_blob_sidecar_upcasting = true;
@@ -671,13 +605,11 @@ impl Default for RpcServerArgs {
             http_addr,
             http_port,
             http_disable_compression,
-            http_api,
             http_corsdomain,
             ws,
             ws_addr,
             ws_port,
             ws_allowed_origins,
-            ws_api,
 
             rpc_jwtsecret,
             rpc_disable_metrics,
@@ -708,13 +640,11 @@ impl Default for RpcServerArgs {
             http_addr,
             http_port,
             http_disable_compression,
-            http_api,
             http_corsdomain,
             ws,
             ws_addr,
             ws_port,
             ws_allowed_origins,
-            ws_api,
 
             rpc_jwtsecret,
             rpc_disable_metrics,
@@ -744,35 +674,6 @@ impl Default for RpcServerArgs {
     }
 }
 
-/// clap value parser for [`RpcModuleSelection`] with configurable validation.
-#[derive(Clone, Debug, Default)]
-#[non_exhaustive]
-struct RpcModuleSelectionValueParser;
-
-impl TypedValueParser for RpcModuleSelectionValueParser {
-    type Value = RpcModuleSelection;
-
-    fn parse_ref(
-        &self,
-        _cmd: &Command,
-        _arg: Option<&Arg>,
-        value: &OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let val =
-            value.to_str().ok_or_else(|| clap::Error::new(clap::error::ErrorKind::InvalidUtf8))?;
-        // This will now accept any module name, creating Other(name) for unknowns
-        Ok(val
-            .parse::<RpcModuleSelection>()
-            .expect("RpcModuleSelection parsing cannot fail with Other variant"))
-    }
-
-    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
-        // Only show standard modules in help text (excludes "other")
-        let values = RethRpcModule::standard_variant_names().map(PossibleValue::new);
-        Some(Box::new(values))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use clap::{Args, Parser};
@@ -784,38 +685,6 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
-    }
-
-    #[test]
-    fn test_rpc_server_args_parser() {
-        let args =
-            CommandParser::<RpcServerArgs>::parse_from(["reth", "--http.api", "eth,admin,debug"])
-                .args;
-
-        let apis = args.http_api.unwrap();
-        let expected = RpcModuleSelection::try_from_selection(["eth", "admin", "debug"]).unwrap();
-
-        assert_eq!(apis, expected);
-    }
-
-    #[test]
-    fn test_rpc_server_eth_call_bundle_args() {
-        let args =
-            CommandParser::<RpcServerArgs>::parse_from(["reth", "--http.api", "eth,admin,debug"])
-                .args;
-
-        let apis = args.http_api.unwrap();
-        let expected = RpcModuleSelection::try_from_selection(["eth", "admin", "debug"]).unwrap();
-
-        assert_eq!(apis, expected);
-    }
-
-    #[test]
-    fn test_rpc_server_args_parser_none() {
-        let args = CommandParser::<RpcServerArgs>::parse_from(["reth", "--http.api", "none"]).args;
-        let apis = args.http_api.unwrap();
-        let expected = RpcModuleSelection::Selection(Default::default());
-        assert_eq!(apis, expected);
     }
 
     #[test]
@@ -871,13 +740,11 @@ mod tests {
             http_addr: "127.0.0.1".parse().unwrap(),
             http_port: 8545,
             http_disable_compression: false,
-            http_api: Some(RpcModuleSelection::try_from_selection(["eth", "admin"]).unwrap()),
             http_corsdomain: Some("*".to_string()),
             ws: true,
             ws_addr: "127.0.0.1".parse().unwrap(),
             ws_port: 8546,
             ws_allowed_origins: Some("*".to_string()),
-            ws_api: Some(RpcModuleSelection::try_from_selection(["eth", "admin"]).unwrap()),
 
             rpc_jwtsecret: Some(
                 JwtSecret::from_hex(
@@ -930,8 +797,6 @@ mod tests {
             "127.0.0.1",
             "--http.port",
             "8545",
-            "--http.api",
-            "eth,admin",
             "--http.corsdomain",
             "*",
             "--ws",
@@ -941,8 +806,6 @@ mod tests {
             "8546",
             "--ws.origins",
             "*",
-            "--ws.api",
-            "eth,admin",
             "--rpc.jwtsecret",
             "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             "--rpc.max-request-size",

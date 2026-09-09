@@ -278,12 +278,10 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_BUILDER_HTTP_PORT}
-      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
       - --ws.port=${L2_BUILDER_WS_PORT}
-      - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
@@ -468,12 +466,10 @@ services:
       - --http.port=${L2_CLIENT_HTTP_PORT}
       # Devnet keeps `miner` on HTTP so local services can read and update
       # the dynamic DA and gas-limit knobs end-to-end.
-      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
       - --ws.port=${L2_CLIENT_WS_PORT}
-      - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
@@ -578,12 +574,10 @@ services:
       - --http.port=${L2_BASE_RPC_HTTP_PORT}
       # Devnet keeps `miner` on HTTP so local services can read and update
       # the dynamic DA and gas-limit knobs end-to-end.
-      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
       - --ws.port=${L2_BASE_RPC_WS_PORT}
-      - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
       - --port=${L2_BASE_RPC_P2P_PORT}
       - --discovery.port=${L2_BASE_RPC_P2P_PORT}
@@ -678,12 +672,10 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_SHADOW_HTTP_PORT}
-      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
       - --ws.port=${L2_SHADOW_WS_PORT}
-      - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
       - --port=${L2_SHADOW_P2P_PORT}
       - --discovery.port=${L2_SHADOW_P2P_PORT}

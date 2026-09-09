@@ -6,7 +6,7 @@ An execution witness is the set of all Merkle trie node preimages, contract byte
 
 ## Enabling execution witnesses in reth
 
-Execution witnesses are served via the `debug_executionWitness` JSON-RPC method, which is part of the debug namespace. To expose it, start reth with `--http.api debug` (or `--ws.api debug` for WebSocket). The method takes a block number in hex and returns the full witness for that block as re-executed by the node.
+Execution witnesses are served via the `debug_executionWitness` JSON-RPC method, which is part of the debug namespace. Base exposes it on every enabled HTTP or WebSocket transport. The method takes a block number in hex and returns the full witness for that block as re-executed by the node.
 
 To additionally record witnesses automatically when a bad block is encountered and compare them against a healthy reference node, use `--debug.invalid-block-hook witness` together with `--debug.healthy-node-rpc-url <URL>`. That flow is handled by reth internally, but `witness-diff` is useful for the same underlying problem when you want to drive the comparison yourself.
 

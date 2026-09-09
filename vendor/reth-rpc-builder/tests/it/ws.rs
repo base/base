@@ -6,7 +6,6 @@ use std::time::Duration;
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
 use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
-use reth_rpc_server_types::RpcModuleSelection;
 use reth_tokio_util::EventSender;
 use serde_json::Value;
 
@@ -14,7 +13,7 @@ use crate::utils::{launch_ws, test_rpc_registry};
 
 /// Helper to launch a WS server with the Eth module.
 async fn launch_ws_eth() -> reth_rpc_builder::RpcServerHandle {
-    launch_ws(vec![reth_rpc_server_types::RethRpcModule::Eth]).await
+    launch_ws().await
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -135,8 +134,7 @@ async fn test_eth_subscribe_not_available_over_http() {
     reth_tracing::init_test_tracing();
 
     let mut registry = test_rpc_registry().await;
-    let modules = RpcModuleSelection::Standard;
-    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http(modules));
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http());
     let handle = RpcServerConfig::http(Default::default())
         .with_http_address(crate::utils::test_address())
         .start(&server)
@@ -186,9 +184,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         EventSender::new(1),
     );
 
-    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws(
-        RpcModuleSelection::Standard,
-    ));
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws());
     let handle = RpcServerConfig::ws(Default::default())
         .with_ws_address(crate::utils::test_address())
         .start(&server)

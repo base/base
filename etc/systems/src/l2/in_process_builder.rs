@@ -329,17 +329,6 @@ fn create_node_config(
         rpc.ws_port = port;
     }
 
-    rpc.http_api = Some(
-        "admin,eth,web3,net,rpc,debug,txpool,miner"
-            .parse()
-            .wrap_err("Failed to parse HTTP API modules")?,
-    );
-    rpc.ws_api = Some(
-        "admin,eth,web3,net,rpc,debug,txpool,miner"
-            .parse()
-            .wrap_err("Failed to parse WS API modules")?,
-    );
-
     let mut network = if config.p2p_port.is_some() {
         NetworkArgs::default()
     } else {

@@ -325,7 +325,6 @@ pub async fn smoke_test_unified_binary_produces_and_follows_blocks() -> Result<(
             .args([
                 "--http",
                 "--http.addr=127.0.0.1",
-                "--http.api=eth,debug,net,web3",
                 "--port=0",
                 "--disable-discovery",
                 "--rpc.port=0",

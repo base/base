@@ -62,7 +62,7 @@ Initialize historical proofs storage before the first launch:
 base reth init --chain <genesis.json> --datadir <data>
 base proofs init --chain <genesis.json> --datadir <data> --proofs-history.storage-path <proofs>
 base --chain <chain.toml> rpc --execution-chain <genesis.json> --datadir <data> \
-  --http --http.api eth,debug --source-l2-rpc <source> --follow.proofs \
+  --http --source-l2-rpc <source> --follow.proofs \
   --proofs-history --proofs-history.storage-path <proofs> \
   --l1-eth-rpc <l1-rpc> --l1-beacon <l1-beacon>
 ```

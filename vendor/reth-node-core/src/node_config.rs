@@ -51,7 +51,6 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 /// #     node_config::NodeConfig,
 /// #     args::RpcServerArgs,
 /// # };
-/// # use reth_rpc_server_types::RpcModuleSelection;
 /// # use tokio::runtime::Handle;
 ///
 /// async fn t() {
@@ -60,7 +59,6 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 ///
 ///     // configure the rpc apis
 ///     let mut rpc = RpcServerArgs::default().with_http().with_ws();
-///     rpc.http_api = Some(RpcModuleSelection::All);
 ///     let builder = builder.with_rpc(rpc);
 /// }
 /// ```
@@ -74,7 +72,6 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 /// #     node_config::NodeConfig,
 /// #     args::RpcServerArgs,
 /// # };
-/// # use reth_rpc_server_types::RpcModuleSelection;
 /// # use tokio::runtime::Handle;
 ///
 /// async fn t() {
@@ -83,7 +80,6 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 ///
 ///     // configure the rpc apis
 ///     let mut rpc = RpcServerArgs::default().with_http().with_ws();
-///     rpc.http_api = Some(RpcModuleSelection::All);
 ///     let builder = builder.with_rpc(rpc);
 /// }
 /// ```

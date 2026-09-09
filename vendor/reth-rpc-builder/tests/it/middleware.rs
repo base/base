@@ -13,7 +13,6 @@ use jsonrpsee::{
     types::Request,
 };
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
-use reth_rpc_server_types::RpcModuleSelection;
 use tower::Layer;
 
 use crate::utils::{test_address, test_rpc_registry};
@@ -72,8 +71,7 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_middleware() {
     let mut registry = test_rpc_registry().await;
-    let modules = registry
-        .create_transport_rpc_modules(TransportRpcModuleConfig::set_http(RpcModuleSelection::All));
+    let modules = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http());
 
     let mylayer = MyMiddlewareLayer::default();
 
@@ -85,9 +83,7 @@ async fn test_rpc_middleware() {
         .unwrap();
 
     let client = handle.http_client().unwrap();
-    EthApiClient::protocol_version(&client)
-    .await
-    .unwrap();
+    EthApiClient::protocol_version(&client).await.unwrap();
     let count = mylayer.count.load(Ordering::Relaxed);
     assert_eq!(count, 1);
 }

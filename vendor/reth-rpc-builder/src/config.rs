@@ -3,8 +3,6 @@ use std::net::SocketAddr;
 use jsonrpsee::server::ServerConfigBuilder;
 use reth_node_core::args::RpcServerArgs;
 use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig};
-use reth_rpc_server_types::RpcModuleSelection;
-use tracing::warn;
 
 use crate::{RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
 
@@ -55,46 +53,18 @@ impl RpcConfig {
             .max_request_body_size(max_request)
             .max_response_body_size(max_response)
             .max_subscriptions_per_connection(args.rpc_max_subscriptions_per_connection.get());
-        let modules = {
-            let mut config =
-                TransportRpcModuleConfig::default().with_config(RpcModuleConfig::new(eth.clone()));
-
-            if args.http {
-                config = config.with_http(
-                    args.http_api
-                        .clone()
-                        .unwrap_or_else(|| RpcModuleSelection::standard_modules().into()),
-                );
-            }
-
-            if args.ws {
-                config = config.with_ws(
-                    args.ws_api
-                        .clone()
-                        .unwrap_or_else(|| RpcModuleSelection::standard_modules().into()),
-                );
-            }
-
-            config
-        };
+        let mut modules =
+            TransportRpcModuleConfig::default().with_config(RpcModuleConfig::new(eth.clone()));
+        if args.http {
+            modules = modules.with_http();
+        }
+        if args.ws {
+            modules = modules.with_ws();
+        }
         let server = {
             let mut config = RpcServerConfig::default()
                 .with_jwt_secret(args.rpc_jwtsecret)
                 .with_rpc_metrics_enabled(!args.rpc_disable_metrics);
-
-            if args.http_api.is_some() && !args.http {
-                warn!(
-                    target: "reth::cli",
-                    "The --http.api flag is set but --http is not enabled. HTTP RPC API will not be exposed."
-                );
-            }
-
-            if args.ws_api.is_some() && !args.ws {
-                warn!(
-                    target: "reth::cli",
-                    "The --ws.api flag is set but --ws is not enabled. WS RPC API will not be exposed."
-                );
-            }
 
             if args.http {
                 let socket_address = SocketAddr::new(args.http_addr, args.http_port);
@@ -127,7 +97,7 @@ mod tests {
     use clap::{Args, Parser};
     use reth_node_core::args::RpcServerArgs;
     use reth_rpc_eth_types::RPC_DEFAULT_GAS_CAP;
-    use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
+    use reth_rpc_server_types::constants;
 
     use crate::RpcConfig;
 
@@ -154,68 +124,9 @@ mod tests {
     }
 
     #[test]
-    fn test_transport_rpc_module_config() {
-        let args = CommandParser::<RpcServerArgs>::parse_from([
-            "reth",
-            "--http.api",
-            "eth,admin,debug",
-            "--http",
-            "--ws",
-        ])
-        .args;
-        let config = RpcConfig::new(&args).modules;
-        let expected = [RethRpcModule::Eth, RethRpcModule::Admin, RethRpcModule::Debug];
-        assert_eq!(config.http().cloned().unwrap().into_selection(), expected.into());
-        assert_eq!(
-            config.ws().cloned().unwrap().into_selection(),
-            RpcModuleSelection::standard_modules()
-        );
-    }
-
-    #[test]
-    fn test_transport_rpc_module_trim_config() {
-        let args = CommandParser::<RpcServerArgs>::parse_from([
-            "reth",
-            "--http.api",
-            " eth, admin, debug",
-            "--http",
-            "--ws",
-        ])
-        .args;
-        let config = RpcConfig::new(&args).modules;
-        let expected = [RethRpcModule::Eth, RethRpcModule::Admin, RethRpcModule::Debug];
-        assert_eq!(config.http().cloned().unwrap().into_selection(), expected.into());
-        assert_eq!(
-            config.ws().cloned().unwrap().into_selection(),
-            RpcModuleSelection::standard_modules()
-        );
-    }
-
-    #[test]
-    fn test_unique_rpc_modules() {
-        let args = CommandParser::<RpcServerArgs>::parse_from([
-            "reth",
-            "--http.api",
-            " eth, admin, debug, eth,admin",
-            "--http",
-            "--ws",
-        ])
-        .args;
-        let config = RpcConfig::new(&args).modules;
-        let expected = [RethRpcModule::Eth, RethRpcModule::Admin, RethRpcModule::Debug];
-        assert_eq!(config.http().cloned().unwrap().into_selection(), expected.into());
-        assert_eq!(
-            config.ws().cloned().unwrap().into_selection(),
-            RpcModuleSelection::standard_modules()
-        );
-    }
-
-    #[test]
     fn test_rpc_server_config() {
         let args = CommandParser::<RpcServerArgs>::parse_from([
             "reth",
-            "--http.api",
-            "eth,admin,debug",
             "--http",
             "--ws",
             "--ws.addr",

@@ -23,7 +23,6 @@ use jsonrpsee::{
     types::error::ErrorCode,
 };
 use reth_network_peers::NodeRecord;
-use reth_rpc_server_types::RethRpcModule;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -443,7 +442,7 @@ where
 async fn test_call_filter_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_filter_calls(&client).await;
 }
@@ -452,7 +451,7 @@ async fn test_call_filter_functions_http() {
 async fn test_call_admin_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Admin]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_admin_calls(&client).await;
 }
@@ -461,7 +460,7 @@ async fn test_call_admin_functions_http() {
 async fn test_call_admin_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Admin]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_admin_calls(&client).await;
 }
@@ -470,7 +469,7 @@ async fn test_call_admin_functions_ws() {
 async fn test_call_admin_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Admin]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_admin_calls(&client).await;
 }
@@ -479,7 +478,7 @@ async fn test_call_admin_functions_http_and_ws() {
 async fn test_call_eth_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_eth_calls(&client).await;
 }
@@ -488,7 +487,7 @@ async fn test_call_eth_functions_http() {
 async fn test_eth_send_raw_transaction_sync_accepts_optional_timeout_arg() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     let mut one_arg = ArrayParams::new();
@@ -510,7 +509,7 @@ async fn test_eth_send_raw_transaction_sync_accepts_optional_timeout_arg() {
 async fn test_call_eth_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Eth]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_eth_calls(&client).await;
 }
@@ -519,7 +518,7 @@ async fn test_call_eth_functions_ws() {
 async fn test_call_eth_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_eth_calls(&client).await;
 }
@@ -528,7 +527,7 @@ async fn test_call_eth_functions_http_and_ws() {
 async fn test_call_debug_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Debug]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_debug_calls(&client).await;
 }
@@ -537,7 +536,7 @@ async fn test_call_debug_functions_http() {
 async fn test_call_debug_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Debug]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_debug_calls(&client).await;
 }
@@ -546,7 +545,7 @@ async fn test_call_debug_functions_ws() {
 async fn test_call_debug_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Debug]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_debug_calls(&client).await;
 }
@@ -555,7 +554,7 @@ async fn test_call_debug_functions_http_and_ws() {
 async fn test_call_net_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Net]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_net_calls(&client).await;
 }
@@ -564,7 +563,7 @@ async fn test_call_net_functions_http() {
 async fn test_call_net_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Net]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_net_calls(&client).await;
 }
@@ -573,7 +572,7 @@ async fn test_call_net_functions_ws() {
 async fn test_call_net_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Net]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_net_calls(&client).await;
 }
@@ -582,7 +581,7 @@ async fn test_call_net_functions_http_and_ws() {
 async fn test_call_trace_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Trace]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_trace_calls(&client).await;
 }
@@ -591,7 +590,7 @@ async fn test_call_trace_functions_http() {
 async fn test_call_trace_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Trace]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_trace_calls(&client).await;
 }
@@ -600,7 +599,7 @@ async fn test_call_trace_functions_ws() {
 async fn test_call_trace_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Trace]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_trace_calls(&client).await;
 }
@@ -609,7 +608,7 @@ async fn test_call_trace_functions_http_and_ws() {
 async fn test_call_web3_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Web3]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_web3_calls(&client).await;
 }
@@ -618,7 +617,7 @@ async fn test_call_web3_functions_http() {
 async fn test_call_web3_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Web3]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_web3_calls(&client).await;
 }
@@ -627,7 +626,7 @@ async fn test_call_web3_functions_ws() {
 async fn test_call_web3_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Web3]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_web3_calls(&client).await;
 }
@@ -636,7 +635,7 @@ async fn test_call_web3_functions_http_and_ws() {
 async fn test_call_otterscan_functions_http() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Ots]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
     test_basic_otterscan_calls(&client).await;
 }
@@ -645,7 +644,7 @@ async fn test_call_otterscan_functions_http() {
 async fn test_call_otterscan_functions_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_ws(vec![RethRpcModule::Ots]).await;
+    let handle = launch_ws().await;
     let client = handle.ws_client().await.unwrap();
     test_basic_otterscan_calls(&client).await;
 }
@@ -654,7 +653,7 @@ async fn test_call_otterscan_functions_ws() {
 async fn test_call_otterscan_functions_http_and_ws() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Ots]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_otterscan_calls(&client).await;
 }
@@ -664,7 +663,7 @@ async fn test_call_otterscan_functions_http_and_ws() {
 async fn test_eth_logs_args() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http_ws(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
 
     let mut params = ArrayParams::default();
@@ -680,7 +679,7 @@ async fn test_eth_get_block_by_number_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting block by number with proper fields
@@ -708,7 +707,7 @@ async fn test_eth_get_block_by_hash_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting block by hash with proper fields
@@ -741,7 +740,7 @@ async fn test_eth_get_code_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting code at a given address with proper fields
@@ -799,7 +798,7 @@ async fn test_eth_block_number_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting block number without any parameter
@@ -820,7 +819,7 @@ async fn test_eth_chain_id_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting chain ID without any parameter
@@ -841,7 +840,7 @@ async fn test_eth_syncing_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting syncing status
@@ -862,7 +861,7 @@ async fn test_eth_protocol_version_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting protocol version without any parameter
@@ -883,7 +882,7 @@ async fn test_eth_coinbase_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting coinbase address without any parameter should return Unimplemented
@@ -903,7 +902,7 @@ async fn test_eth_accounts_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting accounts without any parameter
@@ -924,7 +923,7 @@ async fn test_eth_get_block_transaction_count_by_hash_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting transaction count by block hash with proper fields
@@ -961,7 +960,7 @@ async fn test_eth_get_block_transaction_count_by_number_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting transaction count by block number with proper fields
@@ -1002,7 +1001,7 @@ async fn test_eth_get_uncle_count_by_block_hash_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting uncle count by block hash with proper fields
@@ -1034,7 +1033,7 @@ async fn test_eth_get_uncle_count_by_block_number_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting uncle count by block number with proper fields
@@ -1067,7 +1066,7 @@ async fn test_eth_get_block_receipts_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting block receipts by block hash with proper fields
@@ -1108,7 +1107,7 @@ async fn test_eth_get_uncle_by_block_hash_and_index_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting uncle by block hash and index with proper fields
@@ -1149,7 +1148,7 @@ async fn test_eth_get_uncle_by_block_number_and_index_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting uncle by block number and index with proper fields
@@ -1186,7 +1185,7 @@ async fn test_eth_get_transaction_by_hash_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting transaction by hash with proper fields
@@ -1223,7 +1222,7 @@ async fn test_eth_get_transaction_by_block_hash_and_index_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting transaction by block hash and index with proper fields
@@ -1268,7 +1267,7 @@ async fn test_eth_get_transaction_by_block_number_and_index_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting transaction by block number and index with proper fields
@@ -1309,7 +1308,7 @@ async fn test_eth_get_transaction_receipt_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting transaction receipt by transaction hash with proper fields
@@ -1350,7 +1349,7 @@ async fn test_eth_get_balance_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Vec of block number items
@@ -1400,7 +1399,7 @@ async fn test_eth_get_storage_at_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Vec of block number items
@@ -1466,7 +1465,7 @@ async fn test_eth_get_transaction_count_rpc_call() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Vec of block number items
@@ -1538,7 +1537,7 @@ async fn test_eth_fee_history_raw() {
     reth_tracing::init_test_tracing();
 
     // Launch HTTP server with the specified RPC module
-    let handle = launch_http(vec![RethRpcModule::Eth]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     // Requesting block by number with proper fields
@@ -1554,7 +1553,7 @@ async fn test_eth_fee_history_raw() {
 async fn test_debug_db_get() {
     reth_tracing::init_test_tracing();
 
-    let handle = launch_http(vec![RethRpcModule::Debug]).await;
+    let handle = launch_http().await;
     let client = handle.http_client().unwrap();
 
     let valid_test_cases = [

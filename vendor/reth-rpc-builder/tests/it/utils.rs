@@ -5,7 +5,6 @@ use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
 };
-use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use reth_tokio_util::EventSender;
 
@@ -15,9 +14,9 @@ pub const fn test_address() -> SocketAddr {
 }
 
 /// Launches a new server with http only with the given modules
-pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
+pub async fn launch_http() -> RpcServerHandle {
     let mut registry = test_rpc_registry().await;
-    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http(modules));
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http());
     RpcServerConfig::http(Default::default())
         .with_http_address(test_address())
         .start(&server)
@@ -26,9 +25,9 @@ pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHan
 }
 
 /// Launches a new server with ws only with the given modules
-pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
+pub async fn launch_ws() -> RpcServerHandle {
     let mut registry = test_rpc_registry().await;
-    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws(modules));
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws());
     RpcServerConfig::ws(Default::default())
         .with_ws_address(test_address())
         .start(&server)
@@ -37,12 +36,10 @@ pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandl
 }
 
 /// Launches a new server with http and ws and with the given modules
-pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
+pub async fn launch_http_ws() -> RpcServerHandle {
     let mut registry = test_rpc_registry().await;
-    let modules = modules.into();
-    let server = registry.create_transport_rpc_modules(
-        TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
-    );
+    let server =
+        registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws().with_http());
     RpcServerConfig::ws(Default::default())
         .with_ws_address(test_address())
         .with_ws_address(test_address())
@@ -54,12 +51,10 @@ pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServer
 }
 
 /// Launches a new server with http and ws and with the given modules on the same port.
-pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
+pub async fn launch_http_ws_same_port() -> RpcServerHandle {
     let mut registry = test_rpc_registry().await;
-    let modules = modules.into();
-    let server = registry.create_transport_rpc_modules(
-        TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
-    );
+    let server =
+        registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws().with_http());
     let addr = test_address();
     RpcServerConfig::ws(Default::default())
         .with_ws_address(addr)
