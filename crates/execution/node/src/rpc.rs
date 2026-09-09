@@ -21,7 +21,7 @@ use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_builder::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
-    config::RethRpcServerConfig,
+    RpcConfig,
 };
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use reth_storage_overlay::OverlayManager;
@@ -158,6 +158,8 @@ pub struct RpcSetupContext<'a> {
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
     pub registry: RpcRegistryInner,
+    /// Resolved listener configuration.
+    pub server_config: RpcServerConfig,
 }
 
 impl fmt::Debug for RpcSetupContext<'_> {
@@ -179,7 +181,7 @@ impl BaseRpcServer {
         node_services: &crate::PreparedNodeServices,
     ) -> eyre::Result<RpcHandle> {
         let setup = Self::setup_rpc_components(ctx, base, services, node_services).await?;
-        let server_config = setup.config.rpc.rpc_server_config();
+        let server_config = setup.server_config;
         let rpc = Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
         let handles = RethRpcServerHandles { rpc };
         Ok(RpcHandle { rpc_server_handles: handles, rpc_registry: setup.registry })
@@ -200,9 +202,10 @@ impl BaseRpcServer {
 
         let AddOnsContext { node, config, beacon_engine_handle, engine_events } = ctx;
 
+        let rpc_config = RpcConfig::new(&config.rpc);
         let cache = EthStateCache::spawn_with(
             node.provider().clone(),
-            config.rpc.eth_config().cache,
+            rpc_config.eth.cache,
             node.task_executor().clone(),
         );
 
@@ -212,7 +215,7 @@ impl BaseRpcServer {
             cache_new_blocks_task(c, new_canonical_blocks).await;
         });
 
-        let eth_config = config.rpc.eth_config().max_batch_size(config.txpool.max_batch_size);
+        let eth_config = rpc_config.eth.max_batch_size(config.txpool.max_batch_size);
         let ctx = EthApiCtx {
             components: &node,
             config: eth_config,
@@ -221,7 +224,7 @@ impl BaseRpcServer {
         };
         let eth_api = eth_api_builder.build_eth_api(ctx).await?;
 
-        let module_config = config.rpc.transport_rpc_module_config();
+        let module_config = rpc_config.modules;
         debug!(target: "reth::cli", http=?module_config.http(), ws=?module_config.ws(), "Using RPC module config");
 
         let mut registry = RpcRegistryInner::new(
@@ -285,7 +288,7 @@ impl BaseRpcServer {
         )?;
         node_services.register_rpc(&mut ctx)?;
 
-        Ok(RpcSetupContext { node, config, modules, registry })
+        Ok(RpcSetupContext { node, config, modules, registry, server_config: rpc_config.server })
     }
 
     /// Helper to launch the RPC server

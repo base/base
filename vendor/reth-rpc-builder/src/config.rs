@@ -2,175 +2,120 @@ use std::net::SocketAddr;
 
 use jsonrpsee::server::ServerConfigBuilder;
 use reth_node_core::args::RpcServerArgs;
-use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig, GasPriceOracleConfig};
-use reth_rpc_layer::JwtSecret;
+use reth_rpc_eth_types::{EthConfig, EthStateCacheConfig};
 use reth_rpc_server_types::RpcModuleSelection;
 use tracing::warn;
 
 use crate::{RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
 
-/// A trait that provides a configured RPC server.
-///
-/// This provides all basic config values for the RPC server and is implemented by the
-/// [`RpcServerArgs`] type.
-pub trait RethRpcServerConfig {
-    /// The configured ethereum RPC settings.
-    fn eth_config(&self) -> EthConfig;
-
-    /// Returns state cache configuration.
-    fn state_cache_config(&self) -> EthStateCacheConfig;
-
-    /// Returns the max request size in bytes.
-    fn rpc_max_request_size_bytes(&self) -> u32;
-
-    /// Returns the max response size in bytes.
-    fn rpc_max_response_size_bytes(&self) -> u32;
-
-    /// Extracts the gas price oracle config from the args.
-    fn gas_price_oracle_config(&self) -> GasPriceOracleConfig;
-
-    /// Creates the [`TransportRpcModuleConfig`] from cli args.
-    ///
-    /// This sets all the api modules, and configures additional settings like gas price oracle
-    /// settings in the [`TransportRpcModuleConfig`].
-    fn transport_rpc_module_config(&self) -> TransportRpcModuleConfig;
-
-    /// Returns the default server config for http/ws
-    fn http_ws_server_builder(&self) -> ServerConfigBuilder;
-
-    /// Creates the [`RpcServerConfig`] from cli args.
-    fn rpc_server_config(&self) -> RpcServerConfig;
-
-    /// Returns whether built-in RPC request metrics are enabled.
-    fn rpc_metrics_enabled(&self) -> bool;
-
-    /// Returns the configured jwt secret key for the regular rpc servers, if any.
-    ///
-    /// Note: this is not used for the auth server (engine API).
-    fn rpc_secret_key(&self) -> Option<JwtSecret>;
+/// Resolved settings for the Base RPC server and its handlers.
+pub struct RpcConfig {
+    /// Ethereum API limits, caches, and execution settings.
+    pub eth: EthConfig,
+    /// API modules enabled on each transport.
+    pub modules: TransportRpcModuleConfig,
+    /// Transport listeners, authentication, and request limits.
+    pub server: RpcServerConfig,
 }
 
-impl RethRpcServerConfig for RpcServerArgs {
-    fn eth_config(&self) -> EthConfig {
-        EthConfig::default()
-            .max_tracing_requests(self.rpc_max_tracing_requests)
-            .max_blocking_io_requests(self.rpc_max_blocking_io_requests)
-            .max_trace_filter_blocks(self.rpc_max_trace_filter_blocks)
-            .max_blocks_per_filter(self.rpc_max_blocks_per_filter.unwrap_or_max())
-            .max_logs_per_response(self.rpc_max_logs_per_response.unwrap_or_max() as usize)
-            .eth_proof_window(self.rpc_eth_proof_window)
-            .rpc_gas_cap(self.rpc_gas_cap)
-            .rpc_max_simulate_blocks(self.rpc_max_simulate_blocks)
-            .compute_state_root_for_eth_simulate(self.rpc_compute_state_root_for_eth_simulate)
-            .state_cache(self.state_cache_config())
-            .gpo_config(self.gas_price_oracle_config())
-            .proof_permits(self.rpc_proof_permits)
-            .pending_block_kind(self.rpc_pending_block)
-            .raw_tx_forwarder(self.rpc_forwarder.clone())
-            .rpc_evm_memory_limit(self.rpc_evm_memory_limit)
-            .force_blob_sidecar_upcasting(self.rpc_force_blob_sidecar_upcasting)
-    }
+impl RpcConfig {
+    /// Resolves CLI arguments once for RPC startup.
+    pub fn new(args: &RpcServerArgs) -> Self {
+        let cache = EthStateCacheConfig {
+            max_blocks: args.rpc_state_cache.max_blocks,
+            max_receipts: args.rpc_state_cache.max_receipts,
+            max_headers: args.rpc_state_cache.max_headers,
+            max_bals: args.rpc_state_cache.max_bals,
+            max_concurrent_db_requests: args.rpc_state_cache.max_concurrent_db_requests,
+            max_cached_tx_hashes: args.rpc_state_cache.max_cached_tx_hashes,
+        };
+        let gpo = args.gas_price_oracle.gas_price_oracle_config();
+        let max_request = args.rpc_max_request_size.get().saturating_mul(1024 * 1024);
+        let max_response = args.rpc_max_response_size.get().saturating_mul(1024 * 1024);
+        let eth = EthConfig::default()
+            .max_tracing_requests(args.rpc_max_tracing_requests)
+            .max_blocking_io_requests(args.rpc_max_blocking_io_requests)
+            .max_trace_filter_blocks(args.rpc_max_trace_filter_blocks)
+            .max_blocks_per_filter(args.rpc_max_blocks_per_filter.unwrap_or_max())
+            .max_logs_per_response(args.rpc_max_logs_per_response.unwrap_or_max() as usize)
+            .eth_proof_window(args.rpc_eth_proof_window)
+            .rpc_gas_cap(args.rpc_gas_cap)
+            .rpc_max_simulate_blocks(args.rpc_max_simulate_blocks)
+            .compute_state_root_for_eth_simulate(args.rpc_compute_state_root_for_eth_simulate)
+            .state_cache(cache)
+            .gpo_config(gpo)
+            .proof_permits(args.rpc_proof_permits)
+            .pending_block_kind(args.rpc_pending_block)
+            .raw_tx_forwarder(args.rpc_forwarder.clone())
+            .rpc_evm_memory_limit(args.rpc_evm_memory_limit)
+            .force_blob_sidecar_upcasting(args.rpc_force_blob_sidecar_upcasting);
+        let server_builder = ServerConfigBuilder::new()
+            .max_connections(args.rpc_max_connections.get())
+            .max_request_body_size(max_request)
+            .max_response_body_size(max_response)
+            .max_subscriptions_per_connection(args.rpc_max_subscriptions_per_connection.get());
+        let modules = {
+            let mut config =
+                TransportRpcModuleConfig::default().with_config(RpcModuleConfig::new(eth.clone()));
 
-    fn state_cache_config(&self) -> EthStateCacheConfig {
-        EthStateCacheConfig {
-            max_blocks: self.rpc_state_cache.max_blocks,
-            max_receipts: self.rpc_state_cache.max_receipts,
-            max_headers: self.rpc_state_cache.max_headers,
-            max_bals: self.rpc_state_cache.max_bals,
-            max_concurrent_db_requests: self.rpc_state_cache.max_concurrent_db_requests,
-            max_cached_tx_hashes: self.rpc_state_cache.max_cached_tx_hashes,
-        }
-    }
+            if args.http {
+                config = config.with_http(
+                    args.http_api
+                        .clone()
+                        .unwrap_or_else(|| RpcModuleSelection::standard_modules().into()),
+                );
+            }
 
-    fn rpc_max_request_size_bytes(&self) -> u32 {
-        self.rpc_max_request_size.get().saturating_mul(1024 * 1024)
-    }
+            if args.ws {
+                config = config.with_ws(
+                    args.ws_api
+                        .clone()
+                        .unwrap_or_else(|| RpcModuleSelection::standard_modules().into()),
+                );
+            }
 
-    fn rpc_max_response_size_bytes(&self) -> u32 {
-        self.rpc_max_response_size.get().saturating_mul(1024 * 1024)
-    }
+            config
+        };
+        let server = {
+            let mut config = RpcServerConfig::default()
+                .with_jwt_secret(args.rpc_jwtsecret)
+                .with_rpc_metrics_enabled(!args.rpc_disable_metrics);
 
-    fn gas_price_oracle_config(&self) -> GasPriceOracleConfig {
-        self.gas_price_oracle.gas_price_oracle_config()
-    }
+            if args.http_api.is_some() && !args.http {
+                warn!(
+                    target: "reth::cli",
+                    "The --http.api flag is set but --http is not enabled. HTTP RPC API will not be exposed."
+                );
+            }
 
-    fn transport_rpc_module_config(&self) -> TransportRpcModuleConfig {
-        let mut config = TransportRpcModuleConfig::default()
-            .with_config(RpcModuleConfig::new(self.eth_config()));
+            if args.ws_api.is_some() && !args.ws {
+                warn!(
+                    target: "reth::cli",
+                    "The --ws.api flag is set but --ws is not enabled. WS RPC API will not be exposed."
+                );
+            }
 
-        if self.http {
-            config = config.with_http(
-                self.http_api
-                    .clone()
-                    .unwrap_or_else(|| RpcModuleSelection::standard_modules().into()),
-            );
-        }
+            if args.http {
+                let socket_address = SocketAddr::new(args.http_addr, args.http_port);
+                config = config
+                    .with_http_address(socket_address)
+                    .with_http(server_builder.clone())
+                    .with_http_cors(args.http_corsdomain.clone())
+                    .with_http_disable_compression(args.http_disable_compression);
+            }
 
-        if self.ws {
-            config = config.with_ws(
-                self.ws_api
-                    .clone()
-                    .unwrap_or_else(|| RpcModuleSelection::standard_modules().into()),
-            );
-        }
+            if args.ws {
+                let socket_address = SocketAddr::new(args.ws_addr, args.ws_port);
+                // Ensure WS CORS is applied regardless of HTTP being enabled
+                config = config
+                    .with_ws_address(socket_address)
+                    .with_ws(server_builder.clone())
+                    .with_ws_cors(args.ws_allowed_origins.clone());
+            }
 
-        config
-    }
-
-    fn http_ws_server_builder(&self) -> ServerConfigBuilder {
-        ServerConfigBuilder::new()
-            .max_connections(self.rpc_max_connections.get())
-            .max_request_body_size(self.rpc_max_request_size_bytes())
-            .max_response_body_size(self.rpc_max_response_size_bytes())
-            .max_subscriptions_per_connection(self.rpc_max_subscriptions_per_connection.get())
-    }
-
-    fn rpc_server_config(&self) -> RpcServerConfig {
-        let mut config = RpcServerConfig::default()
-            .with_jwt_secret(self.rpc_secret_key())
-            .with_rpc_metrics_enabled(self.rpc_metrics_enabled());
-
-        if self.http_api.is_some() && !self.http {
-            warn!(
-                target: "reth::cli",
-                "The --http.api flag is set but --http is not enabled. HTTP RPC API will not be exposed."
-            );
-        }
-
-        if self.ws_api.is_some() && !self.ws {
-            warn!(
-                target: "reth::cli",
-                "The --ws.api flag is set but --ws is not enabled. WS RPC API will not be exposed."
-            );
-        }
-
-        if self.http {
-            let socket_address = SocketAddr::new(self.http_addr, self.http_port);
-            config = config
-                .with_http_address(socket_address)
-                .with_http(self.http_ws_server_builder())
-                .with_http_cors(self.http_corsdomain.clone())
-                .with_http_disable_compression(self.http_disable_compression);
-        }
-
-        if self.ws {
-            let socket_address = SocketAddr::new(self.ws_addr, self.ws_port);
-            // Ensure WS CORS is applied regardless of HTTP being enabled
-            config = config
-                .with_ws_address(socket_address)
-                .with_ws(self.http_ws_server_builder())
-                .with_ws_cors(self.ws_allowed_origins.clone());
-        }
-
-        config
-    }
-
-    fn rpc_metrics_enabled(&self) -> bool {
-        !self.rpc_disable_metrics
-    }
-
-    fn rpc_secret_key(&self) -> Option<JwtSecret> {
-        self.rpc_jwtsecret
+            config
+        };
+        Self { eth, modules, server }
     }
 }
 
@@ -183,7 +128,7 @@ mod tests {
     use reth_rpc_eth_types::RPC_DEFAULT_GAS_CAP;
     use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
 
-    use crate::config::RethRpcServerConfig;
+    use crate::RpcConfig;
 
     /// A helper type to parse Args more easily
     #[derive(Parser)]
@@ -195,12 +140,12 @@ mod tests {
     #[test]
     fn test_rpc_gas_cap() {
         let args = CommandParser::<RpcServerArgs>::parse_from(["reth"]).args;
-        let config = args.eth_config();
+        let config = RpcConfig::new(&args).eth;
         assert_eq!(config.rpc_gas_cap, u64::from(RPC_DEFAULT_GAS_CAP));
 
         let args =
             CommandParser::<RpcServerArgs>::parse_from(["reth", "--rpc.gascap", "1000"]).args;
-        let config = args.eth_config();
+        let config = RpcConfig::new(&args).eth;
         assert_eq!(config.rpc_gas_cap, 1000);
 
         let args = CommandParser::<RpcServerArgs>::try_parse_from(["reth", "--rpc.gascap", "0"]);
@@ -217,7 +162,7 @@ mod tests {
             "--ws",
         ])
         .args;
-        let config = args.transport_rpc_module_config();
+        let config = RpcConfig::new(&args).modules;
         let expected = [RethRpcModule::Eth, RethRpcModule::Admin, RethRpcModule::Debug];
         assert_eq!(config.http().cloned().unwrap().into_selection(), expected.into());
         assert_eq!(
@@ -236,7 +181,7 @@ mod tests {
             "--ws",
         ])
         .args;
-        let config = args.transport_rpc_module_config();
+        let config = RpcConfig::new(&args).modules;
         let expected = [RethRpcModule::Eth, RethRpcModule::Admin, RethRpcModule::Debug];
         assert_eq!(config.http().cloned().unwrap().into_selection(), expected.into());
         assert_eq!(
@@ -255,7 +200,7 @@ mod tests {
             "--ws",
         ])
         .args;
-        let config = args.transport_rpc_module_config();
+        let config = RpcConfig::new(&args).modules;
         let expected = [RethRpcModule::Eth, RethRpcModule::Admin, RethRpcModule::Debug];
         assert_eq!(config.http().cloned().unwrap().into_selection(), expected.into());
         assert_eq!(
@@ -278,7 +223,7 @@ mod tests {
             "8888",
         ])
         .args;
-        let config = args.rpc_server_config();
+        let config = RpcConfig::new(&args).server;
         assert_eq!(
             config.http_address().unwrap(),
             SocketAddr::V4(SocketAddrV4::new(
@@ -298,7 +243,7 @@ mod tests {
     fn test_rpc_server_config_disable_metrics() {
         let args =
             CommandParser::<RpcServerArgs>::parse_from(["reth", "--rpc.disable-metrics"]).args;
-        let config = args.rpc_server_config();
+        let config = RpcConfig::new(&args).server;
         assert!(!config.rpc_metrics_enabled());
     }
 
@@ -313,7 +258,7 @@ mod tests {
         ])
         .args;
 
-        let config = args.eth_config().filter_config();
+        let config = RpcConfig::new(&args).eth.filter_config();
         assert_eq!(config.max_blocks_per_filter, Some(u64::MAX));
         assert_eq!(config.max_logs_per_response, Some(usize::MAX));
     }
@@ -329,7 +274,7 @@ mod tests {
         ])
         .args;
 
-        let config = args.eth_config().filter_config();
+        let config = RpcConfig::new(&args).eth.filter_config();
         assert_eq!(config.max_blocks_per_filter, Some(100));
         assert_eq!(config.max_logs_per_response, Some(200));
     }

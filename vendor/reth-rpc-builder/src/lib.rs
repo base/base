@@ -55,7 +55,8 @@ use crate::{error::WsHttpSamePortError, metrics::RpcRequestMetrics};
 /// Auth server utilities.
 
 /// RPC server utilities.
-pub mod config;
+mod config;
+pub use config::RpcConfig;
 
 /// Utils for installing Rpc middleware
 pub mod middleware;
