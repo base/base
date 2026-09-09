@@ -131,7 +131,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-invalid-block-hooks](../../vendor/reth-invalid-block-hooks/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-ipc](../../vendor/reth-ipc/Cargo.toml) | Retain shared infrastructure |
 | [reth-libmdbx](../../vendor/reth-libmdbx/Cargo.toml) | Retain shared infrastructure |
-| [reth-mdbx-sys](../../vendor/reth-mdbx-sys/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-mdbx-sys](../../crates/execution/state/mdbx-sys/Cargo.toml) | Retain shared infrastructure |
 | [base-common-observability-metrics](../../crates/common/observability/metrics/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |

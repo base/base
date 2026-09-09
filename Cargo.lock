@@ -3867,6 +3867,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-state-mdbx-sys"
+version = "0.0.0"
+dependencies = [
+ "bindgen",
+ "cc",
+]
+
+[[package]]
 name = "base-execution-state-memory"
 version = "0.0.0"
 dependencies = [
@@ -14116,25 +14124,17 @@ dependencies = [
 name = "reth-libmdbx"
 version = "0.0.0"
 dependencies = [
+ "base-execution-state-mdbx-sys",
  "bitflags 2.13.1",
  "byteorder",
  "crossbeam-queue",
  "dashmap",
  "derive_more",
  "parking_lot",
- "reth-mdbx-sys",
  "smallvec",
  "tempfile",
  "thiserror 2.0.19",
  "tracing",
-]
-
-[[package]]
-name = "reth-mdbx-sys"
-version = "0.0.0"
-dependencies = [
- "bindgen",
- "cc",
 ]
 
 [[package]]

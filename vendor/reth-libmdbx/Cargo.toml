@@ -19,15 +19,17 @@ workspace = true
 bitflags = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
-reth-mdbx-sys = { workspace = true }
+base-execution-state-mdbx-sys = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 byteorder = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 crossbeam-queue = { workspace = true, features = ["default"] }
 dashmap = { workspace = true, features = ["inline"], optional = true }
+
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }
+
 [features]
 default = []
 return-borrowed = []

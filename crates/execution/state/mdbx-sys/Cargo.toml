@@ -1,5 +1,5 @@
 [package]
-name = "reth-mdbx-sys"
+name = "base-execution-state-mdbx-sys"
 description = "Raw bindings for libmdbx"
 version.workspace = true
 edition.workspace = true
@@ -15,5 +15,6 @@ categories.workspace = true
 [build-dependencies]
 cc = { workspace = true }
 bindgen = { workspace = true, features = ["runtime"] }
+
 [lints]
 workspace = true

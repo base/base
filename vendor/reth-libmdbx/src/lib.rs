@@ -9,7 +9,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![expect(clippy::borrow_as_ptr)]
 
-pub extern crate reth_mdbx_sys as ffi;
+pub extern crate base_execution_state_mdbx_sys as ffi;
 
 #[cfg(feature = "read-tx-timeouts")]
 pub use crate::environment::read_transactions::MaxReadTransactionDuration;
