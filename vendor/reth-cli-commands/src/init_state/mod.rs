@@ -2,8 +2,8 @@
 
 use std::{io::BufReader, path::PathBuf, sync::Arc};
 
+use crate::ChainSpecParser;
 use alloy_primitives::B256;
-use base_cli_utils::ChainSpecParser;
 use base_common_consensus::BlockHeader as AlloyBlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;

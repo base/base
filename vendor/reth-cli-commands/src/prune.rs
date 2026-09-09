@@ -1,7 +1,8 @@
 //! Command that runs pruning.
 use std::sync::Arc;
 
-use base_cli_utils::{ChainSpecParser, CliContext};
+use crate::ChainSpecParser;
+use base_cli_utils::CliContext;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_node_core::metrics_hooks;
 use clap::Parser;

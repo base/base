@@ -1,7 +1,7 @@
 //! Database debugging tool
 use std::{path::PathBuf, sync::Arc};
 
-use base_cli_utils::ChainSpecParser;
+use crate::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};

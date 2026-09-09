@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
-use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;

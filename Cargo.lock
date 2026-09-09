@@ -2652,7 +2652,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-genesis",
  "backtrace",
- "base-execution-chainspec",
  "base-metrics",
  "clap",
  "dirs-next",

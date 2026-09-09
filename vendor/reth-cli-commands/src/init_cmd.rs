@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_cli_utils::ChainSpecParser;
+use crate::ChainSpecParser;
 use base_common_consensus::BlockHeader;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;

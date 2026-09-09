@@ -99,9 +99,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use crate::ChainSpecParser;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use archive::run_modular_downloads;
-use base_cli_utils::ChainSpecParser;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
 use extract::stream_and_extract;

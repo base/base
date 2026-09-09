@@ -4,8 +4,9 @@
 
 use std::{any::Any, net::SocketAddr, sync::Arc};
 
+use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
-use base_cli_utils::{ChainSpecParser, CliContext};
+use base_cli_utils::CliContext;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::metrics_hooks;
 use clap::Parser;

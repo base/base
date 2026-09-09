@@ -1,7 +1,7 @@
 //! Command that initializes the node by importing a chain from a file.
 use std::{path::PathBuf, sync::Arc};
 
-use base_cli_utils::ChainSpecParser;
+use crate::ChainSpecParser;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
 use reth_node_core::version::version_metadata;

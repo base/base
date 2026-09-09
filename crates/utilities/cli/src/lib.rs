@@ -49,4 +49,4 @@ pub use runner::{
 };
 
 mod chainspec;
-pub use chainspec::{ChainSpecParser, ChainSpecValueParser, parse_genesis};
+pub use chainspec::parse_genesis;

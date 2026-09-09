@@ -10,11 +10,11 @@ use std::{
     sync::Arc,
 };
 
-use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use eyre::Result;
 use futures::StreamExt;
+use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
 use reth_node_core::args::DatadirArgs;
 use tokio::io::AsyncWriteExt;

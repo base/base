@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
+use reth_cli_commands::ChainSpecParser;
 
 pub mod init;
 pub mod prune;

@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
+use reth_cli_commands::ChainSpecParser;
 
 /// Initializes the database with the genesis block.
 #[derive(Debug, Parser)]

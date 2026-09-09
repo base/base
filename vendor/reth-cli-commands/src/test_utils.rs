@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use base_cli_utils::{ChainSpecParser, parse_genesis};
+use crate::ChainSpecParser;
+use base_cli_utils::parse_genesis;
 use base_execution_chainspec::BaseChainSpec;
 
 /// Chains supported by reth. First value should be used as the default.

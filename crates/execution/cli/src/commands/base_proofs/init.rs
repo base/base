@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use base_cli_utils::ChainSpecParser;
 use base_common_consensus::ChainInfo;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
@@ -11,6 +10,7 @@ use base_execution_trie::{
 };
 use base_node_core::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
+use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
 use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};

@@ -1,7 +1,7 @@
 //! Database debugging tool
 use std::sync::Arc;
 
-use base_cli_utils::ChainSpecParser;
+use crate::ChainSpecParser;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;

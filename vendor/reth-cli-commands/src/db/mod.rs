@@ -3,7 +3,8 @@ use std::{
     sync::Arc,
 };
 
-use base_cli_utils::{ChainSpecParser, CliContext};
+use crate::ChainSpecParser;
+use base_cli_utils::CliContext;
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_db::version::{DB_VERSION, DatabaseVersionError, get_db_version};

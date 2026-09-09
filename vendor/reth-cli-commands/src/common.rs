@@ -2,8 +2,8 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use crate::ChainSpecParser;
 use alloy_primitives::B256;
-use base_cli_utils::ChainSpecParser;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;

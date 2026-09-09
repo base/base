@@ -19,7 +19,6 @@ alloy-genesis = { workspace = true }
 reth-node-core = { workspace = true }
 tracing-appender = { workspace = true }
 opentelemetry_sdk = { workspace = true }
-base-execution-chainspec = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tokio-util = { workspace = true, features = ["default"] }
