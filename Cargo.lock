@@ -558,13 +558,14 @@ dependencies = [
 
 [[package]]
 name = "alloy-rpc-types-admin"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bfdc2a2cde178ad3a79594b4fabbc0f2f11be5a98a3363083e91575fc95335c"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "serde",
  "serde_json",
- "similar-asserts",
 ]
 
 [[package]]
