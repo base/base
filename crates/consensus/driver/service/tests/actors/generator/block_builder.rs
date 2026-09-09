@@ -1,46 +1,23 @@
 use std::time::SystemTime;
 
-use alloy_eips::Encodable2718;
+use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::Bytes;
 use arbitrary::{Arbitrary, Unstructured};
-use base_common_types_chain::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
+use base_common_types_chain::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use libp2p::bytes::BufMut;
 
 use crate::actors::generator::seed::SeedGenerator;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum PayloadVersion {
-    V1,
-    #[allow(dead_code)]
-    V2,
-    #[allow(dead_code)]
-    V3,
-    #[allow(dead_code)]
-    V4,
-}
-
 impl SeedGenerator {
     /// Generate a random Base execution payload.
-    pub(crate) fn random_valid_payload(
-        &mut self,
-        version: PayloadVersion,
-    ) -> anyhow::Result<BaseExecutionPayloadEnvelope> {
-        let block: Block<BaseTxEnvelope> = match version {
-            PayloadVersion::V1 => self.v1_valid_block(),
-            PayloadVersion::V2 => self.v2_valid_block(),
-            PayloadVersion::V3 => self.v3_valid_block(),
-            PayloadVersion::V4 => self.v4_valid_block(),
-        };
-
-        let (payload, _) = BaseExecutionPayload::from_block_slow(&block);
-
-        let parent_beacon_block_root = block.header.parent_beacon_block_root;
-
-        let envelope =
-            BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload };
-
-        Ok(envelope)
+    pub fn random_valid_payload(&mut self) -> BaseExecutionPayloadEnvelope {
+        let block = self.valid_block();
+        let (execution_payload, _) = BaseExecutionPayload::from_block_slow(&block);
+        BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: block.header.parent_beacon_block_root,
+            execution_payload,
+        }
     }
 
     fn valid_block(&mut self) -> Block<BaseTxEnvelope> {
@@ -71,64 +48,19 @@ impl SeedGenerator {
         let current_timestamp =
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
         block.header.timestamp = current_timestamp;
-
-        block
-    }
-
-    /// Make the block v1 compatible
-    fn v1_valid_block(&mut self) -> Block<BaseTxEnvelope> {
-        let mut block = self.valid_block();
-        block.header.withdrawals_root = None;
-        block.header.blob_gas_used = None;
-        block.header.excess_blob_gas = None;
-        block.header.parent_beacon_block_root = None;
-        block.header.requests_hash = None;
-        block.header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
-        block.header.difficulty = Default::default();
-        block.header.nonce = Default::default();
-
-        block
-    }
-
-    /// Make the block v2 compatible
-    pub(crate) fn v2_valid_block(&mut self) -> Block<BaseTxEnvelope> {
-        let mut block = self.v1_valid_block();
-
-        block.body.withdrawals = Some(vec![].into());
-        let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(
-            &block.body.withdrawals.clone().unwrap_or_default(),
-        );
-
-        block.header.withdrawals_root = Some(withdrawals_root);
-
-        block
-    }
-
-    /// Make the block v3 compatible
-    pub(crate) fn v3_valid_block(&mut self) -> Block<BaseTxEnvelope> {
-        let mut block = self.valid_block();
-
-        block.body.withdrawals = Some(vec![].into());
-        let withdrawals_root = base_common_types_chain::proofs::calculate_withdrawals_root(
-            &block.body.withdrawals.clone().unwrap_or_default(),
-        );
-        block.header.withdrawals_root = Some(withdrawals_root);
-
+        block.body.withdrawals = Some(Default::default());
+        block.body.ommers.clear();
+        block.header.withdrawals_root = Some(EMPTY_ROOT_HASH);
         block.header.blob_gas_used = Some(0);
         block.header.excess_blob_gas = Some(0);
-        block.header.parent_beacon_block_root =
-            Some(block.header.parent_beacon_block_root.unwrap_or_default());
-
-        block.header.requests_hash = None;
+        block.header.parent_beacon_block_root = Some(Default::default());
+        block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
         block.header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
         block.header.difficulty = Default::default();
         block.header.nonce = Default::default();
+        block.header.block_access_list_hash = None;
+        block.header.slot_number = None;
 
         block
-    }
-
-    /// Make the block v4 compatible
-    pub(crate) fn v4_valid_block(&mut self) -> Block<BaseTxEnvelope> {
-        self.v3_valid_block()
     }
 }

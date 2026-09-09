@@ -1,5 +1,7 @@
+use std::time::Duration;
+
 use crate::actors::{
-    generator::{block_builder::PayloadVersion, seed::SEED_GENERATOR_BUILDER},
+    generator::seed::SEED_GENERATOR_BUILDER,
     network::mocks::{ForwardedUnsafeBlock, builder::TestNetworkBuilder},
 };
 
@@ -19,15 +21,14 @@ async fn test_sequencer_network_conn() -> anyhow::Result<()> {
 
     let mut seed_generator = SEED_GENERATOR_BUILDER.next_generator();
 
-    let envelope = seed_generator.random_valid_payload(PayloadVersion::V1)?;
+    let envelope = seed_generator.random_valid_payload();
 
     sequencer_network.inbound_data.gossip_payload_tx.send(envelope.clone()).await?;
 
-    let forwarded_block = validator_network
-        .blocks_rx
-        .recv()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("No block received"))?;
+    let forwarded_block =
+        tokio::time::timeout(Duration::from_secs(20), validator_network.blocks_rx.recv())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No block received"))?;
     let block = match forwarded_block {
         ForwardedUnsafeBlock::P2p(block) => block,
         ForwardedUnsafeBlock::Admin(block) => {
@@ -71,14 +72,16 @@ async fn test_sequencer_network_propagation() -> anyhow::Result<()> {
     // Send a block to the sequencer.
     let mut seed_generator = SEED_GENERATOR_BUILDER.next_generator();
 
-    let envelope = seed_generator.random_valid_payload(PayloadVersion::V1)?;
+    let envelope = seed_generator.random_valid_payload();
 
     sequencer_network.inbound_data.gossip_payload_tx.send(envelope.clone()).await?;
 
     // Check that the block propagates to all networks.
     for network in &mut validator_networks {
         let forwarded_block =
-            network.blocks_rx.recv().await.ok_or_else(|| anyhow::anyhow!("No block received"))?;
+            tokio::time::timeout(Duration::from_secs(20), network.blocks_rx.recv())
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No block received"))?;
         let block = match forwarded_block {
             ForwardedUnsafeBlock::P2p(block) => block,
             ForwardedUnsafeBlock::Admin(block) => {
