@@ -16,10 +16,9 @@ use jsonrpsee::{
 };
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
 use reth_rpc_server_types::RpcModuleSelection;
-use reth_tokio_util::EventSender;
 use tower::Layer;
 
-use crate::utils::{test_address, test_rpc_builder};
+use crate::utils::{test_address, test_rpc_registry};
 
 #[derive(Clone, Default)]
 struct MyMiddlewareLayer {
@@ -74,13 +73,9 @@ where
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_middleware() {
-    let builder = test_rpc_builder().await;
-    let eth_api = builder.eth_api_builder().build();
-    let modules = builder.build(
-        TransportRpcModuleConfig::set_http(RpcModuleSelection::All),
-        eth_api,
-        EventSender::new(1),
-    );
+    let mut registry = test_rpc_registry().await;
+    let modules = registry
+        .create_transport_rpc_modules(TransportRpcModuleConfig::set_http(RpcModuleSelection::All));
 
     let mylayer = MyMiddlewareLayer::default();
 

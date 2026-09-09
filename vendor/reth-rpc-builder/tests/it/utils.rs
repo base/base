@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use base_execution_consensus::BaseBeaconConsensus;
 use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{
-    RpcModuleBuilder, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
+    RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
 };
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
@@ -16,10 +16,8 @@ pub const fn test_address() -> SocketAddr {
 
 /// Launches a new server with http only with the given modules
 pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder().await;
-    let eth_api = builder.eth_api_builder().build();
-    let server =
-        builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
+    let mut registry = test_rpc_registry().await;
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http(modules));
     RpcServerConfig::http(Default::default())
         .with_http_address(test_address())
         .start(&server)
@@ -29,10 +27,8 @@ pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHan
 
 /// Launches a new server with ws only with the given modules
 pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder().await;
-    let eth_api = builder.eth_api_builder().build();
-    let server =
-        builder.build(TransportRpcModuleConfig::set_ws(modules), eth_api, EventSender::new(1));
+    let mut registry = test_rpc_registry().await;
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws(modules));
     RpcServerConfig::ws(Default::default())
         .with_ws_address(test_address())
         .start(&server)
@@ -42,13 +38,10 @@ pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandl
 
 /// Launches a new server with http and ws and with the given modules
 pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder().await;
-    let eth_api = builder.eth_api_builder().build();
+    let mut registry = test_rpc_registry().await;
     let modules = modules.into();
-    let server = builder.build(
+    let server = registry.create_transport_rpc_modules(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
-        eth_api,
-        EventSender::new(1),
     );
     RpcServerConfig::ws(Default::default())
         .with_ws_address(test_address())
@@ -62,13 +55,10 @@ pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServer
 
 /// Launches a new server with http and ws and with the given modules on the same port.
 pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder().await;
+    let mut registry = test_rpc_registry().await;
     let modules = modules.into();
-    let eth_api = builder.eth_api_builder().build();
-    let server = builder.build(
+    let server = registry.create_transport_rpc_modules(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
-        eth_api,
-        EventSender::new(1),
     );
     let addr = test_address();
     RpcServerConfig::ws(Default::default())
@@ -80,8 +70,8 @@ pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) ->
         .unwrap()
 }
 
-/// Returns an [`RpcModuleBuilder`] with testing components.
-pub async fn test_rpc_builder() -> RpcModuleBuilder {
+/// Returns an [`RpcRegistryInner`] with testing components.
+pub async fn test_rpc_registry() -> RpcRegistryInner {
     let mock = reth_provider::test_utils::MockEthProvider::default();
     let transaction = base_execution_txpool::test_utils::TransactionBuilder::default()
         .signer(alloy_primitives::B256::repeat_byte(1))
@@ -101,12 +91,16 @@ pub async fn test_rpc_builder() -> RpcModuleBuilder {
         .expect("local fixture network");
     context.network = manager.handle().clone();
     tokio::spawn(manager);
-    RpcModuleBuilder::new(
+    let eth_api = base_execution_rpc::EthApiBuilder::new_with_components(context.clone()).build();
+    RpcRegistryInner::new(
         context.provider,
         context.pool,
         context.network,
         Runtime::test(),
-        context.evm_config,
         std::sync::Arc::new(BaseBeaconConsensus::noop()),
+        Default::default(),
+        context.evm_config,
+        eth_api,
+        EventSender::new(1),
     )
 }

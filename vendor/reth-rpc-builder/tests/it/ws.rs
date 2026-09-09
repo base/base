@@ -10,7 +10,7 @@ use reth_rpc_server_types::RpcModuleSelection;
 use reth_tokio_util::EventSender;
 use serde_json::Value;
 
-use crate::utils::{launch_ws, test_rpc_builder};
+use crate::utils::{launch_ws, test_rpc_registry};
 
 /// Helper to launch a WS server with the Eth module.
 async fn launch_ws_eth() -> reth_rpc_builder::RpcServerHandle {
@@ -134,11 +134,9 @@ async fn test_eth_subscribe_server_survives_client_disconnect() {
 async fn test_eth_subscribe_not_available_over_http() {
     reth_tracing::init_test_tracing();
 
-    let builder = test_rpc_builder().await;
-    let eth_api = builder.eth_api_builder().build();
+    let mut registry = test_rpc_registry().await;
     let modules = RpcModuleSelection::Standard;
-    let server =
-        builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_http(modules));
     let handle = RpcServerConfig::http(Default::default())
         .with_http_address(crate::utils::test_address())
         .start(&server)
@@ -152,7 +150,7 @@ async fn test_eth_subscribe_not_available_over_http() {
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use base_execution_consensus::BaseBeaconConsensus;
     use base_execution_txpool::{TransactionOrigin, TransactionPool};
-    use reth_rpc_builder::RpcModuleBuilder;
+    use reth_rpc_builder::RpcRegistryInner;
     use reth_tasks::Runtime;
 
     reth_tracing::init_test_tracing();
@@ -175,21 +173,22 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
     let tx = base_execution_txpool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
     let context = base_execution_rpc::test_utils::RpcTestUtils::context(mock);
     let pool_clone = context.pool.clone();
-    let builder = RpcModuleBuilder::new(
+    let eth_api = base_execution_rpc::EthApiBuilder::new_with_components(context.clone()).build();
+    let mut registry = RpcRegistryInner::new(
         context.provider,
         context.pool,
         context.network,
         Runtime::test(),
-        context.evm_config,
         std::sync::Arc::new(BaseBeaconConsensus::noop()),
-    );
-
-    let eth_api = builder.eth_api_builder().build();
-    let server = builder.build(
-        TransportRpcModuleConfig::set_ws(RpcModuleSelection::Standard),
+        Default::default(),
+        context.evm_config,
         eth_api,
         EventSender::new(1),
     );
+
+    let server = registry.create_transport_rpc_modules(TransportRpcModuleConfig::set_ws(
+        RpcModuleSelection::Standard,
+    ));
     let handle = RpcServerConfig::ws(Default::default())
         .with_ws_address(crate::utils::test_address())
         .start(&server)

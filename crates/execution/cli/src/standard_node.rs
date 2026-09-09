@@ -490,16 +490,16 @@ impl StandardBaseRethNode {
         Ok(builder)
     }
 
-    /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
+    /// Installs the upgrade signal runtime service when execution-side live reads are configured.
     pub fn configure_upgrade_signal_runtime(
-        runner: &mut NodeLaunch,
+        launch: &mut NodeLaunch,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(());
         };
 
-        runner.services.upgrade_signal = Some(config);
+        launch.services.upgrade_signal = Some(config);
 
         Ok(())
     }
@@ -539,12 +539,12 @@ impl StandardBaseRethNode {
         Ok(Some(ExecutionUpgradeSignalConfig { signal_config, l1_rpc }))
     }
 
-    /// Builds a runner with the standard Base execution-node extensions installed.
-    pub fn configure(runner: &mut NodeLaunch, args: StandardNodeArgs) -> eyre::Result<()> {
+    /// Configures the built-in Base execution services.
+    pub fn configure(launch: &mut NodeLaunch, args: StandardNodeArgs) -> eyre::Result<()> {
         let rollup_args = args.rpc.rollup_args.clone();
-        // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
+        // Fail fast on an incomplete upgrade-signal configuration before starting services.
         Self::validate_upgrade_signal_args(&rollup_args)?;
-        runner.base = BaseNode::new(rollup_args.clone());
+        launch.base = BaseNode::new(rollup_args.clone());
         let resource_metering_enabled = args.metering.enable_metering;
         let provider: SharedMeteringProvider = if resource_metering_enabled
             && args.metering.resource_metering.resource_metering_schedule.is_some()
@@ -555,7 +555,7 @@ impl StandardBaseRethNode {
                 DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
                 Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
             ));
-            runner.rpc.metering_store = Some(Arc::clone(&store));
+            launch.rpc.metering_store = Some(Arc::clone(&store));
             store
         } else {
             Arc::new(NoopMeteringProvider)
@@ -571,13 +571,13 @@ impl StandardBaseRethNode {
             args.metering.resource_metering.rejection_cache_max_capacity,
             Duration::from_secs(args.metering.resource_metering.rejection_cache_ttl_secs),
         );
-        runner.base.resource_metering = resource_metering;
-        runner.base.rejection_cache = rejection_cache;
+        launch.base.resource_metering = resource_metering;
+        launch.base.rejection_cache = rejection_cache;
 
         let transaction_event_env = TransactionEventEnv::read();
         let transaction_event_writer_config =
             transaction_event_writer_config(&args.rpc, &transaction_event_env)?;
-        // Initialize before installing extensions so node-started hooks that emit
+        // Initialize before starting services so background services that emit
         // transaction events (e.g. tx forwarding) see a ready writer.
         if let Some(config) = transaction_event_writer_config
             && let Err(err) = GlobalTransactionEventWriter::init(Some(config))
@@ -585,7 +585,7 @@ impl StandardBaseRethNode {
             tracing::warn!(error = %err, "transaction event journal disabled");
         }
 
-        runner.services.tracing = Some(TxpoolConfig {
+        launch.services.tracing = Some(TxpoolConfig {
             tracing_enabled: args.rpc.enable_transaction_tracing
                 || args.rpc.enable_transaction_event_journal
                 || transaction_event_env.enabled,
@@ -617,14 +617,14 @@ impl StandardBaseRethNode {
         } else {
             MeteringConfig::disabled()
         };
-        runner.rpc.metering = Some(metering_config);
-        runner.services.shadow_indexer = Some((&args.shadow_indexer).try_into()?);
+        launch.rpc.metering = Some(metering_config);
+        launch.services.shadow_indexer = Some((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
-            runner.rpc.validity = Some(args.rpc.experimental_validity_max_predicates);
+            launch.rpc.validity = Some(args.rpc.experimental_validity_max_predicates);
         }
-        runner.services.forwarding = Some(tx_forwarding_config);
-        Self::configure_upgrade_signal_runtime(runner, &rollup_args)?;
+        launch.services.forwarding = Some(tx_forwarding_config);
+        Self::configure_upgrade_signal_runtime(launch, &rollup_args)?;
         base_cli_utils::register_version_metrics!();
         Ok(())
     }

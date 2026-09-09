@@ -20,7 +20,7 @@ pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_builder::{
-    RpcModuleBuilder, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
+    RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
     config::RethRpcServerConfig,
 };
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
@@ -42,7 +42,7 @@ pub struct RethRpcServerHandles {
 }
 
 /// Helper container for [`RpcRegistryInner`], [`TransportRpcModules`] and
-/// their lifecycle hooks.
+/// their runtime configuration.
 ///
 /// This can be used to access installed modules, or create commonly used handlers like
 /// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
@@ -152,7 +152,7 @@ impl RpcHandle {
     }
 }
 
-/// Prepared public RPC modules and lifecycle hooks.
+/// Prepared public RPC modules and configuration.
 pub struct RpcSetupContext<'a> {
     pub node: base_node_context::BaseNodeContext,
     pub config: &'a NodeConfig,
@@ -171,7 +171,7 @@ impl fmt::Debug for RpcSetupContext<'_> {
 pub struct BaseRpcServer;
 
 impl BaseRpcServer {
-    /// Launches public RPC and invokes the configured extension and lifecycle hooks.
+    /// Registers the built-in Base APIs and starts the configured public transports.
     pub async fn launch(
         ctx: AddOnsContext<'_>,
         base: &crate::BaseNode,
@@ -224,16 +224,14 @@ impl BaseRpcServer {
         let module_config = config.rpc.transport_rpc_module_config();
         debug!(target: "reth::cli", http=?module_config.http(), ws=?module_config.ws(), "Using RPC module config");
 
-        let mut registry = RpcModuleBuilder::new(
+        let mut registry = RpcRegistryInner::new(
             node.provider().clone(),
             node.pool().clone(),
             node.network().clone(),
             node.task_executor().clone(),
-            node.evm_config().clone(),
             node.consensus().clone(),
-        )
-        .into_registry(
             module_config.config().cloned().unwrap_or_default(),
+            node.evm_config().clone(),
             eth_api,
             engine_events,
         );

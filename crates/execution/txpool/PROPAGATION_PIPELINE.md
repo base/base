@@ -141,9 +141,9 @@ pub trait BaseTxApi {
 
 ## PR 4: Node Integration
 
-**Crate:** New `crates/execution/tx-forwarding/` extension crate
+**Crate:** `crates/execution/tx-forwarding/`
 
-Wires consumer + forwarder into the node using the `BaseNodeExtension` pattern.
+Core `NodeServices` starts the consumer and forwarder directly from `TxForwardingConfig`.
 
 ### CLI Flags
 
@@ -155,33 +155,10 @@ Wires consumer + forwarder into the node using the `BaseNodeExtension` pattern.
 | `--tx-forwarding-batch-size` | usize | 100 | Forwarder batch size |
 | `--tx-forwarding-max-rps` | u32 | 200 | Maximum RPC requests per second per forwarder |
 
-### Extension Pattern
+### Startup
 
-```rust
-impl BaseNodeExtension for TxForwardingExtension {
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
-        hooks.add_rpc_module(move |ctx| {
-            let pool = ctx.pool().clone();
-            let handle = run_consumer(pool, self.consumer_config);
-            // One forwarder per builder URL, each subscribing to the broadcast
-            for url in &self.forwarder_config.builder_urls {
-                let rx = handle.sender.subscribe();
-                run_forwarder(rx, url.clone(), &self.forwarder_config);
-            }
-            Ok(())
-        })
-    }
-}
-```
-
-### Registration
-
-```rust
-// Execution launch wiring used by base rpc
-if args.enable_tx_forwarding {
-    runner.install_ext::<TxForwardingExtension>(config);
-}
-```
+The CLI resolves `TxForwardingConfig` into `NodeServices.forwarding`. Core startup starts the
+service against the Base pool and connects its lifetime to graceful node shutdown.
 
 ### Dependencies
 

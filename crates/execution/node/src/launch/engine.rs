@@ -16,7 +16,7 @@ use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
 use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::Head};
 use reth_node_events::node;
-use reth_provider::{BlockNumReader, StorageSettingsCache, providers::BlockchainProvider};
+use reth_provider::{BlockNumReader, StorageSettingsCache};
 use reth_storage_overlay::OverlayManager;
 use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, error, info};
@@ -24,7 +24,7 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    Attached, EngineShutdown, FullNode, LaunchContext, LaunchContextWith, NodeHandle, WithConfigs,
+    EngineShutdown, FullNode, LaunchContext, NodeHandle,
     rpc::{BasicEngineValidatorBuilder, RpcHandle},
     setup::build_networked_pipeline,
 };
@@ -58,33 +58,19 @@ impl crate::NodeLaunch {
             // ensure certain settings take effect
             .with_adjusted_configs()
             // Create the provider factory with the shared overlay manager
-            .with_provider_factory(
-                overlay_manager.clone(),
-                None,
-                disabled_stages,
-            )
-            .await?
-            .inspect(|_| {
-                info!(target: "reth::cli", "Database opened");
-            })
-            .with_prometheus_server().await?
-            .inspect(|this| {
-                debug!(target: "reth::cli", chain=%this.chain_id(), genesis=?this.genesis_hash(), "Initializing genesis");
-            })
-            .with_genesis()?
-            .inspect(|this: &LaunchContextWith<Attached<WithConfigs, _>>| {
-                info!(target: "reth::cli", "\n{}", this.chain_spec().display_hardforks());
-                let settings = this.provider_factory().cached_storage_settings();
-                let pruning_mode =
-                    PruneConfigKind::from_config(&this.prune_config(), this.chain_spec().as_ref()).as_str();
-                info!(target: "reth::cli", ?settings, ?pruning_mode, "Loaded storage settings");
-            })
-            .with_metrics_task()
-            // later the components.
-            .with_blockchain_db(move |provider_factory| {
-                Ok(BlockchainProvider::new(provider_factory)?)
-            })?
-            .with_components(&base, payload).await?;
+            .with_provider_factory(overlay_manager.clone(), disabled_stages)
+            .await?;
+        info!(target: "reth::cli", "Database opened");
+        let ctx = ctx.with_prometheus_server().await?;
+        debug!(target: "reth::cli", chain=%ctx.chain_id(), genesis=?ctx.genesis_hash(), "Initializing genesis");
+        let ctx = ctx.with_genesis()?;
+        info!(target: "reth::cli", hardforks=%ctx.chain_spec().display_hardforks(), "Loaded hardfork schedule");
+        let settings = ctx.provider_factory().cached_storage_settings();
+        let pruning_mode =
+            PruneConfigKind::from_config(&ctx.prune_config(), ctx.chain_spec().as_ref()).as_str();
+        info!(target: "reth::cli", ?settings, ?pruning_mode, "Loaded storage settings");
+        let ctx =
+            ctx.with_metrics_task().with_blockchain_db()?.with_components(&base, payload).await?;
 
         services.start_tracing(ctx.node_adapter());
 

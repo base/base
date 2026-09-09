@@ -1,6 +1,6 @@
 # base-tx-forwarding
 
-Transaction forwarding service and node extension for Base. Forwards transactions from the mempool to builder RPC endpoints.
+Built-in transaction forwarding service for Base. Forwards transactions from the mempool to builder RPC endpoints.
 
 ## Overview
 

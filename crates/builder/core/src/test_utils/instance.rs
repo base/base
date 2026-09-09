@@ -50,7 +50,7 @@ pub fn clear_otel_env_vars() {
 }
 
 /// Represents a type that emulates a local in-process instance of the builder node.
-/// This node uses IPC as the communication channel for the RPC server Engine API.
+/// Execution calls use the local driver; public transaction queries use HTTP.
 #[derive(Debug)]
 pub struct LocalInstance {
     /// In-process execution services.
@@ -99,10 +99,7 @@ where
     }
 }
 
-/// Builder for a [`LocalInstance`] that supports installing node extensions.
-///
-/// The resulting node is wired through the same payload-service and extension-hook pipeline used by
-/// the production runner, so extensions installed here run exactly as they would in a real node.
+/// Configures a [`LocalInstance`] using the production Base launch path.
 ///
 /// ```ignore
 /// let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
@@ -355,7 +352,7 @@ pub fn default_node_config_with_azul() -> NodeConfig {
 
 /// Builds a [`LocalInstance`]-style Reth node configuration for the given chain spec.
 ///
-/// Uses the same IPC-only RPC setup, disabled discovery, unused ports, and temporary data
+/// Uses the same HTTP RPC setup, disabled discovery, unused ports, and temporary data
 /// directories as [`default_node_config`], but with a caller-supplied chain spec — so an in-process
 /// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
 pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig {
@@ -371,7 +368,10 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig {
     std::fs::create_dir_all(&pprof_dumps_path)
         .expect("Failed to create temporary pprof dumps directory");
 
-    let rpc = RpcServerArgs::default().with_unused_ports().with_http();
+    let rpc = RpcServerArgs::default()
+        .with_unused_ports()
+        .with_http()
+        .with_http_api("eth,net,web3,miner,debug".parse().expect("valid test RPC modules"));
 
     let mut network = NetworkArgs::default().with_unused_ports();
     network.discovery.disable_discovery = true;

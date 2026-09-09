@@ -156,7 +156,7 @@ pub struct ExecutionNodeArgs {
     #[command(flatten)]
     pub node: ExecutionNodeConfigArgs,
 
-    /// Standard Base execution-node extension arguments.
+    /// Standard Base execution-node service arguments.
     #[command(flatten)]
     pub standard: RpcStandardNodeArgs,
 
@@ -202,7 +202,7 @@ impl ExecutionNodeRuntimeConfig {
         self
     }
 
-    /// Converts the runtime config into a reth node builder.
+    /// Opens the database and resolves the Base launch resources.
     pub fn into_launch(mut self, ctx: CliContext) -> eyre::Result<NodeLaunch> {
         if let Some(http_api) = &self.node_config.rpc.http_api {
             LenientRpcModuleValidator::validate_selection(http_api, "http.api")
@@ -240,7 +240,7 @@ impl ExecutionNodeRuntimeConfig {
 pub struct ExecutionNodeLaunchConfig {
     /// Reth node configuration.
     pub node_config: NodeConfig,
-    /// Standard Base execution-node extension arguments.
+    /// Standard Base execution-node service arguments.
     pub standard: StandardNodeArgs,
     /// Whether all ports should be assigned by the OS.
     pub with_unused_ports: bool,

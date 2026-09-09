@@ -117,64 +117,9 @@ impl<Storage> BaseProofsExExBuilder<Storage> {
 /// saving the current state, new blocks as they're added, and serving proof RPCs
 /// based on the saved data.
 ///
-/// # Examples
-///
-/// The following example shows how to install the `ExEx` with either in-memory or persistent storage.
-/// This can be used when launching a Base node via a binary.
-///
-/// ```
-/// use futures::FutureExt;
-/// use reth_db::test_utils::create_test_rw_db;
-/// use base_node_core::{NodeBuilder, NodeConfig};
-/// use base_execution_chainspec::BaseChainSpec;
-/// use base_execution_exex::BaseProofsExEx;
-/// use base_node_core::{BaseNode, args::RollupArgs};
-/// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, RocksdbProofsStorage};
-/// use reth_provider::providers::BlockchainProvider;
-/// use std::{sync::Arc, time::Duration};
-///
-/// let config = NodeConfig::new(Arc::new(BaseChainSpec::mainnet()));
-/// let db = create_test_rw_db();
-/// let args = RollupArgs::default();
-/// let base_node = BaseNode::new(args);
-///
-/// // Create in-memory or persistent storage
-/// let storage: BaseProofsStorage<Arc<InMemoryProofsStorage>> =
-///     Arc::new(InMemoryProofsStorage::new()).into();
-///
-/// // Example for creating persistent storage
-/// # let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-/// # let storage_path = temp_dir.path().join("proofs_storage");
-///
-/// # let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-/// #    RocksdbProofsStorage::new(&storage_path).expect("Failed to create RocksdbProofsStorage"),
-/// # ).into();
-///
-/// let storage_exec = storage.clone();
-/// let proofs_history_window = 1_296_000u64;
-/// let proofs_history_prune_interval = Duration::from_secs(3600);
-///
-/// // Verification interval: perform full execution every N blocks
-/// let verification_interval = 0; // 0 = disabled, 100 = verify every 100 blocks
-///
-/// // Can also use install_exex_if along with a boolean flag
-/// // Set this based on your configuration or CLI args
-/// let _builder = NodeBuilder::new(config)
-///     .with_database(db)
-///
-///     .with_components(base_node.components().into_builder())
-///     .install_exex("proofs-history", move |exex_context| async move {
-///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)
-///             .with_proofs_history_window(proofs_history_window)
-///             .with_proofs_history_prune_interval(proofs_history_prune_interval)
-///             .with_verification_interval(verification_interval)
-///             .build()
-///             .run()
-///             .boxed())
-///     })
-///     .on_node_started(|_full_node| Ok(()))
-///     .check_launch();
-/// ```
+/// Core node startup opens the configured proof-history backend and starts this processor
+/// when `RollupArgs::proofs_history` is enabled. The node owns canonical notification delivery,
+/// progress reporting, and RPC registration.
 #[derive(Debug)]
 pub struct BaseProofsExEx<Storage> {
     /// The `ExEx` context containing the node related utilities e.g. provider, notifications,

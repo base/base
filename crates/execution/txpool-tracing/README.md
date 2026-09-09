@@ -25,23 +25,12 @@ cargo run -p base --release -- rpc \
   --enable-transaction-tracing-logs  # optional: emit per-tx lifecycle logs
 ```
 
-From code, wire the extension into the node builder:
-
-```rust,ignore
-use base_txpool_tracing::{TxpoolConfig, TxPoolExtension};
-
-let config = TxpoolConfig {
-    tracing_enabled: true,
-    tracing_logs_enabled: true,
-    sequencer_rpc: None,
-};
-let ext = TxPoolExtension::new(config);
-let builder = Box::new(ext).apply(builder);
-```
+Core node startup subscribes to the pool before opening RPC transports. `NodeServices.tracing`
+contains the CLI-resolved `TxpoolConfig`.
 
 ## Metrics
 
-The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When the in-memory log reaches its limit (20,000 transactions), an `overflowed` event is recorded so dashboards can alert on data loss.
+The tracing service records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When the in-memory log reaches its limit (20,000 transactions), an `overflowed` event is recorded so dashboards can alert on data loss.
 
 ## License
 

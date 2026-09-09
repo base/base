@@ -1,16 +1,4 @@
-//! Configure reth RPC.
-//!
-//! This crate contains several builder and config types that allow to configure the selection of
-//! [`RethRpcModule`] specific to transports (ws, http).
-//!
-//! The [`RpcModuleBuilder`] is the main entrypoint for configuring all reth modules. It takes
-//! instances of components required to start the servers, such as provider impls, network and
-//! transaction pool. [`RpcModuleBuilder::build`] returns a [`TransportRpcModules`] which contains
-//! the transport specific config (what APIs are available via this transport).
-//!
-//! The [`RpcServerConfig`] is used to assemble and start the http and ws servers,
-//! it requires the [`TransportRpcModules`] so it can start the servers with the configured modules.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -33,9 +21,9 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_rpc::{
-    AdminApi, BaseEthApi, BaseRpcContext, DebugApi, EthApiBuilder, EthApiServer, EthBundle,
-    EthCallBundleApiServer, EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi,
-    RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
+    AdminApi, BaseEthApi, DebugApi, EthApiServer, EthBundle, EthCallBundleApiServer,
+    EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi, RPCApi, RethApi,
+    TraceApi, TxPoolApi, Web3Api,
 };
 use base_node_context::BaseNodePool;
 pub use cors::CorsDomainError;
@@ -47,8 +35,7 @@ use jsonrpsee::{
     Methods, RpcModule,
     core::RegisterMethodError,
     server::{
-        AlreadyStoppedError, IdProvider, ServerConfigBuilder, ServerHandle,
-        middleware::rpc::RpcServiceBuilder,
+        AlreadyStoppedError, ServerConfigBuilder, ServerHandle, middleware::rpc::RpcServiceBuilder,
     },
 };
 use reth_engine_primitives::ConsensusEngineEvent;
@@ -93,94 +80,6 @@ use crate::middleware::RethRpcMiddleware;
 // Rpc rate limiter
 pub mod rate_limiter;
 
-/// A builder type to configure the RPC module: See [`RpcModule`]
-///
-/// This is the main entrypoint and the easiest way to configure an RPC server.
-#[derive(Debug, Clone)]
-pub struct RpcModuleBuilder {
-    /// The Provider type to when creating all rpc handlers
-    provider: BlockchainProvider,
-    /// The Pool type to when creating all rpc handlers
-    pool: BaseNodePool<BlockchainProvider>,
-    /// The Network type to when creating all rpc handlers
-    network: reth_network::NetworkHandle,
-    /// How additional tasks are spawned, for example in the eth pubsub namespace
-    executor: Runtime,
-    /// Defines how the EVM should be configured before execution.
-    evm_config: BaseEvmConfig,
-    /// The consensus implementation.
-    consensus: Arc<BaseBeaconConsensus>,
-}
-
-// === impl RpcBuilder ===
-
-impl RpcModuleBuilder {
-    /// Create a new instance of the builder
-    pub const fn new(
-        provider: BlockchainProvider,
-        pool: BaseNodePool<BlockchainProvider>,
-        network: reth_network::NetworkHandle,
-        executor: Runtime,
-        evm_config: BaseEvmConfig,
-        consensus: Arc<BaseBeaconConsensus>,
-    ) -> Self {
-        Self { provider, pool, network, executor, evm_config, consensus }
-    }
-
-    /// Instantiates a new [`EthApiBuilder`] from the configured components.
-    pub fn eth_api_builder(&self) -> EthApiBuilder {
-        EthApiBuilder::new_with_components(BaseRpcContext {
-            provider: self.provider.clone(),
-            pool: self.pool.clone(),
-            network: self.network.clone(),
-            evm_config: self.evm_config.clone(),
-        })
-    }
-}
-
-impl RpcModuleBuilder {
-    /// Converts the builder into a [`RpcRegistryInner`] which can be used to create all
-    /// components.
-    ///
-    /// This is useful for getting access to API handlers directly
-    pub fn into_registry(
-        self,
-        config: RpcModuleConfig,
-        eth: BaseEthApi,
-        engine_events: EventSender<ConsensusEngineEvent>,
-    ) -> RpcRegistryInner {
-        let Self { provider, pool, network, executor, consensus, evm_config, .. } = self;
-        RpcRegistryInner::new(
-            provider,
-            pool,
-            network,
-            executor,
-            consensus,
-            config,
-            evm_config,
-            eth,
-            engine_events,
-        )
-    }
-
-    /// Configures all [`RpcModule`]s specific to the given [`TransportRpcModuleConfig`] which can
-    /// be used to start the transport server(s).
-    pub fn build(
-        self,
-        module_config: TransportRpcModuleConfig,
-        eth: BaseEthApi,
-        engine_events: EventSender<ConsensusEngineEvent>,
-    ) -> TransportRpcModules<()> {
-        if module_config.is_empty() {
-            TransportRpcModules::default()
-        } else {
-            let config = module_config.config.clone().unwrap_or_default();
-            let mut registry = self.into_registry(config, eth, engine_events);
-            registry.create_transport_rpc_modules(module_config)
-        }
-    }
-}
-
 /// Bundles settings for modules
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RpcModuleConfig {
@@ -191,11 +90,6 @@ pub struct RpcModuleConfig {
 // === impl RpcModuleConfig ===
 
 impl RpcModuleConfig {
-    /// Convenience method to create a new [`RpcModuleConfigBuilder`]
-    pub fn builder() -> RpcModuleConfigBuilder {
-        RpcModuleConfigBuilder::default()
-    }
-
     /// Returns a new RPC module config given the eth namespace config
     pub const fn new(eth: EthConfig) -> Self {
         Self { eth }
@@ -209,43 +103,6 @@ impl RpcModuleConfig {
     /// Get a mutable reference to the eth namespace config
     pub const fn eth_mut(&mut self) -> &mut EthConfig {
         &mut self.eth
-    }
-}
-
-/// Configures [`RpcModuleConfig`]
-#[derive(Clone, Debug, Default)]
-pub struct RpcModuleConfigBuilder {
-    eth: Option<EthConfig>,
-}
-
-// === impl RpcModuleConfigBuilder ===
-
-impl RpcModuleConfigBuilder {
-    /// Configures a custom eth namespace config
-    pub fn eth(mut self, eth: EthConfig) -> Self {
-        self.eth = Some(eth);
-        self
-    }
-
-    /// Consumes the type and creates the [`RpcModuleConfig`]
-    pub fn build(self) -> RpcModuleConfig {
-        let Self { eth } = self;
-        RpcModuleConfig { eth: eth.unwrap_or_default() }
-    }
-
-    /// Get a reference to the eth namespace config, if any
-    pub const fn get_eth(&self) -> Option<&EthConfig> {
-        self.eth.as_ref()
-    }
-
-    /// Get a mutable reference to the eth namespace config, if any
-    pub const fn eth_mut(&mut self) -> &mut Option<EthConfig> {
-        &mut self.eth
-    }
-
-    /// Get the eth namespace config, creating a default if none is set
-    pub fn eth_mut_or_default(&mut self) -> &mut EthConfig {
-        self.eth.get_or_insert_with(EthConfig::default)
     }
 }
 
@@ -688,7 +545,7 @@ impl Clone for RpcRegistryInner {
 ///
 /// Http and WS share the same settings: [`ServerBuilder`].
 ///
-/// Once the [`RpcModule`] is built via [`RpcModuleBuilder`] the servers can be started, See also
+/// Once the [`RpcModule`] is assembled by [`RpcRegistryInner`] the servers can be started, See also
 /// [`ServerBuilder::build`] and [`Server::start`](jsonrpsee::server::Server::start).
 #[derive(Debug)]
 pub struct RpcServerConfig<RpcMiddleware = Identity> {
@@ -750,7 +607,7 @@ impl RpcServerConfig {
     /// Configures the http server
     ///
     /// Note: this always configures an [`EthSubscriptionIdProvider`] [`IdProvider`] for
-    /// convenience. To set a custom [`IdProvider`], please use [`Self::with_id_provider`].
+    /// compatibility with Ethereum subscription clients.
     pub fn with_http(mut self, config: ServerConfigBuilder) -> Self {
         self.http_server_config =
             Some(config.set_id_provider(EthSubscriptionIdProvider::default()));
@@ -760,7 +617,7 @@ impl RpcServerConfig {
     /// Configures the ws server
     ///
     /// Note: this always configures an [`EthSubscriptionIdProvider`] [`IdProvider`] for
-    /// convenience. To set a custom [`IdProvider`], please use [`Self::with_id_provider`].
+    /// compatibility with Ethereum subscription clients.
     pub fn with_ws(mut self, config: ServerConfigBuilder) -> Self {
         self.ws_server_config = Some(config.set_id_provider(EthSubscriptionIdProvider::default()));
         self
@@ -832,41 +689,9 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
         self
     }
 
-    /// Sets a custom [`IdProvider`] for all configured transports.
-    ///
-    /// By default all transports use [`EthSubscriptionIdProvider`]
-    pub fn with_id_provider<I>(mut self, id_provider: I) -> Self
-    where
-        I: IdProvider + Clone + 'static,
-    {
-        if let Some(config) = self.http_server_config {
-            self.http_server_config = Some(config.set_id_provider(id_provider.clone()));
-        }
-        if let Some(config) = self.ws_server_config {
-            self.ws_server_config = Some(config.set_id_provider(id_provider.clone()));
-        }
-
-        self
-    }
-
     /// Configures the JWT secret for authentication.
     pub const fn with_jwt_secret(mut self, secret: Option<JwtSecret>) -> Self {
         self.jwt_secret = secret;
-        self
-    }
-
-    /// Configures a custom tokio runtime for the rpc server.
-    pub fn with_tokio_runtime(mut self, tokio_runtime: Option<tokio::runtime::Handle>) -> Self {
-        let Some(tokio_runtime) = tokio_runtime else { return self };
-        if let Some(http_server_config) = self.http_server_config {
-            self.http_server_config =
-                Some(http_server_config.custom_tokio_runtime(tokio_runtime.clone()));
-        }
-        if let Some(ws_server_config) = self.ws_server_config {
-            self.ws_server_config =
-                Some(ws_server_config.custom_tokio_runtime(tokio_runtime.clone()));
-        }
-
         self
     }
 

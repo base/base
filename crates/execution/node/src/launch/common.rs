@@ -274,16 +274,6 @@ impl<T> LaunchContextWith<T> {
             attachment: Attached::new(self.attachment, attachment),
         }
     }
-
-    /// Consumes the type and calls a function with a reference to the context.
-    // Returns the context again
-    pub fn inspect<F>(self, f: F) -> Self
-    where
-        F: FnOnce(&Self),
-    {
-        f(&self);
-        self
-    }
 }
 
 impl LaunchContextWith<WithConfigs> {
@@ -440,7 +430,6 @@ impl LaunchContextWith<Attached<WithConfigs, reth_db::DatabaseEnv>> {
     pub async fn create_provider_factory(
         &self,
         overlay_manager: OverlayManager,
-        rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
     ) -> eyre::Result<ProviderFactory> {
         // Validate static files configuration
@@ -469,16 +458,11 @@ impl LaunchContextWith<Attached<WithConfigs, reth_db::DatabaseEnv>> {
                 .with_genesis_block_number(self.chain_spec().genesis().number.unwrap_or_default())
                 .build()?;
 
-        // Use the provided RocksDB provider or create a new one
-        let rocksdb_provider = if let Some(provider) = rocksdb_provider {
-            provider
-        } else {
-            RocksDBProvider::builder(self.data_dir().rocksdb())
-                .with_default_tables()
-                .with_metrics()
-                .with_statistics()
-                .build()?
-        };
+        let rocksdb_provider = RocksDBProvider::builder(self.data_dir().rocksdb())
+            .with_default_tables()
+            .with_metrics()
+            .with_statistics()
+            .build()?;
 
         let balstore_cache_size = self
             .node_config()
@@ -628,12 +612,9 @@ impl LaunchContextWith<Attached<WithConfigs, reth_db::DatabaseEnv>> {
     pub async fn with_provider_factory(
         self,
         overlay_manager: OverlayManager,
-        rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory>>> {
-        let factory = self
-            .create_provider_factory(overlay_manager, rocksdb_provider, disabled_stages)
-            .await?;
+        let factory = self.create_provider_factory(overlay_manager, disabled_stages).await?;
         let ctx = LaunchContextWith {
             inner: self.inner,
             attachment: self.attachment.map_right(|_| factory),
@@ -770,15 +751,10 @@ impl LaunchContextWith<Attached<WithConfigs, WithMeteredProvider>> {
     }
 
     /// Creates a `BlockchainProvider` and attaches it to the launch context.
-    #[expect(clippy::complexity)]
-    pub fn with_blockchain_db<F>(
+    pub fn with_blockchain_db(
         self,
-        create_blockchain_provider: F,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>>>
-    where
-        F: FnOnce(ProviderFactory) -> eyre::Result<BlockchainProvider>,
-    {
-        let blockchain_db = create_blockchain_provider(self.provider_factory().clone())?;
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>>> {
+        let blockchain_db = BlockchainProvider::new(self.provider_factory().clone())?;
 
         let metered_providers = WithMeteredProviders {
             db_provider_container: WithMeteredProvider {

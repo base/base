@@ -1929,7 +1929,7 @@ async fn test_eth_get_transaction_count_rpc_call() {
 }
 
 #[test]
-fn test_rpc_builder_basic() {
+fn test_rpc_registry_basic() {
     let rpc_string = RawRpcParamsBuilder::default()
         .method("eth_getBalance")
         .add_param("0xaa00000000000000000000000000000000000000")
