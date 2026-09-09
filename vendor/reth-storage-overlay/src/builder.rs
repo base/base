@@ -7,10 +7,10 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
 use base_execution_state_types::PruneSegment;
+use base_execution_state_types::StageId;
 use metrics::{Counter, Histogram};
 use reth_chain_state::ExecutedBlock;
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_stages_types::StageId;
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
@@ -602,6 +602,9 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
+    #[cfg(feature = "partial-persistence")]
+    #[cfg(feature = "partial-persistence")]
+    use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
     use reth_primitives_traits::Account;
     #[cfg(feature = "partial-persistence")]
@@ -609,9 +612,6 @@ mod tests {
         BlockWriter, ProviderFactory,
         test_utils::{MockNodeDatabase, create_test_provider_factory},
     };
-    #[cfg(feature = "partial-persistence")]
-    #[cfg(feature = "partial-persistence")]
-    use reth_stages_types::{FinishCheckpoint, StageCheckpoint};
     use reth_trie::{BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles};
 
     use super::*;

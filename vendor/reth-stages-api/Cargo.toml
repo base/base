@@ -24,7 +24,6 @@ reth-prune = { workspace = true }
 futures-util = { workspace = true }
 reth-provider = { workspace = true }
 reth-static-file = { workspace = true }
-reth-stages-types = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
@@ -32,6 +31,7 @@ base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
+base-execution-state-types = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
@@ -56,7 +56,7 @@ test-utils = [
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "reth-stages-types/test-utils",
+    "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-common-types-chain/test-utils",
 ]

@@ -18,6 +18,7 @@ use base_common_types_chain::{
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
+use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
 };
@@ -41,7 +42,6 @@ use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
     SealedHeader, StorageEntry,
 };
-use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, MetadataProvider, StateProvider, StateReader, StateWriteConfig,
@@ -874,7 +874,7 @@ impl<TX: DbTx + DbTxMut + 'static> DatabaseProvider<TX> {
         // Unwind accounts/storages trie tables using the revert.
         // Get the database tip block number
         let db_tip_block = self
-            .get_stage_checkpoint(reth_stages_types::StageId::Finish)?
+            .get_stage_checkpoint(base_execution_state_types::StageId::Finish)?
             .as_ref()
             .map(|chk| chk.block_number)
             .ok_or_else(|| ProviderError::InsufficientChangesets {

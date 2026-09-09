@@ -14,6 +14,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, Header,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_execution_state_types::PipelineTarget;
 use base_execution_state_types::PruneSegment;
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
@@ -35,7 +36,6 @@ use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
     AlloyBlockHeader as _, RecoveredBlock, SealedHeader, StorageEntry, dashmap::DashMap,
 };
-use reth_stages_types::PipelineTarget;
 use reth_static_file_types::{
     DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles, SegmentHeader, SegmentRangeInclusive,
     StaticFileMap, StaticFileSegment, find_fixed_range,

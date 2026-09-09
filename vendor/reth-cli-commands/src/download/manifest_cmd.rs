@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
+use base_execution_state_types::StageId;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use reth_db::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
 use reth_db_api::transaction::DbTx;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_stages_types::StageId;
 use reth_static_file_types::DEFAULT_BLOCKS_PER_STATIC_FILE;
 use tracing::{info, warn};
 

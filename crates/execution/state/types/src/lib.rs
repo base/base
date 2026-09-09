@@ -127,3 +127,11 @@ pub use pruning::{
     PruneSegmentError, PrunedSegmentInfo, PrunerEvent, PrunerOutput, ReceiptsLogPruneConfig,
     SegmentOutput, SegmentOutputCheckpoint, UnwindTargetPrunedError,
 };
+
+mod stages;
+pub use stages::{
+    AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint, ExecutionCheckpoint,
+    ExecutionStageThresholds, FinishCheckpoint, HeadersCheckpoint, IndexHistoryCheckpoint,
+    MerkleChangeSetsCheckpoint, MerkleCheckpoint, PipelineTarget, StageCheckpoint, StageId,
+    StageUnitCheckpoint, StorageHashingCheckpoint, StorageRootMerkleCheckpoint,
+};

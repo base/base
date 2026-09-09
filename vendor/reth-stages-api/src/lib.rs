@@ -24,7 +24,7 @@ use aquamarine as _;
 pub use error::*;
 pub use pipeline::*;
 // re-export the stages types for convenience
-pub use reth_stages_types::*;
+pub use base_execution_state_types::*;
 pub use stage::*;
 
 pub use crate::metrics::*;

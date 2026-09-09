@@ -21,7 +21,6 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-api = { workspace = true }
 reth-chain-state = { workspace = true }
-reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 rayon = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true}
@@ -42,5 +41,5 @@ reth-chain-state = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 
 [features]
-partial-persistence = ["reth-stages-types/partial-persistence"]
+partial-persistence = ["base-execution-state-types/partial-persistence"]
 rayon = ["dep:rayon", "dep:base-common-runtime-tasks"]

@@ -43,11 +43,10 @@ reth-node-events = { workspace = true }
 reth-static-file = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-node-metrics = { workspace = true }
-reth-stages-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
-base-execution-state-types = { workspace = true}
 tokio = { workspace = true, features = ["net"] }
 arbitrary = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
@@ -104,9 +103,7 @@ arbitrary = [
     "alloy-primitives/arbitrary",
     "base-common-types-chain/test-utils",
     "base-execution-state-types/test-utils",
-    "reth-stages-types/test-utils",
     "base-common-types-chain/arbitrary",
     "base-execution-state-types/arbitrary",
-    "reth-stages-types/arbitrary",
     "reth-primitives-traits/arbitrary",
 ]

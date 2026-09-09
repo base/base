@@ -16,6 +16,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, Header,
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };
+use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_eth_wire::{
     BlockAccessLists, EthVersion,
     protocol::Protocol,
@@ -39,7 +40,6 @@ use reth_provider::{
     providers::{BlockchainProvider, SNAPSHOT_STATE_RETENTION},
     test_utils::{ExtendedAccount, MockEthProvider, create_test_provider_factory},
 };
-use reth_stages_types::{StageCheckpoint, StageId};
 use reth_testing_utils::generators::{self, BlockParams};
 use reth_trie::{HashedPostState, HashedStorage};
 

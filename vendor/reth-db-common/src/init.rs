@@ -7,6 +7,7 @@ use alloy_primitives::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
+use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_config::config::EtlConfig;
 use reth_db_api::{
     DatabaseError,
@@ -25,7 +26,6 @@ use reth_provider::{
     StorageSettings, StorageSettingsCache, TrieWriter, errors::provider::ProviderResult,
     providers::StaticFileWriter,
 };
-use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::StateRootError;
 use reth_trie::{

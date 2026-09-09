@@ -93,14 +93,13 @@ alloy-genesis = { workspace = true  }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-payload-util = { workspace = true }
-reth-stages-types = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-network = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
+base-execution-state-types = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
-base-execution-state-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
@@ -156,7 +155,7 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "base-execution-evm-blocks/test-utils",
-    "reth-stages-types/test-utils",
+    "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",

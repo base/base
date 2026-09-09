@@ -326,6 +326,7 @@ impl<Provider, S: Stage<Provider> + ?Sized> StageExt<Provider> for S {}
 #[cfg(test)]
 mod tests {
 
+    use base_execution_state_types::StageCheckpoint;
     use reth_db::test_utils::{
         create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
     };
@@ -334,7 +335,6 @@ mod tests {
         ProviderFactory, StaticFileProviderBuilder, StaticFileProviderFactory, StaticFileSegment,
         providers::RocksDBProvider,
     };
-    use reth_stages_types::StageCheckpoint;
     use reth_testing_utils::{BaseTestData, generators};
 
     use crate::ExecInput;

@@ -992,7 +992,7 @@ mod tests {
         tx.put::<tables::HashedAccounts>(keccak256(HIGHER_ADDRESS), higher_acc_plain).unwrap();
         tx.put::<tables::StageCheckpoints>(
             "Finish".to_string(),
-            reth_stages_types::StageCheckpoint::new(100),
+            base_execution_state_types::StageCheckpoint::new(100),
         )
         .unwrap();
         tx.commit().unwrap();
@@ -1168,7 +1168,7 @@ mod tests {
         .unwrap();
         tx.put::<tables::StageCheckpoints>(
             "Finish".to_string(),
-            reth_stages_types::StageCheckpoint::new(100),
+            base_execution_state_types::StageCheckpoint::new(100),
         )
         .unwrap();
         tx.commit().unwrap();
@@ -1458,8 +1458,8 @@ mod tests {
             database::{AccountStatus, BundleAccount, BundleState},
             state::AccountInfo,
         };
+        use base_execution_state_types::{StageCheckpoint, StageId};
         use reth_execution_types::ExecutionOutcome;
-        use reth_stages_types::{StageCheckpoint, StageId};
         use reth_storage_api::HashedPostStateProvider;
         use reth_testing_utils::generators::{self, BlockRangeParams};
 

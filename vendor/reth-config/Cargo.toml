@@ -15,12 +15,11 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-reth-stages-types = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
 reth-static-file-types = { workspace = true }
 serde = { workspace = true, optional = true }
-base-execution-state-types = { workspace = true }
+base-execution-state-types = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 humantime-serde = { workspace = true, optional = true }
 toml_0_9_12_spec_1_1_0 = { workspace = true, optional = true, features = ["default"] }
@@ -38,6 +37,5 @@ serde = [
     "reth-network-peers/secp256k1",
     "reth-network-types/serde",
     "base-execution-state-types/serde",
-    "reth-stages-types/serde",
     "alloy-primitives/serde",
 ]

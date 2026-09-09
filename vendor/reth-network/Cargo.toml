@@ -73,9 +73,9 @@ alloy-trie = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-stages-types = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-types = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -111,7 +111,7 @@ serde = [
     "rand_08/serde",
     "reth-storage-api/serde",
     "reth-network-types/serde",
-    "reth-stages-types/serde",
+    "base-execution-state-types/serde",
     "reth-trie/serde",
     "alloy-eip7928/serde",
 ]
@@ -125,6 +125,6 @@ test-utils = [
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "base-common-runtime-tasks/test-utils",
-    "reth-stages-types/test-utils",
+    "base-execution-state-types/test-utils",
     "reth-trie/test-utils",
 ]

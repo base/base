@@ -183,7 +183,6 @@ members = [
   "vendor/reth-rpc-server-types",
   "vendor/reth-stages",
   "vendor/reth-stages-api",
-  "vendor/reth-stages-types",
   "vendor/reth-static-file",
   "vendor/reth-static-file-types",
   "vendor/reth-storage-api",
@@ -516,7 +515,6 @@ reth-net-banlist = { path = "vendor/reth-net-banlist", default-features = false 
 reth-payload-util = { path = "vendor/reth-payload-util", default-features = false }
 reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }
 reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
-reth-stages-types = { path = "vendor/reth-stages-types", default-features = false }
 reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }
 reth-network-peers = { path = "vendor/reth-network-peers", default-features = false }
 reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }

@@ -27,12 +27,11 @@ reth-node-core = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-node-metrics = { workspace = true }
-reth-stages-types = { workspace = true }
 base-execution-trie = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-base-common-observability-events = { workspace = true }
+base-execution-state-types = { workspace = true }
 tar = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -40,6 +39,7 @@ zstd = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
+base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 reth-net-nat = { workspace = true, features = ["default"] }
@@ -56,8 +56,8 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
-base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
 tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
+base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
 
 [dev-dependencies]
 alloy-chains = { workspace = true }

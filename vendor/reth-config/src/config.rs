@@ -4,10 +4,10 @@ use std::{
     time::Duration,
 };
 
+use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes};
 use reth_network_peers::TrustedPeer;
 use reth_network_types::{PeersConfig, SessionsConfig};
-use reth_stages_types::ExecutionStageThresholds;
 use reth_static_file_types::{StaticFileMap, StaticFileSegment};
 
 #[cfg(feature = "serde")]

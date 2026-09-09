@@ -8,6 +8,7 @@ use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::ForkchoiceState;
 use base_common_types_rpc::BlockNumberOrTag;
+use base_execution_state_types::StageId;
 use base_node_core::NodeConfig;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
@@ -15,7 +16,6 @@ use reth_e2e_test_utils::{
 };
 use reth_node_core::args::DatadirArgs;
 use reth_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
-use reth_stages_types::StageId;
 use tokio::sync::Mutex;
 
 /// Tests that a Base node can initialize with a custom genesis block number.

@@ -171,7 +171,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-rpc-traits](../../vendor/reth-rpc-traits/Cargo.toml) | Consolidate; retain required code |
 | [reth-stages](../../vendor/reth-stages/Cargo.toml) | Retain shared infrastructure |
 | [reth-stages-api](../../vendor/reth-stages-api/Cargo.toml) | Retain shared infrastructure |
-| [reth-stages-types](../../vendor/reth-stages-types/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-static-file](../../vendor/reth-static-file/Cargo.toml) | Retain shared infrastructure |
 | [reth-static-file-types](../../vendor/reth-static-file-types/Cargo.toml) | Retain shared infrastructure |
 | [reth-storage-api](../../vendor/reth-storage-api/Cargo.toml) | Retain shared infrastructure |
@@ -198,7 +198,7 @@ Initial ERA cleanup passed:
 
 - `cargo check --offline --locked -p base --all-targets`
 - `cargo test --offline -p reth-config --features serde --lib` — 16 tests, including loading and saving old ERA configuration.
-- `cargo test --offline -p reth-stages-types --features reth-codecs/alloy --lib` — 17 tests. The explicit codec feature supplies the Alloy codec implementations needed by this isolated test build.
+- `cargo test --offline -p base-execution-state-types --features reth-codecs/alloy --lib` — 17 tests. The explicit codec feature supplies the Alloy codec implementations needed by this isolated test build.
 - `cargo test --offline -p reth-stages --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
 - `cargo test --offline --locked -p reth-stages --features test-utils --test preimage` — 7 storage/preimage pipeline tests.
 - `cargo test --offline -p base-execution-cli --lib node::tests` — 37 matching tests, including rejection of ERA CLI flags.

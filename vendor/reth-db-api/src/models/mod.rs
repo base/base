@@ -261,13 +261,13 @@ mod tests {
     #[test]
     fn test_ensure_backwards_compatibility() {
         use base_common_types_chain::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
-        use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
-        use reth_primitives_traits::Account;
-        use reth_stages_types::{
+        use base_execution_state_types::{
             AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint,
             ExecutionCheckpoint, HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint,
             StageUnitCheckpoint, StorageHashingCheckpoint,
         };
+        use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
+        use reth_primitives_traits::Account;
 
         use super::*;
         assert_eq!(Account::bitflag_encoded_bytes(), 2);

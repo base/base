@@ -16,6 +16,11 @@ use base_common_types_chain::{
         withdrawal::Withdrawal,
     },
 };
+use base_execution_state_types::{
+    AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint, ExecutionCheckpoint,
+    HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint, StageUnitCheckpoint,
+    StorageHashingCheckpoint,
+};
 use base_execution_state_types::{PruneCheckpoint, PruneMode};
 use base_execution_state_types::{
     StoredNibbles, StoredNibblesSubKey, hash_builder::HashBuilderState,
@@ -34,11 +39,6 @@ use reth_db::{
 };
 use reth_fs_util as fs;
 use reth_primitives_traits::{Account, Log, LogData, StorageEntry};
-use reth_stages_types::{
-    AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint, ExecutionCheckpoint,
-    HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint, StageUnitCheckpoint,
-    StorageHashingCheckpoint,
-};
 use reth_trie::{TrieMask, hash_builder::HashBuilderValue};
 
 pub const VECTORS_FOLDER: &str = "testdata/micro/compact";
@@ -102,7 +102,7 @@ compact_types!(
         // base_execution_state_types
         PruneCheckpoint,
         PruneMode,
-        // reth_stages_types
+        // base_execution_state_types
         AccountHashingCheckpoint,
         StorageHashingCheckpoint,
         ExecutionCheckpoint,

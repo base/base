@@ -8,9 +8,9 @@ use std::collections::HashSet;
 
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
+use base_execution_state_types::StageId;
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
 use reth_db_api::tables;
-use reth_stages_types::StageId;
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, StageCheckpointReader,
@@ -467,13 +467,13 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
+    use base_execution_state_types::StageCheckpoint;
     use reth_db::cursor::{DbCursorRO, DbCursorRW};
     use reth_db_api::{
         models::{StorageSettings, storage_sharded_key::StorageShardedKey},
         tables::{self, BlockNumberList},
         transaction::DbTxMut,
     };
-    use reth_stages_types::StageCheckpoint;
     use reth_testing_utils::generators::{self, BlockRangeParams};
     use tempfile::TempDir;
 

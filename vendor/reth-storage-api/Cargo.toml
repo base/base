@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -48,10 +47,9 @@ std = [
     "alloy-primitives/std",
     "base-common-types-payload/std",
     "reth-primitives-traits/std",
-    "reth-stages-types/std",
+    "base-execution-state-types/std",
     "base-execution-evm-runtime/std",
     "reth-execution-types/std",
-    "base-execution-state-types/std",
     "reth-storage-errors/std",
     "serde_json?/std",
     "dep:base-common-runtime-tasks",
@@ -64,7 +62,6 @@ serde = [
     "base-execution-state-types/serde",
     "reth-execution-types/serde",
     "reth-primitives-traits/serde",
-    "reth-stages-types/serde",
     "base-execution-evm-runtime/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",

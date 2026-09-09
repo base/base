@@ -12,13 +12,13 @@ use base_common_types_chain::{
 };
 use base_execution_evm_runtime::database::PlainStorageRevert;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
+use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
-use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,

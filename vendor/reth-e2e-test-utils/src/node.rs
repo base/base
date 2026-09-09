@@ -3,9 +3,10 @@ use std::pin::Pin;
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_types_chain::BlockHeader;
-use base_common_types_rpc::BlockNumberOrTag;
 use base_common_types_payload::ForkchoiceState;
+use base_common_types_rpc::BlockNumberOrTag;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_state_types::StageId;
 use base_node_core::FullNode;
 use eyre::Ok;
 use futures_util::Future;
@@ -15,7 +16,6 @@ use reth_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
     StageCheckpointReader,
 };
-use reth_stages_types::StageId;
 use tokio_stream::StreamExt;
 use url::Url;
 

@@ -19,6 +19,7 @@ use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };
+use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
 use parking_lot::RwLock;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_storage_api::{
@@ -34,7 +35,6 @@ use reth_trie::{
 };
 #[cfg(test)]
 use reth_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
-use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
 use tracing::{debug, warn};
 
 use crate::{OverlayManager, OverlayStateProvider, database_state_frontiers};
@@ -618,6 +618,7 @@ mod tests {
         map::{B256Map, HashMap},
     };
     use base_common_types_chain::Header;
+    use base_execution_state_types::{StageCheckpoint, StageId};
     use reth_db::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,
@@ -628,7 +629,6 @@ mod tests {
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
         test_utils::create_test_provider_factory,
     };
-    use reth_stages_types::{StageCheckpoint, StageId};
     use reth_storage_api::TrieWriter;
     use reth_trie::{BranchNodeCompact, Nibbles, StateRoot};
 

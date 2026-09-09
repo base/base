@@ -5,7 +5,7 @@ use core::{
 };
 
 use alloy_primitives::TxNumber;
-use reth_stages_types::StageId;
+use base_execution_state_types::StageId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor, ser::SerializeStruct};
 use strum::{EnumIs, EnumString};
 

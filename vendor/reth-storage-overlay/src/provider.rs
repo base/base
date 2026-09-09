@@ -236,13 +236,13 @@ where
 #[cfg(all(test, feature = "partial-persistence"))]
 mod tests {
     use alloy_primitives::U256;
+    use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
     use reth_primitives_traits::Account;
     use reth_provider::{
         BlockWriter, ProviderFactory,
         test_utils::{MockNodeDatabase, create_test_provider_factory},
     };
-    use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
 
     use reth_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,

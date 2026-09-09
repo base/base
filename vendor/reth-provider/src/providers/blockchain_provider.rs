@@ -13,6 +13,7 @@ use base_common_types_chain::{
 };
 use base_common_types_payload::ForkchoiceState;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
+use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
@@ -22,7 +23,6 @@ use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
-use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
@@ -1010,6 +1010,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
     use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
+    use base_execution_state_types::{StageCheckpoint, StageId};
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{
@@ -1023,7 +1024,6 @@ mod tests {
     use reth_primitives_traits::{
         Account, Block as _, RecoveredBlock, SealedBlock, SignerRecoverable, StorageEntry,
     };
-    use reth_stages_types::{StageCheckpoint, StageId};
     use reth_storage_api::{
         BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
         BlockReaderIdExt, BlockSource, ChangeSetReader, DBProvider, DatabaseProviderFactory,
