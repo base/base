@@ -143,25 +143,15 @@ impl crate::NodeLaunch {
         .await?;
 
         // Create the consensus engine stream with optional reorg
-        let reorg_overlay_manager = overlay_manager.clone();
         let consensus_engine_stream = UnboundedReceiverStream::from(consensus_engine_rx)
             .maybe_skip_fcu(node_config.debug.skip_fcu)
             .maybe_skip_new_payload(node_config.debug.skip_new_payload)
             .maybe_reorg(
                 ctx.blockchain_db().clone(),
                 ctx.node_adapter().evm_config().clone(),
-                || async {
-                    BasicEngineValidatorBuilder::build_tree_validator(
-                        &add_ons_ctx,
-                        engine_tree_config.clone(),
-                        reorg_overlay_manager.clone(),
-                    )
-                    .await
-                },
                 node_config.debug.reorg_frequency,
                 node_config.debug.reorg_depth,
             )
-            .await?
             // Store messages _after_ skipping so that `replay-engine` command
             // would replay only the messages that were observed by the engine
             // during this run.

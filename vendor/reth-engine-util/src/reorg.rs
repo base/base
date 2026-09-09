@@ -17,7 +17,7 @@ use base_execution_payload_types::BaseBuiltPayload;
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
-use reth_engine_tree::tree::EngineValidator;
+use base_execution_payload_builder::BaseEngineValidator;
 use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use reth_storage_api::{BlockReader, StateProviderFactory, errors::ProviderError};
 use revm::database::State;
@@ -43,7 +43,7 @@ type ReorgResponseFut = Pin<Box<dyn Future<Output = EngineReorgResponse> + Send 
 /// Engine API stream wrapper that simulates reorgs with specified frequency.
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct EngineReorg<S, Provider, Validator> {
+pub struct EngineReorg<S, Provider> {
     /// Underlying stream
     #[pin]
     stream: S,
@@ -52,7 +52,7 @@ pub struct EngineReorg<S, Provider, Validator> {
     /// Evm configuration.
     evm_config: BaseEvmConfig,
     /// Payload validator.
-    payload_validator: Validator,
+    payload_validator: BaseEngineValidator,
     /// The frequency of reorgs.
     frequency: usize,
     /// The depth of reorgs.
@@ -68,13 +68,13 @@ pub struct EngineReorg<S, Provider, Validator> {
     reorg_responses: FuturesUnordered<ReorgResponseFut>,
 }
 
-impl<S, Provider, Validator> EngineReorg<S, Provider, Validator> {
+impl<S, Provider> EngineReorg<S, Provider> {
     /// Creates new [`EngineReorg`] stream wrapper.
     pub fn new(
         stream: S,
         provider: Provider,
         evm_config: BaseEvmConfig,
-        payload_validator: Validator,
+        payload_validator: BaseEngineValidator,
         frequency: usize,
         depth: usize,
     ) -> Self {
@@ -93,11 +93,10 @@ impl<S, Provider, Validator> EngineReorg<S, Provider, Validator> {
     }
 }
 
-impl<S, Provider, Validator> Stream for EngineReorg<S, Provider, Validator>
+impl<S, Provider> Stream for EngineReorg<S, Provider>
 where
     S: Stream<Item = BeaconEngineMessage>,
     Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
-    Validator: EngineValidator,
 {
     type Item = S::Item;
 
@@ -217,16 +216,15 @@ where
 }
 
 #[allow(clippy::type_complexity)]
-fn create_reorg_head<Provider, Validator>(
+fn create_reorg_head<Provider>(
     provider: &Provider,
     evm_config: &BaseEvmConfig,
-    payload_validator: &Validator,
+    payload_validator: &BaseEngineValidator,
     mut depth: usize,
     next_payload: base_common_rpc_types_engine::ExecutionData,
 ) -> Result<(SealedBlock, Option<Bytes>), reth_engine_primitives::EngineRequestError>
 where
     Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
-    Validator: EngineValidator,
 {
     // Ensure next payload is valid.
     let next_block = payload_validator

@@ -16,7 +16,7 @@ pub use jsonrpsee::{
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_engine_primitives::TreeConfig;
-pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
+pub use reth_engine_tree::tree::BasicEngineValidator;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_builder::{

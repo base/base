@@ -25,7 +25,7 @@ use crate::{
     download::BasicBlockDownloader,
     engine::{EngineApiKind, EngineHandler},
     persistence::PersistenceHandle,
-    tree::{EngineApiTreeHandler, EngineValidator, TreeConfig},
+    tree::{EngineApiTreeHandler, BasicEngineValidator, TreeConfig},
 };
 
 /// Builds the engine [`ChainOrchestrator`] that drives the chain forward.
@@ -47,7 +47,7 @@ use crate::{
 ///
 /// [`ChainEvent`]: crate::chain::ChainEvent
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn build_engine_orchestrator<Client, S, V>(
+pub fn build_engine_orchestrator<Client, S>(
     engine_kind: EngineApiKind,
     consensus: Arc<BaseBeaconConsensus>,
     client: Client,
@@ -58,7 +58,7 @@ pub fn build_engine_orchestrator<Client, S, V>(
     blockchain_db: BlockchainProvider,
     pruner: PrunerWithFactory<ProviderFactory>,
     payload_builder: PayloadBuilderHandle,
-    payload_validator: V,
+    payload_validator: BasicEngineValidator<BlockchainProvider>,
     overlay_manager: OverlayManager,
     tree_config: TreeConfig,
     sync_metrics_tx: MetricEventsSender,
@@ -70,7 +70,6 @@ pub fn build_engine_orchestrator<Client, S, V>(
 where
     Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
-    V: EngineValidator,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());
 

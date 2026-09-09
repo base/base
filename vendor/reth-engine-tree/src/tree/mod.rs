@@ -78,7 +78,7 @@ pub use block_buffer::BlockBuffer;
 pub use invalid_headers::InvalidHeaderCache;
 pub use metrics::EngineApiMetrics;
 pub use payload_processor::*;
-pub use payload_validator::{BasicEngineValidator, EngineValidator};
+pub use payload_validator::BasicEngineValidator;
 pub use persistence_state::PersistenceState;
 pub use reth_engine_primitives::TreeConfig;
 pub use reth_execution_cache::{
@@ -338,10 +338,10 @@ pub enum TreeAction {
 ///
 /// This type is responsible for processing engine API requests, maintaining the canonical state and
 /// emitting events.
-pub struct EngineApiTreeHandler<P, V> {
+pub struct EngineApiTreeHandler<P> {
     provider: P,
     consensus: Arc<BaseBeaconConsensus>,
-    payload_validator: V,
+    payload_validator: BasicEngineValidator<P>,
     /// Keeps track of internals such as executed and buffered blocks.
     state: EngineApiTreeState,
     /// The half for sending messages to the engine.
@@ -392,7 +392,7 @@ pub struct EngineApiTreeHandler<P, V> {
     runtime: reth_tasks::Runtime,
 }
 
-impl<P: Debug, V: Debug> std::fmt::Debug for EngineApiTreeHandler<P, V> {
+impl<P: Debug> std::fmt::Debug for EngineApiTreeHandler<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EngineApiTreeHandler")
             .field("provider", &self.provider)
@@ -417,7 +417,7 @@ impl<P: Debug, V: Debug> std::fmt::Debug for EngineApiTreeHandler<P, V> {
     }
 }
 
-impl<P, V> EngineApiTreeHandler<P, V>
+impl<P> EngineApiTreeHandler<P>
 where
     P: DatabaseProviderFactory
         + BlockReader<Block = BaseBlock>
@@ -434,14 +434,15 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    V: EngineValidator,
+    P: ChangeSetReader,
+    reth_storage_overlay::OverlayStateProviderFactory<P>: reth_storage_api::DatabaseProviderROFactory<Provider: reth_trie::trie_cursor::TrieCursorFactory + reth_trie::hashed_cursor::HashedCursorFactory> + Clone + 'static,
 {
     /// Creates a new [`EngineApiTreeHandler`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
         consensus: Arc<BaseBeaconConsensus>,
-        payload_validator: V,
+        payload_validator: BasicEngineValidator<P>,
         outgoing: UnboundedSender<EngineApiEvent>,
         state: EngineApiTreeState,
         canonical_in_memory_state: CanonicalInMemoryState,
@@ -491,7 +492,7 @@ where
     pub fn spawn_new(
         provider: P,
         consensus: Arc<BaseBeaconConsensus>,
-        payload_validator: V,
+        payload_validator: BasicEngineValidator<P>,
         persistence: PersistenceHandle,
         payload_builder: PayloadBuilderHandle,
         canonical_in_memory_state: CanonicalInMemoryState,
@@ -3041,7 +3042,7 @@ where
         &mut self,
         block_id: BlockWithParent,
         input: Input,
-        execute: impl FnOnce(&mut V, Input, TreeCtx<'_>) -> Result<ValidationOutput, Err>,
+        execute: impl FnOnce(&mut BasicEngineValidator<P>, Input, TreeCtx<'_>) -> Result<ValidationOutput, Err>,
         convert_to_block: impl FnOnce(&mut Self, Input) -> Result<SealedBlock, Err>,
     ) -> Result<InsertPayloadOk, Err>
     where

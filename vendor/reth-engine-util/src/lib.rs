@@ -11,7 +11,9 @@
 use std::path::PathBuf;
 
 use base_execution_evm::BaseEvmConfig;
-use futures::{Future, Stream};
+use futures::Stream;
+use base_execution_chainspec::ChainSpecProvider;
+use base_execution_payload_builder::BaseEngineValidator;
 use reth_engine_primitives::BeaconEngineMessage;
 use tokio_util::either::Either;
 
@@ -26,10 +28,6 @@ use skip_new_payload::EngineSkipNewPayload;
 
 pub mod reorg;
 use reorg::EngineReorg;
-
-/// The result type for `maybe_reorg` method.
-type MaybeReorgResult<S, Provider, Validator, E> =
-    Result<Either<EngineReorg<S, Provider, Validator>, S>, E>;
 
 /// The collection of stream extensions for engine API message stream.
 pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
@@ -105,14 +103,14 @@ pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
     }
 
     /// Creates reorgs with specified frequency.
-    fn reorg<Provider, Validator>(
+    fn reorg<Provider>(
         self,
         provider: Provider,
         evm_config: BaseEvmConfig,
-        payload_validator: Validator,
+        payload_validator: BaseEngineValidator,
         frequency: usize,
         depth: Option<usize>,
-    ) -> EngineReorg<Self, Provider, Validator>
+    ) -> EngineReorg<Self, Provider>
     where
         Self: Sized,
     {
@@ -126,41 +124,25 @@ pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
         )
     }
 
-    /// If frequency is [Some], returns the stream that creates reorgs with
-    /// specified frequency. Otherwise, returns `Self`.
-    ///
-    /// The `payload_validator_fn` closure is only called if `frequency` is `Some`,
-    /// allowing for lazy initialization of the validator.
-    fn maybe_reorg<Provider, Validator, E, F, Fut>(
+    /// Adds synthetic reorgs when a frequency is configured.
+    fn maybe_reorg<Provider: ChainSpecProvider>(
         self,
         provider: Provider,
         evm_config: BaseEvmConfig,
-        payload_validator_fn: F,
         frequency: Option<usize>,
         depth: Option<usize>,
-    ) -> impl Future<Output = MaybeReorgResult<Self, Provider, Validator, E>> + Send
+    ) -> Either<EngineReorg<Self, Provider>, Self>
     where
-        Self: Sized + Send,
-        Provider: Send,
-        F: FnOnce() -> Fut + Send,
-        Fut: Future<Output = Result<Validator, E>> + Send,
+        Self: Sized,
     {
-        async move {
-            if let Some(frequency) = frequency {
-                let validator = payload_validator_fn().await?;
-                Ok(Either::Left(reorg::EngineReorg::new(
-                    self,
-                    provider,
-                    evm_config,
-                    validator,
-                    frequency,
-                    depth.unwrap_or_default(),
-                )))
-            } else {
-                Ok(Either::Right(self))
-            }
+        if let Some(frequency) = frequency {
+            let validator = BaseEngineValidator::new(provider.chain_spec());
+            Either::Left(EngineReorg::new(self, provider, evm_config, validator, frequency, depth.unwrap_or_default()))
+        } else {
+            Either::Right(self)
         }
     }
+
 }
 
 impl<S> EngineMessageStreamExt for S where S: Stream<Item = BeaconEngineMessage> {}

@@ -181,7 +181,7 @@ type ReceiptRootReceiver = tokio::sync::oneshot::Receiver<(B256, alloy_primitive
 
 /// Context providing access to tree state during validation.
 ///
-/// This context is provided to the [`EngineValidator`] and includes the state of the tree's
+/// This context is provided to the [`BasicEngineValidator`] and includes the state of the tree's
 /// internals
 pub struct TreeCtx<'a> {
     /// The engine API tree state
@@ -226,13 +226,7 @@ impl<'a> TreeCtx<'a> {
     }
 }
 
-/// A helper type that provides reusable payload validation logic for network-specific validators.
-///
-/// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
-///
-/// This type contains common validation, execution, and state root computation logic that can be
-/// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
-/// used as a standalone component, but rather as a building block for concrete implementations.
+/// Executes and validates Base blocks and payloads, retaining execution and state-root caches.
 #[derive(derive_more::Debug)]
 pub struct BasicEngineValidator<P> {
     /// Provider for database access.
@@ -1614,75 +1608,7 @@ where
     }
 }
 
-/// Type that validates the payloads processed by the engine.
-///
-/// This provides the necessary functions for validating/executing payloads/blocks.
-pub trait EngineValidator: Send + Sync + 'static {
-    /// Validates the payload attributes with respect to the header.
-    ///
-    /// By default, this enforces that the payload attributes timestamp is greater than the
-    /// timestamp according to:
-    ///   > 7. Client software MUST ensure that payloadAttributes.timestamp is greater than
-    ///   > timestamp
-    ///   > of a block referenced by forkchoiceState.headBlockHash.
-    ///
-    /// See also: <https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#specification-1>
-    fn validate_payload_attributes_against_header(
-        &self,
-        attr: &BasePayloadBuilderAttributes,
-        header: &base_common_consensus::Header,
-    ) -> Result<(), InvalidPayloadAttributesError>;
-
-    /// Ensures that the given payload does not violate any consensus rules that concern the block's
-    /// layout.
-    ///
-    /// This function must convert the payload into the executable block and pre-validate its
-    /// fields.
-    ///
-    /// Implementers should ensure that the checks are done in the order that conforms with the
-    /// engine-API specification.
-    fn convert_payload_to_block(
-        &self,
-        payload: base_common_rpc_types_engine::ExecutionData,
-    ) -> Result<SealedBlock, NewPayloadError>;
-
-    /// Validates a payload received from engine API.
-    fn validate_payload(
-        &mut self,
-        payload: base_common_rpc_types_engine::ExecutionData,
-        ctx: TreeCtx<'_>,
-    ) -> ValidationOutcome;
-
-    /// Validates a block downloaded from the network.
-    fn validate_block(&mut self, block: SealedBlock, ctx: TreeCtx<'_>) -> ValidationOutcome;
-
-    /// Hook called after an executed block is inserted directly into the tree.
-    ///
-    /// This is invoked when blocks are inserted via `InsertExecutedBlock` (e.g., locally built
-    /// blocks by sequencers) to allow implementations to update internal state such as caches.
-    fn on_inserted_executed_block(
-        &self,
-        block: BuiltPayloadExecutedBlock,
-    ) -> ProviderResult<ExecutedBlock>;
-
-    /// Notifies the validator that `hash` is the current canonical head.
-    ///
-    /// This may also be called when a forkchoice update reaffirms the existing head.
-    fn on_canonical_head_changed(&self, _hash: B256, _state: &EngineApiTreeState) {}
-
-    /// Prepares the resources loaned to a payload builder job.
-    ///
-    /// `timestamp` is taken from the payload attributes.
-    fn payload_builder_resources(
-        &self,
-        parent_hash: B256,
-        parent_header: &base_common_consensus::Header,
-        timestamp: u64,
-        state: &mut EngineApiTreeState,
-    ) -> PayloadBuilderResources;
-}
-
-impl<P> EngineValidator for BasicEngineValidator<P>
+impl<P> BasicEngineValidator<P>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1703,7 +1629,16 @@ where
         + Clone
         + 'static,
 {
-    fn validate_payload_attributes_against_header(
+    /// Validates the payload attributes with respect to the header.
+    ///
+    /// By default, this enforces that the payload attributes timestamp is greater than the
+    /// timestamp according to:
+    ///   > 7. Client software MUST ensure that payloadAttributes.timestamp is greater than
+    ///   > timestamp
+    ///   > of a block referenced by forkchoiceState.headBlockHash.
+    ///
+    /// See also: <https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#specification-1>
+    pub fn validate_payload_attributes_against_header(
         &self,
         attr: &BasePayloadBuilderAttributes,
         header: &base_common_consensus::Header,
@@ -1711,7 +1646,15 @@ where
         self.validator.validate_payload_attributes_against_header(attr, header)
     }
 
-    fn convert_payload_to_block(
+    /// Ensures that the given payload does not violate any consensus rules that concern the block's
+    /// layout.
+    ///
+    /// This function must convert the payload into the executable block and pre-validate its
+    /// fields.
+    ///
+    /// Implementers should ensure that the checks are done in the order that conforms with the
+    /// engine-API specification.
+    pub fn convert_payload_to_block(
         &self,
         payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<SealedBlock, NewPayloadError> {
@@ -1719,7 +1662,8 @@ where
         Ok(block)
     }
 
-    fn validate_payload(
+    /// Validates a payload received from engine API.
+    pub fn validate_payload(
         &mut self,
         payload: base_common_rpc_types_engine::ExecutionData,
         ctx: TreeCtx<'_>,
@@ -1727,11 +1671,16 @@ where
         self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
     }
 
-    fn validate_block(&mut self, block: SealedBlock, ctx: TreeCtx<'_>) -> ValidationOutcome {
+    /// Validates a block downloaded from the network.
+    pub fn validate_block(&mut self, block: SealedBlock, ctx: TreeCtx<'_>) -> ValidationOutcome {
         self.validate_block_with_state(BlockOrPayload::Block(block), ctx)
     }
 
-    fn on_inserted_executed_block(
+    /// Hook called after an executed block is inserted directly into the tree.
+    ///
+    /// This is invoked when blocks are inserted via `InsertExecutedBlock` (e.g., locally built
+    /// blocks by sequencers) to allow implementations to update internal state such as caches.
+    pub fn on_inserted_executed_block(
         &self,
         block: BuiltPayloadExecutedBlock,
     ) -> ProviderResult<ExecutedBlock> {
@@ -1748,7 +1697,10 @@ where
         ))
     }
 
-    fn on_canonical_head_changed(&self, hash: B256, state: &EngineApiTreeState) {
+    /// Notifies the validator that `hash` is the current canonical head.
+    ///
+    /// This may also be called when a forkchoice update reaffirms the existing head.
+    pub fn on_canonical_head_changed(&self, hash: B256, state: &EngineApiTreeState) {
         let Some(txpool_prewarm) = self.txpool_prewarm.as_ref() else { return };
 
         // Obtain the header of the new canonical head; pool transactions are warmed on top of
@@ -1798,7 +1750,10 @@ where
         txpool_prewarm.start(parent.hash(), evm_env, provider_builder)
     }
 
-    fn payload_builder_resources(
+    /// Prepares the resources loaned to a payload builder job.
+    ///
+    /// `timestamp` is taken from the payload attributes.
+    pub fn payload_builder_resources(
         &self,
         parent_hash: B256,
         parent_header: &base_common_consensus::Header,
