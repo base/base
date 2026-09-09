@@ -21,6 +21,7 @@ alloy-primitives.workspace = true
 # base
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
+base-common-eip8130.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 

@@ -28,6 +28,13 @@ pub use executor::{
 
 mod registry;
 
+pub use base_common_eip8130::{
+    AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput,
+};
+
+mod nonce_manager;
+pub use nonce_manager::{NonceManager, NonceOverflow};
+
 mod transition;
 pub use transition::{BaseForkActivations, IrregularStateChange};
 

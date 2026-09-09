@@ -3576,6 +3576,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-eip8130"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-common-consensus",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-common-evm"
 version = "0.0.0"
 dependencies = [
@@ -3616,6 +3626,7 @@ dependencies = [
  "alloy-primitives",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-eip8130",
  "base-common-evm",
  "base-common-genesis",
  "base-common-l1-fees",
@@ -3708,6 +3719,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-chains",
+ "base-common-eip8130",
  "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",
@@ -4353,6 +4365,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-consensus",
+ "base-common-eip8130",
  "base-common-precompiles",
  "base-precompile-macros",
  "base-precompile-storage",

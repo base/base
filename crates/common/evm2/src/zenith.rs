@@ -1,6 +1,7 @@
 //! Zenith EIP-8130 system-account stub transition.
 
-use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY, address};
+use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
+use base_common_eip8130::NonceManagerSlots;
 use base_common_genesis::BaseUpgrade;
 use evm2::{
     AccountInfo, Evm,
@@ -23,11 +24,11 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// therefore must be made non-empty so EIP-161 end-of-block state clearing does not reap them
 /// together with their storage.
 ///
-/// Only the `NonceManager` storage account qualifies (mirrors `base_common_precompiles`'
-/// `NonceManagerStorage::ADDRESS`; hardcoded here to keep this crate revm-free): it persists the
-/// 2D nonce channels in the state trie while never being a deployed contract.
-const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] =
-    [address!("0x813000000000000000000000000000000000aa01")];
+/// Only the `NonceManager` storage account qualifies: it persists the 2D nonce channels in the
+/// state trie while never being a deployed contract. Sourced from the engine-neutral
+/// [`NonceManagerSlots`] so this crate stays revm-free while still sharing one address with the
+/// `base_common_precompiles` `NonceManagerStorage::ADDRESS`.
+const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerSlots::ADDRESS];
 
 /// The Zenith EIP-8130 system-account transition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

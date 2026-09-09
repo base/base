@@ -593,12 +593,17 @@ impl IntrinsicGas {
     /// `expiry`, `scope`) then the `policyData` offset word, and the `policyData`
     /// `(length, data)` tail lives at that offset. This **follows the offset
     /// pointer** rather than assuming the canonical `0xA0`, so the length read
-    /// here is exactly the one [`AccountChangeApplier::decode_authorize`] reads:
-    /// the metering can never disagree with execution on the danger direction
+    /// here is exactly the one the revm apply path's `AccountChangeApplier::decode_authorize`
+    /// reads (the `authorize_attaches_policy_agrees_with_apply_decode` test in
+    /// `base-execution-eip8130` pins this): the metering can never disagree with
+    /// execution on the danger direction
     /// (metering "no policy" while a 52-byte policy is written). A payload whose
     /// pointer is out of range is metered as no policy — the validating decoder
     /// rejects it and the transaction reverts regardless.
-    fn authorize_attaches_policy(payload: &[u8]) -> bool {
+    ///
+    /// Public so the revm apply path (`base-execution-eip8130`) can pin its
+    /// validating decoder's policy detection against this metering predicate.
+    pub fn authorize_attaches_policy(payload: &[u8]) -> bool {
         const OFFSET_WORD: usize = 4 * 32;
         if payload.len() < OFFSET_WORD + 32 {
             return false;
@@ -624,7 +629,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::AccountChangeApplier;
 
     /// Builds an `AuthorizeActor` op payload `abi.encode(actorId, ActorConfig, policyData)`.
     fn authorize_op(
@@ -770,51 +774,6 @@ mod tests {
             U256::from_be_slice(&attached[160..192]),
             U256::from(Eip8130Constants::POLICY_DATA_LEN)
         );
-    }
-
-    #[test]
-    fn authorize_attaches_policy_agrees_with_apply_decode() {
-        // Cross-file coupling guard: whenever the apply-side (validating) decoder
-        // accepts a payload, intrinsic metering must agree with the *decoded*
-        // policyData on whether policy is attached. `authorize_attaches_policy`
-        // follows the same ABI offset pointer the decoder does, so it cannot
-        // under-meter (report "no policy" while a 52-byte policy is written) — the
-        // exact drift a naive "canonical offset only" check would risk if the
-        // decoder were ever relaxed.
-        let build = |policy: &[u8]| -> Vec<u8> {
-            (
-                B256::repeat_byte(0x11),
-                ActorConfigAbi {
-                    authenticator: Address::ZERO,
-                    scope: Eip8130Constants::SCOPE_OPERATOR,
-                    expiry: alloy_primitives::Uint::ZERO,
-                },
-                Bytes::from(policy.to_vec()),
-            )
-                .abi_encode_params()
-        };
-        for policy in [vec![], vec![0u8; Eip8130Constants::POLICY_DATA_LEN]] {
-            let payload = build(&policy);
-            let (_, _, decoded) = AccountChangeApplier::decode_authorize(&payload).unwrap();
-            assert_eq!(
-                IntrinsicGas::authorize_attaches_policy(&payload),
-                AccountChangeApplier::policy_attached(&decoded),
-            );
-        }
-
-        // Hand-corrupt the offset pointer to a non-canonical (but in-range) value.
-        // The validating decoder follows the pointer (it does *not* reject this),
-        // landing on an all-zero word ⇒ length 0 ⇒ no policy; the metering follows
-        // the same pointer and agrees. A canonical-offset-only check would have
-        // mismatched here.
-        let mut corrupted = build(&[0u8; Eip8130Constants::POLICY_DATA_LEN]);
-        corrupted[128..160].copy_from_slice(&U256::from(192).to_be_bytes::<32>());
-        let (_, _, decoded) = AccountChangeApplier::decode_authorize(&corrupted).unwrap();
-        assert_eq!(
-            IntrinsicGas::authorize_attaches_policy(&corrupted),
-            AccountChangeApplier::policy_attached(&decoded),
-        );
-        assert!(!AccountChangeApplier::policy_attached(&decoded));
     }
 
     #[test]

@@ -12,7 +12,8 @@ use evm2::{
 };
 
 use crate::{
-    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Zenith, transaction::BaseTxEnvelope,
+    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, IntrinsicGas, Zenith,
+    transaction::BaseTxEnvelope,
 };
 
 /// Error returned when a block's cumulative gas used would overflow `u64`.
@@ -60,12 +61,13 @@ impl core::error::Error for PreExecutionError {}
 /// Error returned when a transaction's reserved gas exceeds the block's remaining gas.
 ///
 /// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
-/// transaction whose gas limit is larger than the block's unused gas cannot be included. The
-/// reserved gas is the transaction's gas limit (EIP-8130's additional payer-auth reservation does
-/// not apply here, as that transaction type is not yet supported).
+/// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
+/// reserved gas is the transaction's gas limit, plus — for an EIP-8130 transaction — the payer's
+/// worst-case authentication gas ([`IntrinsicGas::max_payer_auth_cost`]), which is metered on top
+/// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGasLimitExceeded {
-    /// The transaction's reserved gas (its gas limit).
+    /// The transaction's reserved gas (gas limit, plus EIP-8130 payer-auth reservation).
     pub transaction_gas_limit: u64,
     /// The block's remaining available gas (block gas limit minus cumulative gas used).
     pub block_available_gas: u64,
@@ -252,17 +254,24 @@ impl<'a> BaseBlockExecutor<'a> {
         let is_deposit = tx.is_deposit();
         let signer = tx.signer();
 
-        // Reject a transaction whose gas limit exceeds the block's remaining gas, before executing
-        // it. Pre-Regolith deposits are exempt (matching the reference's `is_regolith || !is_deposit`
-        // guard); every other transaction — including post-Regolith deposits — is checked.
-        let gas_limit = tx.gas_limit();
+        // Reject a transaction whose reserved gas exceeds the block's remaining gas, before
+        // executing it. For an EIP-8130 transaction the reservation adds the payer's worst-case
+        // authentication gas (metered on top of the sender-signed gas limit), matching the
+        // reference `reserved_block_gas`. Pre-Regolith deposits are exempt (matching the reference's
+        // `is_regolith || !is_deposit` guard); every other transaction is checked.
+        let mut reserved_gas = tx.gas_limit();
+        if let Some(signed) = tx.as_eip8130() {
+            let payer_auth =
+                IntrinsicGas::max_payer_auth_cost(signed).map_err(HandlerError::external)?;
+            reserved_gas = reserved_gas.saturating_add(payer_auth);
+        }
         let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
         let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);
         let is_regolith =
             (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
-        if gas_limit > block_available_gas && (is_regolith || !is_deposit) {
+        if reserved_gas > block_available_gas && (is_regolith || !is_deposit) {
             return Err(HandlerError::external(BlockGasLimitExceeded {
-                transaction_gas_limit: gas_limit,
+                transaction_gas_limit: reserved_gas,
                 block_available_gas,
             }));
         }
