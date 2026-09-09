@@ -30,7 +30,7 @@ mod subscriptions {
     use super::BalNotification;
 
     /// A stream of [`BalNotification`]s.
-    pub type BalNotificationStream = reth_tokio_util::EventStream<BalNotification>;
+    pub type BalNotificationStream = base_common_runtime_tasks::EventStream<BalNotification>;
 }
 
 /// Store for Block Access Lists (BALs).
@@ -320,7 +320,7 @@ impl BalStore for NoopBalStore {
 
     #[cfg(feature = "std")]
     fn bal_stream(&self) -> BalNotificationStream {
-        reth_tokio_util::EventSender::new(1).new_listener()
+        base_common_runtime_tasks::EventSender::new(1).new_listener()
     }
 }
 
@@ -447,7 +447,7 @@ mod tests {
 
         #[cfg(feature = "std")]
         fn bal_stream(&self) -> BalNotificationStream {
-            reth_tokio_util::EventSender::new(1).new_listener()
+            base_common_runtime_tasks::EventSender::new(1).new_listener()
         }
     }
 }

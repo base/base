@@ -29,7 +29,7 @@ use reth_storage_api::{
     StateRangeProviderFactory, noop::NoopProvider,
 };
 use reth_tasks::Runtime;
-use reth_tokio_util::EventStream;
+use base_common_runtime_tasks::EventStream;
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},

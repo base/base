@@ -18,7 +18,7 @@ use reth_storage_api::{
     BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, RawBal,
 };
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 
 use crate::providers::RocksDBProvider;
 

@@ -194,7 +194,6 @@ members = [
   "vendor/reth-storage-overlay",
   "vendor/reth-tasks",
   "vendor/reth-testing-utils",
-  "vendor/reth-tokio-util",
   "vendor/reth-tracing",
   "vendor/reth-tracing-otlp",
   "vendor/reth-trie",
@@ -506,7 +505,6 @@ reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 reth-db-common = { path = "vendor/reth-db-common", default-features = false }
 reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
 reth-db-models = { path = "vendor/reth-db-models", default-features = false }
-reth-tokio-util = { path = "vendor/reth-tokio-util", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }

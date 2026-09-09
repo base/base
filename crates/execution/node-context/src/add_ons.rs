@@ -2,7 +2,7 @@
 
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_node_core::node_config::NodeConfig;
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 
 /// Components and configuration available while launching Base RPC services.
 #[derive(Debug, Clone)]

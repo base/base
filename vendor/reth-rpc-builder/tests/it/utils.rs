@@ -6,7 +6,7 @@ use reth_rpc_builder::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
 };
 use reth_tasks::Runtime;
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 
 /// Localhost with port 0 so a free port is used.
 pub const fn test_address() -> SocketAddr {

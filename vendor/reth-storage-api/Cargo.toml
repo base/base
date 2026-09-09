@@ -30,8 +30,8 @@ base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
 alloy-hardforks = { workspace = true, optional = true }
-reth-tokio-util = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
+base-common-runtime-tasks = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
@@ -58,7 +58,7 @@ std = [
     "reth-db-models/std",
     "reth-trie-common/std",
     "serde_json?/std",
-    "dep:reth-tokio-util",
+    "dep:base-common-runtime-tasks",
     "alloy-eip7928/std",
 ]
 

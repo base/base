@@ -18,7 +18,7 @@ use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::He
 use reth_node_events::node;
 use reth_provider::{BlockNumReader, StorageSettingsCache};
 use reth_storage_overlay::OverlayManager;
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 use reth_tracing::tracing::{debug, error, info};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;

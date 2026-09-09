@@ -22,7 +22,7 @@ use reth_network_p2p::{
 };
 use reth_network_peers::{NodeRecord, PeerId};
 use reth_network_types::{PeerAddr, PeerKind};
-use reth_tokio_util::EventStream;
+use base_common_runtime_tasks::EventStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{Stream, StreamExt, wrappers::UnboundedReceiverStream};
 

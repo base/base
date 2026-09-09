@@ -16,7 +16,7 @@ use reth_provider::{
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
 };
 use reth_static_file::StaticFileProducer;
-use reth_tokio_util::{EventSender, EventStream};
+use base_common_runtime_tasks::{EventSender, EventStream};
 use tokio::sync::watch;
 use tracing::*;
 

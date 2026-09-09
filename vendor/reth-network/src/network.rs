@@ -28,7 +28,7 @@ use reth_network_api::{
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState, SyncStateProvider};
 use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};
 use reth_network_types::{PeerAddr, PeerKind, Reputation, ReputationChangeKind};
-use reth_tokio_util::{EventSender, EventStream};
+use base_common_runtime_tasks::{EventSender, EventStream};
 use secp256k1::SecretKey;
 use tokio::sync::{
     mpsc::{self, UnboundedSender},

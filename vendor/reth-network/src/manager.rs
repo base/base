@@ -43,7 +43,7 @@ use reth_network_peers::{NodeRecord, PeerId};
 use reth_network_types::ReputationChangeKind;
 use reth_storage_api::BlockNumReader;
 use reth_tasks::shutdown::GracefulShutdown;
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;

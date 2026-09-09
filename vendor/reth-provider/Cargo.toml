@@ -27,7 +27,6 @@ alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-tokio-util = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
@@ -35,6 +34,7 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-storage-overlay = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

@@ -17,7 +17,7 @@ use reth_node_core::{
 use reth_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use reth_rpc_builder::RpcServerHandle;
 use reth_tasks::TaskExecutor;
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 
 use crate::EngineShutdown;
 

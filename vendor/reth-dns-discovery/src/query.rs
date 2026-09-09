@@ -13,7 +13,7 @@ use std::{
 use alloy_primitives::keccak256;
 use data_encoding::BASE32_NOPAD;
 use enr::EnrKeyUnambiguous;
-use reth_tokio_util::ratelimit::{Rate, RateLimit};
+use base_common_runtime_tasks::ratelimit::{Rate, RateLimit};
 
 use crate::{
     error::{LookupError, LookupResult},

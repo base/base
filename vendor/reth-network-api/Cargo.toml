@@ -16,21 +16,21 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-thiserror = { workspace = true }
 auto_impl = { workspace = true }
+thiserror = { workspace = true }
 alloy-eip2124 = { workspace = true }
-reth-tokio-util = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 enr = { workspace = true, features = ["rust-secp256k1"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 

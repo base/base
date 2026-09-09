@@ -11,7 +11,7 @@ use reth_eth_wire_types::{DisconnectReason, ProtocolVersion};
 use reth_network_p2p::{NoopFullBlockClient, sync::NetworkSyncUpdater};
 use reth_network_peers::NodeRecord;
 use reth_network_types::{PeerKind, Reputation, ReputationChangeKind};
-use reth_tokio_util::{EventSender, EventStream};
+use base_common_runtime_tasks::{EventSender, EventStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

@@ -17,7 +17,7 @@ use reth_prune_types::PruneModes;
 use reth_stages_types::StageId;
 use reth_static_file_types::{HighestStaticFiles, StaticFileTargets};
 use reth_storage_errors::provider::ProviderResult;
-use reth_tokio_util::{EventSender, EventStream};
+use base_common_runtime_tasks::{EventSender, EventStream};
 use tracing::{debug, trace};
 
 use crate::{StaticFileProducerEvent, segments, segments::Segment};

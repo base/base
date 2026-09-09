@@ -6,7 +6,7 @@ use std::time::Duration;
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
 use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 use serde_json::Value;
 
 use crate::utils::{launch_ws, test_rpc_registry};

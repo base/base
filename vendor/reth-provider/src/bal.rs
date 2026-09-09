@@ -12,7 +12,7 @@ use reth_storage_api::{
     BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, RawBal,
 };
 use reth_storage_errors::provider::ProviderResult;
-use reth_tokio_util::EventSender;
+use base_common_runtime_tasks::EventSender;
 
 mod rocksdb;
 pub use rocksdb::RocksDBBalStore;

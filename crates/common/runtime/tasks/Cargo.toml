@@ -15,19 +15,18 @@ workspace = true
 thiserror = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
+tokio = {workspace = true,  features = ["default", "sync"]}
+tokio-stream = {workspace = true,  features = ["default", "sync"]}
 rand = { workspace = true, optional = true, features = ["default"] }
-tokio = { workspace = true, optional = true, features = ["default"] }
 tokio-util = { workspace = true, optional = true, features = ["default"] }
-tokio-stream = { workspace = true, optional = true, features = ["default"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["default", "rt", "macros", "time", "sync"] }
+tokio = {features = ["default", "full", "macros", "rt", "sync", "time"], workspace = true}
 
 [features]
 default = ["tokio"]
 tokio = [
-    "dep:tokio",
-    "dep:tokio-stream",
     "dep:tokio-util",
     "tokio/macros",
     "tokio/rt",
@@ -35,3 +34,4 @@ tokio = [
     "tokio/time",
 ]
 test-utils = ["dep:rand"]
+time = ["tokio/time"]

@@ -4,7 +4,7 @@ use reth_network_api::{
     test_utils::PeersHandleProvider,
 };
 use reth_network_peers::{NodeRecord, PeerId};
-use reth_tokio_util::EventStream;
+use base_common_runtime_tasks::EventStream;
 use reth_tracing::tracing::info;
 
 /// Helper for network operations

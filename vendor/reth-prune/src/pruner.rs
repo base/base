@@ -11,7 +11,7 @@ use reth_provider::{
 };
 use reth_prune_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
 use reth_stages_types::StageId;
-use reth_tokio_util::{EventSender, EventStream};
+use base_common_runtime_tasks::{EventSender, EventStream};
 use tokio::sync::watch;
 use tracing::{debug, instrument};
 

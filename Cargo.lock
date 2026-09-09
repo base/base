@@ -2704,6 +2704,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3937,6 +3938,7 @@ dependencies = [
 name = "base-node-context"
 version = "0.0.0"
 dependencies = [
+ "base-common-runtime-tasks",
  "base-execution-evm-blocks",
  "base-execution-payload-builder",
  "base-execution-txpool",
@@ -3945,7 +3947,6 @@ dependencies = [
  "reth-node-core",
  "reth-provider",
  "reth-tasks",
- "reth-tokio-util",
 ]
 
 [[package]]
@@ -3961,6 +3962,7 @@ dependencies = [
  "alloy-rlp",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -4029,7 +4031,6 @@ dependencies = [
  "reth-static-file",
  "reth-storage-overlay",
  "reth-tasks",
- "reth-tokio-util",
  "reth-tracing",
  "reth-trie",
  "rstest",
@@ -13913,6 +13914,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "base-common-chain-config",
+ "base-common-runtime-tasks",
  "dashmap",
  "data-encoding",
  "enr",
@@ -13920,7 +13922,6 @@ dependencies = [
  "linked_hash_set",
  "rand 0.9.5",
  "reth-network-peers",
- "reth-tokio-util",
  "reth-tracing",
  "schnellru",
  "secp256k1 0.30.0",
@@ -13981,6 +13982,7 @@ dependencies = [
  "alloy-signer",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -14007,7 +14009,6 @@ dependencies = [
  "reth-rpc-server-types",
  "reth-stages-types",
  "reth-tasks",
- "reth-tokio-util",
  "reth-tracing",
  "serde_json",
  "tempfile",
@@ -14487,6 +14488,7 @@ dependencies = [
  "aquamarine",
  "auto_impl",
  "base-common-chain-config",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-txpool",
@@ -14521,7 +14523,6 @@ dependencies = [
  "reth-storage-api",
  "reth-tasks",
  "reth-testing-utils",
- "reth-tokio-util",
  "reth-tracing",
  "reth-trie",
  "rustc-hash",
@@ -14547,6 +14548,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-admin",
  "auto_impl",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "derive_more",
  "enr",
@@ -14555,7 +14557,6 @@ dependencies = [
  "reth-network-p2p",
  "reth-network-peers",
  "reth-network-types",
- "reth-tokio-util",
  "serde",
  "thiserror 2.0.19",
  "tokio",
@@ -14816,6 +14817,7 @@ dependencies = [
  "alloy-primitives",
  "assert_matches",
  "base-common-chain-config",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-execution-evm-runtime",
@@ -14843,7 +14845,6 @@ dependencies = [
  "reth-storage-overlay",
  "reth-tasks",
  "reth-testing-utils",
- "reth-tokio-util",
  "reth-trie",
  "rocksdb",
  "serde_json",
@@ -14861,6 +14862,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "assert_matches",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "metrics",
  "reth-config",
@@ -14876,7 +14878,6 @@ dependencies = [
  "reth-storage-api",
  "reth-storage-errors",
  "reth-testing-utils",
- "reth-tokio-util",
  "reth-tracing",
  "rustc-hash",
  "thiserror 2.0.19",
@@ -14913,6 +14914,7 @@ dependencies = [
  "alloy-provider",
  "base-common-chain-config",
  "base-common-network",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -14939,7 +14941,6 @@ dependencies = [
  "reth-rpc-layer",
  "reth-rpc-server-types",
  "reth-tasks",
- "reth-tokio-util",
  "reth-tracing",
  "serde",
  "serde_json",
@@ -15110,6 +15111,7 @@ dependencies = [
  "assert_matches",
  "auto_impl",
  "base-common-chain-config",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
@@ -15128,7 +15130,6 @@ dependencies = [
  "reth-storage-errors",
  "reth-tasks",
  "reth-testing-utils",
- "reth-tokio-util",
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
@@ -15157,6 +15158,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "assert_matches",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "parking_lot",
  "rayon",
@@ -15169,7 +15171,6 @@ dependencies = [
  "reth-static-file-types",
  "reth-storage-errors",
  "reth-testing-utils",
- "reth-tokio-util",
  "tempfile",
  "tracing",
 ]
@@ -15202,6 +15203,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-chain-config",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-execution-evm-runtime",
@@ -15213,7 +15215,6 @@ dependencies = [
  "reth-prune-types",
  "reth-stages-types",
  "reth-storage-errors",
- "reth-tokio-util",
  "reth-trie-common",
  "serde_json",
  "tokio",
@@ -15296,15 +15297,6 @@ dependencies = [
  "rand 0.9.5",
  "reth-primitives-traits",
  "secp256k1 0.30.0",
-]
-
-[[package]]
-name = "reth-tokio-util"
-version = "0.0.0"
-dependencies = [
- "tokio",
- "tokio-stream",
- "tracing",
 ]
 
 [[package]]
