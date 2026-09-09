@@ -12,7 +12,6 @@ use base_execution_evm_machine::{
     Block, ContextTr, ExecutionResult, HaltReasonTr, JournalTr, Output, ResultAndState, TransactTo,
     Transaction,
 };
-use base_execution_evm_runtime::JournalExt;
 use base_execution_evm_runtime::{
     DatabaseRef, Inspector,
     bytecode::OpCode,

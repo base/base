@@ -36,7 +36,7 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockIdReader, ProviderTx};
 use reth_storage_errors::provider::ProviderError;
-use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
+use base_execution_evm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 
 use crate::BaseEthApi;

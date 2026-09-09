@@ -3368,6 +3368,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-evm-inspectors"
+version = "0.0.0"
+dependencies = [
+ "alloy-hardforks 0.4.7",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anstyle",
+ "base-common-types-rpc",
+ "base-execution-evm-machine",
+ "base-execution-evm-runtime",
+ "boa_engine",
+ "boa_gc",
+ "colorchoice",
+ "criterion",
+ "serde",
+ "serde_json",
+ "snapbox",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-execution-evm-machine"
 version = "0.0.0"
 dependencies = [
@@ -3596,6 +3617,7 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-execution-evm-blocks",
+ "base-execution-evm-inspectors",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-payload-builder",
@@ -3640,7 +3662,6 @@ dependencies = [
  "reth-tasks",
  "reth-testing-utils",
  "reth-trie-common",
- "revm-inspectors",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -14988,6 +15009,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-execution-evm-blocks",
+ "base-execution-evm-inspectors",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-txpool",
@@ -15012,7 +15034,6 @@ dependencies = [
  "reth-storage-api",
  "reth-storage-errors",
  "reth-tasks",
- "revm-inspectors",
  "schnellru",
  "serde",
  "serde_json",
@@ -15455,27 +15476,6 @@ name = "reth-zstd-compressors"
 version = "0.0.0"
 dependencies = [
  "zstd",
-]
-
-[[package]]
-name = "revm-inspectors"
-version = "0.0.0"
-dependencies = [
- "alloy-hardforks 0.4.7",
- "alloy-primitives",
- "alloy-sol-types",
- "anstyle",
- "base-common-types-rpc",
- "base-execution-evm-machine",
- "base-execution-evm-runtime",
- "boa_engine",
- "boa_gc",
- "colorchoice",
- "criterion",
- "serde",
- "serde_json",
- "snapbox",
- "thiserror 2.0.19",
 ]
 
 [[package]]

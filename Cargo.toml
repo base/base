@@ -204,7 +204,7 @@ members = [
   "vendor/reth-trie-common",
   "vendor/reth-trie-sparse",
   "vendor/reth-zstd-compressors",
-  "vendor/revm-inspectors",
+  "crates/execution/evm/inspectors",
   "crates/execution/evm/crypto",
   "crates/execution/evm/primitives",
 ]
@@ -445,7 +445,7 @@ base-balance-monitor = { path = "crates/utilities/balance-monitor", default-feat
 # revm
 base-execution-evm-machine = { path = "crates/execution/evm/machine", default-features = false }
 base-execution-evm-crypto = { path = "crates/execution/evm/crypto", default-features = false }
-revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
+base-execution-evm-inspectors = { path = "crates/execution/evm/inspectors", default-features = false }
 base-execution-evm-primitives = { path = "crates/execution/evm/primitives", default-features = false }
 base-execution-state-memory = { path = "crates/execution/state/memory", default-features = false }
 

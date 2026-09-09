@@ -1,5 +1,5 @@
 [package]
-name = "revm-inspectors"
+name = "base-execution-evm-inspectors"
 description = "Revm inspector implementations"
 version.workspace = true
 edition.workspace = true
@@ -20,7 +20,7 @@ autobenches = false
 readme = "README.md"
 
 [lib]
-name = "revm_inspectors"
+name = "base_execution_evm_inspectors"
 path = "src/lib.rs"
 
 [[bench]]

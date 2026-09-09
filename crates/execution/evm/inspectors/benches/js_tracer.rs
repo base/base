@@ -17,7 +17,7 @@ use base_execution_evm_runtime::{
     state::{AccountInfo, Bytecode},
 };
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use revm_inspectors::tracing::js::JsInspector;
+use base_execution_evm_inspectors::tracing::js::JsInspector;
 use serde::Deserialize;
 
 const CONTRACT_REPETITIONS: usize = 5_000;

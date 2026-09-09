@@ -15,7 +15,7 @@ use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::ProviderTx;
-use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
+use base_execution_evm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 
 use crate::BaseEthApi;
 

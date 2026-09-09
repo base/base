@@ -14,7 +14,7 @@ use base_execution_evm_machine::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use reth_rpc_eth_types::{EthApiError, utils::binary_search};
 use reth_rpc_server_types::result::internal_rpc_err;
-use revm_inspectors::{
+use base_execution_evm_inspectors::{
     tracing::{TracingInspectorConfig, types::CallTraceNode},
     transfer::{TransferInspector, TransferKind},
 };

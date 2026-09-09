@@ -24,7 +24,7 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockNumReader, BlockReader};
 use reth_tasks::pool::BlockingTaskGuard;
-use revm_inspectors::{
+use base_execution_evm_inspectors::{
     opcode::OpcodeGasInspector,
     storage::StorageInspector,
     tracing::{TracingInspector, TracingInspectorConfig, parity::populate_state_diff},

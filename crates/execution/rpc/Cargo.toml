@@ -62,7 +62,7 @@ tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
-revm-inspectors = { workspace = true, features = ["default"] }
+base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
@@ -121,4 +121,4 @@ test-utils = [
     "reth-network/test-utils",
     "dep:reth-db-common",
 ]
-js-tracer = ["revm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer"]
+js-tracer = ["base-execution-evm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer"]

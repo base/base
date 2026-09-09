@@ -213,7 +213,7 @@ mod tests {
         );
     }
 
-    // <https://github.com/paradigmxyz/revm-inspectors/pull/353#issuecomment-36146608124>
+    // <https://github.com/paradigmxyz/base-execution-evm-inspectors/pull/353#issuecomment-36146608124>
     #[test]
     fn decode_string_revert() {
         let err = hex!(

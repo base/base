@@ -53,7 +53,7 @@ base-common-types-rpc = {workspace = true, features = []}
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
-revm-inspectors = { workspace = true, features = ["default"] }
+base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
@@ -70,4 +70,4 @@ base-protocol = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 [features]
-js-tracer = ["revm-inspectors/js-tracer"]
+js-tracer = ["base-execution-evm-inspectors/js-tracer"]

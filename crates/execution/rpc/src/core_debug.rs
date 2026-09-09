@@ -41,7 +41,7 @@ use reth_trie_common::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, root::storage_root_unsorted,
     updates::TrieUpdates,
 };
-use revm_inspectors::tracing::{DebugInspector, TransactionContext};
+use base_execution_evm_inspectors::tracing::{DebugInspector, TransactionContext};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;

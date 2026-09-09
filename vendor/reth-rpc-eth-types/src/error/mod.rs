@@ -27,7 +27,7 @@ use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
 use reth_storage_errors::provider::ProviderError;
-use revm_inspectors::tracing::{DebugInspectorError, MuxError};
+use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
 use tokio::sync::oneshot::error::RecvError;
 
 /// A trait to convert an error to an RPC error.
@@ -467,10 +467,10 @@ impl From<BalError> for EthApiError {
 }
 
 #[cfg(feature = "js-tracer")]
-impl From<revm_inspectors::tracing::js::JsInspectorError> for EthApiError {
-    fn from(error: revm_inspectors::tracing::js::JsInspectorError) -> Self {
+impl From<base_execution_evm_inspectors::tracing::js::JsInspectorError> for EthApiError {
+    fn from(error: base_execution_evm_inspectors::tracing::js::JsInspectorError) -> Self {
         match error {
-            err @ revm_inspectors::tracing::js::JsInspectorError::JsError(_) => {
+            err @ base_execution_evm_inspectors::tracing::js::JsInspectorError::JsError(_) => {
                 Self::InternalJsTracerError(err.to_string())
             }
             err => Self::InvalidParams(err.to_string()),
