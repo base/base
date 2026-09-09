@@ -18,11 +18,11 @@ workspace = true
 [dependencies]
 metrics = { workspace = true }
 metrics-derive = { workspace = true }
-reth-primitives-traits = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 futures = { workspace = true, optional = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"], optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true, features = ["default"] }
 [features]
-common = ["tokio", "futures", "tokio-util", "reth-primitives-traits"]
+common = ["tokio", "futures", "tokio-util", "base-common-types-chain"]

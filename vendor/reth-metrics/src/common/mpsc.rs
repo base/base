@@ -12,7 +12,7 @@ use std::{
 
 use futures::Stream;
 use metrics::Counter;
-use reth_primitives_traits::InMemorySize;
+use base_common_types_chain::InMemorySize;
 use tokio::sync::mpsc::{
     self,
     error::{SendError, TryRecvError, TrySendError},
