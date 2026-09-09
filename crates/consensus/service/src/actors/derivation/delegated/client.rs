@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_consensus_rpc::RollupNodeApiClient;
+use base_common_client_rollup::RollupNodeApiClient;
 use base_protocol::SyncStatus;
 use jsonrpsee::{
     core::ClientError,

@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 redb = { workspace = true }
 async-trait = { workspace = true }
-serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }

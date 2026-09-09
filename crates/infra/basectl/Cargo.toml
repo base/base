@@ -13,6 +13,7 @@ serde_yaml = { workspace = true }
 alloy-transport = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }
+base-common-client-rollup = {workspace = true}
 serde = { workspace = true, features = ["std"] }
 base-prover-service-client = { workspace = true }
 base-common-l1-transactions = { workspace = true }
@@ -42,7 +43,6 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 base-execution-evm-runtime = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["k256", "std"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
-base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["default", "serde", "std"]}
 tokio = { workspace = true, features = ["default", "macros", "net", "process", "time"] }

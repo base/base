@@ -11,12 +11,12 @@ use base_common_client_ethereum::{
     Provider, ProviderBuilder,
     ext::{AdminApi, NetApi},
 };
+use base_common_client_rollup::BaseP2PApiClient;
 use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
 use base_common_types_rpc::Direction;
 use base_common_types_rpc::PeerStats;
 use base_consensus_network_service::BootNode;
 use base_consensus_network_service::NodeRecord;
-use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,
     http_client::{HttpClient, HttpClientBuilder},

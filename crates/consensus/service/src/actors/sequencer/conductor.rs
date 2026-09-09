@@ -1,8 +1,8 @@
 use std::{fmt::Debug, time::Duration};
 
 use async_trait::async_trait;
+use base_common_client_rollup::ConductorApiClient;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_rpc::ConductorApiClient;
 use jsonrpsee::{
     core::ClientError,
     http_client::{HttpClient, HttpClientBuilder},

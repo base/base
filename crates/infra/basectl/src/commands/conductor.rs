@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 use anyhow::Result;
-use base_consensus_rpc::ServerSuffrage;
+use base_common_types_rpc::ServerSuffrage;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use tracing::warn;

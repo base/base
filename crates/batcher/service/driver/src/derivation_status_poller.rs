@@ -3,9 +3,9 @@
 use std::{future::Future, time::Duration};
 
 use crate::DerivationStatus;
+use base_common_client_rollup::RollupNodeApiClient;
 use base_common_runtime_tasks::AsyncRuntime as Runtime;
 use base_common_types_rpc::BlockNumberOrTag;
-use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use tokio::sync::mpsc;
 use tracing::warn;

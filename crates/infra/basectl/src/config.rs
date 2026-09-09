@@ -1,10 +1,10 @@
 use std::{cmp::Ordering, path::PathBuf};
 
 use alloy_primitives::Address;
-use base_common_client_ethereum::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
 use base_common_chain_config::{ChainConfig, rollup_config};
 use base_common_chain_config::{RollupConfig, UpgradeConfig};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use url::Url;
@@ -288,7 +288,7 @@ impl ConductorSource {
     /// discovered peers.
     pub fn synthesize_nodes(
         &self,
-        membership: &base_consensus_rpc::ClusterMembership,
+        membership: &base_common_types_rpc::ClusterMembership,
     ) -> Option<Vec<ConductorNodeConfig>> {
         let Self::Discover { bootstrap, ports } = self else { return None };
         let mut nodes = membership
@@ -829,7 +829,9 @@ impl MonitoringConfig {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
+    use base_common_types_rpc::ClusterMembership;
+    use base_common_types_rpc::ServerInfo;
+    use base_common_types_rpc::ServerSuffrage;
 
     use super::*;
 

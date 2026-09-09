@@ -54,10 +54,11 @@ derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
+base-consensus-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["default"]}
+base-common-client-rollup = {workspace = true, features = ["server"]}
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
-base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 base-common-types-payload = {workspace = true, features = ["std", "jwt", "serde"]}
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "time"] }

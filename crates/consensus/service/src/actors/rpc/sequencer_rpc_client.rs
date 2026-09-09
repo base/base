@@ -3,7 +3,8 @@
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_consensus_rpc::{SequencerAdminAPIClient, SequencerAdminAPIError};
+use base_consensus_rpc::SequencerAdminAPIClient;
+use base_consensus_rpc::SequencerAdminAPIError;
 use derive_more::Constructor;
 use tokio::sync::{mpsc, oneshot};
 

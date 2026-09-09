@@ -1,9 +1,11 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
-use base_consensus_rpc::{
-    AdminApiClient, BaseP2PApiClient, ClusterMembership, ConductorApiClient, RollupNodeApiClient,
-    ServerSuffrage,
-};
+use base_common_client_rollup::AdminApiClient;
+use base_common_client_rollup::BaseP2PApiClient;
+use base_common_client_rollup::ConductorApiClient;
+use base_common_client_rollup::RollupNodeApiClient;
+use base_common_types_rpc::ClusterMembership;
+use base_common_types_rpc::ServerSuffrage;
 use futures::{StreamExt, stream, stream::FuturesUnordered};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
@@ -1121,7 +1123,9 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
+    use base_common_types_rpc::ClusterMembership;
+    use base_common_types_rpc::ServerInfo;
+    use base_common_types_rpc::ServerSuffrage;
     use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
     use url::Url;
 

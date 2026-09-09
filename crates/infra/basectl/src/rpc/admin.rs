@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 use anyhow::{Context, Result, ensure};
-use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient};
+use base_common_client_rollup::AdminApiClient;
+use base_common_client_rollup::BaseP2PApiClient;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;

@@ -16,32 +16,27 @@ libp2p = { workspace = true }
 async-trait = { workspace = true }
 base-consensus-engine = { workspace = true }
 base-consensus-safedb = { workspace = true }
-serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 backon = { workspace = true, features = ["default"] }
 base-consensus-network-service = { workspace = true }
-getrandom = { workspace = true, features = ["wasm_js"] }
 tokio = { workspace = true, features = ["default", "time"] }
 alloy-eips = { workspace = true, features = ["serde", "std"] }
 base-common-types-rpc = {workspace = true, features = ["std"]}
 base-protocol = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
+base-common-client-rollup = {workspace = true, features = ["server"]}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
 
 [dev-dependencies]
-rstest = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "sync"] }
 
 [features]
 default = []
-reqwest = ["client"]
-client = ["jsonrpsee/async-client", "jsonrpsee/client", "jsonrpsee/http-client"]
 metrics = [
     "base-consensus-engine/metrics",
     "base-consensus-network-service/metrics",

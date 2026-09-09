@@ -11,25 +11,22 @@ use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
 use base_common_types_rpc::PeerCount;
 use base_common_types_rpc::PeerDump;
 use base_common_types_rpc::PeerStats;
+use base_common_types_rpc::RollupSyncStatus as SyncStatus;
+use base_common_types_rpc::SafeHeadResponse;
 use base_common_types_rpc::{ClusterMembership, HealthzResponse};
-use base_consensus_safedb::SafeHeadResponse;
-use base_protocol::SyncStatus;
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
-use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
-use jsonrpsee::{
-    core::{RpcResult, SubscriptionResult},
-    proc_macros::rpc,
-};
+#[cfg(feature = "server")]
+use jsonrpsee::core::{RpcResult, SubscriptionResult};
+use jsonrpsee::proc_macros::rpc;
 
-use crate::OutputResponse;
+use base_common_types_rpc::OutputResponse;
 
 /// Base rollup node RPC interface.
 ///
 /// https://docs.optimism.io/builders/node-operators/json-rpc
 /// https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/node/api.go#L114
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "optimism"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "optimism"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "optimism"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "optimism"))]
 pub trait RollupNodeApi {
     /// Get the output root at a specific block.
     #[method(name = "outputAtBlock")]
@@ -59,8 +56,8 @@ pub trait RollupNodeApi {
 ///
 /// Read-only, non-admin methods intended for node operators — including external operators — so they
 /// are exposed on the public RPC without requiring the (privileged) `admin` namespace to be enabled.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "base"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "base"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "base"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "base"))]
 pub trait BaseApi {
     /// Reports whether this node is ready for the contract-backed upgrades scheduled on L1.
     ///
@@ -82,8 +79,8 @@ pub trait BaseApi {
 }
 
 /// The opp2p namespace handles peer interactions.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "opp2p"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "opp2p"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "opp2p"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "opp2p"))]
 pub trait BaseP2PApi {
     /// Returns information of node
     #[method(name = "self")]
@@ -159,26 +156,26 @@ pub trait BaseP2PApi {
 }
 
 /// Websockets API for the node.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "ws"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "ws"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "ws"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "ws"))]
 #[async_trait]
 pub trait Ws {
     /// Subscribes to the stream of finalized head updates.
-    #[subscription(name = "subscribe_finalized_head", item = base_protocol::L2BlockInfo)]
+    #[subscription(name = "subscribe_finalized_head", item = base_common_types_chain::L2BlockInfo)]
     async fn ws_finalized_head_updates(&self) -> SubscriptionResult;
 
     /// Subscribes to the stream of safe head updates.
-    #[subscription(name = "subscribe_safe_head", item = base_protocol::L2BlockInfo)]
+    #[subscription(name = "subscribe_safe_head", item = base_common_types_chain::L2BlockInfo)]
     async fn ws_safe_head_updates(&self) -> SubscriptionResult;
 
     /// Subscribes to the stream of unsafe head updates.
-    #[subscription(name = "subscribe_unsafe_head", item = base_protocol::L2BlockInfo)]
+    #[subscription(name = "subscribe_unsafe_head", item = base_common_types_chain::L2BlockInfo)]
     async fn ws_unsafe_head_updates(&self) -> SubscriptionResult;
 }
 
 /// Development RPC API for engine state introspection.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "dev"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "dev"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "dev"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "dev"))]
 #[async_trait]
 pub trait DevEngineApi {
     /// Subscribe to engine queue length updates.
@@ -191,8 +188,8 @@ pub trait DevEngineApi {
 }
 
 /// The admin namespace for the consensus node.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "admin"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "admin"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "admin"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "admin"))]
 #[async_trait]
 pub trait AdminApi {
     /// Posts the unsafe payload.
@@ -244,8 +241,8 @@ pub trait AdminApi {
 }
 
 /// The admin namespace for the consensus node.
-#[cfg_attr(not(feature = "client"), rpc(server))]
-#[cfg_attr(feature = "client", rpc(server, client))]
+#[cfg_attr(not(feature = "server"), rpc(client))]
+#[cfg_attr(feature = "server", rpc(server, client))]
 pub trait HealthzApi {
     /// Gets the health of the base-node.
     #[method(name = "healthz")]
@@ -256,8 +253,8 @@ pub trait HealthzApi {
 ///
 /// Implemented by op-conductor nodes. See:
 /// <https://github.com/ethereum-optimism/optimism/blob/develop/op-conductor/rpc/api.go>
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "conductor"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "conductor"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "conductor"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "conductor"))]
 pub trait ConductorApi {
     /// Returns whether this node is the current Raft leader.
     #[method(name = "leader")]
@@ -315,7 +312,7 @@ pub trait ConductorApi {
     async fn conductor_cluster_membership(&self) -> RpcResult<ClusterMembership>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use core::net::IpAddr;
 
@@ -329,8 +326,8 @@ mod tests {
     use base_common_types_rpc::PeerCount;
     use base_common_types_rpc::PeerDump;
     use base_common_types_rpc::PeerStats;
-    use base_consensus_safedb::SafeHeadResponse;
-    use base_protocol::SyncStatus;
+    use base_common_types_rpc::RollupSyncStatus as SyncStatus;
+    use base_common_types_rpc::SafeHeadResponse;
     use ipnet::IpNet;
     use jsonrpsee::{
         PendingSubscriptionSink,
@@ -343,7 +340,7 @@ mod tests {
         DevEngineApiServer, HealthzApiServer, HealthzResponse, RollupNodeApiServer,
         UpgradeReadiness, WsServer,
     };
-    use crate::OutputResponse;
+    use base_common_types_rpc::OutputResponse;
 
     struct StubRollupNodeApi;
 

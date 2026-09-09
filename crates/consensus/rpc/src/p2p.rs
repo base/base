@@ -16,7 +16,8 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObject},
 };
 
-use crate::{BaseP2PApiServer, net::P2pRpc};
+use crate::net::P2pRpc;
+use base_common_client_rollup::BaseP2PApiServer;
 
 const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 

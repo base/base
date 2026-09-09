@@ -24,10 +24,12 @@ use jsonrpsee::{
 };
 use tracing::Instrument;
 
-use crate::{
-    EngineRpcClient, L1State, L1WatcherQueries, OutputResponse, RollupNodeApiServer,
-    l1_watcher::L1WatcherQuerySender,
-};
+use crate::EngineRpcClient;
+use crate::L1State;
+use crate::L1WatcherQueries;
+use crate::l1_watcher::L1WatcherQuerySender;
+use base_common_client_rollup::RollupNodeApiServer;
+use base_common_types_rpc::OutputResponse;
 
 static RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 

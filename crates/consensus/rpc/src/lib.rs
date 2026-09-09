@@ -26,18 +26,7 @@ mod dev;
 pub use dev::DevEngineRpc;
 
 mod health;
-pub use base_common_types_rpc::HealthzResponse;
 pub use health::HealthzRpc;
-
-mod jsonrpsee;
-#[cfg(feature = "client")]
-pub use jsonrpsee::{
-    AdminApiClient, BaseApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
-};
-pub use jsonrpsee::{
-    AdminApiServer, BaseApiServer, BaseP2PApiServer, ConductorApiServer, DevEngineApiServer,
-    HealthzApiServer, RollupNodeApiServer, WsServer,
-};
 
 mod l1_watcher;
 pub use l1_watcher::{L1State, L1WatcherQueries, L1WatcherQuerySender};
@@ -45,23 +34,10 @@ pub use l1_watcher::{L1State, L1WatcherQueries, L1WatcherQuerySender};
 mod net;
 pub use net::P2pRpc;
 
-pub use base_common_types_rpc::OutputResponse;
-
 mod p2p;
-
-mod response;
 
 mod rollup;
 pub use rollup::RollupRpc;
 
-mod sync;
-#[cfg(feature = "client")]
-pub use sync::SyncStatusApiClient;
-pub use sync::SyncStatusApiServer;
-
 mod ws;
 pub use ws::WsRPC;
-
-pub use base_common_types_rpc::{
-    ClusterMembership, ServerInfo, ServerSuffrage, UnknownServerSuffrage,
-};

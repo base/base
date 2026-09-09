@@ -14,7 +14,9 @@ use jsonrpsee::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use crate::{AdminApiServer, SequencerAdminAPIClient, SequencerAdminAPIError};
+use crate::SequencerAdminAPIClient;
+use crate::SequencerAdminAPIError;
+use base_common_client_rollup::AdminApiServer;
 
 /// The query types to the network actor for the admin api.
 #[derive(Debug)]

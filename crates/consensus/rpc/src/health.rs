@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use base_common_types_rpc::HealthzResponse;
 use jsonrpsee::core::RpcResult;
 
-use crate::jsonrpsee::HealthzApiServer;
+use base_common_client_rollup::HealthzApiServer;
 
 /// The healthz rpc server.
 #[derive(Debug, Clone)]

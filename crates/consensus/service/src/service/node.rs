@@ -9,16 +9,17 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::Address;
-use base_common_client_ethereum::RootProvider;
 use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
+use base_common_client_ethereum::RootProvider;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
+use base_consensus_rpc::BaseRpc;
+use base_consensus_rpc::RpcBuilder;
+use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_consensus_source_providers::{
     AlloyChainProvider, LocalL2Provider, OnlineBeaconClient, OnlineBlobProvider, OnlinePipeline,
 };
-use base_consensus_rpc::{BaseRpc, RpcBuilder};
-use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -329,7 +330,8 @@ impl RollupNode {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
-        let l1_head_number: base_consensus_source_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_source_providers::L1HeadNumber =
+            Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         let engine_client = Arc::new(self.engine_config.client.clone());
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
@@ -354,7 +356,8 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
-        let l1_head_number: base_consensus_source_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_source_providers::L1HeadNumber =
+            Arc::new(AtomicU64::new(0));
         let engine_client = Arc::new(self.engine_config.client.clone());
         self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
@@ -368,7 +371,8 @@ impl RollupNode {
         &self,
         engine_client: Arc<E>,
     ) -> Result<(), String> {
-        let l1_head_number: base_consensus_source_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_source_providers::L1HeadNumber =
+            Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }

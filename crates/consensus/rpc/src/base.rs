@@ -18,7 +18,7 @@ use jsonrpsee::{
 };
 use tracing::warn;
 
-use crate::BaseApiServer;
+use base_common_client_rollup::BaseApiServer;
 
 /// A cached outcome of an L1 schedule read, used to collapse bursts of readiness queries into a
 /// single read.

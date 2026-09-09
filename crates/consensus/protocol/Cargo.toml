@@ -26,7 +26,6 @@ base-common-types-chain = { workspace = true }
 base-common-types-payload = {workspace = true}
 base-common-chain-config = { workspace = true }
 tracing = { workspace = true, optional = true }
-derive_more = { workspace = true, features = ["display"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 spin = { workspace = true, optional = true, features = ["default"] }
@@ -84,7 +83,6 @@ std = [
     "base-common-types-rpc/std",
     "base-common-chain-config/std",
     "brotli/std",
-    "derive_more/std",
     "miniz_oxide/std",
     "serde?/std",
     "spin?/std",

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
 use base_common_chain_config::{SystemConfig, UpgradeConfig};
-use base_consensus_rpc::ClusterMembership;
+use base_common_types_rpc::ClusterMembership;
 use tokio::{sync::mpsc, task::AbortHandle};
 use url::Url;
 

@@ -5,10 +5,10 @@
 //! observe the process-local [`RuntimeUpgradeRegistry`] use unique L2 chain IDs because the
 //! registry is shared by every in-process node in this test binary.
 
-use base_common_chain_config::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
-use base_consensus_rpc::RollupNodeApiClient;
-use base_system_tests::{SystemTestStack, SystemTestStackBuilder, UpgradeSignalStackOptions};
 use base_common_chain_activation::UpgradeSignalMode;
+use base_common_chain_config::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
+use base_common_client_rollup::RollupNodeApiClient;
+use base_system_tests::{SystemTestStack, SystemTestStackBuilder, UpgradeSignalStackOptions};
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 

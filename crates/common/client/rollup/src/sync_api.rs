@@ -1,19 +1,21 @@
-use base_protocol::SyncStatus;
-use jsonrpsee::{core::RpcResult, proc_macros::rpc};
+use base_common_types_rpc::RollupSyncStatus as SyncStatus;
+#[cfg(feature = "server")]
+use jsonrpsee::core::RpcResult;
+use jsonrpsee::proc_macros::rpc;
 
 /// Base sync status RPC API.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "optimism"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "optimism"))]
+#[cfg_attr(not(feature = "server"), rpc(client, namespace = "optimism"))]
+#[cfg_attr(feature = "server", rpc(server, client, namespace = "optimism"))]
 pub trait SyncStatusApi {
     /// Returns the current [`SyncStatus`] of the node.
     #[method(name = "syncStatus")]
     async fn sync_status(&self) -> RpcResult<SyncStatus>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use async_trait::async_trait;
-    use base_protocol::SyncStatus;
+    use base_common_types_rpc::RollupSyncStatus as SyncStatus;
     use jsonrpsee::core::RpcResult;
     use rstest::rstest;
 

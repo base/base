@@ -15,9 +15,9 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{
     Network, Provider, ProviderBuilder, ReceiptResponse, TransactionResponse,
 };
+use base_common_client_rollup::RollupNodeApiClient;
 use base_common_types_chain::Predeploys;
 use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
-use base_consensus_rpc::RollupNodeApiClient;
 use base_execution_evm_runtime::BaseTime;
 use base_protocol::BaseTimeUpdateTx;
 use futures::{SinkExt, StreamExt};
