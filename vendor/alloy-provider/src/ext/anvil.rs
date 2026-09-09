@@ -1,12 +1,12 @@
 //! This module extends the Ethereum JSON-RPC provider with the Anvil namespace's RPC methods.
 
 use alloy_primitives::{Address, B256, Bytes, TxHash, U64, U128, U256};
-use alloy_rpc_types_anvil::{Forking, Metadata, MineOptions, NodeInfo, ReorgOptions};
 use alloy_transport::{TransportError, TransportResult};
 use base_common_consensus::Blob;
 use base_common_network::{Network, TransactionBuilder};
 use futures::try_join;
 
+use super::{Forking, Metadata, MineOptions, NodeInfo, ReorgOptions};
 use crate::{PendingTransactionBuilder, Provider};
 
 /// Anvil namespace rpc interface that gives access to several non-standard RPC methods.

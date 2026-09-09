@@ -12,8 +12,6 @@ pub use alloy_serde as serde_helpers;
 mod rpc;
 #[cfg(feature = "admin")]
 pub use alloy_rpc_types_admin as admin;
-#[cfg(feature = "anvil")]
-pub use alloy_rpc_types_anvil as anvil;
 #[cfg(feature = "any")]
 pub use alloy_rpc_types_any as any;
 #[cfg(feature = "beacon")]

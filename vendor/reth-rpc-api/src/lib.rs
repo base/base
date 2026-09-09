@@ -15,9 +15,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod admin;
-mod anvil;
 mod debug;
-mod hardhat;
 mod mev;
 mod miner;
 mod net;
@@ -38,9 +36,7 @@ pub mod servers {
 
     pub use crate::{
         admin::AdminApiServer,
-        anvil::AnvilApiServer,
         debug::DebugApiServer,
-        hardhat::HardhatApiServer,
         mev::{MevFullApiServer, MevSimApiServer},
         miner::MinerApiServer,
         net::NetApiServer,
@@ -64,9 +60,7 @@ pub mod clients {
 
     pub use crate::{
         admin::AdminApiClient,
-        anvil::AnvilApiClient,
         debug::DebugApiClient,
-        hardhat::HardhatApiClient,
         mev::{MevFullApiClient, MevSimApiClient},
         miner::MinerApiClient,
         net::NetApiClient,

@@ -25,7 +25,6 @@ alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
-alloy-rpc-types-anvil = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
@@ -41,6 +40,7 @@ jsonrpsee = { workspace = true, features = ["client", "async-client", "http-clie
 
 [features]
 client = [
+    "reth-chain-state/serde",
     "jsonrpsee/client",
     "jsonrpsee/async-client",
 ]

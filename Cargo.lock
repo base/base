@@ -422,7 +422,6 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-anvil",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -541,7 +540,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-anvil",
  "alloy-rpc-types-any",
  "alloy-rpc-types-beacon",
  "alloy-rpc-types-debug",
@@ -566,18 +564,6 @@ dependencies = [
  "alloy-primitives",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "alloy-rpc-types-anvil"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "serde",
- "serde_json",
- "similar-asserts",
 ]
 
 [[package]]
@@ -15324,7 +15310,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-anvil",
  "alloy-rpc-types-beacon",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-eth",

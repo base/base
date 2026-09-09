@@ -81,3 +81,11 @@ pub(crate) mod test {
         }
     }
 }
+
+#[cfg(feature = "anvil-api")]
+mod anvil_types;
+#[cfg(feature = "anvil-api")]
+pub use anvil_types::{
+    ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    ReorgOptions, TransactionData,
+};

@@ -59,7 +59,6 @@ alloy-node-bindings = { workspace = true, optional = true }
 alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
-alloy-rpc-types-anvil = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
 alloy-rpc-types-txpool = { workspace = true, optional = true }
@@ -115,7 +114,7 @@ workspace = true
 
 [features]
 admin-api = ["dep:alloy-rpc-types-admin"]
-anvil-api = ["dep:alloy-rpc-types-anvil"]
+anvil-api = []
 anvil-node = ["anvil-api", "reqwest", "dep:alloy-node-bindings"]
 debug-api = ["dep:alloy-rpc-types-trace", "dep:alloy-rpc-types-debug"]
 default = ["reqwest", "reqwest-default-tls"]
