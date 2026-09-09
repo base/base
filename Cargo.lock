@@ -249,7 +249,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-eips"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d40246adf7468b430fce87945ece8a54ef27fa760dd9f670f5162a412007bdb2"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
@@ -266,9 +268,7 @@ dependencies = [
  "either",
  "ethereum_ssz",
  "ethereum_ssz_derive",
- "rand 0.8.7",
  "serde",
- "serde_json",
  "serde_with",
  "sha2 0.10.9",
 ]
