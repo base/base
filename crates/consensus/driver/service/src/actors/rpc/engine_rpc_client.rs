@@ -1,8 +1,6 @@
 use std::fmt::Debug;
 
-use crate::EngineRpcClient;
 use alloy_eips::BlockNumberOrTag;
-use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_consensus_engine::{EngineQueries, EngineState};
 use base_protocol::{L2BlockInfo, OutputRoot};
@@ -18,15 +16,14 @@ use tokio::sync::{
 
 use crate::EngineRpcRequest;
 
-/// Queue-based implementation of the [`EngineRpcClient`] trait. This handles all channel-based
-/// operations, providing a nice facade for callers.
+/// Sends engine RPC requests through the bounded driver queue.
 #[derive(Clone, Constructor, Debug)]
-pub struct QueuedEngineRpcClient {
+pub struct EngineRpcClient {
     /// A channel to use to send engine RPC requests.
     pub engine_rpc_request_tx: mpsc::Sender<EngineRpcRequest>,
 }
 
-impl QueuedEngineRpcClient {
+impl EngineRpcClient {
     /// Attempts to enqueue an engine query without waiting for channel capacity.
     ///
     /// Public RPC requests fail fast under load so they cannot block consensus-critical work.
@@ -44,11 +41,9 @@ impl QueuedEngineRpcClient {
             },
         )
     }
-}
 
-#[async_trait]
-impl EngineRpcClient for QueuedEngineRpcClient {
-    async fn get_config(&self) -> RpcResult<RollupConfig> {
+    /// Request the current [`RollupConfig`].
+    pub async fn get_config(&self) -> RpcResult<RollupConfig> {
         let (config_tx, config_rx) = oneshot::channel();
 
         self.try_enqueue_engine_query(EngineQueries::Config(config_tx))?;
@@ -59,7 +54,8 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         })
     }
 
-    async fn get_state(&self) -> RpcResult<EngineState> {
+    /// Request the current [`EngineState`] snapshot.
+    pub async fn get_state(&self) -> RpcResult<EngineState> {
         let (state_tx, state_rx) = oneshot::channel();
 
         self.try_enqueue_engine_query(EngineQueries::State(state_tx))?;
@@ -70,7 +66,11 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         })
     }
 
-    async fn output_at_block(
+    /// Request the L2 output root for a specific [`BlockNumberOrTag`].
+    ///
+    /// Returns a tuple of [`L2BlockInfo`], [`OutputRoot`], and [`EngineState`] at the requested
+    /// block.
+    pub async fn output_at_block(
         &self,
         block: BlockNumberOrTag,
     ) -> RpcResult<(L2BlockInfo, OutputRoot, EngineState)> {
@@ -84,7 +84,8 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         })
     }
 
-    async fn dev_get_task_queue_length(&self) -> RpcResult<usize> {
+    /// Development API: Get the current number of pending tasks in the queue.
+    pub async fn dev_get_task_queue_length(&self) -> RpcResult<usize> {
         let (length_tx, length_rx) = oneshot::channel();
 
         self.try_enqueue_engine_query(EngineQueries::TaskQueueLength(length_tx))?;
@@ -95,7 +96,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         })
     }
 
-    async fn dev_subscribe_to_engine_queue_length(&self) -> RpcResult<watch::Receiver<usize>> {
+    /// Development API: Subscribes to engine queue length updates managed by the returned
+    /// [`watch::Receiver`].
+    pub async fn dev_subscribe_to_engine_queue_length(&self) -> RpcResult<watch::Receiver<usize>> {
         let (sub_tx, sub_rx) = oneshot::channel();
 
         self.try_enqueue_engine_query(EngineQueries::QueueLengthReceiver(sub_tx))?;
@@ -106,7 +109,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         })
     }
 
-    async fn dev_subscribe_to_engine_state(&self) -> RpcResult<watch::Receiver<EngineState>> {
+    /// Development API: Subscribes to engine state updates managed by the returned
+    /// [`watch::Receiver`].
+    pub async fn dev_subscribe_to_engine_state(&self) -> RpcResult<watch::Receiver<EngineState>> {
         let (sub_tx, sub_rx) = oneshot::channel();
 
         self.try_enqueue_engine_query(EngineQueries::StateReceiver(sub_tx))?;

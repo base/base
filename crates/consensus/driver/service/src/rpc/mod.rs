@@ -6,8 +6,8 @@ pub use admin::{AdminRpc, NetworkAdminQuery};
 mod base;
 pub use base::BaseRpc;
 
-mod client;
-pub use client::{EngineRpcClient, SequencerAdminAPIClient, SequencerAdminAPIError};
+mod error;
+pub use error::SequencerAdminAPIError;
 
 mod config;
 pub use config::RpcBuilder;

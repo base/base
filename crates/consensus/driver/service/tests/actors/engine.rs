@@ -9,11 +9,11 @@ use std::{
 };
 
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
-use base_consensus_engine::EngineQueries;
 use base_consensus_driver_service::{
-    BuildRequest, EngineActor, EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor,
-    QueuedEngineRpcClient,
+    BuildRequest, EngineActor, EngineActorRequest, EngineError, EngineRequestReceiver,
+    EngineRpcClient, NodeActor,
 };
+use base_consensus_engine::EngineQueries;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use jsonrpsee::types::ErrorCode;
 use opentelemetry::Context;
@@ -64,7 +64,7 @@ async fn full_public_rpc_queue_does_not_block_engine_processing_requests() {
     );
     let engine_handle = tokio::spawn(async move { engine_actor.start(()).await });
 
-    let client = QueuedEngineRpcClient::new(engine_rpc_request_tx);
+    let client = EngineRpcClient::new(engine_rpc_request_tx);
     let (queued_response_tx, _queued_response_rx) = oneshot::channel();
     client
         .try_enqueue_engine_query(EngineQueries::TaskQueueLength(queued_response_tx))
@@ -109,7 +109,7 @@ async fn full_public_rpc_queue_does_not_block_engine_processing_requests() {
 #[tokio::test]
 async fn queued_engine_rpc_client_rejects_when_public_rpc_queue_is_full() {
     let (engine_rpc_request_tx, _engine_rpc_request_rx) = mpsc::channel(1);
-    let client = QueuedEngineRpcClient::new(engine_rpc_request_tx);
+    let client = EngineRpcClient::new(engine_rpc_request_tx);
 
     let (queued_response_tx, _queued_response_rx) = oneshot::channel();
     client

@@ -13,7 +13,7 @@ use crate::P2pRpc;
 use crate::RollupRpc;
 use crate::RpcBuilder;
 use crate::SafeDBReader;
-use crate::SequencerAdminAPIClient;
+use crate::SequencerAdminClient;
 use crate::WsRPC;
 use async_trait::async_trait;
 use base_common_chain_activation::UpgradeSignalRefresher;
@@ -40,16 +40,12 @@ use crate::{NodeActor, RpcActorError, actors::CancellableContext};
 
 /// An actor that handles the RPC server for the rollup node.
 #[derive(Constructor, Debug)]
-pub struct RpcActor<EngineRpcClient_, SequencerAdminApiClient_>
-where
-    EngineRpcClient_: EngineRpcClient,
-    SequencerAdminApiClient_: SequencerAdminAPIClient,
-{
+pub struct RpcActor {
     /// A launcher for the rpc.
     config: RpcBuilder,
 
-    engine_rpc_client: EngineRpcClient_,
-    sequencer_admin_rpc_client: Option<SequencerAdminApiClient_>,
+    engine_rpc_client: EngineRpcClient,
+    sequencer_admin_rpc_client: Option<SequencerAdminClient>,
     safe_db_reader: Arc<dyn SafeDBReader>,
     upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
     /// Public `base`-namespace RPC server, present when the upgrade signal is configured.
@@ -124,12 +120,7 @@ pub(crate) async fn launch_rpc_server(
 }
 
 #[async_trait]
-impl<EngineRpcClient_, SequencerAdminApiClient_> NodeActor
-    for RpcActor<EngineRpcClient_, SequencerAdminApiClient_>
-where
-    EngineRpcClient_: EngineRpcClient + 'static,
-    SequencerAdminApiClient_: SequencerAdminAPIClient + 'static,
-{
+impl NodeActor for RpcActor {
     type Error = RpcActorError;
     type StartData = RpcContext;
 

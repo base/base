@@ -11,19 +11,19 @@ use jsonrpsee::{
 };
 use tracing::warn;
 
-use crate::rpc::EngineRpcClient;
+use crate::EngineRpcClient;
 use base_common_client_rollup::DevEngineApiServer;
 
 /// Implementation of the development RPC API.
 #[derive(Debug)]
-pub struct DevEngineRpc<EngineRpcClient_> {
+pub struct DevEngineRpc {
     /// The engine query sender.
-    engine_client: EngineRpcClient_,
+    engine_client: EngineRpcClient,
 }
 
-impl<EngineRpcClient_: EngineRpcClient> DevEngineRpc<EngineRpcClient_> {
+impl DevEngineRpc {
     /// Creates a new [`DevEngineRpc`] instance.
-    pub const fn new(engine_client: EngineRpcClient_) -> Self {
+    pub const fn new(engine_client: EngineRpcClient) -> Self {
         Self { engine_client }
     }
 
@@ -53,9 +53,7 @@ impl<EngineRpcClient_: EngineRpcClient> DevEngineRpc<EngineRpcClient_> {
 }
 
 #[async_trait]
-impl<EngineRpcClient_: EngineRpcClient + 'static> DevEngineApiServer
-    for DevEngineRpc<EngineRpcClient_>
-{
+impl DevEngineApiServer for DevEngineRpc {
     async fn dev_task_queue_length(&self) -> RpcResult<usize> {
         self.engine_client.dev_get_task_queue_length().await.map_err(|_| {
             jsonrpsee::types::ErrorObjectOwned::owned(

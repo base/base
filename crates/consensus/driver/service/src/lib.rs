@@ -36,7 +36,7 @@ pub use actors::{
     DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
     DerivationStateTransitionError, DerivationStateUpdate, EngineActor, EngineActorRequest,
     EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
+    EngineProcessor, EngineRequestReceiver, EngineRpcClient, EngineRpcProcessor, EngineRpcRequest,
     GetPayloadRequest, GossipTransport, InsertUnsafePayloadRequest, L1BlockFetcher,
     L1OriginSelector, L1OriginSelectorError, L1OriginSelectorProvider, L1WatcherActor,
     L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
@@ -45,14 +45,14 @@ pub use actors::{
     NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
     OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
     PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
-    RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
-    RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
-    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
-    ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient,
+    ReconcileShadowRequest, RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason,
+    ResetRequest, ResetRequestOutcome, RpcActor, RpcActorError, RpcContext, ScheduledTicker,
+    SealState, SealStepError, SealStepOutcome, SequencerActor, SequencerActorError,
+    SequencerAdminClient, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle, ShadowFunding,
+    ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
@@ -71,9 +71,8 @@ pub use metrics::Metrics;
 
 mod rpc;
 pub use rpc::{
-    AdminRpc, BaseRpc, DevEngineRpc, EngineRpcClient, HealthzRpc, L1State, L1WatcherQueries,
-    L1WatcherQuerySender, NetworkAdminQuery, P2pRpc, RollupRpc, RpcBuilder,
-    SequencerAdminAPIClient, SequencerAdminAPIError, WsRPC,
+    AdminRpc, BaseRpc, DevEngineRpc, HealthzRpc, L1State, L1WatcherQueries, L1WatcherQuerySender,
+    NetworkAdminQuery, P2pRpc, RollupRpc, RpcBuilder, SequencerAdminAPIError, WsRPC,
 };
 
 mod safedb;

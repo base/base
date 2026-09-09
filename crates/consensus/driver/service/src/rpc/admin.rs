@@ -1,7 +1,5 @@
 //! Admin RPC Module
 
-use core::fmt::Debug;
-
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_chain_activation::{UpgradeSignalApplySummary, UpgradeSignalRefresher};
@@ -14,7 +12,7 @@ use jsonrpsee::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use crate::rpc::SequencerAdminAPIClient;
+use crate::SequencerAdminClient;
 use crate::rpc::SequencerAdminAPIError;
 use base_common_client_rollup::AdminApiServer;
 
@@ -33,28 +31,23 @@ pub enum NetworkAdminQuery {
     },
 }
 
-type NetworkAdminQuerySender = mpsc::Sender<NetworkAdminQuery>;
-
 /// The admin rpc server.
 #[derive(Debug)]
-pub struct AdminRpc<SequencerAdminAPIClient> {
+pub struct AdminRpc {
     /// The sequencer admin API client.
-    pub sequencer_admin_client: Option<SequencerAdminAPIClient>,
+    pub sequencer_admin_client: Option<SequencerAdminClient>,
     /// The sender to the network actor.
-    pub network_sender: NetworkAdminQuerySender,
+    pub network_sender: mpsc::Sender<NetworkAdminQuery>,
     /// Runtime upgrade signal refresher.
     pub upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
 }
 
-impl<SequencerAdminAPIClient_> AdminRpc<SequencerAdminAPIClient_>
-where
-    SequencerAdminAPIClient_: SequencerAdminAPIClient,
-{
+impl AdminRpc {
     /// Constructs a new [`AdminRpc`] given the sequencer sender and network sender.
     ///
     /// # Parameters
     ///
-    /// - `sequencer_sender`: The [`SequencerAdminAPIClient`] used to fulfill sequencer admin
+    /// - `sequencer_sender`: The [`SequencerAdminClient`] used to fulfill sequencer admin
     ///   queries.
     /// - `network_sender`: The sender to the network actor.
     ///
@@ -62,8 +55,8 @@ where
     ///
     /// A new [`AdminRpc`] instance.
     pub const fn new(
-        sequencer_admin_client: Option<SequencerAdminAPIClient_>,
-        network_sender: NetworkAdminQuerySender,
+        sequencer_admin_client: Option<SequencerAdminClient>,
+        network_sender: mpsc::Sender<NetworkAdminQuery>,
     ) -> Self {
         Self { sequencer_admin_client, network_sender, upgrade_signal_refresher: None }
     }
@@ -108,10 +101,7 @@ fn upgrade_signal_refresh_failed() -> ErrorObject<'static> {
 }
 
 #[async_trait]
-impl<SequencerAdminAPIClient_> AdminApiServer for AdminRpc<SequencerAdminAPIClient_>
-where
-    SequencerAdminAPIClient_: SequencerAdminAPIClient + 'static + Send + Sync,
-{
+impl AdminApiServer for AdminRpc {
     async fn admin_post_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,

@@ -28,14 +28,13 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
-    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
-    ValidatorEngineRequestHandler,
+    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcClient, EngineRpcProcessor,
+    L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
+    NetworkConfig, NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
+    RpcContext, SequencerActor, SequencerAdminClient, SequencerConfig,
+    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -606,7 +605,7 @@ impl RollupNode {
                     sealer: None,
                     pending_stop: None,
                 }),
-                Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
+                Some(SequencerAdminClient::new(sequencer_admin_api_tx)),
             )
         } else {
             (None, None)
@@ -628,7 +627,7 @@ impl RollupNode {
         let rpc = rpc_builder.map(|b| {
             RpcActor::new(
                 b,
-                QueuedEngineRpcClient::new(engine_rpc_request_tx),
+                EngineRpcClient::new(engine_rpc_request_tx),
                 sequencer_admin_client,
                 safe_db_reader,
                 upgrade_signal_refresher,

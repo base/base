@@ -24,7 +24,7 @@ use jsonrpsee::{
 };
 use tracing::Instrument;
 
-use crate::rpc::EngineRpcClient;
+use crate::EngineRpcClient;
 use crate::rpc::L1State;
 use crate::rpc::L1WatcherQueries;
 use crate::rpc::l1_watcher::L1WatcherQuerySender;
@@ -37,19 +37,19 @@ static RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 ///
 /// This is a server implementation of [`crate::rpc::RollupNodeApiServer`].
 #[derive(Debug)]
-pub struct RollupRpc<EngineRpcClient_> {
+pub struct RollupRpc {
     /// The channel to send [`base_consensus_engine::EngineQueries`]s.
-    pub engine_client: EngineRpcClient_,
+    pub engine_client: EngineRpcClient,
     /// The channel to send [`crate::rpc::L1WatcherQueries`]s.
     pub l1_watcher_sender: L1WatcherQuerySender,
     /// Reader for safe head lookups by L1 block number.
     pub safe_db_reader: Arc<dyn SafeDBReader>,
 }
 
-impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
+impl RollupRpc {
     /// Constructs a new [`RollupRpc`] given a sender channel.
     pub fn new(
-        engine_client: EngineRpcClient_,
+        engine_client: EngineRpcClient,
         l1_watcher_sender: L1WatcherQuerySender,
         safe_db_reader: Arc<dyn SafeDBReader>,
     ) -> Self {
@@ -77,9 +77,7 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
 }
 
 #[async_trait]
-impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
-    for RollupRpc<EngineRpcClient_>
-{
+impl RollupNodeApiServer for RollupRpc {
     async fn output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
         const RPC_METHOD: &str = "optimism_outputAtBlock";
 

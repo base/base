@@ -8,19 +8,19 @@ use jsonrpsee::{
     tracing::warn,
 };
 
-use crate::rpc::EngineRpcClient;
+use crate::EngineRpcClient;
 use base_common_client_rollup::WsServer;
 
 /// An RPC server that handles subscriptions to the node's state.
 #[derive(Debug)]
-pub struct WsRPC<EngineRpcClient_> {
+pub struct WsRPC {
     /// The engine query sender.
-    engine_client: EngineRpcClient_,
+    engine_client: EngineRpcClient,
 }
 
-impl<EngineRpcClient_: EngineRpcClient> WsRPC<EngineRpcClient_> {
+impl WsRPC {
     /// Constructs a new [`WsRPC`] instance.
-    pub const fn new(engine_client: EngineRpcClient_) -> Self {
+    pub const fn new(engine_client: EngineRpcClient) -> Self {
         Self { engine_client }
     }
 
@@ -49,7 +49,7 @@ impl<EngineRpcClient_: EngineRpcClient> WsRPC<EngineRpcClient_> {
 }
 
 #[async_trait::async_trait]
-impl<EngineRpcClient_: EngineRpcClient + 'static> WsServer for WsRPC<EngineRpcClient_> {
+impl WsServer for WsRPC {
     async fn ws_safe_head_updates(&self, sink: PendingSubscriptionSink) -> SubscriptionResult {
         let sink = sink.accept().await?;
 

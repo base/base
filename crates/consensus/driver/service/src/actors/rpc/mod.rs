@@ -5,10 +5,10 @@ pub(crate) use actor::launch_rpc_server;
 pub use actor::{RpcActor, RpcContext};
 
 mod engine_rpc_client;
-pub use engine_rpc_client::QueuedEngineRpcClient;
+pub use engine_rpc_client::EngineRpcClient;
 
 mod error;
 pub use error::RpcActorError;
 
 mod sequencer_rpc_client;
-pub use sequencer_rpc_client::QueuedSequencerAdminAPIClient;
+pub use sequencer_rpc_client::SequencerAdminClient;

@@ -24,9 +24,7 @@ pub use engine::{
 
 mod rpc;
 pub(crate) use rpc::launch_rpc_server;
-pub use rpc::{
-    QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
-};
+pub use rpc::{EngineRpcClient, RpcActor, RpcActorError, RpcContext, SequencerAdminClient};
 
 mod derivation;
 pub use derivation::{

@@ -11,7 +11,7 @@ use crate::actors::generator::seed::SeedGenerator;
 
 impl SeedGenerator {
     /// Generate a random Base execution payload.
-    pub fn random_valid_payload(&mut self) -> BaseExecutionPayloadEnvelope {
+    pub(crate) fn random_valid_payload(&mut self) -> BaseExecutionPayloadEnvelope {
         let block = self.valid_block();
         let (execution_payload, _) = BaseExecutionPayload::from_block_slow(&block);
         BaseExecutionPayloadEnvelope {
