@@ -67,7 +67,7 @@ pub use service::{
     PayloadBuilderService, PayloadFuture, PayloadServiceCommand, PayloadStore,
 };
 mod job;
-pub use job::{KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator};
+pub use job::{KeepPayloadJobAlive, PayloadJob};
 mod noop;
 pub use noop::NoopPayloadBuilderService;
 mod service_metrics;
@@ -77,5 +77,3 @@ pub use job_metrics::PayloadBuilderMetrics;
 mod basic;
 pub use alloy_rpc_types::engine::PayloadId;
 pub use basic::*;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;

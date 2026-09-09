@@ -117,7 +117,7 @@ impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
             payload_builder,
         );
         let (service, handle) =
-            PayloadBuilderService::<_, _>::new(generator, ctx.provider().canonical_state_stream());
+            PayloadBuilderService::new(generator, ctx.provider().canonical_state_stream());
         match self.mode {
             BasePayloadServiceMode::DedicatedThread => {
                 ctx.task_executor().spawn_critical_os_thread(

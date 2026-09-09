@@ -33,8 +33,7 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     BasePayloadBuilder, BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderLease, PayloadId,
-    PayloadJob, PayloadJobGenerator, builder::BasePayloadTransactions,
-    job_metrics::PayloadBuilderMetrics,
+    PayloadJob, builder::BasePayloadTransactions, job_metrics::PayloadBuilderMetrics,
 };
 
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
@@ -42,7 +41,7 @@ const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
 /// Header used by payload builders.
 pub type HeaderForPayload = base_common_consensus::Header;
 
-/// The [`PayloadJobGenerator`] that creates [`BasicPayloadJob`]s.
+/// Creates and schedules Base payload construction jobs.
 #[derive(Debug)]
 pub struct BasicPayloadJobGenerator<Client, Pool, Txs> {
     /// The client that can interact with the chain.
@@ -136,19 +135,18 @@ impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs> {
 
 // === impl BasicPayloadJobGenerator ===
 
-impl<Client, Pool, Txs> PayloadJobGenerator for BasicPayloadJobGenerator<Client, Pool, Txs>
+impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool>,
 {
-    type Job = BasicPayloadJob<Pool, Client, Txs>;
-
-    fn new_payload_job(
+    /// Starts building a payload against its requested parent.
+    pub fn new_payload_job(
         &self,
         input: BuildNewPayload,
         id: PayloadId,
-    ) -> Result<Self::Job, PayloadBuilderError> {
+    ) -> Result<BasicPayloadJob<Pool, Client, Txs>, PayloadBuilderError> {
         let BuildNewPayload { attributes, parent_hash, mut resources } = input;
         let parent_header = if parent_hash.is_zero() {
             // Use latest header for genesis block case
@@ -197,7 +195,8 @@ where
         Ok(job)
     }
 
-    fn on_new_state(&mut self, new_state: CanonStateNotification) {
+    /// Updates cached state after a canonical chain change.
+    pub fn on_new_state(&mut self, new_state: CanonStateNotification) {
         if !self.config.pre_cache_state {
             self.pre_cached = None;
             return;

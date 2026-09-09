@@ -30,7 +30,10 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{Span, debug, debug_span, info, trace, warn};
 
-use crate::{KeepPayloadJobAlive, PayloadBuilderServiceMetrics, PayloadJob, PayloadJobGenerator};
+use crate::{
+    BasicPayloadJob, BasicPayloadJobGenerator, KeepPayloadJobAlive, PayloadBuilderServiceMetrics,
+    PayloadJob, builder::BasePayloadTransactions,
+};
 
 pub type PayloadFuture =
     Pin<Box<dyn Future<Output = Result<BaseBuiltPayload, PayloadBuilderError>> + Send>>;
@@ -48,7 +51,7 @@ pub struct PayloadStore {
 impl PayloadStore {
     /// Resolves the payload job and returns the best payload that has been built so far.
     ///
-    /// Note: depending on the installed [`PayloadJobGenerator`], this may or may not terminate the
+    /// Note: depending on the installed [`BasicPayloadJobGenerator`], this may or may not terminate the
     /// job, See [`PayloadJob::resolve`].
     pub fn resolve_kind(
         &self,
@@ -200,20 +203,32 @@ impl Clone for PayloadBuilderHandle {
 ///
 /// It tracks active payloads and their build jobs that run in a worker pool.
 ///
-/// By design, this type relies entirely on the [`PayloadJobGenerator`] to create new payloads and
+/// By design, this type relies entirely on the [`BasicPayloadJobGenerator`] to create new payloads and
 /// does know nothing about how to build them, it just drives their jobs to completion.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct PayloadBuilderService<Gen, St>
+pub struct PayloadBuilderService<Client, Pool, Txs, St>
 where
-    Gen: PayloadJobGenerator,
+    Client: reth_storage_api::StateProviderFactory
+        + reth_storage_api::BlockReaderIdExt
+        + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Unpin
+        + 'static,
+    Pool: base_execution_txpool::TransactionPool<
+            Transaction: base_execution_txpool::BasePooledTx<
+                Consensus = base_common_consensus::BaseTxEnvelope,
+            >,
+        > + Unpin
+        + 'static,
+    Txs: BasePayloadTransactions<Pool>,
 {
     /// The type that knows how to create new payloads.
-    generator: Gen,
+    generator: BasicPayloadJobGenerator<Client, Pool, Txs>,
     /// All active payload jobs, each accompanied by its id and the caller's tracing span
     /// propagated across the channel so that poll and resolve work appears as children of the
     /// original Engine API request.
-    payload_jobs: Vec<PayloadJobEntry<Gen::Job>>,
+    payload_jobs: Vec<PayloadJobEntry<BasicPayloadJob<Pool, Client, Txs>>>,
     /// Copy of the sender half, so new [`PayloadBuilderHandle`] can be created on demand.
     service_tx: mpsc::UnboundedSender<PayloadServiceCommand>,
     /// Receiver half of the command channel.
@@ -235,17 +250,32 @@ const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 
 // === impl PayloadBuilderService ===
 
-impl<Gen, St> PayloadBuilderService<Gen, St>
+impl<Client, Pool, Txs, St> PayloadBuilderService<Client, Pool, Txs, St>
 where
-    Gen: PayloadJobGenerator,
+    Client: reth_storage_api::StateProviderFactory
+        + reth_storage_api::BlockReaderIdExt
+        + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Unpin
+        + 'static,
+    Pool: base_execution_txpool::TransactionPool<
+            Transaction: base_execution_txpool::BasePooledTx<
+                Consensus = base_common_consensus::BaseTxEnvelope,
+            >,
+        > + Unpin
+        + 'static,
+    Txs: BasePayloadTransactions<Pool>,
 {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
     /// with it.
     ///
     /// This also takes a stream of chain events that will be forwarded to the generator to apply
     /// additional logic when new state is committed. See also
-    /// [`PayloadJobGenerator::on_new_state`].
-    pub fn new(generator: Gen, chain_events: St) -> (Self, PayloadBuilderHandle) {
+    /// [`BasicPayloadJobGenerator::on_new_state`].
+    pub fn new(
+        generator: BasicPayloadJobGenerator<Client, Pool, Txs>,
+        chain_events: St,
+    ) -> (Self, PayloadBuilderHandle) {
         let (service_tx, command_rx) = mpsc::unbounded_channel();
         let (payload_events, _) = broadcast::channel(PAYLOAD_EVENTS_BUFFER_SIZE);
 
@@ -301,7 +331,11 @@ where
     ///
     /// If the job should be terminated, this removes it from active polling and returns it so the
     /// caller can drop it after the response is sent.
-    fn resolve(&mut self, id: PayloadId, kind: PayloadKind) -> ResolvePayloadResult<Gen::Job> {
+    fn resolve(
+        &mut self,
+        id: PayloadId,
+        kind: PayloadKind,
+    ) -> ResolvePayloadResult<BasicPayloadJob<Pool, Client, Txs>> {
         let start = Instant::now();
         debug!(target: "payload_builder", %id, "resolving payload job");
 
@@ -375,10 +409,21 @@ where
     }
 }
 
-impl<Gen, St> Future for PayloadBuilderService<Gen, St>
+impl<Client, Pool, Txs, St> Future for PayloadBuilderService<Client, Pool, Txs, St>
 where
-    Gen: PayloadJobGenerator + Unpin + 'static,
-    <Gen as PayloadJobGenerator>::Job: Unpin + 'static,
+    Client: reth_storage_api::StateProviderFactory
+        + reth_storage_api::BlockReaderIdExt
+        + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Unpin
+        + 'static,
+    Pool: base_execution_txpool::TransactionPool<
+            Transaction: base_execution_txpool::BasePooledTx<
+                Consensus = base_common_consensus::BaseTxEnvelope,
+            >,
+        > + Unpin
+        + 'static,
+    Txs: BasePayloadTransactions<Pool>,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     type Output = ();
@@ -648,9 +693,18 @@ mod tests {
 
     use alloy_primitives::Address;
     use alloy_rpc_types::engine::PayloadAttributes as EthPayloadAttributes;
+    use base_common_consensus::{BaseBlock, Header};
+    use base_execution_chainspec::BaseChainSpec;
+    use base_execution_evm::BaseEvmConfig;
+    use base_execution_txpool::{
+        BasePooledTransaction, CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator,
+        Pool,
+    };
+    use reth_provider::test_utils::MockEthProvider;
+    use reth_tasks::Runtime;
 
     use super::*;
-    use crate::test_utils::test_payload_service;
+    use crate::{BasePayloadBuilder, BasicPayloadJobGeneratorConfig};
 
     struct DropProbe(Arc<AtomicBool>);
 
@@ -662,32 +716,59 @@ mod tests {
 
     #[test]
     fn payload_builder_lease_is_held_until_resolve_finishes() {
-        tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
-            let (service, handle) = test_payload_service();
-            let service = tokio::spawn(service);
-            let dropped = Arc::new(AtomicBool::new(false));
-            let lease = PayloadBuilderLease::new(DropProbe(Arc::clone(&dropped)));
-            let input = BuildNewPayload {
-                attributes: EthPayloadAttributes {
-                    timestamp: 1,
-                    prev_randao: B256::ZERO,
-                    suggested_fee_recipient: Address::ZERO,
-                    withdrawals: None,
-                    parent_beacon_block_root: None,
-                    slot_number: None,
-                    target_gas_limit: None,
-                }
-                .into(),
-                parent_hash: B256::ZERO,
-                resources: PayloadBuilderResources::default().with_lease(lease),
-            };
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(
+            async {
+                let chain_spec = Arc::new(BaseChainSpec::mainnet());
+                let provider = MockEthProvider::default().with_chain_spec((*chain_spec).clone());
+                let parent = Header { gas_limit: 30_000_000, ..Default::default() };
+                provider.add_block(
+                    parent.hash_slow(),
+                    BaseBlock { header: parent, body: Default::default() },
+                );
+                let pool = Pool::new(
+                    MockTransactionValidator::<BasePooledTransaction>::default(),
+                    CoinbaseTipOrdering::<BasePooledTransaction>::default(),
+                    InMemoryBlobStore::default(),
+                    Default::default(),
+                );
+                let builder =
+                    BasePayloadBuilder::new(pool, provider.clone(), BaseEvmConfig::new(chain_spec))
+                        .with_transactions(|_, _| {
+                            crate::NoopPayloadTransactions::<BasePooledTransaction>::default()
+                        });
+                let generator = BasicPayloadJobGenerator::with_builder(
+                    provider,
+                    Runtime::test(),
+                    BasicPayloadJobGeneratorConfig::default(),
+                    builder,
+                );
+                let (service, handle) =
+                    PayloadBuilderService::new(generator, futures_util::stream::empty());
+                let service = tokio::spawn(service);
+                let dropped = Arc::new(AtomicBool::new(false));
+                let lease = PayloadBuilderLease::new(DropProbe(Arc::clone(&dropped)));
+                let input = BuildNewPayload {
+                    attributes: EthPayloadAttributes {
+                        timestamp: 1,
+                        prev_randao: B256::ZERO,
+                        suggested_fee_recipient: Address::ZERO,
+                        withdrawals: None,
+                        parent_beacon_block_root: None,
+                        slot_number: None,
+                        target_gas_limit: None,
+                    }
+                    .into(),
+                    parent_hash: B256::ZERO,
+                    resources: PayloadBuilderResources::default().with_lease(lease),
+                };
 
-            let id = handle.send_new_payload(input).await.unwrap().unwrap();
-            assert!(!dropped.load(Ordering::Acquire));
+                let id = handle.send_new_payload(input).await.unwrap().unwrap();
+                assert!(!dropped.load(Ordering::Acquire));
 
-            handle.resolve_kind(id, PayloadKind::Earliest).await.unwrap().unwrap();
-            assert!(dropped.load(Ordering::Acquire));
-            service.abort();
-        });
+                handle.resolve_kind(id, PayloadKind::Earliest).await.unwrap().unwrap();
+                assert!(dropped.load(Ordering::Acquire));
+                service.abort();
+            },
+        );
     }
 }

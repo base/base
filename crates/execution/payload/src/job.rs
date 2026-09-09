@@ -2,13 +2,9 @@
 
 use std::future::Future;
 
-use alloy_rpc_types::engine::PayloadId;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };
-use reth_chain_state::CanonStateNotification;
-
-use crate::service::BuildNewPayload;
 
 /// A type that can build a payload.
 ///
@@ -96,34 +92,4 @@ pub enum KeepPayloadJobAlive {
     Yes,
     /// Terminate the job.
     No,
-}
-
-/// A type that knows how to create new jobs for creating payloads.
-pub trait PayloadJobGenerator {
-    /// The type that manages the lifecycle of a payload.
-    ///
-    /// This type is a future that yields better payloads.
-    type Job: PayloadJob;
-
-    /// Creates the initial payload and a new [`PayloadJob`] that yields better payloads over time.
-    ///
-    /// This is called when the CL requests a new payload job via a fork choice update.
-    ///
-    /// # Note
-    ///
-    /// This is expected to initially build a new (empty) payload without transactions, so it can be
-    /// returned directly.
-    fn new_payload_job(
-        &self,
-        input: BuildNewPayload,
-        id: PayloadId,
-    ) -> Result<Self::Job, PayloadBuilderError>;
-
-    /// Handles new chain state events
-    ///
-    /// This is intended for any logic that needs to be run when the chain state changes or used to
-    /// use the in memory state for the head block.
-    fn on_new_state(&mut self, new_state: CanonStateNotification) {
-        let _ = new_state;
-    }
 }
