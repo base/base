@@ -573,7 +573,10 @@ impl NetworkArgs {
                         .collect()
                 })
             })
-            .unwrap_or_else(|| chain_spec.bootnodes().unwrap_or_else(mainnet_nodes));
+            .unwrap_or_else(|| {
+                NodeRecord::parse_bootnodes(chain_spec.config.bootnodes.execution)
+                    .unwrap_or_else(mainnet_nodes)
+            });
         let peers_file = self.peers_file.clone().unwrap_or(default_peers_file);
 
         // Configure peer connections

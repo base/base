@@ -3316,7 +3316,6 @@ dependencies = [
  "base-common-chain-config",
  "base-common-types-chain",
  "base-common-types-rpc",
- "reth-network-peers",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -14688,6 +14687,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "base-common-chain-config",
  "enr",
  "rand 0.8.7",
  "rand 0.9.5",

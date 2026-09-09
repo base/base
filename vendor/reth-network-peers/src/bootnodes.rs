@@ -61,3 +61,56 @@ pub fn hoodi_nodes() -> Vec<NodeRecord> {
 pub fn parse_nodes(nodes: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<NodeRecord> {
     nodes.into_iter().map(|s| s.as_ref().parse().unwrap()).collect()
 }
+
+impl NodeRecord {
+    /// Parses configured execution bootnodes, preserving the absence of defaults.
+    pub fn parse_bootnodes(nodes: &[&str]) -> Option<Vec<Self>> {
+        (!nodes.is_empty()).then(|| parse_nodes(nodes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_chain_config::ChainConfig;
+
+    use crate::NodeRecord;
+
+    #[test]
+    fn el_bootnodes_count_matches_config() {
+        // `bootnodes()` must surface every EL entry from `ChainConfig.bootnodes.execution`.
+        // A mismatch means `parse_nodes` silently dropped a malformed entry.
+        for cfg in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
+            let parsed = NodeRecord::parse_bootnodes(cfg.bootnodes.execution)
+                .expect("known chain returns Some");
+            assert_eq!(
+                parsed.len(),
+                cfg.bootnodes.execution.len(),
+                "EL bootnode parse drop on chain {}",
+                cfg.chain_id,
+            );
+        }
+    }
+
+    #[test]
+    fn el_bootnodes_have_no_consensus_entries() {
+        // The EL chainspec must never expose CL ENRs — they belong to a different
+        // discv5 network (different protocol ID / port) and bricked discovery in the past.
+        for cfg in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
+            assert!(
+                cfg.bootnodes.execution.iter().all(|s| s.starts_with("enode://")),
+                "non-enode entry in EL list for chain {}",
+                cfg.chain_id,
+            );
+            let parsed = NodeRecord::parse_bootnodes(cfg.bootnodes.execution).unwrap();
+            for record in &parsed {
+                assert_ne!(record.tcp_port, 0, "EL bootnode missing TCP port: {record:?}");
+                assert_ne!(record.udp_port, 0, "EL bootnode missing UDP port: {record:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn el_bootnodes_unknown_chain_returns_none() {
+        assert!(NodeRecord::parse_bootnodes(&[]).is_none());
+    }
+}

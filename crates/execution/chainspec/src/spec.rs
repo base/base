@@ -16,7 +16,6 @@ use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{
     BlockHeader, EMPTY_ROOT_HASH, Header, Predeploys, proofs::storage_root_unhashed,
 };
-use reth_network_peers::{NodeRecord, parse_nodes};
 
 use crate::{compute_jovian_base_fee, decode_holocene_base_fee};
 
@@ -611,12 +610,6 @@ impl BaseChainSpec {
     /// Returns a string representation of the hardforks.
     pub fn display_hardforks(&self) -> crate::UpgradeDisplay {
         crate::UpgradeDisplay(self.schedule())
-    }
-
-    /// The bootnodes for the chain, if any.
-    pub fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        (!self.config.bootnodes.execution.is_empty())
-            .then(|| parse_nodes(self.config.bootnodes.execution))
     }
 
     /// Computes the next block base fee using the active Base upgrade rules.
@@ -1267,56 +1260,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn el_bootnodes_count_matches_config() {
-        // `bootnodes()` must surface every EL entry from `ChainConfig.bootnodes.execution`.
-        // A mismatch means `parse_nodes` silently dropped a malformed entry.
-        for (spec, cfg) in [
-            (BaseChainSpec::mainnet(), ChainConfig::mainnet()),
-            (BaseChainSpec::sepolia(), ChainConfig::sepolia()),
-            (BaseChainSpec::zeronet(), ChainConfig::zeronet()),
-        ] {
-            let parsed = spec.bootnodes().expect("known chain returns Some");
-            assert_eq!(
-                parsed.len(),
-                cfg.bootnodes.execution.len(),
-                "EL bootnode parse drop on chain {}",
-                cfg.chain_id,
-            );
-        }
-    }
-
-    #[test]
-    fn el_bootnodes_have_no_consensus_entries() {
-        // The EL chainspec must never expose CL ENRs — they belong to a different
-        // discv5 network (different protocol ID / port) and bricked discovery in the past.
-        for (spec, cfg) in [
-            (BaseChainSpec::mainnet(), ChainConfig::mainnet()),
-            (BaseChainSpec::sepolia(), ChainConfig::sepolia()),
-            (BaseChainSpec::zeronet(), ChainConfig::zeronet()),
-        ] {
-            assert!(
-                cfg.bootnodes.execution.iter().all(|s| s.starts_with("enode://")),
-                "non-enode entry in EL list for chain {}",
-                cfg.chain_id,
-            );
-            let parsed = spec.bootnodes().unwrap();
-            for record in &parsed {
-                assert_ne!(record.tcp_port, 0, "EL bootnode missing TCP port: {record:?}");
-                assert_ne!(record.udp_port, 0, "EL bootnode missing UDP port: {record:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn el_bootnodes_unknown_chain_returns_none() {
-        let unknown = BaseChainSpecBuilder::default()
-            .genesis(Genesis::default())
-            .chain(alloy_chains::Chain::from_id(99_999))
-            .build();
-        assert!(unknown.bootnodes().is_none());
     }
 
     #[test]

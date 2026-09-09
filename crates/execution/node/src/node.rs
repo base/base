@@ -496,7 +496,11 @@ impl BaseNode {
                     ctx.config()
                         .network
                         .resolved_bootnodes()
-                        .or_else(|| ctx.chain_spec().bootnodes())
+                        .or_else(|| {
+                            reth_network_peers::NodeRecord::parse_bootnodes(
+                                ctx.chain_spec().config.bootnodes.execution,
+                            )
+                        })
                         .unwrap_or_default(),
                     external_addr,
                 )

@@ -24,7 +24,6 @@ alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
-reth-network-peers = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["default", "std"]}
 
@@ -38,7 +37,6 @@ std = [
     "alloy-primitives/std",
     "base-common-chain-config/std",
     "base-common-types-rpc/std",
-    "reth-network-peers/std",
     "serde?/std",
     "serde_json/std",
     "thiserror/std",
