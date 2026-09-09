@@ -805,7 +805,8 @@ services:
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/devnet.json
       - GF_INSTALL_PLUGINS=grafana-pyroscope-app 0.1.8
     volumes:
-      - ../scripts/devnet/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../scripts/devnet/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../scripts/devnet/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ../scripts/devnet/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus

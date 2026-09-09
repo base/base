@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 CONDUCTOR0_URL="${CONDUCTOR0_URL:-http://op-conductor-0:6545}"
 CONDUCTOR1_URL="${CONDUCTOR1_URL:-http://op-conductor-1:6546}"
@@ -33,23 +33,53 @@ wait_for_rpc "$CONDUCTOR0_URL" "op-conductor-0"
 wait_for_rpc "$CONDUCTOR1_URL" "op-conductor-1"
 wait_for_rpc "$CONDUCTOR2_URL" "op-conductor-2"
 
+# The bootstrap RPC can listen before Raft elects its first leader.
+for attempt in $(seq 1 120); do
+  if curl -sf --max-time 2 "$CONDUCTOR0_URL" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"conductor_leader","params":[],"id":1}' \
+    | jq -e '.result == true' >/dev/null; then
+    break
+  fi
+  if [ "$attempt" -eq 120 ]; then
+    echo "ERROR: bootstrap conductor did not become leader"
+    exit 1
+  fi
+  sleep 0.5
+done
+
 echo ""
 echo "=== Adding sequencer-1 as Raft voter ==="
 curl -s -X POST "$CONDUCTOR0_URL" \
   -H 'Content-Type: application/json' \
-  -d "{\"jsonrpc\":\"2.0\",\"method\":\"conductor_addServerAsVoter\",\"params\":[\"sequencer-1\",\"$CONDUCTOR1_RAFT_ADDR\",0],\"id\":1}" | jq .
+  -d "{\"jsonrpc\":\"2.0\",\"method\":\"conductor_addServerAsVoter\",\"params\":[\"sequencer-1\",\"$CONDUCTOR1_RAFT_ADDR\",0],\"id\":1}" | jq -e 'if .error then error(.error.message) else . end'
 
 echo ""
 echo "=== Adding sequencer-2 as Raft voter ==="
 curl -s -X POST "$CONDUCTOR0_URL" \
   -H 'Content-Type: application/json' \
-  -d "{\"jsonrpc\":\"2.0\",\"method\":\"conductor_addServerAsVoter\",\"params\":[\"sequencer-2\",\"$CONDUCTOR2_RAFT_ADDR\",0],\"id\":1}" | jq .
+  -d "{\"jsonrpc\":\"2.0\",\"method\":\"conductor_addServerAsVoter\",\"params\":[\"sequencer-2\",\"$CONDUCTOR2_RAFT_ADDR\",0],\"id\":1}" | jq -e 'if .error then error(.error.message) else . end'
 
 echo ""
 echo "=== Verifying cluster membership ==="
 curl -s -X POST "$CONDUCTOR0_URL" \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"conductor_clusterMembership","params":[],"id":1}' | jq .
+  -d '{"jsonrpc":"2.0","method":"conductor_clusterMembership","params":[],"id":1}' | jq -e 'if .error then error(.error.message) else . end'
+
+# Batchers need a working rollup proxy, not just an open conductor RPC port.
+for attempt in $(seq 1 120); do
+  if curl -sf --max-time 2 "$CONDUCTOR0_URL" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"optimism_rollupConfig","params":[],"id":1}' \
+    | jq -e '.error == null and .result != null' >/dev/null; then
+    break
+  fi
+  if [ "$attempt" -eq 120 ]; then
+    echo "ERROR: conductor rollup proxy did not become ready"
+    exit 1
+  fi
+  sleep 0.5
+done
 
 echo ""
 echo "=== Conductor cluster setup complete ==="
