@@ -62,7 +62,7 @@ impl<T: Compact> Compact for AlloyEthereumReceipt<T> {
         total_length += flags.len() + buffer.len();
         buf.put_slice(&flags);
         if zstd {
-            reth_zstd_compressors::with_receipt_compressor(|compressor| {
+            base_common_codec_storage::StorageCodec::with_receipt_compressor(|compressor| {
                 let compressed = compressor.compress(&buffer).expect("Failed to compress.");
                 buf.put(compressed.as_slice());
             });
@@ -75,7 +75,7 @@ impl<T: Compact> Compact for AlloyEthereumReceipt<T> {
     fn from_compact(buf: &[u8], _len: usize) -> (Self, &[u8]) {
         let (flags, mut buf) = ReceiptFlags::from(buf);
         if flags.__zstd() != 0 {
-            reth_zstd_compressors::with_receipt_decompressor(|decompressor| {
+            base_common_codec_storage::StorageCodec::with_receipt_decompressor(|decompressor| {
                 let decompressed = decompressor.decompress(buf);
                 let original_buf = buf;
                 let mut buf: &[u8] = decompressed;

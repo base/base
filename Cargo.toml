@@ -190,7 +190,7 @@ members = [
   "vendor/reth-trie",
   "crates/execution/state/types",
   "vendor/reth-trie-sparse",
-  "vendor/reth-zstd-compressors",
+  "crates/common/codec/storage",
   "crates/execution/evm/inspectors",
   "crates/execution/evm/crypto",
   "crates/execution/evm/primitives",
@@ -526,7 +526,7 @@ reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features 
 reth-execution-cache = { path = "vendor/reth-execution-cache", default-features = false }
 reth-storage-overlay = { path = "vendor/reth-storage-overlay", default-features = false }
 reth-rpc-server-types = { path = "vendor/reth-rpc-server-types", default-features = false }
-reth-zstd-compressors = { path = "vendor/reth-zstd-compressors", default-features = false }
+base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }

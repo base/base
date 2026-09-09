@@ -152,7 +152,7 @@ impl<T: Envelope + ToTxCompact + Transaction + Send + Sync> CompactEnvelope for 
             self.to_tx_compact(&mut tx_buf);
 
             buf.put_slice(
-                &reth_zstd_compressors::with_tx_compressor(|compressor| {
+                &base_common_codec_storage::StorageCodec::with_tx_compressor(|compressor| {
                     compressor.compress(&tx_buf)
                 })
                 .expect("Failed to compress"),
@@ -180,7 +180,7 @@ impl<T: Envelope + ToTxCompact + Transaction + Send + Sync> CompactEnvelope for 
         let (signature, buf) = Signature::from_compact(buf, sig_bit);
 
         let (transaction, buf) = if zstd_bit != 0 {
-            reth_zstd_compressors::with_tx_decompressor(|decompressor| {
+            base_common_codec_storage::StorageCodec::with_tx_decompressor(|decompressor| {
                 let decompressed = decompressor.decompress(buf);
                 let (tx_type, tx_buf) = T::TxType::from_compact(decompressed, tx_bits);
                 let (tx, _) = Self::from_tx_compact(tx_buf, tx_type, signature);

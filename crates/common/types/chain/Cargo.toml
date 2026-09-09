@@ -27,8 +27,8 @@ visibility = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
 alloy-trie = { workspace = true,  features = ["ethereum"]}
-reth-zstd-compressors = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"]  }
+base-common-codec-storage = { workspace = true, optional = true }
 c-kzg = { workspace = true, features = ["serde"], optional = true }
 borsh = { workspace = true, features = ["derive"], optional = true }
 alloy-eips = { workspace = true, features = ["serde", "kzg-sidecar"]}
@@ -91,7 +91,7 @@ std = [
     "alloy-rlp/std",
     "alloy-serde/std",
     "alloy-sol-types/std",
-    "reth-zstd-compressors?/std",
+    "base-common-codec-storage?/std",
     "serde/std",
     "thiserror/std",
     "bytes/std",
@@ -139,14 +139,14 @@ serde = [
 ]
 serde-bincode-compat = ["serde_with", "alloy-eips/serde-bincode-compat"]
 reth = [
-    "dep:reth-zstd-compressors",
+    "dep:base-common-codec-storage",
     "k256",
     "serde",
     "serde-bincode-compat",
     "std",
     "alloy",
 ]
-alloy = ["dep:alloy-genesis", "dep:reth-zstd-compressors"]
+alloy = ["dep:alloy-genesis", "dep:base-common-codec-storage"]
 test-utils = [
     "std",
     "alloy",

@@ -3,7 +3,7 @@
 
 Reads `etc/upstream-pins/reth.toml` and keeps every git-based `reth-*`
 workspace dependency on one repository and one ref. Crates.io Reth crates
-(`reth-codecs`, `reth-primitives-traits`, `reth-zstd-compressors`, …) are
+(`reth-codecs`, `reth-primitives-traits`, `base-common-codec-storage`, …) are
 left unchanged.
 
 See `etc/upstream-pins/README.md`.
@@ -543,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
 
 SAMPLE_CARGO = """[workspace.dependencies]
 # reth
-reth-zstd-compressors = { version = "0.6.0", default-features = false }
+base-common-codec-storage = { version = "0.6.0", default-features = false }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1" }
 base-execution-state-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.1", default-features = false }
@@ -588,7 +588,7 @@ class PinRethTests(unittest.TestCase):
             rewritten,
         )
         self.assertIn(
-            'reth-zstd-compressors = { version = "0.6.0", default-features = false }',
+            'base-common-codec-storage = { version = "0.6.0", default-features = false }',
             rewritten,
         )
 

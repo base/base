@@ -1,5 +1,5 @@
 [package]
-name = "reth-zstd-compressors"
+name = "base-common-codec-storage"
 description = "Commonly used zstd compressors."
 version.workspace = true
 edition.workspace = true
@@ -17,14 +17,15 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-readme = false
+readme = "README.md"
 
 [lib]
-name = "reth_zstd_compressors"
+name = "base_common_codec_storage"
 path = "src/lib.rs"
 
 [dependencies]
 zstd = { workspace = true, features = ["default", "experimental"] }
+
 [lints]
 workspace = true
 

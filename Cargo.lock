@@ -2703,6 +2703,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-codec-storage"
+version = "0.0.0"
+dependencies = [
+ "zstd",
+]
+
+[[package]]
 name = "base-common-io-files"
 version = "0.0.0"
 dependencies = [
@@ -2868,6 +2875,7 @@ dependencies = [
  "assert_matches",
  "auto_impl",
  "base-common-codec-macros",
+ "base-common-codec-storage",
  "base-common-network",
  "bincode 2.0.1",
  "borsh",
@@ -2883,7 +2891,6 @@ dependencies = [
  "proptest-arbitrary-interop",
  "rand 0.8.7",
  "rand 0.9.5",
- "reth-zstd-compressors",
  "rstest",
  "secp256k1 0.30.0",
  "serde",
@@ -15239,13 +15246,6 @@ dependencies = [
  "smallvec",
  "strum 0.27.2",
  "tracing",
-]
-
-[[package]]
-name = "reth-zstd-compressors"
-version = "0.0.0"
-dependencies = [
- "zstd",
 ]
 
 [[package]]

@@ -1,16 +1,3 @@
-//! Commonly used zstd [`Compressor`] and [`Decompressor`] for reth types.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 use zstd::bulk::{Compressor, Decompressor};
@@ -61,84 +48,90 @@ mod locals {
     }
 }
 
-/// Fn creates tx [`Compressor`]
-pub fn create_tx_compressor() -> Compressor<'static> {
-    Compressor::with_dictionary(0, TRANSACTION_DICTIONARY)
-        .expect("Failed to instantiate tx compressor")
-}
+/// Dictionary-backed codecs for persisted transactions and receipts.
+#[derive(Debug, Clone, Copy)]
+pub struct StorageCodec;
 
-/// Fn creates tx [`Decompressor`]
-pub fn create_tx_decompressor() -> ReusableDecompressor {
-    ReusableDecompressor::new(
-        Decompressor::with_dictionary(TRANSACTION_DICTIONARY)
-            .expect("Failed to instantiate tx decompressor"),
-    )
-}
+impl StorageCodec {
+    /// Fn creates tx [`Compressor`]
+    pub fn create_tx_compressor() -> Compressor<'static> {
+        Compressor::with_dictionary(0, TRANSACTION_DICTIONARY)
+            .expect("Failed to instantiate tx compressor")
+    }
 
-/// Fn creates receipt [`Compressor`]
-pub fn create_receipt_compressor() -> Compressor<'static> {
-    Compressor::with_dictionary(0, RECEIPT_DICTIONARY)
-        .expect("Failed to instantiate receipt compressor")
-}
+    /// Fn creates tx [`Decompressor`]
+    pub fn create_tx_decompressor() -> ReusableDecompressor {
+        ReusableDecompressor::new(
+            Decompressor::with_dictionary(TRANSACTION_DICTIONARY)
+                .expect("Failed to instantiate tx decompressor"),
+        )
+    }
 
-/// Fn creates receipt [`Decompressor`]
-pub fn create_receipt_decompressor() -> ReusableDecompressor {
-    ReusableDecompressor::new(
-        Decompressor::with_dictionary(RECEIPT_DICTIONARY)
-            .expect("Failed to instantiate receipt decompressor"),
-    )
-}
+    /// Fn creates receipt [`Compressor`]
+    pub fn create_receipt_compressor() -> Compressor<'static> {
+        Compressor::with_dictionary(0, RECEIPT_DICTIONARY)
+            .expect("Failed to instantiate receipt compressor")
+    }
 
-/// Executes `f` with the thread-local transaction compressor on `std`, otherwise creates a new one.
-#[inline]
-pub fn with_tx_compressor<R>(f: impl FnOnce(&mut Compressor<'_>) -> R) -> R {
-    #[cfg(feature = "std")]
-    {
-        TRANSACTION_COMPRESSOR.with_borrow_mut(f)
+    /// Fn creates receipt [`Decompressor`]
+    pub fn create_receipt_decompressor() -> ReusableDecompressor {
+        ReusableDecompressor::new(
+            Decompressor::with_dictionary(RECEIPT_DICTIONARY)
+                .expect("Failed to instantiate receipt decompressor"),
+        )
     }
-    #[cfg(not(feature = "std"))]
-    {
-        f(&mut create_tx_compressor())
-    }
-}
 
-/// Executes `f` with the thread-local transaction decompressor on `std`, otherwise creates a new
-/// one.
-#[inline]
-pub fn with_tx_decompressor<R>(f: impl FnOnce(&mut ReusableDecompressor) -> R) -> R {
-    #[cfg(feature = "std")]
-    {
-        TRANSACTION_DECOMPRESSOR.with_borrow_mut(f)
+    /// Executes `f` with the thread-local transaction compressor on `std`, otherwise creates a new one.
+    #[inline]
+    pub fn with_tx_compressor<R>(f: impl FnOnce(&mut Compressor<'_>) -> R) -> R {
+        #[cfg(feature = "std")]
+        {
+            TRANSACTION_COMPRESSOR.with_borrow_mut(f)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            f(&mut Self::create_tx_compressor())
+        }
     }
-    #[cfg(not(feature = "std"))]
-    {
-        f(&mut create_tx_decompressor())
-    }
-}
 
-/// Executes `f` with the thread-local receipt compressor on `std`, otherwise creates a new one.
-#[inline]
-pub fn with_receipt_compressor<R>(f: impl FnOnce(&mut Compressor<'_>) -> R) -> R {
-    #[cfg(feature = "std")]
-    {
-        RECEIPT_COMPRESSOR.with_borrow_mut(f)
+    /// Executes `f` with the thread-local transaction decompressor on `std`, otherwise creates a new
+    /// one.
+    #[inline]
+    pub fn with_tx_decompressor<R>(f: impl FnOnce(&mut ReusableDecompressor) -> R) -> R {
+        #[cfg(feature = "std")]
+        {
+            TRANSACTION_DECOMPRESSOR.with_borrow_mut(f)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            f(&mut Self::create_tx_decompressor())
+        }
     }
-    #[cfg(not(feature = "std"))]
-    {
-        f(&mut create_receipt_compressor())
-    }
-}
 
-/// Executes `f` with the thread-local receipt decompressor on `std`, otherwise creates a new one.
-#[inline]
-pub fn with_receipt_decompressor<R>(f: impl FnOnce(&mut ReusableDecompressor) -> R) -> R {
-    #[cfg(feature = "std")]
-    {
-        RECEIPT_DECOMPRESSOR.with_borrow_mut(f)
+    /// Executes `f` with the thread-local receipt compressor on `std`, otherwise creates a new one.
+    #[inline]
+    pub fn with_receipt_compressor<R>(f: impl FnOnce(&mut Compressor<'_>) -> R) -> R {
+        #[cfg(feature = "std")]
+        {
+            RECEIPT_COMPRESSOR.with_borrow_mut(f)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            f(&mut Self::create_receipt_compressor())
+        }
     }
-    #[cfg(not(feature = "std"))]
-    {
-        f(&mut create_receipt_decompressor())
+
+    /// Executes `f` with the thread-local receipt decompressor on `std`, otherwise creates a new one.
+    #[inline]
+    pub fn with_receipt_decompressor<R>(f: impl FnOnce(&mut ReusableDecompressor) -> R) -> R {
+        #[cfg(feature = "std")]
+        {
+            RECEIPT_DECOMPRESSOR.with_borrow_mut(f)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            f(&mut Self::create_receipt_decompressor())
+        }
     }
 }
 
@@ -214,10 +207,10 @@ mod tests {
     fn tx_roundtrip_compression() {
         let data: Vec<u8> = (0u8..=255).collect();
 
-        let mut compressor = create_tx_compressor();
+        let mut compressor = StorageCodec::create_tx_compressor();
         let compressed = compressor.compress(&data).expect("compress tx");
 
-        let mut decompressor = create_tx_decompressor();
+        let mut decompressor = StorageCodec::create_tx_decompressor();
         let decompressed = decompressor.decompress(&compressed);
 
         assert_eq!(decompressed, &*data);
@@ -227,10 +220,10 @@ mod tests {
     fn receipt_roundtrip_compression() {
         let data: Vec<u8> = (0u8..=255).rev().collect();
 
-        let mut compressor = create_receipt_compressor();
+        let mut compressor = StorageCodec::create_receipt_compressor();
         let compressed = compressor.compress(&data).expect("compress receipt");
 
-        let mut decompressor = create_receipt_decompressor();
+        let mut decompressor = StorageCodec::create_receipt_decompressor();
         let decompressed = decompressor.decompress(&compressed);
 
         assert_eq!(decompressed, &*data);

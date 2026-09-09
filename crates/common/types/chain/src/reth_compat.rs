@@ -354,8 +354,8 @@ impl Compact for CompactPhaseStatuses {
 #[derive(CompactZstd)]
 #[reth_codecs(crate = "base_common_types_chain")]
 #[reth_zstd(
-    compressor = reth_zstd_compressors::with_receipt_compressor,
-    decompressor = reth_zstd_compressors::with_receipt_decompressor
+    compressor = base_common_codec_storage::StorageCodec::with_receipt_compressor,
+    decompressor = base_common_codec_storage::StorageCodec::with_receipt_decompressor
 )]
 struct CompactBaseReceipt<'a> {
     tx_type: OpTxType,
