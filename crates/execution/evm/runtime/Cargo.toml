@@ -30,7 +30,7 @@ revm-primitives = { workspace = true }
 revm-interpreter = { workspace = true }
 base-common-l1-fees = { workspace = true }
 base-common-types-rpc = { workspace = true}
-base-common-precompiles = {workspace = true}
+base-execution-evm-precompiles = {workspace = true}
 metrics = { workspace = true, optional = true }
 base-metrics = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -54,7 +54,7 @@ rstest = { workspace = true, features = ["default"] }
 base-state = { workspace = true, features = ["serde"]}
 alloy-primitives = {features = ["serde"], workspace = true}
 k256 = { workspace = true, features = ["default", "ecdsa"] }
-base-common-precompiles = { workspace = true, features = ["test-utils"] }
+base-execution-evm-precompiles = { workspace = true, features = ["test-utils"] }
 serde_json = {features = ["alloc", "default", "preserve_order"], workspace = true}
 
 [features]
@@ -71,7 +71,7 @@ std = [
     "base-common-chain-config/std",
     "base-common-flz/std",
     "base-common-l1-fees/std",
-    "base-common-precompiles/std",
+    "base-execution-evm-precompiles/std",
     "base-common-types-chain/std",
     "base-common-types-rpc/std",
     "base-evm-context/std",
@@ -111,18 +111,18 @@ metrics = [
     "dep:metrics",
     "std",
 ]
-bn = ["base-common-precompiles/bn", "revm-precompile/bn"]
-blst = ["base-common-precompiles/blst", "revm-precompile/blst"]
-c-kzg = ["base-common-precompiles/c-kzg", "revm-precompile/c-kzg"]
-portable = ["base-common-precompiles/portable", "revm-precompile/portable"]
-secp256k1 = ["base-common-precompiles/secp256k1", "revm-precompile/secp256k1"]
-memory_limit = ["base-common-precompiles/memory_limit", "base-evm-context/memory_limit", "revm-interpreter/memory_limit"]
-optional_no_base_fee = ["base-common-precompiles/optional_no_base_fee", "base-evm-context/optional_no_base_fee"]
-optional_eip3541 = ["base-common-precompiles/optional_eip3541", "base-evm-context/optional_eip3541"]
-optional_eip3607 = ["base-common-precompiles/optional_eip3607", "base-evm-context/optional_eip3607"]
-optional_fee_charge = ["base-common-precompiles/optional_fee_charge", "base-evm-context/optional_fee_charge"]
-optional_balance_check = ["base-common-precompiles/optional_balance_check", "base-evm-context/optional_balance_check"]
-optional_block_gas_limit = ["base-common-precompiles/optional_block_gas_limit", "base-evm-context/optional_block_gas_limit"]
+bn = ["base-execution-evm-precompiles/bn", "revm-precompile/bn"]
+blst = ["base-execution-evm-precompiles/blst", "revm-precompile/blst"]
+c-kzg = ["base-execution-evm-precompiles/c-kzg", "revm-precompile/c-kzg"]
+portable = ["base-execution-evm-precompiles/portable", "revm-precompile/portable"]
+secp256k1 = ["base-execution-evm-precompiles/secp256k1", "revm-precompile/secp256k1"]
+memory_limit = ["base-execution-evm-precompiles/memory_limit", "base-evm-context/memory_limit", "revm-interpreter/memory_limit"]
+optional_no_base_fee = ["base-execution-evm-precompiles/optional_no_base_fee", "base-evm-context/optional_no_base_fee"]
+optional_eip3541 = ["base-execution-evm-precompiles/optional_eip3541", "base-evm-context/optional_eip3541"]
+optional_eip3607 = ["base-execution-evm-precompiles/optional_eip3607", "base-evm-context/optional_eip3607"]
+optional_fee_charge = ["base-execution-evm-precompiles/optional_fee_charge", "base-evm-context/optional_fee_charge"]
+optional_balance_check = ["base-execution-evm-precompiles/optional_balance_check", "base-evm-context/optional_balance_check"]
+optional_block_gas_limit = ["base-execution-evm-precompiles/optional_block_gas_limit", "base-evm-context/optional_block_gas_limit"]
 serde-json = ["serde", "tracer"]
 tracer = [
     "dep:serde",

@@ -180,7 +180,7 @@ impl ActorTxVerifier {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Bytes, U256, address, keccak256};
-    use base_common_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_execution_evm_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
     use base_common_types_chain::{Eip8130Constants, TxEip8130};
     use k256::ecdsa::SigningKey as K256SigningKey;
 

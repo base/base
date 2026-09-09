@@ -106,7 +106,7 @@ jobs:
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
           cargo \
-            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
+            --config "patch.\"https://github.com/base/base.git\".base-execution-evm-precompiles.path=\"$GITHUB_WORKSPACE/crates/execution/evm/precompiles\"" \
             --config "patch.\"https://github.com/base/base.git\".base-common-chain-config.path=\"$GITHUB_WORKSPACE/crates/common/chain/config\"" \
             build --release --no-default-features --features anvil/cli -p anvil -p forge
 

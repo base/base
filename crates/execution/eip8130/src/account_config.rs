@@ -2,7 +2,7 @@
 //! contract's storage layout and its storage-view functions.
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_precompiles::{ContractStorage, Handler, Mapping, Result, Slot, StorageKey};
+use base_execution_evm_precompiles::{ContractStorage, Handler, Mapping, Result, Slot, StorageKey};
 use base_common_types_chain::{Eip8130Constants, Eip8130Contracts};
 use base_precompile_macros::contract;
 
@@ -629,7 +629,7 @@ pub struct LockStatus {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use base_common_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_execution_evm_precompiles::{Handler, HashMapStorageProvider, StorageCtx};
 
     use super::*;
 

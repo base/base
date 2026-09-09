@@ -8,7 +8,7 @@ use alloy_primitives::{
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
 use base_common_chain_config::BaseChainSpec;
-use base_common_precompiles::{
+use base_execution_evm_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_common_types_chain::{BlockHeader, Transaction as _};
@@ -867,7 +867,7 @@ mod tests {
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_precompiles::{
+    use base_execution_evm_precompiles::{
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
     use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};

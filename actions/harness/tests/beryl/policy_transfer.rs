@@ -7,7 +7,7 @@
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{
+use base_execution_evm_precompiles::{
     B20FactoryStorage, B20PolicyType, B20Variant, IB20, IB20Factory, IPolicyRegistry,
     PolicyRegistryStorage,
 };

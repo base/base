@@ -14,8 +14,8 @@ use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chain_config::DaFootprintGasScalarUpdate;
 use base_common_chain_config::Upgrades;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
-use base_common_precompiles::NonceManagerStorage;
-use base_common_precompiles::{
+use base_execution_evm_precompiles::NonceManagerStorage;
+use base_execution_evm_precompiles::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
 };
 use base_common_types_chain::{

@@ -4,7 +4,7 @@
 use core::cmp::Ordering;
 
 use alloy_primitives::{Address, B256, U256};
-use base_common_precompiles::NonceManagerStorage;
+use base_execution_evm_precompiles::NonceManagerStorage;
 use base_common_types_chain::{Eip8130Constants, TxEip8130};
 
 use crate::NonceError;
@@ -121,7 +121,7 @@ impl NonceValidator {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, address};
-    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
+    use base_execution_evm_precompiles::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
 

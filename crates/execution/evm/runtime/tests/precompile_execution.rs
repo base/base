@@ -8,7 +8,7 @@ use base_state::InMemoryDB;
 use revm_primitives::{TxKind, U256, address, hardfork::SpecId};
 use revm_state::AccountInfo;
 
-use base_common_precompiles::{
+use base_execution_evm_precompiles::{
     EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
 };
 use base_evm_context::{Cfg, ContextTr};

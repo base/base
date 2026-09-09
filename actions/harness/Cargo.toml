@@ -60,7 +60,7 @@ base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 
 [dev-dependencies]
 base-blobs = { workspace = true }
-base-common-precompiles = {workspace = true}
+base-execution-evm-precompiles = {workspace = true}
 alloy-sol-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "rt", "macros"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }

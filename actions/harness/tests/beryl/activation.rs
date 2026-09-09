@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_types_chain::TxReceipt;
-use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
+use base_execution_evm_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 
 use crate::env::BerylTestEnv;
 

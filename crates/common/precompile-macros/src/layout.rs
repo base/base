@@ -12,10 +12,10 @@ pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::To
     let doc_str = format!("Storage handler for the `{field_name}` slot.");
     let handler_type = match &field.kind {
         FieldKind::Direct(ty) => {
-            quote! { <#ty as ::base_common_precompiles::StorableType>::Handler<'a> }
+            quote! { <#ty as ::base_execution_evm_precompiles::StorableType>::Handler<'a> }
         }
         FieldKind::Mapping { key, value } => {
-            quote! { <::base_common_precompiles::Mapping<#key, #value> as ::base_common_precompiles::StorableType>::Handler<'a> }
+            quote! { <::base_execution_evm_precompiles::Mapping<#key, #value> as ::base_execution_evm_precompiles::StorableType>::Handler<'a> }
         }
     };
 
@@ -67,15 +67,15 @@ pub(crate) fn gen_handler_field_init(
             };
 
             quote! {
-                #field_name: <#ty as ::base_common_precompiles::StorableType>::handle(
+                #field_name: <#ty as ::base_execution_evm_precompiles::StorableType>::handle(
                     #slot_expr, #layout_ctx, address, storage
                 )
             }
         }
         FieldKind::Mapping { key, value } => {
             quote! {
-                #field_name: <::base_common_precompiles::Mapping<#key, #value> as ::base_common_precompiles::StorableType>::handle(
-                    #slot_expr, ::base_common_precompiles::LayoutCtx::FULL, address, storage
+                #field_name: <::base_execution_evm_precompiles::Mapping<#key, #value> as ::base_execution_evm_precompiles::StorableType>::handle(
+                    #slot_expr, ::base_execution_evm_precompiles::LayoutCtx::FULL, address, storage
                 )
             }
         }
@@ -136,7 +136,7 @@ pub(crate) fn gen_struct(
         #vis struct #name<'a> {
             #(#handler_fields,)*
             address: ::alloy_primitives::Address,
-            storage: ::base_common_precompiles::StorageCtx<'a>,
+            storage: ::base_execution_evm_precompiles::StorageCtx<'a>,
         }
     }
 }
@@ -156,7 +156,7 @@ pub(crate) fn gen_constructor(
             /// Creates an instance of the precompile.
             ///
             /// Caution: This does not initialize the account, see [`Self::initialize`].
-            pub fn new(storage: ::base_common_precompiles::StorageCtx<'a>) -> Self {
+            pub fn new(storage: ::base_execution_evm_precompiles::StorageCtx<'a>) -> Self {
                 Self::__new(#addr, storage)
             }
         }
@@ -169,7 +169,7 @@ pub(crate) fn gen_constructor(
             #[inline(always)]
             fn __new(
                 address: ::alloy_primitives::Address,
-                storage: ::base_common_precompiles::StorageCtx<'a>,
+                storage: ::base_execution_evm_precompiles::StorageCtx<'a>,
             ) -> Self {
                 #[cfg(debug_assertions)]
                 {
@@ -184,14 +184,14 @@ pub(crate) fn gen_constructor(
             }
 
             #[inline(always)]
-            fn __initialize(&mut self) -> ::base_common_precompiles::Result<()> {
-                let bytecode = ::base_common_precompiles::Bytecode::new_legacy(::alloy_primitives::Bytes::from_static(&[0xef]));
+            fn __initialize(&mut self) -> ::base_execution_evm_precompiles::Result<()> {
+                let bytecode = ::base_execution_evm_precompiles::Bytecode::new_legacy(::alloy_primitives::Bytes::from_static(&[0xef]));
                 self.storage.set_code(self.address, bytecode)?;
                 Ok(())
             }
 
             #[inline(always)]
-            fn emit_event(&mut self, event: impl ::alloy_primitives::IntoLogData) -> ::base_common_precompiles::Result<()> {
+            fn emit_event(&mut self, event: impl ::alloy_primitives::IntoLogData) -> ::base_execution_evm_precompiles::Result<()> {
                 self.storage.emit_event(self.address, event.into_log_data())
             }
 
@@ -222,14 +222,14 @@ pub(crate) fn gen_constructor(
 
 pub(crate) fn gen_contract_storage_impl(name: &Ident) -> proc_macro2::TokenStream {
     quote! {
-        impl<'a> ::base_common_precompiles::ContractStorage<'a> for #name<'a> {
+        impl<'a> ::base_execution_evm_precompiles::ContractStorage<'a> for #name<'a> {
             #[inline(always)]
             fn address(&self) -> ::alloy_primitives::Address {
                 self.address
             }
 
             #[inline(always)]
-            fn storage(&self) -> ::base_common_precompiles::StorageCtx<'a> {
+            fn storage(&self) -> ::base_execution_evm_precompiles::StorageCtx<'a> {
                 self.storage
             }
         }

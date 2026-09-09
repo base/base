@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, Bytes, LogData, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_network::{Base, PrivateKeySigner};
-use base_common_precompiles::{
+use base_execution_evm_precompiles::{
     ActivationFeature, B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Asset, IB20Factory,
     IB20Stablecoin,
 };

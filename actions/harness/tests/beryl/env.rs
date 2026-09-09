@@ -8,8 +8,8 @@ use base_action_harness::{
     VerifierPipeline,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_precompiles::StorageKey;
-use base_common_precompiles::{
+use base_execution_evm_precompiles::StorageKey;
+use base_execution_evm_precompiles::{
     ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
     IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
 };

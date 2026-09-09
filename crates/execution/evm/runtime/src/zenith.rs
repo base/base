@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes};
 use base_common_chain_config::Upgrades;
-use base_common_precompiles::NonceManagerStorage;
+use base_execution_evm_precompiles::NonceManagerStorage;
 use base_execution_evm_runtime::Database;
 use base_execution_evm_runtime::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 

@@ -143,11 +143,11 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
         let consts = PackingConstants::new(field.name);
         let (loc_const, (slot_const, offset_const)) = (consts.location(), consts.into_tuple());
         let slots_to_end = quote! {
-            ::alloy_primitives::U256::from_limbs([<#ty as ::base_common_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
+            ::alloy_primitives::U256::from_limbs([<#ty as ::base_execution_evm_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
                 .saturating_sub(::alloy_primitives::U256::ONE)
         };
 
-        let bytes_expr = quote! { <#ty as ::base_common_precompiles::StorableType>::BYTES };
+        let bytes_expr = quote! { <#ty as ::base_execution_evm_precompiles::StorableType>::BYTES };
 
         let (slot_expr, offset_expr) = match &field.assigned_slot {
             SlotAssignment::Manual(manual_slot) => {
@@ -180,8 +180,8 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
             let loc_doc = format!("Storage location descriptor for the `{}` field.", field.name);
             constants.extend(quote! {
                 #[doc = #loc_doc]
-                pub const #loc_const: ::base_common_precompiles::FieldLocation =
-                    ::base_common_precompiles::FieldLocation::new(#slot_const.as_limbs()[0] as usize, #offset_const, #bytes_expr);
+                pub const #loc_const: ::base_execution_evm_precompiles::FieldLocation =
+                    ::base_execution_evm_precompiles::FieldLocation::new(#slot_const.as_limbs()[0] as usize, #offset_const, #bytes_expr);
             });
         }
 
@@ -231,14 +231,14 @@ fn gen_auto_slot_expr(
             let (candidate_slot, candidate_offset) = candidate_output;
             output = (
                 quote! {
-                    if <#candidate_ty as ::base_common_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
+                    if <#candidate_ty as ::base_execution_evm_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
                         #fallback_slot
                     } else {
                         #candidate_slot
                     }
                 },
                 quote! {
-                    if <#candidate_ty as ::base_common_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
+                    if <#candidate_ty as ::base_execution_evm_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
                         #fallback_offset
                     } else {
                         #candidate_offset
@@ -255,8 +255,8 @@ fn gen_auto_slot_expr(
         let (normal_slot, normal_offset) = output;
         (
             quote! {
-                if <#field_ty as ::base_common_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
-                    <#field_ty as ::base_common_precompiles::StorableType>::STORAGE_NAMESPACE_ROOT
+                if <#field_ty as ::base_execution_evm_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
+                    <#field_ty as ::base_execution_evm_precompiles::StorableType>::STORAGE_NAMESPACE_ROOT
                         .checked_add(#slots_to_end).expect("slot overflow")
                         .saturating_sub(#slots_to_end)
                 } else {
@@ -264,7 +264,7 @@ fn gen_auto_slot_expr(
                 }
             },
             quote! {
-                if <#field_ty as ::base_common_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
+                if <#field_ty as ::base_execution_evm_precompiles::StorableType>::HAS_STORAGE_NAMESPACE {
                     0
                 } else {
                     #normal_offset
@@ -335,17 +335,17 @@ pub(crate) fn gen_slot_packing_logic(
     prev_offset_expr: TokenStream,
 ) -> (TokenStream, TokenStream) {
     let prev_layout_slots = quote! {
-        ::alloy_primitives::U256::from_limbs([<#prev_ty as ::base_common_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
+        ::alloy_primitives::U256::from_limbs([<#prev_ty as ::base_execution_evm_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
     };
     let curr_slots_to_end = quote! {
-        ::alloy_primitives::U256::from_limbs([<#curr_ty as ::base_common_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
+        ::alloy_primitives::U256::from_limbs([<#curr_ty as ::base_execution_evm_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
             .saturating_sub(::alloy_primitives::U256::ONE)
     };
 
     let can_pack_expr = quote! {
         #prev_offset_expr
-            + <#prev_ty as ::base_common_precompiles::StorableType>::BYTES
-            + <#curr_ty as ::base_common_precompiles::StorableType>::BYTES <= 32
+            + <#prev_ty as ::base_execution_evm_precompiles::StorableType>::BYTES
+            + <#curr_ty as ::base_execution_evm_precompiles::StorableType>::BYTES <= 32
     };
 
     let slot_expr = quote! {{
@@ -360,7 +360,7 @@ pub(crate) fn gen_slot_packing_logic(
     }};
 
     let offset_expr = quote! {{
-        if #can_pack_expr { #prev_offset_expr + <#prev_ty as ::base_common_precompiles::StorableType>::BYTES } else { 0 }
+        if #can_pack_expr { #prev_offset_expr + <#prev_ty as ::base_execution_evm_precompiles::StorableType>::BYTES } else { 0 }
     }};
 
     (slot_expr, offset_expr)
@@ -376,15 +376,15 @@ pub(crate) fn gen_layout_ctx_expr(
     if !is_manual_slot && let Some(shares_slot_check) = shares_slot_check {
         quote! {
             {
-                if #shares_slot_check && <#ty as ::base_common_precompiles::StorableType>::IS_PACKABLE {
-                    ::base_common_precompiles::LayoutCtx::packed(#offset_const_ref)
+                if #shares_slot_check && <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE {
+                    ::base_execution_evm_precompiles::LayoutCtx::packed(#offset_const_ref)
                 } else {
-                    ::base_common_precompiles::LayoutCtx::FULL
+                    ::base_execution_evm_precompiles::LayoutCtx::FULL
                 }
             }
         }
     } else {
-        quote! { ::base_common_precompiles::LayoutCtx::FULL }
+        quote! { ::base_execution_evm_precompiles::LayoutCtx::FULL }
     }
 }
 
@@ -395,7 +395,7 @@ pub(crate) fn gen_collision_check_fn(
     all_fields: &[LayoutField<'_>],
 ) -> (Ident, TokenStream) {
     fn gen_slot_count_expr(ty: &Type) -> TokenStream {
-        quote! { ::alloy_primitives::U256::from_limbs([<#ty as ::base_common_precompiles::StorableType>::SLOTS as u64, 0, 0, 0]) }
+        quote! { ::alloy_primitives::U256::from_limbs([<#ty as ::base_execution_evm_precompiles::StorableType>::SLOTS as u64, 0, 0, 0]) }
     }
 
     let check_fn_name = format_ident!("__check_collision_{}", field.name);
@@ -426,8 +426,8 @@ pub(crate) fn gen_collision_check_fn(
                 let other_slot_end = other_slot.checked_add(#other_count_expr).expect("slot range overflow");
 
                 let no_overlap = if slot == other_slot {
-                    let byte_end = #offset_const + <#field_ty as ::base_common_precompiles::StorableType>::BYTES;
-                    let other_byte_end = #other_offset_const + <#other_ty as ::base_common_precompiles::StorableType>::BYTES;
+                    let byte_end = #offset_const + <#field_ty as ::base_execution_evm_precompiles::StorableType>::BYTES;
+                    let other_byte_end = #other_offset_const + <#other_ty as ::base_execution_evm_precompiles::StorableType>::BYTES;
                     byte_end <= #other_offset_const || other_byte_end <= #offset_const
                 } else {
                     slot_end.le(&other_slot) || other_slot_end.le(&slot)

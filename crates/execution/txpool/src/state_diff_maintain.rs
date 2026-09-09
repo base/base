@@ -5,7 +5,7 @@
 //! deltas into the EIP-8130 invalidation index.
 
 use alloy_primitives::{B256, U256};
-use base_common_precompiles::NonceManagerStorage;
+use base_execution_evm_precompiles::NonceManagerStorage;
 use base_execution_evm_runtime::database::BundleState;
 use futures::StreamExt;
 use reth_provider::CanonStateNotification;

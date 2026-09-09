@@ -25,7 +25,7 @@ Behavior by `nonce_key`:
 
 This avoids the cost of an `eth_call` to the precompile's `getNonce` for
 the common `nonce_key != 0` case while keeping layout ownership inside
-`base-common-precompiles` (via `NonceManagerStorage::nonce_slot`).
+`base-execution-evm-precompiles` (via `NonceManagerStorage::nonce_slot`).
 
 ## `Eip8130GasEstimator`
 

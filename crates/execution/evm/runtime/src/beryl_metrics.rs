@@ -4,8 +4,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "metrics")]
-use base_common_precompiles::PrecompileCallStatus;
-use base_common_precompiles::{
+use base_execution_evm_precompiles::PrecompileCallStatus;
+use base_execution_evm_precompiles::{
     PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
 };
 #[cfg(feature = "metrics")]

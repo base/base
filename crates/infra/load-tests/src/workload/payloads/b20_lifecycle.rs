@@ -7,7 +7,7 @@ use alloy_provider::{PendingTransactionBuilder, Provider};
 use base_common_types_rpc::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
+use base_execution_evm_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
 use futures::{StreamExt, stream};
 use tracing::{info, trace, warn};
 

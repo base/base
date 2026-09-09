@@ -20,7 +20,7 @@ revm-bytecode = { workspace = true }
 alloy-primitives = { workspace = true }
 base-evm-context = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-common-precompiles = { workspace = true }
+base-execution-evm-precompiles = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }

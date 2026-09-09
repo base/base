@@ -32,7 +32,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     } else {
         quote! {
             Ok(crate::B20Variant::from_address(
-                ::base_common_precompiles::ContractStorage::address(self),
+                ::base_execution_evm_precompiles::ContractStorage::address(self),
             )
             .and_then(|v| v.decimals())
             .unwrap_or(0))
@@ -43,9 +43,9 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
         impl #name<'_> {
             fn __require_policy_type(
                 policy_scope: ::alloy_primitives::B256,
-            ) -> ::base_common_precompiles::Result<crate::B20PolicyType> {
+            ) -> ::base_execution_evm_precompiles::Result<crate::B20PolicyType> {
                 crate::B20PolicyType::from_id(policy_scope).ok_or_else(|| {
-                    ::base_common_precompiles::BasePrecompileError::revert(
+                    ::base_execution_evm_precompiles::BasePrecompileError::revert(
                         crate::IB20::UnsupportedPolicyType { policyScope: policy_scope },
                     )
                 })
@@ -54,17 +54,17 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
 
         impl crate::TokenAccounting for #name<'_> {
             fn token_address(&self) -> ::alloy_primitives::Address {
-                ::base_common_precompiles::ContractStorage::address(self)
+                ::base_execution_evm_precompiles::ContractStorage::address(self)
             }
 
-            fn is_initialized(&self) -> ::base_common_precompiles::Result<bool> {
-                ::base_common_precompiles::ContractStorage::is_initialized(self)
+            fn is_initialized(&self) -> ::base_execution_evm_precompiles::Result<bool> {
+                ::base_execution_evm_precompiles::ContractStorage::is_initialized(self)
             }
 
             fn balance_of(
                 &self,
                 account: ::alloy_primitives::Address,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 self.b20.balance_of(account)
             }
 
@@ -72,7 +72,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 account: ::alloy_primitives::Address,
                 balance: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_balance(account, balance)
             }
 
@@ -80,7 +80,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 owner: ::alloy_primitives::Address,
                 spender: ::alloy_primitives::Address,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 self.b20.allowance(owner, spender)
             }
 
@@ -89,97 +89,97 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 owner: ::alloy_primitives::Address,
                 spender: ::alloy_primitives::Address,
                 amount: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_allowance(owner, spender, amount)
             }
 
             fn total_supply(
                 &self,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 self.b20.total_supply()
             }
 
             fn set_total_supply(
                 &mut self,
                 supply: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_total_supply(supply)
             }
 
-            fn supply_cap(&self) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            fn supply_cap(&self) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 self.b20.supply_cap()
             }
 
             fn set_supply_cap(
                 &mut self,
                 cap: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_supply_cap(cap)
             }
 
-            fn name(&self) -> ::base_common_precompiles::Result<::alloc::string::String> {
+            fn name(&self) -> ::base_execution_evm_precompiles::Result<::alloc::string::String> {
                 self.b20.name()
             }
 
             fn set_name(
                 &mut self,
                 name: ::alloc::string::String,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_name(name)
             }
 
-            fn symbol(&self) -> ::base_common_precompiles::Result<::alloc::string::String> {
+            fn symbol(&self) -> ::base_execution_evm_precompiles::Result<::alloc::string::String> {
                 self.b20.symbol()
             }
 
             fn set_symbol(
                 &mut self,
                 symbol: ::alloc::string::String,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_symbol(symbol)
             }
 
-            fn decimals(&self) -> ::base_common_precompiles::Result<u8> {
+            fn decimals(&self) -> ::base_execution_evm_precompiles::Result<u8> {
                 #decimals_impl
             }
 
-            fn paused(&self) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            fn paused(&self) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 self.b20.paused()
             }
 
             fn set_paused(
                 &mut self,
                 vectors: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_paused(vectors)
             }
 
             fn nonce(
                 &self,
                 owner: ::alloy_primitives::Address,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 self.b20.nonce(owner)
             }
 
             fn increment_nonce(
                 &mut self,
                 owner: ::alloy_primitives::Address,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 let current = self.b20.nonce(owner)?;
                 let next = current
                     .checked_add(::alloy_primitives::U256::ONE)
-                    .ok_or_else(::base_common_precompiles::BasePrecompileError::under_overflow)?;
+                    .ok_or_else(::base_execution_evm_precompiles::BasePrecompileError::under_overflow)?;
                 self.b20.set_nonce(owner, next)
             }
 
-            fn contract_uri(&self) -> ::base_common_precompiles::Result<::alloc::string::String> {
+            fn contract_uri(&self) -> ::base_execution_evm_precompiles::Result<::alloc::string::String> {
                 self.b20.contract_uri()
             }
 
             fn set_contract_uri(
                 &mut self,
                 uri: ::alloc::string::String,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_contract_uri(uri)
             }
 
@@ -187,7 +187,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 role: ::alloy_primitives::B256,
                 account: ::alloy_primitives::Address,
-            ) -> ::base_common_precompiles::Result<bool> {
+            ) -> ::base_execution_evm_precompiles::Result<bool> {
                 self.b20.has_role(role, account)
             }
 
@@ -196,14 +196,14 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 role: ::alloy_primitives::B256,
                 account: ::alloy_primitives::Address,
                 enabled: bool,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_role(role, account, enabled)
             }
 
             fn role_member_count(
                 &self,
                 role: ::alloy_primitives::B256,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 if role == crate::B20TokenRole::DefaultAdmin.id() {
                     self.b20.admin_count()
                 } else {
@@ -215,7 +215,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 role: ::alloy_primitives::B256,
                 count: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 if role == crate::B20TokenRole::DefaultAdmin.id() {
                     self.b20.set_admin_count(count)
                 } else {
@@ -226,7 +226,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             fn role_admin(
                 &self,
                 role: ::alloy_primitives::B256,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::B256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::B256> {
                 self.b20.role_admin(role)
             }
 
@@ -234,14 +234,14 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 role: ::alloy_primitives::B256,
                 admin_role: ::alloy_primitives::B256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.b20.set_role_admin(role, admin_role)
             }
 
             fn policy_id(
                 &self,
                 policy_scope: ::alloy_primitives::B256,
-            ) -> ::base_common_precompiles::Result<u64> {
+            ) -> ::base_execution_evm_precompiles::Result<u64> {
                 match Self::__require_policy_type(policy_scope)? {
                     crate::B20PolicyType::TransferSender => self.b20.transfer_sender_policy_id(),
                     crate::B20PolicyType::TransferReceiver => {
@@ -258,7 +258,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
 
             fn transfer_policy_ids(
                 &self,
-            ) -> ::base_common_precompiles::Result<crate::TransferPolicyIds> {
+            ) -> ::base_execution_evm_precompiles::Result<crate::TransferPolicyIds> {
                 // Single SLOAD of the shared transfer-policy slot, extracting all three lanes.
                 self.b20.transfer_policy_ids()
             }
@@ -267,7 +267,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 policy_scope: ::alloy_primitives::B256,
                 policy_id: u64,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 match Self::__require_policy_type(policy_scope)? {
                     crate::B20PolicyType::TransferSender => {
                         self.b20.set_transfer_sender_policy_id(policy_id)
@@ -293,19 +293,19 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             fn emit_event(
                 &mut self,
                 log: ::alloy_primitives::LogData,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.emit_event(log)
             }
 
             fn metered_keccak256(
                 &self,
                 data: &[u8],
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::B256> {
-                ::base_common_precompiles::ContractStorage::storage(self).metered_keccak256(data)
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::B256> {
+                ::base_execution_evm_precompiles::ContractStorage::storage(self).metered_keccak256(data)
             }
 
-            fn deduct_gas(&self, gas: u64) -> ::base_common_precompiles::Result<()> {
-                ::base_common_precompiles::ContractStorage::storage(self).deduct_gas(gas)
+            fn deduct_gas(&self, gas: u64) -> ::base_execution_evm_precompiles::Result<()> {
+                ::base_execution_evm_precompiles::ContractStorage::storage(self).deduct_gas(gas)
             }
         }
     })
@@ -316,14 +316,14 @@ fn expand_stablecoin(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = input.ident;
     Ok(quote! {
         impl crate::StablecoinAccounting for #name<'_> {
-            fn currency(&self) -> ::base_common_precompiles::Result<::alloc::string::String> {
+            fn currency(&self) -> ::base_execution_evm_precompiles::Result<::alloc::string::String> {
                 self.stablecoin.currency()
             }
 
             fn set_currency(
                 &mut self,
                 currency: ::alloc::string::String,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.stablecoin.set_currency(currency)
             }
         }
@@ -337,13 +337,13 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
         impl crate::AssetAccounting for #name<'_> {
             fn timestamp(
                 &self,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 Ok(self.storage.timestamp())
             }
 
             fn multiplier(
                 &self,
-            ) -> ::base_common_precompiles::Result<::alloy_primitives::U256> {
+            ) -> ::base_execution_evm_precompiles::Result<::alloy_primitives::U256> {
                 let multiplier = self.asset.multiplier()?;
                 Ok(if multiplier.is_zero() { Self::WAD } else { multiplier })
             }
@@ -351,15 +351,15 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             fn set_multiplier(
                 &mut self,
                 multiplier: ::alloy_primitives::U256,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.asset.set_multiplier(multiplier)
             }
 
-            fn pending_multiplier(&self) -> ::base_common_precompiles::Result<u128> {
+            fn pending_multiplier(&self) -> ::base_execution_evm_precompiles::Result<u128> {
                 self.asset.pending_multiplier()
             }
 
-            fn pending_effective_at(&self) -> ::base_common_precompiles::Result<u64> {
+            fn pending_effective_at(&self) -> ::base_execution_evm_precompiles::Result<u64> {
                 self.asset.pending_effective_at()
             }
 
@@ -367,21 +367,21 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 multiplier: u128,
                 effective_at: u64,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.write_pending(multiplier, effective_at)
             }
 
             fn clear_pending_multiplier_and_effective_at(
                 &mut self,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 self.write_pending(0, 0)
             }
 
             fn extra_metadata(
                 &self,
                 key: &str,
-            ) -> ::base_common_precompiles::Result<::alloc::string::String> {
-                ::base_common_precompiles::Handler::read(
+            ) -> ::base_execution_evm_precompiles::Result<::alloc::string::String> {
+                ::base_execution_evm_precompiles::Handler::read(
                     self.asset
                         .extra_metadata
                         .at(&::alloc::string::String::from(key)),
@@ -392,12 +392,12 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 key: &str,
                 value: ::alloc::string::String,
-            ) -> ::base_common_precompiles::Result<()> {
+            ) -> ::base_execution_evm_precompiles::Result<()> {
                 let key = ::alloc::string::String::from(key);
                 if value.is_empty() {
-                    ::base_common_precompiles::Handler::delete(self.asset.extra_metadata.at_mut(&key))
+                    ::base_execution_evm_precompiles::Handler::delete(self.asset.extra_metadata.at_mut(&key))
                 } else {
-                    ::base_common_precompiles::Handler::write(
+                    ::base_execution_evm_precompiles::Handler::write(
                         self.asset.extra_metadata.at_mut(&key),
                         value,
                     )
@@ -407,8 +407,8 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             fn is_announcement_id_used(
                 &self,
                 id: &str,
-            ) -> ::base_common_precompiles::Result<bool> {
-                ::base_common_precompiles::Handler::read(
+            ) -> ::base_execution_evm_precompiles::Result<bool> {
+                ::base_execution_evm_precompiles::Handler::read(
                     self.asset
                         .used_announcement_ids
                         .at(&::alloc::string::String::from(id)),
@@ -418,8 +418,8 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             fn mark_announcement_id_used(
                 &mut self,
                 id: &str,
-            ) -> ::base_common_precompiles::Result<()> {
-                ::base_common_precompiles::Handler::write(
+            ) -> ::base_execution_evm_precompiles::Result<()> {
+                ::base_execution_evm_precompiles::Handler::write(
                     self.asset
                         .used_announcement_ids
                         .at_mut(&::alloc::string::String::from(id)),
@@ -427,7 +427,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 )
             }
 
-            fn decimals(&self) -> ::base_common_precompiles::Result<u8> {
+            fn decimals(&self) -> ::base_execution_evm_precompiles::Result<u8> {
                 let stored = self.asset.decimals()?;
                 Ok(if stored == 0 { Self::MIN_DECIMALS } else { stored })
             }

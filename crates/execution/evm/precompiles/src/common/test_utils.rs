@@ -1,0 +1,458 @@
+//! In-memory fakes of [`TokenAccounting`] and [`PolicyAccounting`] for unit tests.
+//!
+//! Use these for the versioned `logic/vN` unit tests.
+//! For factory, dispatch, and storage-layout tests keep the EVM harness.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use alloy_primitives::{Address, B256, LogData, U256, keccak256};
+use base_execution_evm_precompiles::Result;
+
+use crate::{
+    PackedPolicy, PolicyAccounting, PolicyRegistryStorage,
+    b20_asset::{AssetAccounting, B20AssetStorage},
+    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
+    common::{B20_MAX_SUPPLY_CAP, TokenAccounting, TransferPolicyIds},
+};
+
+/// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
+///
+/// The stablecoin holder is a minimal storage+policy holder (its behavior lives in `logic/vN`), so
+/// this alias is used by dispatch/`inner` tests.
+pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+
+/// HashMap-backed [`TokenAccounting`] for unit tests.
+///
+/// Collect emitted events via the public `events` field after calling token ops.
+#[derive(Debug)]
+pub struct InMemoryTokenAccounting {
+    address: Address,
+    /// Whether `is_initialized` returns `true`.
+    pub initialized: bool,
+    /// Per-account token balances.
+    pub balances: HashMap<Address, U256>,
+    /// Approved spending allowances keyed by `(owner, spender)`.
+    pub allowances: HashMap<(Address, Address), U256>,
+    /// Current total token supply.
+    pub total_supply: U256,
+    /// Defaults to [`B20_MAX_SUPPLY_CAP`] so mint tests don't need to set a cap explicitly.
+    pub supply_cap: U256,
+    /// Token name.
+    pub name: String,
+    /// Token symbol.
+    pub symbol: String,
+    /// Number of decimal places.
+    pub decimals: u8,
+    /// Stablecoin currency identifier.
+    pub currency: String,
+    /// Bitmask of active pause vectors.
+    pub paused: U256,
+    /// Per-account EIP-2612 nonces.
+    pub nonces: HashMap<Address, U256>,
+    /// URI pointing to the contract-level metadata.
+    pub contract_uri: String,
+    /// Role membership keyed by `(role, account)`.
+    pub roles: HashMap<(B256, Address), bool>,
+    /// Number of accounts assigned to each role.
+    pub role_member_counts: HashMap<B256, U256>,
+    /// Admin role for each role.
+    pub role_admins: HashMap<B256, B256>,
+    /// Policy IDs keyed by policy type.
+    pub policy_ids: HashMap<B256, u64>,
+    /// Current block timestamp. Asset-token tests set this to exercise versioned lazy reads.
+    pub timestamp: U256,
+    /// Multiplier scaled to WAD (1e18). Asset tokens only.
+    pub multiplier: U256,
+    /// Pending scheduled multiplier target (ERC-8056). Asset tokens only.
+    pub pending_multiplier: u128,
+    /// Timestamp at which `pending_multiplier` becomes effective; `0` means none. Asset tokens only.
+    pub pending_effective_at: u64,
+    /// Extra-metadata values keyed by raw metadata `key`. Asset tokens only.
+    pub extra_metadata: HashMap<String, String>,
+    /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
+    pub announcement_ids_used: HashSet<String>,
+    /// Events collected by `emit_event`; does not produce real EVM logs.
+    pub events: Vec<LogData>,
+}
+
+impl InMemoryTokenAccounting {
+    /// Creates an initialized accounting instance at `address` with sensible defaults.
+    pub fn new(address: Address) -> Self {
+        Self {
+            address,
+            initialized: true,
+            balances: HashMap::new(),
+            allowances: HashMap::new(),
+            total_supply: U256::ZERO,
+            supply_cap: B20_MAX_SUPPLY_CAP,
+            name: String::new(),
+            symbol: String::new(),
+            decimals: 18,
+            currency: String::new(),
+            paused: U256::ZERO,
+            nonces: HashMap::new(),
+            contract_uri: String::new(),
+            roles: HashMap::new(),
+            role_member_counts: HashMap::new(),
+            role_admins: HashMap::new(),
+            policy_ids: HashMap::new(),
+            timestamp: U256::ZERO,
+            multiplier: U256::ZERO,
+            pending_multiplier: 0,
+            pending_effective_at: 0,
+            extra_metadata: HashMap::new(),
+            announcement_ids_used: HashSet::new(),
+            events: Vec::new(),
+        }
+    }
+}
+
+impl TokenAccounting for InMemoryTokenAccounting {
+    fn token_address(&self) -> Address {
+        self.address
+    }
+
+    fn is_initialized(&self) -> Result<bool> {
+        Ok(self.initialized)
+    }
+
+    fn balance_of(&self, account: Address) -> Result<U256> {
+        Ok(*self.balances.get(&account).unwrap_or(&U256::ZERO))
+    }
+
+    fn set_balance(&mut self, account: Address, balance: U256) -> Result<()> {
+        self.balances.insert(account, balance);
+        Ok(())
+    }
+
+    fn allowance(&self, owner: Address, spender: Address) -> Result<U256> {
+        Ok(*self.allowances.get(&(owner, spender)).unwrap_or(&U256::ZERO))
+    }
+
+    fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()> {
+        self.allowances.insert((owner, spender), amount);
+        Ok(())
+    }
+
+    fn total_supply(&self) -> Result<U256> {
+        Ok(self.total_supply)
+    }
+
+    fn set_total_supply(&mut self, supply: U256) -> Result<()> {
+        self.total_supply = supply;
+        Ok(())
+    }
+
+    fn supply_cap(&self) -> Result<U256> {
+        Ok(self.supply_cap)
+    }
+
+    fn set_supply_cap(&mut self, cap: U256) -> Result<()> {
+        self.supply_cap = cap;
+        Ok(())
+    }
+
+    fn name(&self) -> Result<String> {
+        Ok(self.name.clone())
+    }
+
+    fn set_name(&mut self, name: String) -> Result<()> {
+        self.name = name;
+        Ok(())
+    }
+
+    fn symbol(&self) -> Result<String> {
+        Ok(self.symbol.clone())
+    }
+
+    fn set_symbol(&mut self, symbol: String) -> Result<()> {
+        self.symbol = symbol;
+        Ok(())
+    }
+
+    fn decimals(&self) -> Result<u8> {
+        Ok(self.decimals)
+    }
+
+    fn paused(&self) -> Result<U256> {
+        Ok(self.paused)
+    }
+
+    fn set_paused(&mut self, vectors: U256) -> Result<()> {
+        self.paused = vectors;
+        Ok(())
+    }
+
+    fn nonce(&self, owner: Address) -> Result<U256> {
+        Ok(*self.nonces.get(&owner).unwrap_or(&U256::ZERO))
+    }
+
+    fn increment_nonce(&mut self, owner: Address) -> Result<()> {
+        let n = self.nonces.entry(owner).or_default();
+        *n += U256::from(1u64);
+        Ok(())
+    }
+
+    fn contract_uri(&self) -> Result<String> {
+        Ok(self.contract_uri.clone())
+    }
+
+    fn set_contract_uri(&mut self, uri: String) -> Result<()> {
+        self.contract_uri = uri;
+        Ok(())
+    }
+
+    fn has_role(&self, role: B256, account: Address) -> Result<bool> {
+        Ok(*self.roles.get(&(role, account)).unwrap_or(&false))
+    }
+
+    fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
+        self.roles.insert((role, account), enabled);
+        Ok(())
+    }
+
+    fn role_member_count(&self, role: B256) -> Result<U256> {
+        Ok(*self.role_member_counts.get(&role).unwrap_or(&U256::ZERO))
+    }
+
+    fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
+        self.role_member_counts.insert(role, count);
+        Ok(())
+    }
+
+    fn role_admin(&self, role: B256) -> Result<B256> {
+        Ok(*self.role_admins.get(&role).unwrap_or(&B256::ZERO))
+    }
+
+    fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
+        self.role_admins.insert(role, admin_role);
+        Ok(())
+    }
+
+    fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        Ok(*self.policy_ids.get(&policy_scope).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
+    }
+
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
+        self.policy_ids.insert(policy_scope, policy_id);
+        Ok(())
+    }
+
+    fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+        TransferPolicyIds::read_individually(self)
+    }
+
+    fn emit_event(&mut self, log: LogData) -> Result<()> {
+        self.events.push(log);
+        Ok(())
+    }
+
+    /// In-memory double has no gas meter: hashes without charging. Real gas enforcement is
+    /// exercised against the EVM harness in the dispatch tests.
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        Ok(keccak256(data))
+    }
+
+    /// In-memory double has no gas meter: charging is a no-op. Real `OutOfGas` enforcement is
+    /// exercised against the EVM harness in the dispatch tests.
+    fn deduct_gas(&self, _gas: u64) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl StablecoinAccounting for InMemoryTokenAccounting {
+    fn currency(&self) -> Result<String> {
+        Ok(self.currency.clone())
+    }
+
+    fn set_currency(&mut self, currency: String) -> Result<()> {
+        self.currency = currency;
+        Ok(())
+    }
+}
+
+/// In-memory [`PolicyAccounting`] for unit tests.
+///
+/// Pair with [`PolicyVersion::V1`] on tokens so authorization goes through
+/// [`crate::PolicyRegistryLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
+/// (ALLOWLIST semantics under V1) before exercising token ops that need a custom policy.
+#[derive(Debug)]
+pub struct FakePolicyAccounting {
+    caller: Address,
+    initialized: bool,
+    policies: BTreeMap<u64, U256>,
+    members: BTreeMap<(u64, Address), bool>,
+    pending_admins: BTreeMap<u64, Address>,
+    next_counter: u64,
+    events: Vec<LogData>,
+}
+
+impl Default for FakePolicyAccounting {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FakePolicyAccounting {
+    /// Creates empty policy-registry storage (no built-ins seeded).
+    pub const fn new() -> Self {
+        Self {
+            caller: Address::ZERO,
+            initialized: false,
+            policies: BTreeMap::new(),
+            members: BTreeMap::new(),
+            pending_admins: BTreeMap::new(),
+            next_counter: 0,
+            events: Vec::new(),
+        }
+    }
+
+    /// Marks `account` as a member of `policy_id` and records the policy as existing.
+    ///
+    /// For V1 ALLOWLIST policy IDs this authorizes `account`; for BLOCKLIST IDs it blocks them.
+    pub fn allow(&mut self, policy_id: u64, account: Address) {
+        self.create_existing_policy(policy_id);
+        self.members.insert((policy_id, account), true);
+    }
+
+    /// Marks `policy_id` as an existing policy without granting any account.
+    pub fn create_existing_policy(&mut self, policy_id: u64) {
+        self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
+    }
+}
+
+impl PolicyAccounting for FakePolicyAccounting {
+    fn registry_address(&self) -> Address {
+        Address::repeat_byte(0x02)
+    }
+
+    fn caller(&self) -> Address {
+        self.caller
+    }
+
+    fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
+        Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
+    }
+
+    fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
+        self.policies.insert(policy_id, word);
+        Ok(())
+    }
+
+    fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
+        Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
+    }
+
+    fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+        self.members.insert((policy_id, account), true);
+        Ok(())
+    }
+
+    fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+        self.members.remove(&(policy_id, account));
+        Ok(())
+    }
+
+    fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
+        Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
+    }
+
+    fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
+        self.pending_admins.insert(policy_id, admin);
+        Ok(())
+    }
+
+    fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
+        self.pending_admins.remove(&policy_id);
+        Ok(())
+    }
+
+    fn read_next_counter(&self) -> Result<u64> {
+        Ok(self.next_counter)
+    }
+
+    fn write_next_counter(&mut self, counter: u64) -> Result<()> {
+        self.next_counter = counter;
+        Ok(())
+    }
+
+    fn emit_event(&mut self, log: LogData) -> Result<()> {
+        self.events.push(log);
+        Ok(())
+    }
+
+    fn mark_initialized(&mut self) -> Result<()> {
+        self.initialized = true;
+        Ok(())
+    }
+
+    // This fake does not exercise composite policies.
+    fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+        Ok(Vec::new())
+    }
+
+    fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl AssetAccounting for InMemoryTokenAccounting {
+    fn timestamp(&self) -> Result<U256> {
+        Ok(self.timestamp)
+    }
+
+    fn multiplier(&self) -> Result<U256> {
+        Ok(if self.multiplier.is_zero() { B20AssetStorage::WAD } else { self.multiplier })
+    }
+
+    fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
+        self.multiplier = ratio;
+        Ok(())
+    }
+
+    fn pending_multiplier(&self) -> Result<u128> {
+        Ok(self.pending_multiplier)
+    }
+
+    fn pending_effective_at(&self) -> Result<u64> {
+        Ok(self.pending_effective_at)
+    }
+
+    fn set_pending_and_effective_at(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
+        self.pending_multiplier = multiplier;
+        self.pending_effective_at = effective_at;
+        Ok(())
+    }
+
+    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
+        self.pending_multiplier = 0;
+        self.pending_effective_at = 0;
+        Ok(())
+    }
+
+    fn extra_metadata(&self, key: &str) -> Result<String> {
+        Ok(self.extra_metadata.get(key).cloned().unwrap_or_default())
+    }
+
+    fn set_extra_metadata_value(&mut self, key: &str, value: String) -> Result<()> {
+        if value.is_empty() {
+            self.extra_metadata.remove(key);
+        } else {
+            self.extra_metadata.insert(key.to_owned(), value);
+        }
+        Ok(())
+    }
+
+    fn is_announcement_id_used(&self, id: &str) -> Result<bool> {
+        Ok(self.announcement_ids_used.contains(id))
+    }
+
+    fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
+        self.announcement_ids_used.insert(id.to_owned());
+        Ok(())
+    }
+
+    fn decimals(&self) -> Result<u8> {
+        Ok(if self.decimals == 0 { B20AssetStorage::MIN_DECIMALS } else { self.decimals })
+    }
+}

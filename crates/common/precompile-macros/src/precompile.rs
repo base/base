@@ -46,7 +46,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
         quote! {
             #[doc = #doc]
             pub fn install(
-                precompiles: &mut ::base_common_precompiles::PrecompilesMap,
+                precompiles: &mut ::base_execution_evm_precompiles::PrecompilesMap,
                 #(#install_arg_defs),*
             ) {
                 precompiles.extend_precompiles(::core::iter::once((
@@ -77,7 +77,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
             #install
 
             #[doc = #precompile_doc]
-            pub fn precompile(#(#arg_defs),*) -> ::base_common_precompiles::DynPrecompile {
+            pub fn precompile(#(#arg_defs),*) -> ::base_execution_evm_precompiles::DynPrecompile {
                 #macro_invocation
             }
         }
@@ -308,7 +308,7 @@ mod tests {
     fn config_accepts_storage_features() {
         let config = parse_config(quote! {
             install,
-            storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
+            storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
         })
         .unwrap();
 
@@ -333,7 +333,7 @@ mod tests {
         let tokens = expand_impl(
             quote! {
                 install,
-                storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
+                storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;
@@ -368,7 +368,7 @@ mod tests {
         let tokens = expand_impl(
             quote! {
                 install,
-                storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
+                storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;
@@ -388,7 +388,7 @@ mod tests {
             quote! {
                 storage = CustomStorage<'_>,
                 install,
-                storage_features = ::base_common_precompiles::StorageFeatures::Cobalt,
+                storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;

@@ -11,7 +11,7 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_sol_types::{SolEvent, sol};
-use base_common_precompiles::{ContractStorage, Result as StorageResult, StorageCtx};
+use base_execution_evm_precompiles::{ContractStorage, Result as StorageResult, StorageCtx};
 
 use crate::{AccountConfigurationStorage, ActorConfig};
 

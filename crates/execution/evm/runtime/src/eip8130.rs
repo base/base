@@ -46,8 +46,8 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_common_precompiles::{JournalStorageProvider, StorageCtx};
-use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
+use base_execution_evm_precompiles::{JournalStorageProvider, StorageCtx};
+use base_execution_evm_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_common_types_chain::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
@@ -1722,8 +1722,8 @@ impl Eip8130Executor {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
-    use base_common_precompiles::INonceManager;
-    use base_common_precompiles::{HashMapStorageProvider, StorageCtx};
+    use base_execution_evm_precompiles::INonceManager;
+    use base_execution_evm_precompiles::{HashMapStorageProvider, StorageCtx};
     use base_common_types_chain::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
@@ -2963,7 +2963,7 @@ mod tests {
         signer_addr: Address,
         target: Address,
     ) {
-        use base_common_precompiles::Handler as _;
+        use base_execution_evm_precompiles::Handler as _;
         let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
         {
             let ctx = evm.ctx_mut();

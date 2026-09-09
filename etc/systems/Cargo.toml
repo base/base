@@ -42,7 +42,7 @@ base-consensus-engine = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-consensus-sources = { workspace = true }
 base-prover-service-db = { workspace = true }
-base-common-precompiles = { workspace = true }
+base-execution-evm-precompiles = { workspace = true }
 base-consensus-providers = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["std"] }

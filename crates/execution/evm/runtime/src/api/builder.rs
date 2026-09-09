@@ -130,7 +130,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use alloy_sol_types::SolCall;
-    use base_common_precompiles::{
+    use base_execution_evm_precompiles::{
         ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
         IActivationRegistry, PolicyRegistryStorage,
     };

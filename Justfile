@@ -200,7 +200,7 @@ bench-consensus-derive:
 
 # Runs precompile benchmarks
 bench-precompiles:
-    cargo bench -p base-common-precompiles --bench base_precompiles --features test-utils
+    cargo bench -p base-execution-evm-precompiles --bench base_precompiles --features test-utils
 
 # Runs node runner forkchoice update benchmarks
 bench-node-runner:

@@ -10,7 +10,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_sol_types::SolCall;
 use base_common_chain_config::UpgradeConfig;
 use base_common_chain_config::{BaseUpgrade, ChainConfig};
-use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
+use base_execution_evm_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use base_common_types_rpc::{
     BlockId, BlockNumberOrTag, Filter, TransactionInput, TransactionRequest,
 };

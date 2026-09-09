@@ -300,7 +300,7 @@ Beryl,
 
 ### 10. Route precompiles
 
-**File:** [`crates/common/precompiles/src/provider.rs`](../../crates/common/precompiles/src/provider.rs)
+**File:** [`crates/execution/evm/precompiles/src/provider.rs`](../../crates/execution/evm/precompiles/src/provider.rs)
 
 If the upgrade introduces new precompiles, add a new method on `BasePrecompiles`. If it reuses the
 previous set, extend the existing arm in `new_with_spec`:

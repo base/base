@@ -6,7 +6,7 @@ use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::TEST_ACCOUNT_KEY;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, TxReceipt};
 use base_common_network::PrivateKeySigner;
-use base_common_precompiles::{B20_MAX_SUPPLY_CAP, B20TokenRole, IB20};
+use base_execution_evm_precompiles::{B20_MAX_SUPPLY_CAP, B20TokenRole, IB20};
 
 use crate::env::BerylTestEnv;
 

@@ -1,0 +1,111 @@
+[package]
+name = "base-execution-evm-precompiles"
+description = "Base precompile definitions and fork-specific precompile sets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+auto_impl = {workspace = true}
+tracing = { workspace = true }
+base-state = {workspace = true}
+revm-state = {workspace = true}
+thiserror = { workspace = true }
+alloy-sol-types = {workspace = true}
+revm-precompile = {workspace = true}
+revm-primitives = {workspace = true}
+alloy-primitives = {workspace = true}
+base-evm-context = {workspace = true}
+revm-interpreter = {workspace = true}
+base-precompile-macros = {workspace = true}
+base-common-types-chain = {workspace = true}
+base-common-chain-config = { workspace = true }
+derive_more = { workspace = true, features = ["from", "try_into"] }
+
+[dev-dependencies]
+rstest = {features = ["default"], workspace = true}
+proptest = { workspace = true, features = ["default"] }
+criterion = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["rand"] }
+k256 = { workspace = true, features = ["default", "ecdsa"] }
+
+[[bench]]
+name = "base_precompiles"
+harness = false
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_stablecoin_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_stablecoin_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_factory_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "contract"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v2_golden"
+required-features = ["test-utils"]
+
+[features]
+default = [
+    "blst",
+    "c-kzg",
+    "portable",
+    "secp256k1",
+    "std",
+]
+std = [
+    "alloy-primitives/std",
+    "alloy-sol-types/std",
+    "base-common-chain-config/std",
+    "base-evm-context/std",
+    "base-state/std",
+    "revm-interpreter/std",
+    "revm-precompile/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "base-common-types-chain/std",
+    "derive_more/std",
+    "thiserror/std",
+    "tracing/std",
+]
+bn = ["revm-precompile/bn"]
+blst = ["revm-precompile/blst"]
+c-kzg = ["revm-precompile/c-kzg"]
+portable = ["revm-precompile/portable"]
+secp256k1 = ["revm-precompile/secp256k1"]
+memory_limit = ["base-evm-context/memory_limit"]
+optional_no_base_fee = ["base-evm-context/optional_no_base_fee"]
+optional_eip3541 = ["base-evm-context/optional_eip3541"]
+optional_eip3607 = ["base-evm-context/optional_eip3607"]
+optional_fee_charge = ["base-evm-context/optional_fee_charge"]
+optional_balance_check = ["base-evm-context/optional_balance_check"]
+optional_block_gas_limit = ["base-evm-context/optional_block_gas_limit"]
+test-utils = ["base-common-chain-config/test-utils", "std"]

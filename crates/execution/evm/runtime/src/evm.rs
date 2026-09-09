@@ -447,7 +447,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, U256};
-    use base_common_precompiles::{
+    use base_execution_evm_precompiles::{
         JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
         JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
         JOVIAN_PAIRING_MAX_INPUT_SIZE,

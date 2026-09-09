@@ -33,7 +33,7 @@ mod handler;
 pub use handler::BaseHandler;
 
 mod precompiles;
-pub use base_common_precompiles::BasePrecompiles;
+pub use base_execution_evm_precompiles::BasePrecompiles;
 
 mod beryl_metrics;
 pub use beryl_metrics::BerylPrecompileMetricsObserver;
@@ -199,7 +199,7 @@ mod either_evm;
 
 mod base_transactions;
 
-pub use base_common_precompiles::{
+pub use base_execution_evm_precompiles::{
     DynPrecompile, DynPrecompiles, ErasedError, EthPrecompiles, EvmInternals, EvmInternalsError,
     MovePrecompileError, Precompile, PrecompileInput, PrecompileLookup, PrecompileProvider,
     PrecompilesMap, TransactionTr, precompile_output_to_interpreter_result,
